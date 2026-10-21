@@ -1,0 +1,22 @@
+# The texts artifacts give a model (issue 57), namespace `artifacts`:
+# templates of `minijinja`, rendered by `PromptCatalogue`; the conventions
+# are those of the agents' file (`caelumora-agents/src/prompts.yaml`). Names
+# of tools are values.
+
+# The descriptions of the tools (`caelumora_agents::tool::described`).
+# `publish_file` is the tool of `terminal_tool` to point to a file for a
+# look now: a tool of another plugin, which this one does not know by its
+# name.
+tools:
+  artifact_tool:
+    description: >-
+      Artifacts: results published from the session's workspace as fixed versions, kept beyond the
+      workspace and downloaded where they were published.
+    publish_artifact: >-
+      Publish a file of the session's workspace as an artifact for the users of the channel: a fixed
+      copy of it as it is now, kept beyond the workspace and downloaded at this message. Publishing
+      again under the same name adds a version. Use it for a result to be kept; to point to a file for
+      a look now, use publish_file.
+    publish_artifact.path: The file, relative to the workspace's top
+    publish_artifact.name: The artifact's name, at most 100 characters; the file's name unless given
+    publish_artifact.description: What it is, in a sentence, for whoever downloads it

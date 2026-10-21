@@ -590,7 +590,8 @@ what it was handed. A part is never stored in the transcript, which stays a stab
 
 Every part the runtime writes has one form: a short title in brackets on a line of its own -
 `[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content;
-`prompt::titled` gives a text the code holds the same form. A part that says nothing is no part.
+a part configured with a title (`static_system_prompt_provider`) is given the same form
+(`agents.titled`). A part that says nothing is no part.
 The personality's own system prompt stays as written.
 
 ### The prompt catalogue

@@ -10,6 +10,7 @@
 //! input (`PromptPosition::BeforeTurnInput`), not in the system prompt, so
 //! that changing notes do not invalidate the prompt cache (issue 47).
 
+use crate::prompt::NAMESPACE;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
@@ -104,7 +105,7 @@ impl NotesComponent {
     /// `PromptError` if one of its texts cannot be had.
     pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
         let tools = vec![
-            described(&prompts, NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, NOTES_KIND, Tool {
                 name: WRITE_NOTE_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -116,7 +117,7 @@ impl NotesComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, NOTES_KIND, Tool {
                 name: UPDATE_NOTE_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -128,7 +129,7 @@ impl NotesComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, NOTES_KIND, Tool {
                 name: REVOKE_NOTE_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -140,7 +141,7 @@ impl NotesComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, NOTES_KIND, Tool {
                 name: RECLASSIFY_NOTE_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: reclassify_parameters(&prompts)?,
@@ -149,7 +150,7 @@ impl NotesComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, NOTES_KIND, Tool {
                 name: READ_NOTES_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -162,7 +163,7 @@ impl NotesComponent {
                 presentation: NOTE_LIST_PRESENTATION,
             }, ())?,
         ];
-        let description = tool_text(&prompts, NOTES_KIND, "description", ())?;
+        let description = tool_text(&prompts, NAMESPACE, NOTES_KIND, "description", ())?;
         Ok(Self { access_policy, confidentiality, prompts, description, tools })
     }
 

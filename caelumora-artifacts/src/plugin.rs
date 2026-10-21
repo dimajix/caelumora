@@ -5,6 +5,7 @@
 //! routes reach it by - and as a member of a scope, and the `artifact_tool`
 //! component.
 
+use crate::{NAMESPACE, PROMPTS};
 use crate::artifact::Artifact;
 use crate::component;
 use crate::local;
@@ -40,6 +41,7 @@ impl Plugin for ArtifactsPlugin {
         let manager = Arc::new(manager);
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);
+        runtime.prompts().add(NAMESPACE, PROMPTS)?;
         component::register(runtime.components());
         Ok(())
     }

@@ -49,8 +49,10 @@ use caelumora_agents::command::AgentCommandProvider;
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_agents::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_agents::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
-use caelumora_agents::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use caelumora_agents::tool::{arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use crate::NAMESPACE;
 use caelumora_runtime::view::SessionView;
 use chrono::Utc;
 use serde::Deserialize;
@@ -77,14 +79,15 @@ pub const UPDATE_SKILL_TOOL_NAME: &str = "update_skill";
 pub const SKILL_COMMAND_NAME: &str = "skill";
 pub const SKILLS_COMMAND_NAME: &str = "skills";
 
-const CATALOGUE_TITLE: &str = "Skills you can load";
-
 #[derive(Debug)]
 pub struct SkillsComponent {
     pub position: PromptPosition,
-    /// Whether writing a skill is approved first: always, unless the
-    /// parameter `requires_approval` says `false`.
-    pub requires_approval: ApprovalMode,
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them (issue 57).
+    description: String,
+    tools: Vec<Tool>,
+    /// The texts of its catalogue and of a skill given.
+    prompts: Arc<PromptCatalogue>,
 }
 
 /// What the component is configured with besides its position.
@@ -98,23 +101,6 @@ struct SkillsConfig {
 /// the turn's: their join where it surely flows there, else the bound.
 fn joined(skills: &[SkillView], bound: &Classification) -> Classification {
     skills.iter().fold(Classification::PUBLIC, |joined, skill| joined.join_within(skill.classification(), bound))
-}
-
-/// The catalogue of `skills`: a line each, its name and what it is for;
-/// empty if there are none.
-fn catalogue(skills: &[SkillView]) -> String {
-    if skills.is_empty() {
-        return String::new();
-    }
-    let mut text = format!(
-        "A skill is a procedure written down for you: how a task is done here. When a task calls for one of these, \
-        load it with `{LOAD_SKILL_TOOL_NAME}` and follow it. A skill a user loaded for you stands in the conversation \
-        already, as their message.\n"
-    );
-    for skill in skills {
-        text.push_str(&format!("- {}: {}\n", skill.name(), skill.description()));
-    }
-    titled(CATALOGUE_TITLE, &text)
 }
 
 /// The session `turn` reads from (`Situation::session`); a turn that
@@ -198,6 +184,62 @@ impl From<SkillError> for ToolError {
     }
 }
 
+impl SkillsComponent {
+    /// The component at `position`, asking for approval to write a skill as
+    /// `requires_approval` says, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of them cannot be had.
+    pub fn new(position: PromptPosition, requires_approval: ApprovalMode, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+        let tool = |name: &str, parameters, requires_approval, presentation| {
+            let tool = Tool { name: name.to_string(), description: String::new(), parameters, requires_approval, visibility: ToolVisibility::SHOWN, classification: None, presentation };
+            described(&prompts, NAMESPACE, SKILLS_KIND, tool, ())
+        };
+        let writes = requires_approval.required(false);
+        let tools = vec![
+            tool(LIST_SKILLS_TOOL_NAME, ToolParameters::object(Vec::<(&str, ToolParameters)>::new(), Vec::<&str>::new()), false, SKILL_LIST_PRESENTATION)?,
+            // Its result names the skill; its text is given to the agent,
+            // never published (issue 389).
+            tool(LOAD_SKILL_TOOL_NAME, ToolParameters::object([("name", ToolParameters::string())], ["name"]), false, SKILL_PRESENTATION)?,
+            tool(
+                CREATE_SKILL_TOOL_NAME,
+                ToolParameters::object(
+                    [("name", ToolParameters::string()), ("description", ToolParameters::string()), ("body", ToolParameters::string()), ("scope", ToolParameters::string())],
+                    ["name", "description", "body", "scope"],
+                ),
+                writes,
+                SKILL_PRESENTATION,
+            )?,
+            tool(
+                UPDATE_SKILL_TOOL_NAME,
+                ToolParameters::object([("name", ToolParameters::string()), ("description", ToolParameters::string()), ("body", ToolParameters::string())], ["name"]),
+                writes,
+                SKILL_PRESENTATION,
+            )?,
+        ];
+        let description = tool_text(&prompts, NAMESPACE, SKILLS_KIND, "description", ())?;
+        Ok(Self { position, description, tools, prompts })
+    }
+
+    /// The catalogue of `skills`: a line each, its name and what it is for;
+    /// empty if there are none.
+    fn catalogue(&self, skills: &[SkillView]) -> Result<String, PromptError> {
+        if skills.is_empty() {
+            return Ok(String::new());
+        }
+        let skills: Vec<_> = skills.iter().map(|skill| context! { name => skill.name().to_string(), description => skill.description().to_string() }).collect();
+        self.prompts.render(&format!("{NAMESPACE}.catalogue"), context! { skills, load_skill => LOAD_SKILL_TOOL_NAME })
+    }
+
+    /// The text of `skill` as the model is given it, titled with its name:
+    /// the one rendering of every way it reaches a model - loaded by the
+    /// model, given with `/skill`, given again after a compaction (issues
+    /// 16, 22).
+    fn given(&self, skill: &SkillView) -> Result<String, PromptError> {
+        self.prompts.render(&format!("{NAMESPACE}.skill"), context! { name => skill.name().to_string(), body => skill.body().as_str() })
+    }
+}
+
 #[async_trait]
 impl PromptProvider for SkillsComponent {
     fn position(&self) -> PromptPosition {
@@ -208,81 +250,18 @@ impl PromptProvider for SkillsComponent {
         let Some(session) = situation.session().await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let skills = session.views().usable_skills().await?;
         let classification = joined(&skills, &situation.classification());
-        Ok(Prompt::classified(catalogue(&skills), classification))
+        Ok(Prompt::classified(self.catalogue(&skills)?, classification))
     }
 }
 
 #[async_trait]
 impl ToolProvider for SkillsComponent {
     fn description(&self) -> String {
-        "Skills: procedures written down for you to follow, loaded when a task needs one.".to_string()
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        vec![
-            Tool {
-                name: LIST_SKILLS_TOOL_NAME.to_string(),
-                description: "List the skills you can load here, each with what it is for.".to_string(),
-                parameters: ToolParameters::object(Vec::<(&str, ToolParameters)>::new(), Vec::<&str>::new()),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: SKILL_LIST_PRESENTATION,
-            },
-            Tool {
-                name: LOAD_SKILL_TOOL_NAME.to_string(),
-                description: "Load a skill by its name - a procedure to follow for the task at hand. Its text follows the \
-                    result. The channel sees which skill you loaded, not what it says; do not quote it to them."
-                    .to_string(),
-                parameters: ToolParameters::object([("name", ToolParameters::string().described("The name of the skill"))], ["name"]),
-                requires_approval: false,
-                // Its result names the skill; its text is given to the agent,
-                // never published (issue 389).
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: SKILL_PRESENTATION,
-            },
-            Tool {
-                name: CREATE_SKILL_TOOL_NAME.to_string(),
-                description: "Write down a skill: how a task is done here, as you have learnt it - steps to follow, \
-                    for yourself and other agents of your owner's next time. A skill is for what to do, not for what you \
-                    know (that is memory). Keep it self-contained; check the skills you can load first, and update one \
-                    rather than writing a second. It belongs to your owner, and lies in this session's scope or your \
-                    owner's. A user has to approve it."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [
-                        ("name", ToolParameters::string().described("A short name, e.g. release-notes")),
-                        ("description", ToolParameters::string().described("What it is for, in one line: what the catalogue shows")),
-                        ("body", ToolParameters::string().described("The steps, in Markdown")),
-                        ("scope", ToolParameters::string().described("\"session\" for this session alone, \"user\" for every session of your owner")),
-                    ],
-                    ["name", "description", "body", "scope"],
-                ),
-                requires_approval: self.requires_approval.required(false),
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: SKILL_PRESENTATION,
-            },
-            Tool {
-                name: UPDATE_SKILL_TOOL_NAME.to_string(),
-                description: "Change a skill you can load here that belongs to your owner: what it is for, its steps, \
-                    or both. Give the whole new text of what you change. A user has to approve it."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [
-                        ("name", ToolParameters::string().described("The name of the skill")),
-                        ("description", ToolParameters::string().described("What it is for, in one line, if that changes")),
-                        ("body", ToolParameters::string().described("The steps, in Markdown, if they change")),
-                    ],
-                    ["name"],
-                ),
-                requires_approval: self.requires_approval.required(false),
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: SKILL_PRESENTATION,
-            },
-        ]
+        self.tools.clone()
     }
 
     fn describe(&self, name: &str, params: &Value) -> ToolResult<String> {
@@ -332,7 +311,7 @@ impl ToolProvider for SkillsComponent {
                     sender_id: ActorId::Agent(turn.situation().agent_id()),
                     sender_name: turn.agent_name().to_string(),
                     role: MessageRole::User,
-                    content: Some(skill.as_given()),
+                    content: Some(self.given(&skill).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?),
                     timestamp: Utc::now(),
                     ..Message::new(skill.classification().clone())
                 };
@@ -452,7 +431,7 @@ impl AgentCommandProvider for SkillsComponent {
                     sender_id: issuer,
                     sender_name: issuer_name.unwrap_or_else(|| "a user".to_string()),
                     role: MessageRole::User,
-                    content: Some(skill.as_given()),
+                    content: Some(self.given(&skill).map_err(|e| failed(&e.to_string()))?),
                     timestamp: Utc::now(),
                     ..Message::new(skill.classification().clone())
                 };
@@ -481,14 +460,14 @@ impl KnowledgeRestorer for SkillsComponent {
         };
         let session = turn.situation().session().await.map_err(|e| unreadable(&e))?.ok_or(CompactionError::NoSession)?;
         let usable = session.views().usable_skills().await.map_err(|e| unreadable(&e))?;
-        Ok(given.iter()
+        given.iter()
             .filter_map(|id| usable.iter().find(|skill| skill.id() == SkillId::from(*id)))
-            .map(|skill| GivenAgain {
+            .map(|skill| Ok(GivenAgain {
                 name: skill.name().to_string(),
-                text: skill.as_given(),
+                text: self.given(skill)?,
                 knowledge: skill.knowledge(turn.situation().channel_id(), turn.situation().session_id()),
-            })
-            .collect())
+            }))
+            .collect()
     }
 }
 
@@ -498,11 +477,12 @@ pub fn register(registry: &mut ComponentRegistry) {
             .provides::<dyn PromptProvider>()
             .provides::<dyn ToolProvider>()
             .provides::<dyn AgentCommandProvider>()
-            .provides::<dyn KnowledgeRestorer>(),
-        |descriptor, _context| {
+            .provides::<dyn KnowledgeRestorer>()
+            .uses::<PromptCatalogue>(),
+        |descriptor, context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
             let SkillsConfig { requires_approval } = config_of_params(&descriptor.params)?;
-            let component = Arc::new(SkillsComponent { position, requires_approval });
+            let component = Arc::new(SkillsComponent::new(position, requires_approval, Arc::clone(context.service::<PromptCatalogue>()?))?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::<SkillsComponent>::clone(&component));
             facets.insert::<dyn ToolProvider>(Arc::<SkillsComponent>::clone(&component));

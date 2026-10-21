@@ -19,6 +19,7 @@
 //! own, seen by its owner in the context panel only. Its entries are
 //! numbered differently from notes, on purpose: see `AgentMemory::remember`.
 
+use crate::prompt::NAMESPACE;
 use crate::components::notes::NOTE_PRESENTATION;
 use crate::memory::AgentMemory;
 use crate::turn::Turn;
@@ -102,7 +103,7 @@ impl AgentMemoryComponent {
     /// `PromptError` if one of its texts cannot be had.
     pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
         let tools = vec![
-            described(&prompts, AGENT_MEMORY_KIND, Tool {
+            described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
                 name: REMEMBER_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -114,7 +115,7 @@ impl AgentMemoryComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, AGENT_MEMORY_KIND, Tool {
+            described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
                 name: UPDATE_MEMORY_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -126,7 +127,7 @@ impl AgentMemoryComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, AGENT_MEMORY_KIND, Tool {
+            described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
                 name: FORGET_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -138,7 +139,7 @@ impl AgentMemoryComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, AGENT_MEMORY_KIND, Tool {
+            described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
                 name: RECLASSIFY_MEMORY_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: reclassify_parameters(&prompts)?,
@@ -148,7 +149,7 @@ impl AgentMemoryComponent {
                 presentation: NOTE_PRESENTATION,
             }, ())?,
         ];
-        let description = tool_text(&prompts, AGENT_MEMORY_KIND, "description", ())?;
+        let description = tool_text(&prompts, NAMESPACE, AGENT_MEMORY_KIND, "description", ())?;
         Ok(Self { access_policy, confidentiality, prompts, description, tools })
     }
 

@@ -7,6 +7,7 @@
 //! written as the model is given the times of its own channel's (issue
 //! 424): in the turn's time zone, in the same form.
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::components::notes::READ_NOTES_TOOL_NAME;
@@ -52,7 +53,7 @@ impl ChannelHistoryComponent {
     pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
         // What its texts are told.
         let values = context! { max_last => MAX_LAST, default_last => DEFAULT_LAST, read_notes => READ_NOTES_TOOL_NAME };
-        let tools = vec![described(prompts, CHANNEL_HISTORY_KIND, Tool {
+        let tools = vec![described(prompts, NAMESPACE, CHANNEL_HISTORY_KIND, Tool {
             name: READ_HISTORY_TOOL_NAME.to_string(),
             description: String::new(),
             parameters: ToolParameters::object(
@@ -68,7 +69,7 @@ impl ChannelHistoryComponent {
             classification: None,
             presentation: Default::default(),
         }, &values)?];
-        Ok(Self { description: tool_text(prompts, CHANNEL_HISTORY_KIND, "description", &values)?, tools })
+        Ok(Self { description: tool_text(prompts, NAMESPACE, CHANNEL_HISTORY_KIND, "description", &values)?, tools })
     }
 }
 

@@ -21,6 +21,7 @@
 //! channel, but the agent's owner sees them, and the prompt part, in the
 //! context panel - the audit view of the one responsible for the agent.
 
+use crate::prompt::NAMESPACE;
 use crate::components::notes::NOTE_PRESENTATION;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::turn::Turn;
@@ -98,7 +99,7 @@ impl PrivateNotesComponent {
     /// `PromptError` if one of its texts cannot be had.
     pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
         let tools = vec![
-            described(&prompts, PRIVATE_NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
                 name: WRITE_PRIVATE_NOTE_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -110,7 +111,7 @@ impl PrivateNotesComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, PRIVATE_NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
                 name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -122,7 +123,7 @@ impl PrivateNotesComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, PRIVATE_NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
                 name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -134,7 +135,7 @@ impl PrivateNotesComponent {
                 classification: None,
                 presentation: NOTE_PRESENTATION,
             }, ())?,
-            described(&prompts, PRIVATE_NOTES_KIND, Tool {
+            described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
                 name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: reclassify_parameters(&prompts)?,
@@ -144,7 +145,7 @@ impl PrivateNotesComponent {
                 presentation: NOTE_PRESENTATION,
             }, ())?,
         ];
-        let description = tool_text(&prompts, PRIVATE_NOTES_KIND, "description", ())?;
+        let description = tool_text(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, "description", ())?;
         Ok(Self { access_policy, confidentiality, prompts, description, tools })
     }
 

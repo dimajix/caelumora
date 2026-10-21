@@ -3,6 +3,7 @@
 //! and the routes reach it by - and as a member of a scope, the `skills`
 //! component, and the section `skills` of the seed files.
 
+use crate::{NAMESPACE, PROMPTS};
 use crate::component;
 use crate::manager::SkillManager;
 use crate::skill::Skill;
@@ -37,6 +38,7 @@ impl Plugin for SkillsPlugin {
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);
         runtime.seed_section(SKILLS, Arc::new(SeededSkills(skills)))?;
+        runtime.prompts().add(NAMESPACE, PROMPTS)?;
         component::register(runtime.components());
         Ok(())
     }

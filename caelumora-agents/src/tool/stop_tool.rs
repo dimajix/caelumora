@@ -1,6 +1,7 @@
 //! The `stop_tool` component: tools with which an agent ends its part in a
 //! conversation - `stop`, `bye` and `silence`.
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -33,7 +34,7 @@ impl StopToolProvider {
     /// # Errors
     /// `PromptError` if one of them cannot be had.
     pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
-        let tool = |name: &str| described(prompts, STOP_TOOL_KIND, Tool {
+        let tool = |name: &str| described(prompts, NAMESPACE, STOP_TOOL_KIND, Tool {
             name: name.to_string(),
             description: String::new(),
             parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
@@ -43,7 +44,7 @@ impl StopToolProvider {
             presentation: Default::default(),
         }, ());
         let tools = vec![tool(STOP_TOOL_NAME)?, tool(BYE_TOOL_NAME)?, tool(SILENCE_TOOL_NAME)?];
-        Ok(Self { description: tool_text(prompts, STOP_TOOL_KIND, "description", ())?, tools })
+        Ok(Self { description: tool_text(prompts, NAMESPACE, STOP_TOOL_KIND, "description", ())?, tools })
     }
 }
 

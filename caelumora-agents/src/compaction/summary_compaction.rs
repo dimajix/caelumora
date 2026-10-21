@@ -158,8 +158,7 @@ impl SummaryCompaction {
         if text.is_empty() {
             return Ok(String::new());
         }
-        let end = if text.ends_with('\n') { "" } else { "\n" };
-        self.prompts.render(&format!("{NAMESPACE}.compaction.summary"), context! { text => format!("{text}{end}") })
+        self.prompts.render(&format!("{NAMESPACE}.compaction.summary"), context! { text })
     }
 
     /// What `wanted` - given in the part summarised and not in the part

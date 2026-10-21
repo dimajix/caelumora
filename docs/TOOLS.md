@@ -27,7 +27,8 @@ What a tool, its parameters and its tool set say to the model are texts of the p
 (issue 57, see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), kept apart from the tool's
 schema. The code builds the schema - the parameters, their types, which are required
 (`ToolParameters::string()`, `object(…)`) -, and `tool::described` gives the tool and each of its
-parameters the text of its path among the tools of its component kind: `notes.write_note` is the
+parameters the text of its path among the tools of its component kind, in the namespace of the
+agents or of the plugin that brings it (`<namespace>.tools.<kind>`): `notes.write_note` is the
 tool's, `notes.write_note.text` its parameter's, `.item` an entry's of a list, and the entries of a
 list of objects are described by their fields under the list's path. A parameter described already
 keeps its text, as the parameters every reclassifying tool shares (`tool::reclassify_parameters`).

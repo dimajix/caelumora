@@ -36,12 +36,14 @@ use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::message::{estimated_tokens, Message, MessageId};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use crate::NAMESPACE;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
 use caelumora_runtime::moderator::ResponderPolicy;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tracing::warn;
@@ -150,6 +152,9 @@ enum Undecided {
     TooMany(usize),
     #[error(transparent)]
     Model(#[from] DecisionError),
+    /// What it is asked cannot be worded (issue 57).
+    #[error("the questions cannot be worded: {0}")]
+    Unworded(#[from] PromptError),
 }
 
 /// Asks a decision model whom to ask to respond.
@@ -162,6 +167,8 @@ pub struct DecisionPolicy {
     destination: Classification,
     profile: ModelProfile,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// What the model is asked.
+    prompts: Arc<PromptCatalogue>,
 }
 
 #[async_trait]
@@ -196,10 +203,10 @@ impl DecisionPolicy {
         let state = self.state(event, messages)?;
         let options = options(candidates);
         if candidates.len() < MAX_OPTIONS {
-            let answers = self.client.ask(&event.security, &state, &choice(candidates, &options)).await?;
+            let answers = self.client.ask(&event.security, &state, &choice(&self.prompts, candidates, &options)?).await?;
             self.chosen_by_choice(answers.get(RESPONDENT), candidates, &options)
         } else if candidates.len() <= MAX_QUESTIONS {
-            let answers = self.client.ask(&event.security, &state, &nouls(candidates, &options)).await?;
+            let answers = self.client.ask(&event.security, &state, &nouls(&self.prompts, candidates, &options)?).await?;
             let probabilities = options.iter().map(|option| match answers.get(option) {
                 Some(Answer::Noul { noul }) => Ok(*noul),
                 _ => Err(self.invalid(format!("the question '{option}' is not answered yes or no"))),
@@ -290,28 +297,35 @@ fn options(candidates: &[ActorDescription]) -> Vec<String> {
     }).collect()
 }
 
+/// The text `key` of `prompts` for the decision model, rendered with
+/// `values`.
+fn text(prompts: &PromptCatalogue, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+    prompts.render(&format!("{NAMESPACE}.{key}"), values)
+}
+
 /// Who `candidate` is, for the model: its name, and how it is introduced,
 /// on one line.
-fn described(candidate: &ActorDescription) -> String {
-    match &candidate.introduction {
-        Some(introduction) => format!("{}: {}", candidate.name, introduction.as_str().split_whitespace().collect::<Vec<_>>().join(" ")),
-        None => candidate.name.to_string(),
-    }
+fn described(prompts: &PromptCatalogue, candidate: &ActorDescription) -> Result<String, PromptError> {
+    let introduction = candidate.introduction.as_ref().map(|introduction| introduction.as_str().split_whitespace().collect::<Vec<_>>().join(" "));
+    text(prompts, "candidate", context! { name => candidate.name.as_str(), introduction })
 }
 
 /// One `choice` over the candidates, by `options`, and nobody.
-fn choice(candidates: &[ActorDescription], options: &[String]) -> BTreeMap<String, Question> {
-    let mut criteria: BTreeMap<String, Option<String>> = options.iter().cloned().zip(candidates.iter().map(|candidate| Some(described(candidate)))).collect();
-    criteria.insert(NOBODY.to_string(), Some("Nobody: the message needs no answer from any of them.".to_string()));
-    let instructions = "Which participant of the conversation should respond to the last message? Choose nobody if it needs no answer.".to_string();
-    BTreeMap::from([(RESPONDENT.to_string(), Question::Choice { instructions, criteria })])
+fn choice(prompts: &PromptCatalogue, candidates: &[ActorDescription], options: &[String]) -> Result<BTreeMap<String, Question>, PromptError> {
+    let mut criteria = BTreeMap::new();
+    for (option, candidate) in options.iter().zip(candidates) {
+        criteria.insert(option.clone(), Some(described(prompts, candidate)?));
+    }
+    criteria.insert(NOBODY.to_string(), Some(text(prompts, "choice.nobody", ())?));
+    let instructions = text(prompts, "choice.instructions", ())?;
+    Ok(BTreeMap::from([(RESPONDENT.to_string(), Question::Choice { instructions, criteria })]))
 }
 
 /// One `noul` per candidate, by its option.
-fn nouls(candidates: &[ActorDescription], options: &[String]) -> BTreeMap<String, Question> {
+fn nouls(prompts: &PromptCatalogue, candidates: &[ActorDescription], options: &[String]) -> Result<BTreeMap<String, Question>, PromptError> {
     options.iter().zip(candidates).map(|(option, candidate)| {
-        let instructions = format!("Should this participant respond to the last message? {}", described(candidate));
-        (option.clone(), Question::Noul { instructions })
+        let instructions = text(prompts, "noul", context! { candidate => described(prompts, candidate)? })?;
+        Ok((option.clone(), Question::Noul { instructions }))
     }).collect()
 }
 
@@ -321,6 +335,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             .provides::<dyn ResponderPolicy>()
             .uses::<SecretManager>()
             .uses::<dyn ConfidentialityPolicy>()
+            .uses::<PromptCatalogue>()
             .operator_only(),
         |descriptor, context| {
             let config: DecisionPolicyConfig = config_of_params(&descriptor.params)?;
@@ -337,6 +352,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 destination: config.destination.unwrap_or(Classification::PUBLIC),
                 profile,
                 confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
+                prompts: Arc::clone(context.service::<PromptCatalogue>()?),
             };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ResponderPolicy>(Arc::new(policy));
@@ -348,6 +364,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PROMPTS;
     use axum::extract::State;
     use axum::http::StatusCode;
     use axum::routing::post;
@@ -418,7 +435,15 @@ mod tests {
             destination: config.destination.unwrap_or(Classification::PUBLIC),
             profile,
             confidentiality: Arc::new(ConfidentialityRules::default()),
+            prompts: prompts(),
         }
+    }
+
+    /// The catalogue with the questions of the decision model.
+    fn prompts() -> Arc<PromptCatalogue> {
+        let mut catalogue = PromptCatalogue::new();
+        catalogue.add(NAMESPACE, PROMPTS).expect("the questions are compiled in");
+        Arc::new(catalogue)
     }
 
     fn agent(name: &str, introduction: Option<&str>) -> ActorDescription {

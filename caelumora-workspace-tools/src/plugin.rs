@@ -1,7 +1,7 @@
 //! How the tools of the workspace are joined to the runtime (issue 428): by
 //! their component kinds alone.
 
-use crate::{terminal_tool, workspace_prompt_provider};
+use crate::{terminal_tool, workspace_prompt_provider, NAMESPACE, PROMPTS};
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use anyhow::Result;
@@ -16,6 +16,7 @@ impl Plugin for WorkspaceToolsPlugin {
     }
 
     fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
+        runtime.prompts().add(NAMESPACE, PROMPTS)?;
         terminal_tool::register(runtime.components());
         workspace_prompt_provider::register(runtime.components());
         Ok(())

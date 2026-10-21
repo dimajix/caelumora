@@ -11,7 +11,8 @@
 //! through the same shell of the channel (`ChannelLoop::workspace_shell`)
 //! as the REST server does for them.
 
-use crate::terminal_tool::{tool, TerminalToolConfig};
+use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use caelumora_runtime::terminal::{CommandState, Shell};
 use caelumora_model::workspace::CommandStatus;
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
@@ -76,7 +77,7 @@ fn wait(config: &TerminalToolConfig, asked: Option<f64>) -> Duration {
 
 /// `state` as the model is given it: the output cut from the front to
 /// what a result may hold.
-fn result(config: &TerminalToolConfig, state: CommandState) -> Value {
+fn result(config: &TerminalToolConfig, prompts: &PromptCatalogue, state: CommandState) -> Value {
     let mut output = state.output;
     let mut truncated = state.truncated;
     if output.len() > config.max_output_bytes {
@@ -98,7 +99,9 @@ fn result(config: &TerminalToolConfig, state: CommandState) -> Value {
         result["exit_code"] = json!(code);
     }
     if state.status == CommandStatus::Running {
-        result["next"] = json!(format!("It is still running: follow it with {COMMAND_OUTPUT} (id, offset = next_offset), or end it with {KILL_COMMAND}."));
+        if let Some(next) = next(prompts, "still_running", context! { command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND }) {
+            result["next"] = json!(next);
+        }
     }
     result
 }
@@ -119,51 +122,28 @@ struct Follow {
     wait_secs: Option<f64>,
 }
 
-pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
+pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptCatalogue) -> Result<Vec<Tool>, PromptError> {
     let most = config.max_wait_secs.min(MAX_WAIT_SECS);
-    vec![
+    let values = context! { most, run_command => RUN_COMMAND, command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND };
+    Ok(vec![
         tool(
+            prompts,
             RUN_COMMAND,
-            format!(
-                "Run a shell command (bash) in the session's workspace, a directory whose files persist across \
-                turns and are shared with the others who use it. Every command starts in the workspace's top \
-                directory: a `cd` does not carry over to the next. Waits up to {most} seconds for it to end, and \
-                returns what it printed - standard output and error in the order they came - and its exit code. \
-                A command still running then is returned with its id: follow it with {COMMAND_OUTPUT}, end it with \
-                {KILL_COMMAND}."
-            ),
-            ToolParameters::object(
-                [
-                    ("command", ToolParameters::shell().described("The command line, as bash reads it")),
-                    ("wait_secs", ToolParameters::number().described(format!("How long to wait for it to end, at most {most} seconds; {most} unless given"))),
-                ],
-                ["command"],
-            ),
+            ToolParameters::object([("command", ToolParameters::shell()), ("wait_secs", ToolParameters::number())], ["command"]),
             config.requires_approval.required(false),
             SHELL_PRESENTATION,
-        ),
+            &values,
+        )?,
         tool(
+            prompts,
             COMMAND_OUTPUT,
-            format!("New output of a command {RUN_COMMAND} returned as still running, from the next_offset of its last result, waiting for it to end as {RUN_COMMAND} does."),
-            ToolParameters::object(
-                [
-                    ("id", ToolParameters::string().described("The id of the command")),
-                    ("offset", ToolParameters::number().described("The next_offset of the last result about it; 0 for all it printed")),
-                    ("wait_secs", ToolParameters::number().described(format!("How long to wait for it to end, at most {most} seconds"))),
-                ],
-                ["id"],
-            ),
+            ToolParameters::object([("id", ToolParameters::string()), ("offset", ToolParameters::number()), ("wait_secs", ToolParameters::number())], ["id"]),
             false,
             SHELL_PRESENTATION,
-        ),
-        tool(
-            KILL_COMMAND,
-            "End a command that is still running, with everything it started.".to_string(),
-            ToolParameters::object([("id", ToolParameters::string().described("The id of the command"))], ["id"]),
-            false,
-            SHELL_PRESENTATION,
-        ),
-    ]
+            &values,
+        )?,
+        tool(prompts, KILL_COMMAND, ToolParameters::object([("id", ToolParameters::string())], ["id"]), false, SHELL_PRESENTATION, &values)?,
+    ])
 }
 
 /// What an approver reads: the command, whole.
@@ -178,9 +158,10 @@ pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     }
 }
 
-/// Runs the shell tool `name` with `params` on `shell`, the workspace's as
+/// Runs the shell tool `name` of `tool` with `params` on `shell`, the workspace's as
 /// the turn's channel sees it.
-pub(crate) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, shell: Arc<dyn Shell>) -> ToolResult<Value> {
+pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, shell: Arc<dyn Shell>) -> ToolResult<Value> {
+    let (config, prompts) = (&tool.config, tool.prompts.as_ref());
     let state = match name {
         RUN_COMMAND => {
             let Run { command, wait_secs } = arguments(params)?;
@@ -202,7 +183,7 @@ pub(crate) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             shell.kill(&id, offset.unwrap_or(0)).await
         }
     }?;
-    Ok(result(config, state))
+    Ok(result(config, prompts, state))
 }
 
 #[cfg(test)]
@@ -285,7 +266,8 @@ mod tests {
     fn output_beyond_what_a_result_holds_is_cut_from_the_front() {
         let config: TerminalToolConfig = serde_json::from_value(json!({ "max_output_bytes": 2 })).unwrap();
         let state = CommandState { id: "x".to_string(), status: CommandStatus::Completed, exit_code: Some(0), output: "abcdéf".to_string(), next_offset: 7, truncated: false };
-        let result = result(&config, state);
+        // No text of how to go on is needed for a command that ended.
+        let result = result(&config, &PromptCatalogue::new(), state);
         assert_eq!((result["output"].as_str(), result["truncated"].as_bool()), (Some("f"), Some(true)), "the cut falls inside é and moves past it: {result}");
     }
 }

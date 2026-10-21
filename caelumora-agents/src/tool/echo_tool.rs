@@ -1,5 +1,6 @@
 //! The `echo_tool` component: a tool that echoes its input, for testing.
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -28,7 +29,7 @@ impl EchoToolProvider {
     /// # Errors
     /// `PromptError` if one of them cannot be had.
     pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
-        let tools = vec![described(prompts, ECHO_TOOL_KIND, Tool {
+        let tools = vec![described(prompts, NAMESPACE, ECHO_TOOL_KIND, Tool {
             name: ECHO_TOOL_NAME.to_string(),
             description: String::new(),
             parameters: ToolParameters::object(
@@ -40,7 +41,7 @@ impl EchoToolProvider {
             classification: None,
             presentation: Default::default(),
         }, ())?];
-        Ok(Self { description: tool_text(prompts, ECHO_TOOL_KIND, "description", ())?, tools })
+        Ok(Self { description: tool_text(prompts, NAMESPACE, ECHO_TOOL_KIND, "description", ())?, tools })
     }
 }
 

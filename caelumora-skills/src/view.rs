@@ -17,7 +17,6 @@ use caelumora_model::store::query::Query;
 use caelumora_model::store::{StoreResultExt, Stored};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::Description;
-use caelumora_agents::prompt::titled;
 use caelumora_runtime::view::Views;
 use std::sync::Arc;
 
@@ -172,13 +171,6 @@ impl SkillView {
 
     pub fn classification(&self) -> &Classification {
         &self.skill.classification
-    }
-
-    /// Its text as the model is given it, titled with its name: the one
-    /// rendering of every way it reaches a model - loaded by the model, given
-    /// with `/skill`, given again after a compaction (issues 16, 22).
-    pub fn as_given(&self) -> String {
-        titled(&format!("Skill: {}", self.name()), self.skill.body.as_str())
     }
 
     /// That it was loaded in `channel` of `session`, as it is now: knowledge

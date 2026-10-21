@@ -1,6 +1,7 @@
 //! The `calculator_tool` component: a tool that evaluates mathematical
 //! expressions.
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -30,7 +31,7 @@ impl CalculatorToolProvider {
     /// # Errors
     /// `PromptError` if one of them cannot be had.
     pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
-        let tools = vec![described(prompts, CALCULATOR_TOOL_KIND, Tool {
+        let tools = vec![described(prompts, NAMESPACE, CALCULATOR_TOOL_KIND, Tool {
             name: CALCULATE_TOOL_NAME.to_string(),
             description: String::new(),
             parameters: ToolParameters::object(
@@ -42,7 +43,7 @@ impl CalculatorToolProvider {
             classification: None,
             presentation: Default::default(),
         }, ())?];
-        Ok(Self { description: tool_text(prompts, CALCULATOR_TOOL_KIND, "description", ())?, tools })
+        Ok(Self { description: tool_text(prompts, NAMESPACE, CALCULATOR_TOOL_KIND, "description", ())?, tools })
     }
 }
 

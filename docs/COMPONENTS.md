@@ -250,7 +250,7 @@ by the agents' plugin (`caelumora_agents::plugin::register_components`, issue 37
 |---|---|
 | `tool/` | tool providers (`calculator_tool`, `ask_user_tool`, ...) |
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
-| `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_participants_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`, `Section`, `titled`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
+| `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_participants_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
 | `llm/` | the facet through which an agent asks its model, the defusing of control tokens any kind may use, and no kind: each model provider is a plugin (`ollama_client` in `caelumora-ollama`) |
 | `moderator/` | the moderator and its responder policies |
 | `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction policies (`threshold_compaction_policy`) and strategies (`summary_compaction`) |
@@ -280,7 +280,7 @@ They follow one convention:
 *   **Parameters:** the turn is always the parameter `turn`.
 
 What components share lives beside the facet: `tool::text_argument` and `id_argument` for tool
-parameters, `prompt::render_sections` for a prompt part that lists entries, and `view::ViewError`,
+parameters, `tool::described` and `tool::tool_text` for the texts of tools, and `view::ViewError`,
 which a tool passes on with `?`.
 
 ## Plugins

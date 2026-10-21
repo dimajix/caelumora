@@ -5,6 +5,7 @@
 //! parameter `seconds` (default 5) - at most `MAX_SECONDS`, and needs no
 //! approval unless the parameter `requires_approval` says so.
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{flag_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -45,7 +46,7 @@ impl SleepToolProvider {
     pub fn new(seconds: f64, requires_approval: bool, prompts: &PromptCatalogue) -> Result<Self, PromptError> {
         // What its texts are told, written as Rust writes them - `5`, not `5.0`.
         let values = context! { seconds => seconds.to_string(), max_seconds => MAX_SECONDS.to_string() };
-        let tools = vec![described(prompts, SLEEP_TOOL_KIND, Tool {
+        let tools = vec![described(prompts, NAMESPACE, SLEEP_TOOL_KIND, Tool {
             name: SLEEP_TOOL_NAME.to_string(),
             description: String::new(),
             parameters: ToolParameters::object(
@@ -57,7 +58,7 @@ impl SleepToolProvider {
             classification: None,
             presentation: Default::default(),
         }, &values)?];
-        Ok(Self { seconds, description: tool_text(prompts, SLEEP_TOOL_KIND, "description", &values)?, tools })
+        Ok(Self { seconds, description: tool_text(prompts, NAMESPACE, SLEEP_TOOL_KIND, "description", &values)?, tools })
     }
 }
 

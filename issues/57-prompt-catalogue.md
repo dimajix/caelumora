@@ -192,3 +192,13 @@ personality and component, and repeat them in each.
   ([443](443-errors-carry-only-an-english-text.md)); and a tool result whose message cannot be had
   is given with its status alone, logged, while one only its agent may see is withheld without its
   mark. Every text was compared with the one before, word for word.
+- **2026-10-21** — Step 1, commit 4, the last of the step: the plugins' texts, each in a namespace
+  and a `src/prompts.yaml` of its own - `skills` (the catalogue, a skill as it is given, the tools),
+  `workspace_tools` (the part on the workspace, the tools, what a result says of how to go on),
+  `artifacts` (the tool) and `decision` (the questions to the decision model). `tool::described`
+  and `tool_text` take the namespace. A part configured with a title is put under it by the
+  catalogue too (`agents.titled`), so `prompt::titled`, `render_sections` and `Section` are gone.
+  The file and shell tools of the workspace take their `TerminalTool` rather than its parts. What
+  is told to people - approvals, the output of commands such as `/skills` - stays in the code
+  ([443](443-errors-carry-only-an-english-text.md)). Every text was compared with the one before,
+  word for word. Step 1 is done; step 2 - the variants per model and the overrides - is open.

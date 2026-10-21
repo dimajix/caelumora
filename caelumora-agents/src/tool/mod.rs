@@ -138,27 +138,28 @@ pub fn classification_argument(params: &Value) -> ToolResult<Classification> {
 }
 
 /// The text `key` of `prompts` about the tools the component kind `kind`
-/// offers (issue 57), rendered with `values`: `description` that of its
-/// tool set, `<tool>` that of a tool, `<tool>.<path>` that of a parameter
+/// offers (issue 57), among the texts of `namespace` - the agents' or a
+/// plugin's -, rendered with `values`: `description` that of its tool set,
+/// `<tool>` that of a tool, `<tool>.<path>` that of a parameter
 /// (`ToolParameters::describe`). The texts of tools are rendered once, when
 /// their component is made.
 ///
 /// # Errors
 /// `PromptError` if the catalogue has no such text, or it cannot be
 /// rendered with `values`.
-pub fn tool_text(prompts: &PromptCatalogue, kind: &str, key: &str, values: impl Serialize) -> Result<String, PromptError> {
-    prompts.render(&format!("{NAMESPACE}.tools.{kind}.{key}"), values)
+pub fn tool_text(prompts: &PromptCatalogue, namespace: &str, kind: &str, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+    prompts.render(&format!("{namespace}.tools.{kind}.{key}"), values)
 }
 
 /// `tool`, one of the component kind `kind`, with its description and
-/// those of its parameters not described yet from `prompts`, rendered with
-/// `values` (`tool_text`).
+/// those of its parameters not described yet from the texts of `namespace`
+/// in `prompts`, rendered with `values` (`tool_text`).
 ///
 /// # Errors
 /// As `tool_text`, for the first text that cannot be had.
-pub fn described(prompts: &PromptCatalogue, kind: &str, mut tool: Tool, values: impl Serialize) -> Result<Tool, PromptError> {
-    tool.description = tool_text(prompts, kind, &tool.name, &values)?;
-    tool.parameters.describe(&tool.name, &mut |path| tool_text(prompts, kind, path, &values))?;
+pub fn described(prompts: &PromptCatalogue, namespace: &str, kind: &str, mut tool: Tool, values: impl Serialize) -> Result<Tool, PromptError> {
+    tool.description = tool_text(prompts, namespace, kind, &tool.name, &values)?;
+    tool.parameters.describe(&tool.name, &mut |path| tool_text(prompts, namespace, kind, path, &values))?;
     Ok(tool)
 }
 
@@ -169,7 +170,7 @@ pub fn described(prompts: &PromptCatalogue, kind: &str, mut tool: Tool, values: 
 /// # Errors
 /// As `tool_text`.
 pub fn reclassify_parameters(prompts: &PromptCatalogue) -> Result<ToolParameters, PromptError> {
-    let shared = |key| tool_text(prompts, "reclassify", key, ());
+    let shared = |key| tool_text(prompts, NAMESPACE, "reclassify", key, ());
     Ok(ToolParameters::object(
         [
             ("id", ToolParameters::number()),

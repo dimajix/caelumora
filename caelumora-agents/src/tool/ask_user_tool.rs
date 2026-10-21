@@ -7,6 +7,7 @@
 //! runtime's (see `ToolProvider::questions`). Its questions are never
 //! sensitive: their answers go to the model.
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -59,7 +60,7 @@ impl AskUserToolProvider {
             ],
             vec!["header", "question"],
         );
-        let tools = vec![described(prompts, ASK_USER_TOOL_KIND, Tool {
+        let tools = vec![described(prompts, NAMESPACE, ASK_USER_TOOL_KIND, Tool {
             name: ASK_USER_TOOL_NAME.to_string(),
             description: String::new(),
             parameters: ToolParameters::object(
@@ -74,7 +75,7 @@ impl AskUserToolProvider {
             classification: None,
             presentation: QUESTIONS_PRESENTATION,
         }, &limits)?];
-        Ok(Self { description: tool_text(prompts, ASK_USER_TOOL_KIND, "description", &limits)?, tools })
+        Ok(Self { description: tool_text(prompts, NAMESPACE, ASK_USER_TOOL_KIND, "description", &limits)?, tools })
     }
 }
 

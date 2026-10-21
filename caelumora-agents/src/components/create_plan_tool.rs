@@ -1,6 +1,7 @@
 //! The `create_plan_tool` component: the `create_plan` tool, and the planning
 //! prompt that nudges the model towards it (extended planning).
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::prompt::{ContextError, Prompt, PromptProvider};
@@ -59,7 +60,7 @@ impl CreatePlanToolProvider {
     pub fn new(prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
         // What its texts are told.
         let values = context! { max_steps => Plan::MAX_STEPS };
-        let tools = vec![described(&prompts, CREATE_PLAN_TOOL_KIND, Tool {
+        let tools = vec![described(&prompts, NAMESPACE, CREATE_PLAN_TOOL_KIND, Tool {
             name: CREATE_PLAN_TOOL_NAME.to_string(),
             description: String::new(),
             parameters: ToolParameters::object(
@@ -81,7 +82,7 @@ impl CreatePlanToolProvider {
             classification: None,
             presentation: PLAN_PRESENTATION,
         }, &values)?];
-        let description = tool_text(&prompts, CREATE_PLAN_TOOL_KIND, "description", &values)?;
+        let description = tool_text(&prompts, NAMESPACE, CREATE_PLAN_TOOL_KIND, "description", &values)?;
         Ok(Self { description, tools, prompts })
     }
 }

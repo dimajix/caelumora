@@ -28,12 +28,13 @@
 //! that only read; `command_output`, `kill_command` and `publish_file`
 //! never ask.
 
-use crate::{files, shell};
+use crate::{files, shell, NAMESPACE};
 use caelumora_agents::turn::Turn;
 use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::workspace::{WorkspaceError, WorkspaceManager};
-use caelumora_agents::tool::{proposed_matcher, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{described, proposed_matcher, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::Answers;
@@ -41,7 +42,9 @@ use caelumora_model::security::Grant;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
+use serde::Serialize;
 use std::sync::Arc;
+use tracing::error;
 
 pub const TERMINAL_TOOL_KIND: &str = "terminal_tool";
 
@@ -83,14 +86,52 @@ pub(crate) struct TerminalToolConfig {
 
 #[derive(Debug)]
 pub struct TerminalTool {
-    config: TerminalToolConfig,
+    pub(crate) config: TerminalToolConfig,
     /// Where the largest file it may write is said.
-    workspaces: Arc<WorkspaceManager>,
+    pub(crate) workspaces: Arc<WorkspaceManager>,
+    /// What its tool set is for and its tools, as the configuration or the
+    /// prompt catalogue words them (issue 57).
+    description: String,
+    tools: Vec<Tool>,
+    /// What its results say of how to go on.
+    pub(crate) prompts: Arc<PromptCatalogue>,
 }
 
-/// A tool of this component, as the model is offered it.
-pub(crate) fn tool(name: &str, description: String, parameters: ToolParameters, requires_approval: bool, presentation: ToolPresentation) -> Tool {
-    Tool { name: name.to_string(), description, parameters, requires_approval, visibility: ToolVisibility::SHOWN, classification: None, presentation }
+impl TerminalTool {
+    /// The tool, configured by `config`, with the largest file it may write
+    /// said by `workspaces`, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of them cannot be had.
+    pub(crate) fn new(config: TerminalToolConfig, workspaces: Arc<WorkspaceManager>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+        let mut tools = shell::tools(&config, &prompts)?;
+        tools.extend(files::tools(&config, &prompts)?);
+        let description = match &config.description {
+            Some(description) => description.clone(),
+            None => tool_text(&prompts, NAMESPACE, TERMINAL_TOOL_KIND, "description", ())?,
+        };
+        Ok(Self { config, workspaces, description, tools, prompts })
+    }
+}
+
+/// A tool of this component, `values` told its texts (issue 57), as the
+/// model is offered it.
+///
+/// # Errors
+/// `PromptError` if one of its texts cannot be had.
+pub(crate) fn tool(prompts: &PromptCatalogue, name: &str, parameters: ToolParameters, requires_approval: bool, presentation: ToolPresentation, values: impl Serialize) -> Result<Tool, PromptError> {
+    let tool = Tool { name: name.to_string(), description: String::new(), parameters, requires_approval, visibility: ToolVisibility::SHOWN, classification: None, presentation };
+    described(prompts, NAMESPACE, TERMINAL_TOOL_KIND, tool, values)
+}
+
+/// What a result says of how to go on, the text `key` of the results
+/// (`results.<key>`) rendered with `values`; `None`, logged, if it cannot be
+/// had - the result is given without it, as what happened is given without
+/// what to do next where a message is missing (issue 57).
+pub(crate) fn next(prompts: &PromptCatalogue, key: &str, values: impl Serialize) -> Option<String> {
+    prompts.render(&format!("{NAMESPACE}.results.{key}"), values)
+        .inspect_err(|e| error!("A result of the workspace's tools is given without saying how to go on: {e}"))
+        .ok()
 }
 
 /// That the workspace could not be used as a call needs it, as the model is
@@ -116,16 +157,11 @@ fn needs(name: &str) -> Option<(Grant, bool)> {
 #[async_trait]
 impl ToolProvider for TerminalTool {
     fn description(&self) -> String {
-        self.config.description.clone().unwrap_or_else(|| {
-            "The session's workspace: its files, which persist across turns and are shared with the others who use it - \
-            list, read, search and change them - and a shell in it, where its storage gives one.".to_string()
-        })
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        let mut tools = shell::tools(&self.config);
-        tools.extend(files::tools(&self.config));
-        tools
+        self.tools.clone()
     }
 
     /// The tools that may be called on the workspace the work may use in
@@ -172,11 +208,11 @@ impl ToolProvider for TerminalTool {
             true => {
                 let (workspace, shell) = turn.workspace_shell().await.map_err(unusable)?;
                 let shell = shell.ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
-                (workspace, shell::execute(&self.config, name, params, shell).await?)
+                (workspace, shell::execute(self, name, params, shell).await?)
             }
             false => {
                 let (workspace, terminal) = turn.workspace_terminal(need).await.map_err(unusable)?;
-                let value = files::execute(&self.config, name, params, terminal.as_ref(), &workspace, self.workspaces.max_file_bytes(), turn).await?;
+                let value = files::execute(self, name, params, terminal.as_ref(), &workspace, turn).await?;
                 (workspace, value)
             }
         };
@@ -186,12 +222,13 @@ impl ToolProvider for TerminalTool {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(TERMINAL_TOOL_KIND).provides::<dyn ToolProvider>().uses::<WorkspaceManager>(),
+        ComponentKind::new(TERMINAL_TOOL_KIND).provides::<dyn ToolProvider>().uses::<WorkspaceManager>().uses::<PromptCatalogue>(),
         |descriptor, context| {
             let config: TerminalToolConfig = config_of_params(&descriptor.params)?;
             let workspaces = Arc::clone(context.service::<WorkspaceManager>()?);
+            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool { config, workspaces }));
+            facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool::new(config, workspaces, prompts)?));
             Ok(facets)
         },
     );
@@ -200,6 +237,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::prompts;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
@@ -211,7 +249,7 @@ pub(crate) mod tests {
     use serde_json::json;
 
     pub(crate) fn tool(world: &WithWorkspace, params: Value) -> TerminalTool {
-        TerminalTool { config: serde_json::from_value(params).unwrap(), workspaces: Arc::clone(world.runtime.workspace_manager()) }
+        TerminalTool::new(serde_json::from_value(params).unwrap(), Arc::clone(world.runtime.workspace_manager()), prompts()).unwrap()
     }
 
     /// Issue 290: offered where the channel uses the workspace - every tool,
@@ -245,7 +283,8 @@ pub(crate) mod tests {
         register(&mut registry);
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)] };
         let world = session_with_workspace().await;
-        let context = ComponentContext::new(SecurityContext::default(), world.runtime.services().clone());
+        // The world runs the core alone: the texts of these tools are added.
+        let context = ComponentContext::new(SecurityContext::default(), world.runtime.services().clone().with(prompts()));
         let container = ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], &Arc::new(registry), &context).await;
         assert!(container.is_ok(), "{:?}", container.err());
     }

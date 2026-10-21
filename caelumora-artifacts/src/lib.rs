@@ -12,6 +12,15 @@
 pub mod api;
 pub mod artifact;
 
+/// The namespace of the texts of artifacts in the prompt catalogue (issue
+/// 57).
+#[cfg(feature = "runtime")]
+pub const NAMESPACE: &str = "artifacts";
+
+/// Their texts, added to the catalogue under `NAMESPACE` by the plugin.
+#[cfg(feature = "runtime")]
+pub const PROMPTS: &str = include_str!("prompts.yaml");
+
 #[cfg(feature = "runtime")]
 pub mod access;
 #[cfg(feature = "runtime")]
