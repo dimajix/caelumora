@@ -253,18 +253,26 @@ mod tests {
 
     /// The runtime of the program, with its plugins, over `store`, with the
     /// policy of the example configuration, which knows the roles the
-    /// example seed names, and its variants of the texts, which the
-    /// example seed's models are given (issue 57) - read from where the
-    /// program runs, the root of the sources.
+    /// example seed names, its component defaults, on which the example
+    /// seed's models build (issue 445), and its variants of the texts, which
+    /// they are given (issue 57) - read from where the program runs, the
+    /// root of the sources.
     fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let prompts = config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
+        let AppConfig { compartments, roles, component_defaults, .. } = config;
+        runtime_of(store, &AppConfig { compartments, roles, component_defaults, prompts, ..AppConfig::default() })
+    }
+
+    /// The runtime of the program, with its plugins, over `store`, as
+    /// `config` configures it.
+    fn runtime_of(store: &Arc<MemoryStore>, config: &AppConfig) -> RuntimeManager {
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
-        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, config.create_confidentiality_policy(), &AppConfig { prompts, ..AppConfig::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), Backends::with_plugins(&plugins)).unwrap();
+        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, config.create_confidentiality_policy(), config, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), Backends::with_plugins(&plugins)).unwrap();
         for plugin in plugins {
             builder.plugin(plugin).unwrap();
         }
@@ -277,7 +285,7 @@ mod tests {
     /// plugin (issue 329).
     #[test]
     fn the_default_model_is_served_by_ollama() {
-        let runtime = runtime(&Arc::new(MemoryStore::new()));
+        let runtime = runtime_of(&Arc::new(MemoryStore::new()), &AppConfig::default());
         assert_eq!(runtime.component_registry().kind_of::<dyn LLMClient>(&ComponentConfig::default()).as_deref(), Some(OLLAMA_CLIENT_KIND));
     }
 

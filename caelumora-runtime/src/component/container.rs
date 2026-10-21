@@ -296,7 +296,7 @@ impl ComponentContainer {
         context: &ComponentContext,
     ) -> ComponentResult<Self> {
         let own_defaults = registry.defaults_of(defaults)?;
-        let planned = registry.plan(config, &context.security_context).await?;
+        let planned = registry.plan(config, &own_defaults, &context.security_context).await?;
         // Refused before anything is built: what nobody asks for would read
         // its owner's secrets for nothing (issue 337).
         registry.require_asked(&planned, &own_defaults, asked)?;
@@ -410,8 +410,8 @@ mod tests {
 
             let without = ComponentContainer::from_config(&config(&[("a", "part")]), ASKED, &registry, &test_context()).await.unwrap();
             assert_eq!(built.load(Ordering::SeqCst), 0, "nobody asked for it yet");
-            assert_eq!(without.one::<dyn Choice>().await.unwrap().id, "default");
-            assert_eq!(without.one::<dyn Choice>().await.unwrap().id, "default");
+            assert_eq!(without.one::<dyn Choice>().await.unwrap().id, "declared");
+            assert_eq!(without.one::<dyn Choice>().await.unwrap().id, "declared");
             assert_eq!(built.load(Ordering::SeqCst), 1, "built once");
 
             let with = ComponentContainer::from_config(&config(&[("mine", "other")]), ASKED, &registry, &test_context()).await.unwrap();
@@ -428,7 +428,7 @@ mod tests {
         #[tokio::test]
         async fn a_container_may_have_defaults_of_its_own_in_place_of_the_registrys() {
             let (mut registry, built) = choices();
-            registry.set_defaults(&config(&[("configured", "default")])).unwrap();
+            registry.set_defaults(&config(&[("configured", "declared")])).unwrap();
             let registry = Arc::new(registry);
 
             let own = ComponentContainer::with_defaults(&config(&[]), &config(&[("its_own", "other")]), ASKED, &registry, &test_context()).await.unwrap();

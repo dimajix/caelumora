@@ -121,6 +121,12 @@ defaults in `caelumora-app` and `caelumora-tui`, which list its plugin `caelumor
 (issue 329) - the core names no model. There is no separate section for it, and no environment
 variable.
 
+A personality's own model replaces the default whole. One that is to differ in a few parameters
+builds on the default instead, by its `id`, and names only those (`kind: default`, issue 445, see
+[COMPONENTS.md](COMPONENTS.md#building-on-a-default)); it follows every other change of the
+default. The ids of `component_defaults` are therefore names a seed may refer to: Sassy in the
+example seed builds on `model`.
+
 ```yaml
 component_defaults:
   - id: model

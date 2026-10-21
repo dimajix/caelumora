@@ -4,6 +4,7 @@ use caelumora_model::store::{ComponentStore, StoreError};
 use caelumora_model::type_map::{TypeKey, TypeMap};
 use futures::future::BoxFuture;
 use serde::Deserialize;
+use serde_json::{Map, Value};
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -105,6 +106,21 @@ pub const PRECONFIGURED_REF_KIND: &str = "ref";
 #[derive(Deserialize)]
 struct PreconfiguredRef {
     id: String,
+}
+
+/// Reserved `kind` that builds on a component default (issue 445): one of
+/// `AppConfig::component_defaults`, or of the defaults a container was built
+/// with. `params` must deserialize to `{ "id": "<the default's id>",
+/// "params": { ... } }`; the component is the default's kind, with its params
+/// and those given over them.
+pub const COMPONENT_DEFAULT_KIND: &str = "default";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultRef {
+    id: String,
+    #[serde(default)]
+    params: Value,
 }
 
 pub struct ComponentRegistry {
@@ -221,8 +237,9 @@ impl ComponentRegistry {
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` naming the component if one is a
-    /// `ref`, has an unknown kind, provides no single, or provides one that
-    /// another of them provides too; nothing is taken then.
+    /// `ref` or builds on a default, has an id another of them has too, has
+    /// an unknown kind, provides no single, or provides one that another of
+    /// them provides too; nothing is taken then.
     pub fn set_defaults(&mut self, config: &ComponentConfig) -> ComponentResult<()> {
         self.defaults = self.defaults_of(config)?;
         Ok(())
@@ -236,9 +253,17 @@ impl ComponentRegistry {
     /// As `set_defaults`.
     pub(super) fn defaults_of(&self, config: &ComponentConfig) -> ComponentResult<HashMap<TypeId, ComponentDescriptor>> {
         let mut defaults: HashMap<TypeId, ComponentDescriptor> = HashMap::new();
+        // By its id a component builds on a default (`COMPONENT_DEFAULT_KIND`).
+        let mut ids = HashSet::new();
         for node in &config.component_nodes {
             if node.kind == PRECONFIGURED_REF_KIND {
                 return Err(ComponentError::InvalidConfig(format!("component default '{}' cannot be a ref", node.id)));
+            }
+            if node.kind == COMPONENT_DEFAULT_KIND {
+                return Err(ComponentError::InvalidConfig(format!("component default '{}' cannot build on a default", node.id)));
+            }
+            if !ids.insert(node.id.as_str()) {
+                return Err(ComponentError::InvalidConfig(format!("two component defaults have the id '{}'", node.id)));
             }
             let registration = self.kinds.get(&node.kind)
                 .ok_or_else(|| ComponentError::InvalidConfig(format!("component default '{}' has the unknown kind '{}'", node.id, node.kind)))?;
@@ -261,18 +286,23 @@ impl ComponentRegistry {
 
     /// The kind of the component of `config` that provides `T`, a facet of
     /// which there is one - or else of the default built for it - as
-    /// configured, without building anything (issue 174). `None` if `T` is
-    /// no such facet, or if `config` refers to a preconfigured component
-    /// (`ref`) and none of its own provides `T`: what that one provides only
-    /// its descriptor in the store tells.
+    /// configured, without building anything (issue 174); of one that builds
+    /// on a default, the default's. `None` if `T` is no such facet, or if
+    /// `config` refers to a preconfigured component (`ref`) and none of its
+    /// own provides `T`: what that one provides only its descriptor in the
+    /// store tells.
     pub fn kind_of<T: ?Sized + 'static>(&self, config: &ComponentConfig) -> Option<String> {
         let facet = TypeKey::of::<T>();
         if !self.is_single(facet.id) {
             return None;
         }
         let provides = |kind: &str| self.provides(kind).is_some_and(|facets| facets.iter().any(|f| f.id == facet.id));
-        if let Some(node) = config.component_nodes.iter().find(|node| provides(&node.kind)) {
-            return Some(node.kind.clone());
+        let kind_of = |node: &ComponentDescriptor| match node.kind.as_str() {
+            COMPONENT_DEFAULT_KIND => self.on_default(node, &HashMap::new()).ok().map(|built| built.kind),
+            kind => Some(kind.to_string()),
+        };
+        if let Some(kind) = config.component_nodes.iter().filter_map(kind_of).find(|kind| provides(kind)) {
+            return Some(kind);
         }
         if config.component_nodes.iter().any(|node| node.kind == PRECONFIGURED_REF_KIND) {
             return None;
@@ -326,7 +356,7 @@ impl ComponentRegistry {
     /// `ComponentError::OperatorOnly`, wrapped with the component, for one
     /// of a kind only an operator configures, written in `config` itself.
     pub async fn require_acceptable(&self, config: &ComponentConfig, asked: &[TypeKey], context: &SecurityContext) -> ComponentResult<()> {
-        let planned = self.plan(config, context).await?;
+        let planned = self.plan(config, &HashMap::new(), context).await?;
         if let Some(written) = planned.iter().find(|p| p.brought_by.is_none() && self.kinds.get(&p.descriptor.kind).is_some_and(|r| r.operator_only)) {
             return Err(ComponentError::of_component(&written.descriptor, ComponentError::OperatorOnly(written.descriptor.kind.clone())));
         }
@@ -334,17 +364,18 @@ impl ComponentRegistry {
     }
 
     /// The components of `config`, its `ref`s resolved in the name
-    /// `context`, with the facets their kinds provide - checked, but not
-    /// built.
+    /// `context` and those that build on a default resolved among
+    /// `own_defaults` and the registry's, with the facets their kinds provide
+    /// - checked, but not built.
     ///
     /// # Errors
     /// `ComponentError::DuplicateId` if two entries of `config` share an id,
     /// or two of the components they stand for do - wrapped with the `ref`
     /// that brings the second -; `ComponentError::UnsupportedKind` for a kind
     /// that is not registered, `ComponentError::InvalidConfig` if two provide
-    /// a facet of which there is one; whatever resolving a `ref` reports,
+    /// a facet of which there is one; whatever resolving an entry reports,
     /// wrapped with it.
-    pub(super) async fn plan(&self, config: &ComponentConfig, context: &SecurityContext) -> ComponentResult<Vec<Planned>> {
+    pub(super) async fn plan(&self, config: &ComponentConfig, own_defaults: &HashMap<TypeId, ComponentDescriptor>, context: &SecurityContext) -> ComponentResult<Vec<Planned>> {
         let mut entries = HashSet::new();
         // The entry of `config` each component's id came from.
         let mut ids: HashMap<String, &ComponentDescriptor> = HashMap::new();
@@ -354,7 +385,7 @@ impl ComponentRegistry {
                 return Err(ComponentError::DuplicateId(node.id.clone()));
             }
             let brought_by = (node.kind == PRECONFIGURED_REF_KIND).then(|| node.clone());
-            for descriptor in self.resolve(node, context).await.map_err(|cause| ComponentError::of_component(node, cause))? {
+            for descriptor in self.resolve(node, own_defaults, context).await.map_err(|cause| ComponentError::of_component(node, cause))? {
                 if let Some(earlier) = ids.insert(descriptor.id.clone(), node) {
                     // Two plain entries of one id are caught above: at least
                     // one of the two is a ref, and it is named.
@@ -431,15 +462,19 @@ impl ComponentRegistry {
         own_defaults.get(&facet).cloned().or_else(|| self.default_of(facet))
     }
 
-    /// `node` itself, or - for `kind: "ref"` - the preconfigured components
-    /// it names, in their order (issue 270), fetched from the ComponentStore
-    /// fresh on every call, in the name `context` of whichever component
-    /// graph is referencing it. This ensures things like secret resolution
-    /// run under the actual caller's name rather than a synthetic one, at
-    /// the cost of not sharing a single instance across references (e.g. a
-    /// preconfigured `mcp_tool` re-runs discovery for every personality that
-    /// references it).
-    async fn resolve(&self, node: &ComponentDescriptor, context: &SecurityContext) -> ComponentResult<Vec<ComponentDescriptor>> {
+    /// `node` itself; for `kind: "default"` the default it builds on
+    /// (`on_default`); or - for `kind: "ref"` - the preconfigured components
+    /// it names, in their order (issue 270), each built on its default as
+    /// `node` would be, fetched from the ComponentStore fresh on every call,
+    /// in the name `context` of whichever component graph is referencing it.
+    /// This ensures things like secret resolution run under the actual
+    /// caller's name rather than a synthetic one, at the cost of not sharing
+    /// a single instance across references (e.g. a preconfigured `mcp_tool`
+    /// re-runs discovery for every personality that references it).
+    async fn resolve(&self, node: &ComponentDescriptor, own_defaults: &HashMap<TypeId, ComponentDescriptor>, context: &SecurityContext) -> ComponentResult<Vec<ComponentDescriptor>> {
+        if node.kind == COMPONENT_DEFAULT_KIND {
+            return Ok(vec![self.on_default(node, own_defaults)?]);
+        }
         if node.kind != PRECONFIGURED_REF_KIND {
             return Ok(vec![node.clone()]);
         }
@@ -456,7 +491,42 @@ impl ComponentRegistry {
                 target.id, inner.id
             )));
         }
-        Ok(components.component_nodes)
+        components.component_nodes.into_iter()
+            .map(|inner| match inner.kind.as_str() {
+                COMPONENT_DEFAULT_KIND => self.on_default(&inner, own_defaults).map_err(|cause| ComponentError::of_component(&inner, cause)),
+                _ => Ok(inner),
+            })
+            .collect()
+    }
+
+    /// `node`, of `kind: "default"`, as the component default it names -
+    /// the container's own (`own_defaults`), or else the configuration's -
+    /// with the params it gives over the default's: each replaces the
+    /// default's of its name whole, so that nothing of the default's stays
+    /// beside what it changes - an `endpoint` given takes none of the
+    /// default's `auth` along (issue 445). Its kind is the default's; its id,
+    /// tags and fail policy are its own.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if its params are not of that form,
+    /// there is no default of that id, or the default's or its own params
+    /// are no object.
+    fn on_default(&self, node: &ComponentDescriptor, own_defaults: &HashMap<TypeId, ComponentDescriptor>) -> ComponentResult<ComponentDescriptor> {
+        let target: DefaultRef = serde_json::from_value(node.params.clone())
+            .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+        let base = own_defaults.values().chain(self.defaults.values()).find(|default| default.id == target.id)
+            .ok_or_else(|| ComponentError::InvalidConfig(format!("there is no component default '{}'", target.id)))?;
+        let mut params = match &base.params {
+            Value::Object(params) => params.clone(),
+            Value::Null => Map::new(),
+            _ => return Err(ComponentError::InvalidConfig(format!("the params of component default '{}' are no object", base.id))),
+        };
+        match target.params {
+            Value::Object(own) => params.extend(own),
+            Value::Null => {}
+            _ => return Err(ComponentError::InvalidConfig(format!("the params given over component default '{}' are no object", base.id))),
+        }
+        Ok(ComponentDescriptor { kind: base.kind.clone(), params: Value::Object(params), ..node.clone() })
     }
 
     pub(super) fn dispatch(&self, node: ComponentDescriptor, context: ComponentContext) -> ComponentResult<BoxFuture<'static, ComponentResult<ComponentFacets>>> {
@@ -472,7 +542,7 @@ mod tests {
     use super::*;
     use crate::component::testing::*;
     use crate::component::ComponentContainer;
-    use caelumora_model::component::StoredComponents;
+    use caelumora_model::component::{ComponentFailPolicy, StoredComponents};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::memory::MemoryStore;
     use serde_json::json;
@@ -680,7 +750,7 @@ mod tests {
         fn the_kind_of_a_single_is_told_from_the_configuration_without_building_it() {
             let (mut registry, built) = choices();
             assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("a", "part"), ("mine", "other")])).as_deref(), Some("other"));
-            assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("a", "part")])).as_deref(), Some("default"), "the default if none provides it");
+            assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("a", "part")])).as_deref(), Some("declared"), "the default if none provides it");
             assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("shared", PRECONFIGURED_REF_KIND)])), None, "a preconfigured one might provide it");
             assert_eq!(registry.kind_of::<dyn Named>(&config(&[("a", "part")])), None, "of Named there may be any number");
             registry.set_defaults(&config(&[("configured", "other")])).unwrap();
@@ -695,11 +765,108 @@ mod tests {
                 (config(&[("x", PRECONFIGURED_REF_KIND)]), "cannot be a ref"),
                 (config(&[("x", "unknown")]), "unknown kind 'unknown'"),
                 (config(&[("x", "part")]), "provides no facet of which there is one"),
-                (config(&[("x", "other"), ("y", "default")]), "'x' and 'y' both provide Choice"),
+                (config(&[("x", "other"), ("y", "declared")]), "'x' and 'y' both provide Choice"),
+                (config(&[("x", COMPONENT_DEFAULT_KIND)]), "cannot build on a default"),
+                (config(&[("x", "other"), ("x", "part")]), "two component defaults have the id 'x'"),
             ] {
                 let message = registry.set_defaults(&nodes).expect_err(expected).to_string();
                 assert!(message.contains(expected), "{message}");
             }
+        }
+
+        /// An entry that builds on the default `target` with `params` over its own.
+        fn on_default(id: &str, target: &str, params: Value) -> ComponentDescriptor {
+            descriptor(id, COMPONENT_DEFAULT_KIND, json!({ "id": target, "params": params }))
+        }
+
+        /// A component that builds on a default (issue 445) is the default's
+        /// kind, with the default's params and its own over them - each of
+        /// its own replacing the default's of its name whole - and its own id,
+        /// tags and fail policy.
+        #[tokio::test]
+        async fn a_component_built_on_a_default_is_the_default_with_its_own_params_over_the_defaults() {
+            let (mut registry, built) = choices();
+            registry.set_defaults(&ComponentConfig {
+                component_nodes: vec![descriptor("model", "other", json!({ "model": "big", "endpoint": { "url": "http://gpu", "auth": "token" } }))],
+            }).unwrap();
+            let registry = Arc::new(registry);
+            let mine = ComponentDescriptor {
+                fail_policy: ComponentFailPolicy::FailClosed,
+                tags: vec!["mine".to_string()],
+                ..on_default("mine", "model", json!({ "endpoint": { "url": "http://elsewhere" }, "prompt_texts": "gemma4" }))
+            };
+            let container = ComponentContainer::from_config(&ComponentConfig { component_nodes: vec![mine] }, ASKED, &registry, &test_context()).await.unwrap();
+
+            assert_eq!(container.one::<dyn Choice>().await.unwrap().id, "mine", "in place of the default");
+            assert_eq!(built.load(Ordering::SeqCst), 0, "the declared default is not built");
+            let [resolved] = container.components().component_nodes.try_into().unwrap();
+            assert_eq!((resolved.id.as_str(), resolved.kind.as_str()), ("mine", "other"), "built as the default's kind");
+            assert_eq!(resolved.params, json!({ "model": "big", "endpoint": { "url": "http://elsewhere" }, "prompt_texts": "gemma4" }), "no auth beside the endpoint given");
+            assert_eq!((resolved.tags, resolved.fail_policy), (vec!["mine".to_string()], ComponentFailPolicy::FailClosed), "its own");
+            assert_eq!(registry.kind_of::<dyn Choice>(&container.components()).as_deref(), Some("other"));
+            assert_eq!(
+                registry.kind_of::<dyn Choice>(&ComponentConfig { component_nodes: vec![on_default("mine", "model", json!(null))] }).as_deref(),
+                Some("other"), "told without building it"
+            );
+        }
+
+        /// The default is found among the container's own defaults first, then
+        /// the configuration's; within a preconfigured list as where it is
+        /// written.
+        #[tokio::test]
+        async fn a_component_builds_on_the_containers_own_default_and_within_a_ref_as_well() {
+            let store = Arc::new(MemoryStore::new());
+            let shared = StoredComponents::new("shared", ComponentConfig { component_nodes: vec![on_default("listed", "model", json!(null))] }, Default::default());
+            store.create_components(&SecurityContext::default(), &shared).await.unwrap();
+            let (choices, _) = choices();
+            let mut registry = ComponentRegistry { component_store: store, ..choices };
+            registry.set_defaults(&config(&[("model", "other")])).unwrap();
+            let registry = Arc::new(registry);
+            let kinds = |container: &ComponentContainer| container.components().component_nodes.into_iter().map(|node| (node.id, node.kind)).collect::<Vec<_>>();
+
+            let own = ComponentContainer::with_defaults(&ComponentConfig { component_nodes: vec![on_default("mine", "model", json!(null))] }, &config(&[("model", "declared")]), ASKED, &registry, &test_context()).await.unwrap();
+            assert_eq!(kinds(&own), [("mine".to_string(), "declared".to_string())], "the container's own first");
+            let listed = ComponentContainer::from_config(&ComponentConfig { component_nodes: vec![reference("ref", "shared")] }, ASKED, &registry, &test_context()).await.unwrap();
+            assert_eq!(kinds(&listed), [("listed".to_string(), "other".to_string())], "the configuration's");
+        }
+
+        #[tokio::test]
+        async fn a_component_built_on_a_default_that_cannot_be_had_is_refused_naming_it() {
+            let (mut registry, _) = choices();
+            registry.set_defaults(&ComponentConfig { component_nodes: vec![descriptor("model", "other", json!(["listed"]))] }).unwrap();
+            let registry = Arc::new(registry);
+            for (params, expected) in [
+                (json!({ "id": "missing" }), "there is no component default 'missing'"),
+                (json!({ "id": "model", "parms": {} }), "unknown field `parms`"),
+                (json!({ "id": "model", "params": { "model": "big" } }), "the params of component default 'model' are no object"),
+            ] {
+                let config = ComponentConfig { component_nodes: vec![descriptor("mine", COMPONENT_DEFAULT_KIND, params)] };
+                let error = ComponentContainer::from_config(&config, ASKED, &registry, &test_context()).await.expect_err(expected);
+                assert!(matches!(&error, ComponentError::Build { component, .. } if component == "mine"), "{error}");
+                assert!(error.to_string().contains(expected), "{error}");
+            }
+            let (mut registry, _) = choices();
+            registry.set_defaults(&config(&[("model", "other")])).unwrap();
+            let error = ComponentContainer::from_config(&ComponentConfig { component_nodes: vec![on_default("mine", "model", json!("big"))] }, ASKED, &Arc::new(registry), &test_context())
+                .await.expect_err("params no object");
+            assert!(error.to_string().contains("the params given over component default 'model' are no object"), "{error}");
+        }
+
+        /// What an operator configures alone are the params of its kind
+        /// (issue 403): a request that changes those of such a default is
+        /// refused as one that writes the component.
+        #[tokio::test]
+        async fn a_request_cannot_change_the_params_of_a_default_only_an_operator_configures() {
+            let (mut registry, _) = choices();
+            registry.register(ComponentKind::new("operated").provides::<dyn Choice>().operator_only(), |descriptor, _| {
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn Choice>(Arc::new(Name(descriptor.id.clone())));
+                Ok(facets)
+            });
+            registry.set_defaults(&config(&[("model", "operated")])).unwrap();
+            let config = ComponentConfig { component_nodes: vec![on_default("mine", "model", json!({ "url": "http://elsewhere" }))] };
+            let error = registry.require_acceptable(&config, ASKED, &SecurityContext::default()).await.expect_err("written");
+            assert!(matches!(causes(&error).last(), Some(ComponentError::OperatorOnly(kind)) if kind == "operated"), "{error}");
         }
 
         /// The program names the default kind of a single (issue 329), and the
@@ -726,8 +893,8 @@ mod tests {
 
             let (mut registry, _) = choices();
             registry.set_default_kind::<dyn Choice>("other").unwrap();
-            registry.set_defaults(&config(&[("configured", "default")])).unwrap();
-            assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])).as_deref(), Some("default"), "the configuration's comes first");
+            registry.set_defaults(&config(&[("configured", "declared")])).unwrap();
+            assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])).as_deref(), Some("declared"), "the configuration's comes first");
         }
 
         /// A single declared again - by a plugin registered after the program

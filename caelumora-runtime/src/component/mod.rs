@@ -32,7 +32,7 @@ pub mod testing;
 
 pub use container::{ComponentContainer, ComponentImpl};
 pub use context::{service_of, ComponentContext};
-pub use registry::{ComponentFacets, ComponentKind, ComponentRegistry, PRECONFIGURED_REF_KIND};
+pub use registry::{ComponentFacets, ComponentKind, ComponentRegistry, COMPONENT_DEFAULT_KIND, PRECONFIGURED_REF_KIND};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComponentError {
