@@ -472,7 +472,7 @@ impl InternalActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::tests::{replayed, stored};
+    use crate::agent::testing::{replayed, stored};
     use crate::message::tests::{id, make_message};
 
     /// Five messages, one a day, the last one `now`.
