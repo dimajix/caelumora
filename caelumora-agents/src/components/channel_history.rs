@@ -9,9 +9,11 @@
 
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::components::notes::READ_NOTES_TOOL_NAME;
+use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::chain::Position;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use caelumora_model::question::Answers;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::confidentiality::Classification;
@@ -34,28 +36,30 @@ const DEFAULT_LAST: usize = 20;
 const MAX_LAST: usize = 100;
 
 #[derive(Debug)]
-pub struct ChannelHistoryComponent;
+pub struct ChannelHistoryComponent {
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them (issue 57).
+    description: String,
+    tools: Vec<Tool>,
+}
 
-#[async_trait]
-impl ToolProvider for ChannelHistoryComponent {
-    fn description(&self) -> String {
-        "Read the history of the other channels of this session.".to_string()
-    }
-
-    fn tools(&self) -> Vec<Tool> {
-        vec![Tool {
+impl ChannelHistoryComponent {
+    /// The component, its texts from `prompts`, told how many messages a
+    /// call returns.
+    ///
+    /// # Errors
+    /// `PromptError` if one of them cannot be had.
+    pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+        // What its texts are told.
+        let values = context! { max_last => MAX_LAST, default_last => DEFAULT_LAST, read_notes => READ_NOTES_TOOL_NAME };
+        let tools = vec![described(prompts, CHANNEL_HISTORY_KIND, Tool {
             name: READ_HISTORY_TOOL_NAME.to_string(),
-            description: format!(
-                "Read the conversation of another channel of this session: its latest messages, or \
-                those containing a text. Returns at most {MAX_LAST} messages, the latest {DEFAULT_LAST} \
-                unless you ask for another number. Use `read_notes` without a channel to find out \
-                which channels there are."
-            ),
+            description: String::new(),
             parameters: ToolParameters::object(
                 [
-                    ("channel", ToolParameters::string().described("The name of the channel")),
-                    ("last", ToolParameters::number().described("How many of the latest messages to return")),
-                    ("query", ToolParameters::string().described("Only messages containing this text, ignoring case")),
+                    ("channel", ToolParameters::string()),
+                    ("last", ToolParameters::number()),
+                    ("query", ToolParameters::string()),
                 ],
                 ["channel"],
             ),
@@ -63,7 +67,19 @@ impl ToolProvider for ChannelHistoryComponent {
             visibility: ToolVisibility::SHOWN,
             classification: None,
             presentation: Default::default(),
-        }]
+        }, &values)?];
+        Ok(Self { description: tool_text(prompts, CHANNEL_HISTORY_KIND, "description", &values)?, tools })
+    }
+}
+
+#[async_trait]
+impl ToolProvider for ChannelHistoryComponent {
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+
+    fn tools(&self) -> Vec<Tool> {
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -122,10 +138,10 @@ fn wanted(query: Option<&str>) -> Filter<HistoryField> {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>(),
-        |_descriptor, _context| {
+        ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
+        |_descriptor, context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryComponent));
+            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryComponent::new(context.service::<PromptCatalogue>()?)?));
             Ok(facets)
         },
     );

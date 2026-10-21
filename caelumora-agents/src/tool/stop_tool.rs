@@ -3,8 +3,9 @@
 
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
 use caelumora_model::question::Answers;
 use caelumora_model::actor::ActorState;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
@@ -19,46 +20,41 @@ pub const BYE_TOOL_NAME: &str = "bye";
 pub const SILENCE_TOOL_NAME: &str = "silence";
 
 #[derive(Debug)]
-pub struct StopToolProvider;
+pub struct StopToolProvider {
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them (issue 57).
+    description: String,
+    tools: Vec<Tool>,
+}
+
+impl StopToolProvider {
+    /// The provider, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of them cannot be had.
+    pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+        let tool = |name: &str| described(prompts, STOP_TOOL_KIND, Tool {
+            name: name.to_string(),
+            description: String::new(),
+            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
+            requires_approval: false,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: Default::default(),
+        }, ());
+        let tools = vec![tool(STOP_TOOL_NAME)?, tool(BYE_TOOL_NAME)?, tool(SILENCE_TOOL_NAME)?];
+        Ok(Self { description: tool_text(prompts, STOP_TOOL_KIND, "description", ())?, tools })
+    }
+}
 
 #[async_trait]
 impl ToolProvider for StopToolProvider {
     fn description(&self) -> String {
-        "End your part in the conversation.".to_string()
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        let properties: Vec<(String, ToolParameters)> = vec![];
-        let required: Vec<String> = vec![];
-        vec![
-            Tool {
-                name: STOP_TOOL_NAME.to_string(),
-                description: "Signal that you have finished your task and have no further input.".to_string(),
-                parameters: ToolParameters::object(properties.clone(), required.clone()),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: Default::default(),
-            },
-            Tool {
-                name: BYE_TOOL_NAME.to_string(),
-                description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
-                parameters: ToolParameters::object(properties.clone(), required.clone()),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: Default::default(),
-            },
-            Tool {
-                name: SILENCE_TOOL_NAME.to_string(),
-                description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
-                parameters: ToolParameters::object(properties, required),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: Default::default(),
-            }
-        ]
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -83,10 +79,10 @@ impl ToolProvider for StopToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(STOP_TOOL_KIND).provides::<dyn ToolProvider>(),
-        |_descriptor, _context| {
+        ComponentKind::new(STOP_TOOL_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
+        |_descriptor, context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider));
+            facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider::new(context.service::<PromptCatalogue>()?)?));
             Ok(facets)
         },
     );
@@ -95,12 +91,13 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
 
     #[tokio::test]
     async fn test_stop_tool() {
-        let provider = StopToolProvider;
+        let provider = StopToolProvider::new(&testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 

@@ -21,9 +21,12 @@
 //! `lstrip_blocks`); one that ends a line of text takes its line break with
 //! it, unless written `+%}`. A text ends in the line break its file gives it.
 
+use crate::config::parse_yaml;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior};
-use serde::Serialize;
+use serde::de::{MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 /// The values a text is rendered with, by name: `context!{ name => "Sassy" }`.
 pub use minijinja::context;
@@ -58,7 +61,9 @@ impl PromptCatalogue {
     }
 
     /// Adds the texts of `namespace` from `yaml`, a map of their keys to
-    /// their templates.
+    /// their templates - or to maps of further keys, which group texts:
+    /// `tools: { notes: { write_note: … } }` is the text
+    /// `tools.notes.write_note`.
     ///
     /// # Errors
     /// `PromptError::Unreadable` if `yaml` is not such a map;
@@ -66,14 +71,22 @@ impl PromptCatalogue {
     /// `PromptError::Invalid` naming the first text whose template does not
     /// parse.
     pub fn add(&mut self, namespace: &str, yaml: &str) -> Result<(), PromptError> {
-        let texts: BTreeMap<String, String> = serde_saphyr::from_str(yaml)
+        let texts: BTreeMap<String, Entry> = parse_yaml(yaml)
             .map_err(|cause| PromptError::Unreadable { namespace: namespace.to_string(), cause: cause.to_string() })?;
         if !self.namespaces.insert(namespace.to_string()) {
             return Err(PromptError::NamespaceTaken(namespace.to_string()));
         }
-        for (key, template) in texts {
-            let key = format!("{namespace}.{key}");
-            self.templates.add_template_owned(key.clone(), template).map_err(|cause| PromptError::Invalid { key, cause })?;
+        self.add_entries(namespace, texts)
+    }
+
+    /// Adds the texts of `entries` under `prefix`.
+    fn add_entries(&mut self, prefix: &str, entries: BTreeMap<String, Entry>) -> Result<(), PromptError> {
+        for (key, entry) in entries {
+            let key = format!("{prefix}.{key}");
+            match entry {
+                Entry::Text(template) => self.templates.add_template_owned(key.clone(), template).map_err(|cause| PromptError::Invalid { key, cause })?,
+                Entry::Group(entries) => self.add_entries(&key, entries)?,
+            }
         }
         Ok(())
     }
@@ -87,6 +100,37 @@ impl PromptCatalogue {
     pub fn render(&self, key: &str, values: impl Serialize) -> Result<String, PromptError> {
         let template = self.templates.get_template(key).map_err(|_| PromptError::Unknown(key.to_string()))?;
         template.render(values).map_err(|cause| PromptError::Invalid { key: key.to_string(), cause })
+    }
+}
+
+/// An entry of a file of texts: a text, or a group of further entries.
+enum Entry {
+    Text(String),
+    Group(BTreeMap<String, Entry>),
+}
+
+/// A text or a map, nothing else: a text that reads as a number - `5` - is
+/// to be quoted, rather than read back as another text - `5.0` as `5`.
+impl<'de> Deserialize<'de> for Entry {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct EntryVisitor;
+        impl<'de> Visitor<'de> for EntryVisitor {
+            type Value = Entry;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a text, or a map of further texts")
+            }
+            fn visit_str<E>(self, text: &str) -> Result<Entry, E> {
+                Ok(Entry::Text(text.to_string()))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Entry, A::Error> {
+                let mut entries = BTreeMap::new();
+                while let Some((key, entry)) = map.next_entry()? {
+                    entries.insert(key, entry);
+                }
+                Ok(Entry::Group(entries))
+            }
+        }
+        deserializer.deserialize_any(EntryVisitor)
     }
 }
 
@@ -124,6 +168,15 @@ mod tests {
     }
 
     #[test]
+    fn a_group_names_the_texts_it_holds() {
+        let tools = catalogue("tools:\n  notes:\n    description: Notes.\n    write_note.text: What to note\n");
+        assert_eq!(tools.render("agents.tools.notes.description", ()).unwrap(), "Notes.");
+        assert_eq!(tools.render("agents.tools.notes.write_note.text", ()).unwrap(), "What to note", "a key may hold dots of its own");
+        let choices = catalogue("choices:\n  yes: y\n  no: \"no\"\n");
+        assert_eq!(choices.render("agents.choices.yes", ()).unwrap(), "y", "only true and false are no texts");
+    }
+
+    #[test]
     fn nothing_is_escaped_and_a_value_that_is_not_given_is_an_error() {
         let catalogue = catalogue("said: \"{{ name }} said <{{ text }}>\"\n");
         assert_eq!(catalogue.render("agents.said", context! { name => "Kaya", text => "a & b" }).unwrap(), "Kaya said <a & b>");
@@ -139,8 +192,10 @@ mod tests {
 
         let mut catalogue = PromptCatalogue::new();
         catalogue.add("agents", "said: x\n").unwrap();
-        assert!(matches!(catalogue.add("agents", "other: y\n"), Err(PromptError::NamespaceTaken(namespace)) if namespace == "agents"));
+        let twice = catalogue.add("agents", "other: y\n");
+        assert!(matches!(&twice, Err(PromptError::NamespaceTaken(namespace)) if namespace == "agents"), "{twice:?}");
         assert!(matches!(catalogue.add("skills", "- a list\n"), Err(PromptError::Unreadable { namespace, .. }) if namespace == "skills"));
+        assert!(matches!(catalogue.add("decision", "limit: 5\n"), Err(PromptError::Unreadable { namespace, .. }) if namespace == "decision"), "a number is to be quoted");
         let refused = catalogue.add("tools", "broken: \"{% if %}\"\n").expect_err("does not parse");
         assert!(matches!(&refused, PromptError::Invalid { key, .. } if key == "tools.broken"), "{refused}");
     }

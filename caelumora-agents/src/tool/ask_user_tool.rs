@@ -9,8 +9,9 @@
 
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use caelumora_model::question::{Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
@@ -26,8 +27,56 @@ pub const ASK_USER_TOOL_KIND: &str = "ask_user_tool";
 
 pub const ASK_USER_TOOL_NAME: &str = "ask_user";
 
-#[derive(Debug, Default)]
-pub struct AskUserToolProvider;
+#[derive(Debug)]
+pub struct AskUserToolProvider {
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them (issue 57).
+    description: String,
+    tools: Vec<Tool>,
+}
+
+impl AskUserToolProvider {
+    /// The provider, its texts from `prompts`, told the limits of a call.
+    ///
+    /// # Errors
+    /// `PromptError` if one of them cannot be had.
+    pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+        let limits = context! { max_questions => MAX_QUESTIONS, max_choices => MAX_CHOICES, max_header_chars => MAX_HEADER_CHARS };
+        let choice = ToolParameters::object(
+            vec![
+                ("label", ToolParameters::string()),
+                ("description", ToolParameters::string()),
+                ("recommended", ToolParameters::boolean()),
+            ],
+            vec!["label"],
+        );
+        let question = ToolParameters::object(
+            vec![
+                ("header", ToolParameters::string()),
+                ("question", ToolParameters::string()),
+                ("choices", ToolParameters::array(choice)),
+                ("multi_select", ToolParameters::boolean()),
+            ],
+            vec!["header", "question"],
+        );
+        let tools = vec![described(prompts, ASK_USER_TOOL_KIND, Tool {
+            name: ASK_USER_TOOL_NAME.to_string(),
+            description: String::new(),
+            parameters: ToolParameters::object(
+                vec![
+                    ("questions", ToolParameters::array(question)),
+                    ("ask", ToolParameters::array(ToolParameters::string())),
+                ],
+                vec!["questions", "ask"],
+            ),
+            requires_approval: false,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: QUESTIONS_PRESENTATION,
+        }, &limits)?];
+        Ok(Self { description: tool_text(prompts, ASK_USER_TOOL_KIND, "description", &limits)?, tools })
+    }
+}
 
 /// The arguments of `ask_user`: the questions, and the handles of the users
 /// to ask.
@@ -40,54 +89,11 @@ struct AskUser {
 #[async_trait]
 impl ToolProvider for AskUserToolProvider {
     fn description(&self) -> String {
-        "Ask users of the channel and wait for their answers.".to_string()
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        let choice = ToolParameters::object(
-            vec![
-                ("label", ToolParameters::string().described("The answer as the user chooses it; unique within the question")),
-                ("description", ToolParameters::string().described("What choosing it means, if the label does not say")),
-                ("recommended", ToolParameters::boolean().described("Whether you recommend this choice; mark at most one")),
-            ],
-            vec!["label"],
-        );
-        let question = ToolParameters::object(
-            vec![
-                ("header", ToolParameters::string().described(format!("A short label for the question, at most {MAX_HEADER_CHARS} characters"))),
-                ("question", ToolParameters::string().described("The question, without its possible answers")),
-                ("choices", ToolParameters::array(choice).described(format!("The possible answers, 2 to {MAX_CHOICES}; leave out for a free-text answer"))),
-                ("multi_select", ToolParameters::boolean().described("Whether several choices may be chosen")),
-            ],
-            vec!["header", "question"],
-        );
-        vec![Tool {
-            name: ASK_USER_TOOL_NAME.to_string(),
-            description: format!(
-                "Asks users of the channel one or more questions and waits for their answer, then goes on with it. \
-                 Use it when you need a decision or information from a user before you can go on. \
-                 Put the possible answers of a question into `choices`, never into the question text: \
-                 the user can only choose what is in `choices`, and may always write another answer instead. \
-                 For yes or no, offer the two as choices. \
-                 Ask questions that do not depend on each other together, at most {MAX_QUESTIONS} in one call; \
-                 ask a question whose answer changes another in a call of its own. \
-                 Name in `ask` the users to ask by their handles, e.g. `@alice`, or `@all` for every user here; only their answer counts. \
-                 The result gives the answers in the order of the questions; a question the user did not answer is `declined`. \
-                 If the user declines the whole call, or writes a message instead, the call is answered as declined: \
-                 go on with what they wrote."
-            ),
-            parameters: ToolParameters::object(
-                vec![
-                    ("questions", ToolParameters::array(question).described(format!("The questions, 1 to {MAX_QUESTIONS}"))),
-                    ("ask", ToolParameters::array(ToolParameters::string().described("A handle")).described("The users to ask, by their handles; at least one")),
-                ],
-                vec!["questions", "ask"],
-            ),
-            requires_approval: false,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: QUESTIONS_PRESENTATION,
-        }]
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, _params: &Value, answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -111,10 +117,10 @@ impl ToolProvider for AskUserToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(ASK_USER_TOOL_KIND).provides::<dyn ToolProvider>(),
-        |_descriptor, _context| {
+        ComponentKind::new(ASK_USER_TOOL_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
+        |_descriptor, context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AskUserToolProvider));
+            facets.insert::<dyn ToolProvider>(Arc::new(AskUserToolProvider::new(context.service::<PromptCatalogue>()?)?));
             Ok(facets)
         },
     );
@@ -123,13 +129,14 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::question::Response;
 
     #[test]
     fn its_arguments_are_its_questions_put_to_the_handles_named() {
-        let tool = AskUserToolProvider;
+        let tool = AskUserToolProvider::new(&testing::prompts()).unwrap();
         let params = serde_json::json!({
             "questions": [
                 { "header": "Database", "question": "Which one?", "choices": [{ "label": "Postgres", "recommended": true }, { "label": "SQLite" }] },
@@ -150,12 +157,12 @@ mod tests {
 
     #[test]
     fn its_calls_are_presented_as_questions() {
-        assert_eq!(AskUserToolProvider.tools().remove(0).presentation, QUESTIONS_PRESENTATION);
+        assert_eq!(AskUserToolProvider::new(&testing::prompts()).unwrap().tools().remove(0).presentation, QUESTIONS_PRESENTATION);
     }
 
     #[tokio::test]
     async fn its_result_is_the_answers_as_given() {
-        let tool = AskUserToolProvider;
+        let tool = AskUserToolProvider::new(&testing::prompts()).unwrap();
         let mut state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         let params = serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }, { "header": "Ok", "question": "Go on?", "choices": [{ "label": "yes" }, { "label": "no" }] }], "ask": ["@alice"] });

@@ -159,3 +159,167 @@ agent_memory: |
   {% for memory in recalled %}
   - #{{ memory.id }}: {{ memory.text }}
   {% endfor %}
+
+# The descriptions of the tools (issue 57), under the kind of the component
+# that offers them: `description` is that of its tool set, `<tool>` that of
+# a tool, `<tool>.<parameter>` that of a parameter - `.<field>` of a field of
+# what it holds, `.item` of an entry of a list; the entries of a list of
+# objects have their fields under the list's path
+# (`ToolParameters::describe`).
+tools:
+  calculator_tool:
+    description: Evaluate mathematical expressions.
+    calculate: Evaluates a mathematical expression
+    calculate.expression: Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')
+
+  # `max_questions`, `max_choices`, `max_header_chars`: the limits of a call.
+  ask_user_tool:
+    description: Ask users of the channel and wait for their answers.
+    ask_user: >-
+      Asks users of the channel one or more questions and waits for their answer, then goes on with
+      it. Use it when you need a decision or information from a user before you can go on. Put the
+      possible answers of a question into `choices`, never into the question text: the user can only
+      choose what is in `choices`, and may always write another answer instead. For yes or no, offer
+      the two as choices. Ask questions that do not depend on each other together, at most
+      {{ max_questions }} in one call; ask a question whose answer changes another in a call of its
+      own. Name in `ask` the users to ask by their handles, e.g. `@alice`, or `@all` for every user
+      here; only their answer counts. The result gives the answers in the order of the questions; a
+      question the user did not answer is `declined`. If the user declines the whole call, or writes
+      a message instead, the call is answered as declined: go on with what they wrote.
+    ask_user.questions: The questions, 1 to {{ max_questions }}
+    ask_user.questions.header: A short label for the question, at most {{ max_header_chars }} characters
+    ask_user.questions.question: The question, without its possible answers
+    ask_user.questions.choices: The possible answers, 2 to {{ max_choices }}; leave out for a free-text answer
+    ask_user.questions.choices.label: The answer as the user chooses it; unique within the question
+    ask_user.questions.choices.description: What choosing it means, if the label does not say
+    ask_user.questions.choices.recommended: Whether you recommend this choice; mark at most one
+    ask_user.questions.multi_select: Whether several choices may be chosen
+    ask_user.ask: The users to ask, by their handles; at least one
+    ask_user.ask.item: A handle
+
+  stop_tool:
+    description: End your part in the conversation.
+    stop: Signal that you have finished your task and have no further input.
+    bye: Signal that you want to say good-bye and stop the conversation.
+    silence: Signal that you do not want to respond to the last message and stay silent instead.
+
+  # `max_seconds`: the longest it waits; `seconds`: how long it waits unless told.
+  sleep_tool:
+    description: Wait for a while, for testing.
+    sleep: Waits the given number of seconds, at most {{ max_seconds }}, and then says so. For testing.
+    sleep.seconds: How long to wait; {{ seconds }} unless given
+
+  echo_tool:
+    description: Echo the input, for testing.
+    echo: Echoes the input back
+    echo.message: Input message to be echoed back
+
+  # `max_last`, `default_last`: how many messages a call returns; `read_notes`:
+  # the tool that lists the channels.
+  channel_history:
+    description: Read the history of the other channels of this session.
+    read_history: >-
+      Read the conversation of another channel of this session: its latest messages, or those
+      containing a text. Returns at most {{ max_last }} messages, the latest {{ default_last }}
+      unless you ask for another number. Use `{{ read_notes }}` without a channel to find out which
+      channels there are.
+    read_history.channel: The name of the channel
+    read_history.last: How many of the latest messages to return
+    read_history.query: Only messages containing this text, ignoring case
+
+  # `max_steps`: the most steps a plan has.
+  create_plan_tool:
+    description: Plan a larger piece of work in steps before doing it.
+    create_plan: >-
+      Submit your structured multi-step plan for the user's request. Call this once you have
+      gathered enough information (using other tools if needed) to describe how you will address the
+      request. For simple requests that need no research or multiple steps, just answer directly
+      instead of calling this. If a plan is already in progress, calling this again appends the
+      given steps to it instead of replacing it - use that to add more work once you discover it's
+      needed, whether mid-step or after the original steps are done. A plan has at most
+      {{ max_steps }} steps, those appended included.
+    create_plan.summary: One-sentence summary of the overall approach
+    create_plan.steps: Ordered list of steps
+    create_plan.steps.description: What this step will do
+
+  notes:
+    description: "Notes in this channel: what you want to remember here, and what the others noted."
+    write_note: >-
+      Note something worth remembering in this channel - a fact, a decision, a preference of the
+      user. Every participant of the channel is shown your notes from now on, you included. Keep a
+      note short and self-contained, and update one rather than writing a second on the same thing.
+    write_note.text: What to note
+    update_note: >-
+      Change what one of your own notes in this channel says, by its number, when it is no longer
+      quite right. Give its whole new text; it keeps its number.
+    update_note.id: The number of your note
+    update_note.text: Its new text
+    revoke_note: >-
+      Revoke one of your own notes in this channel, by its number, when it is no longer true or no
+      longer needed.
+    revoke_note.id: The number of your note
+    reclassify_note: >-
+      Change how one of your notes in this channel is classified, by its number: its level and the
+      compartments it is meant for, never above this channel. Releasing it - a lower level, or
+      further compartments - makes it readable by a wider circle; a user has to approve it.
+    reclassify_note.id: The number of your note
+    read_notes: >-
+      Read what the agents of another channel of this session noted. Without a channel, lists every
+      channel you may read with its notes - also how to find out which channels there are. The notes
+      of your own channel are already shown to you. Notes of another channel come without numbers:
+      they can only be updated, revoked or reclassified in that channel.
+    read_notes.channel: The name of the channel; omit it for all channels
+
+  private_notes:
+    description: >-
+      Your private notes: what only you should remember across your channels of this session.
+    write_private_note: >-
+      Note something privately - no other participant sees it; only the person responsible for you
+      can inspect it. Do not quote or reveal your private notes in your answers. You are shown your
+      private notes from now on, in this channel and in your other channels of this session where
+      that reveals nothing to someone who may not know it. Keep a note short and self-contained, and
+      update one rather than writing a second on the same thing.
+    write_private_note.text: What to note
+    update_private_note: >-
+      Change what one of your private notes of this channel says, by its number. Give its whole new
+      text; it keeps its number.
+    update_private_note.id: The number of your private note
+    update_private_note.text: Its new text
+    revoke_private_note: Revoke one of your private notes of this channel, by its number.
+    revoke_private_note.id: The number of your private note
+    reclassify_private_note: >-
+      Change how one of your private notes of this channel is classified, by its number: its level
+      and the compartments it is meant for, never above this channel. It decides in which of your
+      other channels you are shown it. Releasing it - a lower level, or further compartments - makes
+      it readable by a wider circle; a user has to approve it.
+    reclassify_private_note.id: The number of your private note
+
+  agent_memory:
+    description: >-
+      Your memory: what you should know across all your channels and sessions.
+    remember: >-
+      Remember something beyond this conversation - in your other channels and sessions too,
+      wherever what was said here may be known. No other participant sees it; only the person
+      responsible for you can inspect it. Do not quote or reveal it in your answers. Keep an entry
+      short and self-contained, and update one rather than remembering a second on the same thing.
+    remember.text: What to remember
+    update_memory: >-
+      Change one of the things you remember, by its number. Give its whole new text; it keeps its
+      number, and from then on you recall it where what was said here may be known.
+    update_memory.id: The number of what you remember
+    update_memory.text: Its new text
+    forget: Forget one of the things you remember, by its number.
+    forget.id: The number of what you remember
+    reclassify_memory: >-
+      Change how one of the things you remember is classified, by its number: its level and the
+      compartments it is meant for, never above this channel. It decides where you recall it.
+      Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a
+      user has to approve it.
+    reclassify_memory.id: The number of what you remember
+
+  # What every tool that reclassifies is given beside the number of what it
+  # reclassifies (`tool::reclassify_parameters`).
+  reclassify:
+    level: "The new level: public, internal, confidential or strictly_confidential"
+    compartments: "Who it is meant for; none: everybody of the level. Public takes none."
+    compartments.item: A compartment

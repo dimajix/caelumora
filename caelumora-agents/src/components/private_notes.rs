@@ -29,7 +29,7 @@ use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
 use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use crate::situation::Situation;
 use caelumora_runtime::view::PrivateNotesElsewhere;
-use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, classification_argument, id_argument, reclassify_parameters, tool_text, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
@@ -60,73 +60,20 @@ pub struct PrivateNotesComponent {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The texts of its prompt part (issue 57).
     prompts: Arc<PromptCatalogue>,
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them.
+    description: String,
+    tools: Vec<Tool>,
 }
 
 #[async_trait]
 impl ToolProvider for PrivateNotesComponent {
     fn description(&self) -> String {
-        "Your private notes: what only you should remember across your channels of this session.".to_string()
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        vec![
-            Tool {
-                name: WRITE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                description: "Note something privately - no other participant sees it; only the person \
-                    responsible for you can inspect it. Do not quote or reveal your private notes in \
-                    your answers. You are shown your private notes from now on, in this channel and in your other channels of this \
-                    session where that reveals nothing to someone who may not know it. Keep a note short \
-                    and self-contained, and update one rather than writing a second on the same thing."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("text", ToolParameters::string().described("What to note"))],
-                    ["text"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                description: "Change what one of your private notes of this channel says, by its number. \
-                    Give its whole new text; it keeps its number."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("id", ToolParameters::number().described("The number of your private note")), ("text", ToolParameters::string().described("Its new text"))],
-                    ["id", "text"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                description: "Revoke one of your private notes of this channel, by its number."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("id", ToolParameters::number().described("The number of your private note"))],
-                    ["id"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                description: "Change how one of your private notes of this channel is classified, by its \
-                    number: its level and the compartments it is meant for, never above this channel. It \
-                    decides in which of your other channels you are shown it. Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a user has to approve it."
-                    .to_string(),
-                parameters: reclassify_parameters("your private note"),
-                requires_approval: true,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-        ]
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -144,6 +91,63 @@ impl ToolProvider for PrivateNotesComponent {
 }
 
 impl PrivateNotesComponent {
+    /// The component, deciding by `access_policy` and `confidentiality`;
+    /// its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+        let tools = vec![
+            described(&prompts, PRIVATE_NOTES_KIND, Tool {
+                name: WRITE_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("text", ToolParameters::string())],
+                    ["text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, PRIVATE_NOTES_KIND, Tool {
+                name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number()), ("text", ToolParameters::string())],
+                    ["id", "text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, PRIVATE_NOTES_KIND, Tool {
+                name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number())],
+                    ["id"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, PRIVATE_NOTES_KIND, Tool {
+                name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: reclassify_parameters(&prompts)?,
+                requires_approval: true,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+        ];
+        let description = tool_text(&prompts, PRIVATE_NOTES_KIND, "description", ())?;
+        Ok(Self { access_policy, confidentiality, prompts, description, tools })
+    }
+
     /// `write_private_note(text)`: notes `text` privately, taken over when
     /// the turn completes.
     fn execute_write_private_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
@@ -233,11 +237,11 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>().uses::<PromptCatalogue>(),
         |_descriptor, context| {
-            let component = Arc::new(PrivateNotesComponent {
-                access_policy: Arc::clone(context.service::<dyn AccessPolicy>()?),
-                confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-                prompts: Arc::clone(context.service::<PromptCatalogue>()?),
-            });
+            let component = Arc::new(PrivateNotesComponent::new(
+                Arc::clone(context.service::<dyn AccessPolicy>()?),
+                Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
+                Arc::clone(context.service::<PromptCatalogue>()?),
+            )?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -278,7 +282,7 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()), prompts: testing::prompts() };
+        let tools = PrivateNotesComponent::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap();
         let mut turn = Turn::begun(AgentId::new(), &mut state);
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(WRITE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), None, &mut turn).await.unwrap();
@@ -307,7 +311,7 @@ mod tests {
 
     #[test]
     fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = PrivateNotesComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()), prompts: testing::prompts() }.tools();
+        let tools = PrivateNotesComponent::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap().tools();
         assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (NOTE_PRESENTATION, ToolVisibility::HIDDEN)));
     }
 }

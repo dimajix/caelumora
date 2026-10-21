@@ -272,7 +272,9 @@ They follow one convention:
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).
 *   **Texts:** what a prompt part says is a text of the prompt catalogue, its key a constant
     (`TEXT`), rendered from the catalogue the component takes as a service
-    ([AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)).
+    ([AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)); so are the descriptions of its tools,
+    rendered when it is made (`new`, which fails if one is missing) and kept with its tools
+    ([TOOLS.md](TOOLS.md)).
 *   **Construction:** the factory builds the struct literally; there is a `new` only where
     something is checked.
 *   **Parameters:** the turn is always the parameter `turn`.

@@ -18,6 +18,7 @@
 //! `ComponentImpl`s (`container`).
 
 use caelumora_model::component::ComponentDescriptor;
+use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::store::StoreError;
 use caelumora_model::type_map::TypeKey;
 use serde::de::DeserializeOwned;
@@ -46,6 +47,10 @@ pub enum ComponentError {
     Cycle { component: String, facet: &'static str, other: String },
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+    /// A text the component gives its model cannot be had from the prompt
+    /// catalogue (issue 57) - a fault of the texts or of the component.
+    #[error("{0}")]
+    Prompt(#[from] PromptError),
     /// A component asked for a service of the runtime its kind does not
     /// declare it uses, or one the runtime does not have (issue 296).
     #[error("the {0} is not a service offered to the component")]

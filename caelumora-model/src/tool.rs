@@ -97,11 +97,13 @@ impl ToolParameters {
         self
     }
 
-    /// Describes every parameter below `path` by what `text` answers for
-    /// its path: `<path>.<name>` for a property of an object, the path of a
+    /// Describes every parameter below `path` that is not described yet by
+    /// what `text` answers for its path: `<path>.<name>` for a property of an object, the path of a
     /// list for each of its entries' properties if they are objects, and
     /// `<path>.item` for an entry otherwise -
-    /// `ask_user.questions.choices.label`, `ask_user.ask.item`.
+    /// `ask_user.questions.choices.label`, `ask_user.ask.item`. One
+    /// described already (`described`) keeps its description: a text that
+    /// several tools share.
     ///
     /// # Errors
     /// The first error `text` answers.
@@ -122,10 +124,10 @@ impl ToolParameters {
         }
     }
 
-    /// Describes this parameter by the text of `path`, and what it holds
-    /// below it.
+    /// Describes this parameter by the text of `path` unless it is
+    /// described, and what it holds below it.
     fn describe_at<E>(&mut self, path: &str, text: &mut impl FnMut(&str) -> Result<String, E>) -> Result<(), E> {
-        if let Some(description) = self.description_mut() {
+        if let Some(description @ None) = self.description_mut() {
             *description = Some(text(path)?);
         }
         self.describe(path, text)
@@ -538,7 +540,7 @@ mod tests {
         let choice = ToolParameters::object([("label", ToolParameters::string())], ["label"]);
         let question = ToolParameters::object([("header", ToolParameters::string()), ("choices", ToolParameters::array(choice))], ["header"]);
         let mut parameters = ToolParameters::object(
-            [("questions", ToolParameters::array(question)), ("ask", ToolParameters::array(ToolParameters::string())), ("all", ToolParameters::boolean())],
+            [("questions", ToolParameters::array(question)), ("ask", ToolParameters::array(ToolParameters::string())), ("all", ToolParameters::boolean()), ("level", ToolParameters::string().described("shared"))],
             ["questions"],
         );
         let mut asked = Vec::new();
@@ -551,6 +553,7 @@ mod tests {
         let described = serde_json::to_value(&parameters).unwrap();
         assert_eq!(described["properties"]["questions"]["items"]["properties"]["choices"]["items"]["properties"]["label"]["description"], "<ask_user.questions.choices.label>");
         assert_eq!(described["properties"]["ask"]["items"]["description"], "<ask_user.ask.item>");
+        assert_eq!(described["properties"]["level"]["description"], "shared", "one described already keeps its description");
 
         let failed = ToolParameters::object([("a", ToolParameters::string())], ["a"]).describe("t", &mut |path: &str| Err(path.to_string()));
         assert_eq!(failed, Err("t.a".to_string()), "the first text that cannot be had");

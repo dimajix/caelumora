@@ -173,3 +173,10 @@ personality and component, and repeat them in each.
   word for word as before. A template that does not parse stops the start; that the code gives every
   value a text names is checked by the tests, which render every part - the check of overrides
   against their defaults comes with them in step 2.
+- **2026-10-21** — Step 1, commit 2: the descriptions of the agents' tools, their parameters and
+  their tool sets are texts of the catalogue, under `tools.<kind>` in
+  `caelumora-agents/src/prompts.yaml`. A provider renders them once, when it is made, and keeps its
+  tools; `tool::described` gives a tool and its parameters the texts of their paths
+  (`ToolParameters::describe`, prepared in a commit of its own: the schema is built without
+  descriptions). Groups of texts in the catalogue's files, which are read with strict booleans.
+  The texts were compared with those before, word for word, for every tool of the agents.

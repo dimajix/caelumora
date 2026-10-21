@@ -26,8 +26,10 @@ use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ViewError, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus, ToolParameters};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
+use crate::prompt::NAMESPACE;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
 use std::future::Future;
@@ -134,17 +136,47 @@ pub fn classification_argument(params: &Value) -> ToolResult<Classification> {
         .map_err(|e| ToolError::InvalidParameter(e.to_string()))
 }
 
-/// The parameters of a tool that reclassifies the entry numbered `id`,
-/// described as `what` (e.g. "your note"): `id`, `level` and `compartments`.
-pub fn reclassify_parameters(what: &str) -> ToolParameters {
-    ToolParameters::object(
+/// The text `key` of `prompts` about the tools the component kind `kind`
+/// offers (issue 57), rendered with `values`: `description` that of its
+/// tool set, `<tool>` that of a tool, `<tool>.<path>` that of a parameter
+/// (`ToolParameters::describe`). The texts of tools are rendered once, when
+/// their component is made.
+///
+/// # Errors
+/// `PromptError` if the catalogue has no such text, or it cannot be
+/// rendered with `values`.
+pub fn tool_text(prompts: &PromptCatalogue, kind: &str, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+    prompts.render(&format!("{NAMESPACE}.tools.{kind}.{key}"), values)
+}
+
+/// `tool`, one of the component kind `kind`, with its description and
+/// those of its parameters not described yet from `prompts`, rendered with
+/// `values` (`tool_text`).
+///
+/// # Errors
+/// As `tool_text`, for the first text that cannot be had.
+pub fn described(prompts: &PromptCatalogue, kind: &str, mut tool: Tool, values: impl Serialize) -> Result<Tool, PromptError> {
+    tool.description = tool_text(prompts, kind, &tool.name, &values)?;
+    tool.parameters.describe(&tool.name, &mut |path| tool_text(prompts, kind, path, &values))?;
+    Ok(tool)
+}
+
+/// The parameters of a tool that reclassifies the entry numbered `id`:
+/// `id`, which the tool's own text describes (`described`), and `level`
+/// and `compartments`, described by the texts every such tool shares.
+///
+/// # Errors
+/// As `tool_text`.
+pub fn reclassify_parameters(prompts: &PromptCatalogue) -> Result<ToolParameters, PromptError> {
+    let shared = |key| tool_text(prompts, "reclassify", key, ());
+    Ok(ToolParameters::object(
         [
-            ("id", ToolParameters::number().described(format!("The number of {what}"))),
-            ("level", ToolParameters::string().described("The new level: public, internal, confidential or strictly_confidential")),
-            ("compartments", ToolParameters::array(ToolParameters::string().described("A compartment")).described("Who it is meant for; none: everybody of the level. Public takes none.")),
+            ("id", ToolParameters::number()),
+            ("level", ToolParameters::string().described(shared("level")?)),
+            ("compartments", ToolParameters::array(ToolParameters::string().described(shared("compartments.item")?)).described(shared("compartments")?)),
         ],
         ["id", "level"],
-    )
+    ))
 }
 
 /// The parameter `text` of a tool that notes or remembers something,

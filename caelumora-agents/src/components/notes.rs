@@ -17,7 +17,7 @@ use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use caelumora_model::question::Answers;
 use caelumora_model::snapshot::PublishedNotes;
-use crate::tool::{arguments, classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, arguments, classification_argument, id_argument, reclassify_parameters, tool_text, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
@@ -65,89 +65,20 @@ pub struct NotesComponent {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The texts of its prompt part (issue 57).
     prompts: Arc<PromptCatalogue>,
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them.
+    description: String,
+    tools: Vec<Tool>,
 }
 
 #[async_trait]
 impl ToolProvider for NotesComponent {
     fn description(&self) -> String {
-        "Notes in this channel: what you want to remember here, and what the others noted.".to_string()
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        vec![
-            Tool {
-                name: WRITE_NOTE_TOOL_NAME.to_string(),
-                description: "Note something worth remembering in this channel - a fact, a decision, \
-                    a preference of the user. Every participant of the channel is shown your notes \
-                    from now on, you included. Keep a note short and self-contained, and update one \
-                    rather than writing a second on the same thing."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("text", ToolParameters::string().described("What to note"))],
-                    ["text"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: UPDATE_NOTE_TOOL_NAME.to_string(),
-                description: "Change what one of your own notes in this channel says, by its number, when \
-                    it is no longer quite right. Give its whole new text; it keeps its number."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("id", ToolParameters::number().described("The number of your note")), ("text", ToolParameters::string().described("Its new text"))],
-                    ["id", "text"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: REVOKE_NOTE_TOOL_NAME.to_string(),
-                description: "Revoke one of your own notes in this channel, by its number, when it is \
-                    no longer true or no longer needed."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("id", ToolParameters::number().described("The number of your note"))],
-                    ["id"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: RECLASSIFY_NOTE_TOOL_NAME.to_string(),
-                description: "Change how one of your notes in this channel is classified, by its number: \
-                    its level and the compartments it is meant for, never above this channel. Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a user has to approve it."
-                    .to_string(),
-                parameters: reclassify_parameters("your note"),
-                requires_approval: true,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: READ_NOTES_TOOL_NAME.to_string(),
-                description: "Read what the agents of another channel of this session noted. Without \
-                    a channel, lists every channel you may read with its notes - also how to find out \
-                    which channels there are. The notes of your own channel are already shown to you. \
-                    Notes of another channel come without numbers: they can only be updated, \
-                    revoked or reclassified in that channel."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("channel", ToolParameters::string().described("The name of the channel; omit it for all channels"))],
-                    Vec::<&str>::new(),
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: NOTE_LIST_PRESENTATION,
-            },
-        ]
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -166,6 +97,75 @@ impl ToolProvider for NotesComponent {
 }
 
 impl NotesComponent {
+    /// The component, deciding by `access_policy` and `confidentiality`;
+    /// its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+        let tools = vec![
+            described(&prompts, NOTES_KIND, Tool {
+                name: WRITE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("text", ToolParameters::string())],
+                    ["text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NOTES_KIND, Tool {
+                name: UPDATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number()), ("text", ToolParameters::string())],
+                    ["id", "text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NOTES_KIND, Tool {
+                name: REVOKE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number())],
+                    ["id"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NOTES_KIND, Tool {
+                name: RECLASSIFY_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: reclassify_parameters(&prompts)?,
+                requires_approval: true,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NOTES_KIND, Tool {
+                name: READ_NOTES_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("channel", ToolParameters::string())],
+                    Vec::<&str>::new(),
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: NOTE_LIST_PRESENTATION,
+            }, ())?,
+        ];
+        let description = tool_text(&prompts, NOTES_KIND, "description", ())?;
+        Ok(Self { access_policy, confidentiality, prompts, description, tools })
+    }
+
     /// `write_note(text)`: notes `text`, published when the turn completes.
     fn execute_write_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id = AgentNotes::note(turn, NoteKind::Public, text_argument(params)?);
@@ -305,11 +305,11 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>().uses::<PromptCatalogue>(),
         |_descriptor, context| {
-            let component = Arc::new(NotesComponent {
-                access_policy: Arc::clone(context.service::<dyn AccessPolicy>()?),
-                confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-                prompts: Arc::clone(context.service::<PromptCatalogue>()?),
-            });
+            let component = Arc::new(NotesComponent::new(
+                Arc::clone(context.service::<dyn AccessPolicy>()?),
+                Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
+                Arc::clone(context.service::<PromptCatalogue>()?),
+            )?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<NotesComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -361,7 +361,7 @@ mod tests {
         use caelumora_model::confidentiality::{Classification, Confidentiality};
         let agent = AgentId::new();
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()), prompts: testing::prompts() };
+        let tools = NotesComponent::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap();
         // Asked in the turn's context: the agent's, which reclassifies its own note.
         let context = SecurityContext::default().next(ActorId::Agent(agent), ActorId::None, ActorId::None);
         state.begin_turn(Work::new(Default::default(), None, context, Default::default(), Default::default()));
@@ -381,7 +381,7 @@ mod tests {
     #[tokio::test]
     async fn notes_are_published_when_the_turn_completes_and_only_the_author_revokes() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()), prompts: testing::prompts() };
+        let tools = NotesComponent::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap();
         {
             let mut turn = Turn::begun(AgentId::new(), &mut state);
             let noted = tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
@@ -414,7 +414,7 @@ mod tests {
     async fn an_updated_note_keeps_its_number_and_is_classified_as_the_turn_that_updated_it() {
         use caelumora_model::confidentiality::{Classification, Confidentiality};
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()), prompts: testing::prompts() };
+        let tools = NotesComponent::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap();
         let texts = |state: &AgentChannelState| state.notes.current().into_iter().map(|n| (n.id.0, n.text)).collect::<Vec<_>>();
         {
             let mut turn = Turn::begun(AgentId::new(), &mut state);
@@ -448,7 +448,7 @@ mod tests {
     #[tokio::test]
     async fn a_note_revoked_in_the_turn_that_noted_it_is_gone_and_its_number_used_up() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()), prompts: testing::prompts() };
+        let tools = NotesComponent::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap();
         {
             let mut turn = Turn::begun(AgentId::new(), &mut state);
             tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn).await.unwrap();
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn a_note_acted_on_is_shown_as_a_note_and_the_notes_read_as_a_list() {
-        let tools = NotesComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()), prompts: testing::prompts() }.tools();
+        let tools = NotesComponent::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap().tools();
         let notes: Vec<_> = tools.iter().filter(|t| t.presentation == NOTE_PRESENTATION).map(|t| t.name.as_str()).collect();
         assert_eq!(notes, [WRITE_NOTE_TOOL_NAME, UPDATE_NOTE_TOOL_NAME, REVOKE_NOTE_TOOL_NAME, RECLASSIFY_NOTE_TOOL_NAME]);
         let read = tools.iter().find(|t| t.name == READ_NOTES_TOOL_NAME).unwrap();

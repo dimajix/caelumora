@@ -23,6 +23,18 @@ its calls, so that they need not recognise a tool by its name. The presentation 
 what a call does, and whether it waits for anyone, does not depend on it. Approval and
 classification are decided per tool by its provider, not by the personality.
 
+What a tool, its parameters and its tool set say to the model are texts of the prompt catalogue
+(issue 57, see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), kept apart from the tool's
+schema. The code builds the schema - the parameters, their types, which are required
+(`ToolParameters::string()`, `object(…)`) -, and `tool::described` gives the tool and each of its
+parameters the text of its path among the tools of its component kind: `notes.write_note` is the
+tool's, `notes.write_note.text` its parameter's, `.item` an entry's of a list, and the entries of a
+list of objects are described by their fields under the list's path. A parameter described already
+keeps its text, as the parameters every reclassifying tool shares (`tool::reclassify_parameters`).
+The texts are rendered once, when the component is made; a text missing keeps it from being built.
+A tool of a generic provider, an MCP server's, is described as it describes itself
+(`ToolParameters::described`).
+
 ## Tool sets
 
 The tools of one provider are a *tool set* (`ToolSet`), named after its component, with the
