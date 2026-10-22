@@ -11,9 +11,9 @@
 A page of a history (`HistoryStore::page`) holds the items its reader may see (issue 417). Every
 store reads the items backwards and asks the model of each one whether the reader is given it
 (`seen`, over `Recorded::seen_by`), until the page is full. The Postgres store of issue
-[04](04-postgres-state-store.md) does the same: it puts the filter of the page into its query, as far
-as SQL can judge it (`Condition`, issue 421), but not who reads - it reads the items in batches and
-judges each in Rust.
+[04](04-postgres-state-store.md) does the same: it puts the filter of the page into its query, as
+far as SQL can judge it (`Condition`, issue 421), but not who reads - it reads the items in batches
+and judges each in Rust.
 
 For the channel itself and for a participant who sees most of what is said, that costs nothing. For
 a reader who sees little - an outsider who is given only what went to every user, a participant
@@ -37,9 +37,14 @@ database answers it as a `WHERE` (`docs/STORAGE.md`); only no store does yet.
 - **What is published** (`HistoryEntry::is_published`) is computed from the message - whether
   anything of it is left to show. A store that translates it needs it as data of the item, or as a
   condition over its fields.
-- **The same question for entities** is issue [332](332-policy-as-a-predicate.md): the policy decides
-  entity by entity, so no database can put who may read into its query. Whatever form the predicate
-  takes should be the same for both.
+- **The same pattern as [332](332-policy-as-a-predicate.md), not the same rule.** There the
+  configured `AccessPolicy` decides entity by entity who may read it, over its security
+  attributes; it differs by policy and is to become a predicate the policy gives. Here the
+  permission to read the history is checked before (`Enforcement::require`); `seen_by` is the
+  model's one fixed rule of what a reader was given of it - addressed by name, a member then,
+  published - and belongs to the history (417), not to a policy. What both need is the same: a rule
+  as data that a store judges in memory or translates (`Filter`), so the form found for one should
+  serve the other.
 
 ## History
 
