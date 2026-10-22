@@ -389,6 +389,7 @@ impl EntityStores {
 /// keeps the documents of every kind (`DocumentStorage`), the states and the
 /// histories and transcripts they hold, without asking anything. The checks
 /// are the `StoreBackend`'s, which is made of a backend and the policies.
+#[async_trait]
 pub trait Persistence: StateStore + HistoryStore + TranscriptStore {
     /// The storage of the documents of `kind`, opened once - asked again,
     /// the same one, so that whoever writes a kind writes one storage.
@@ -398,6 +399,20 @@ pub trait Persistence: StateStore + HistoryStore + TranscriptStore {
     /// # Errors
     /// If the storage cannot be opened.
     fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>>;
+
+    /// Makes the backend ready to be used (issue 447): once, at start,
+    /// after every plugin registered - so after the kinds of the core and of
+    /// the plugins were opened -, and before anything reads or writes. A
+    /// database connects here, applies its migrations and makes what the
+    /// kinds opened need, so that what is wrong with it fails the start; a
+    /// kind opened later is the backend's to make ready when it is first
+    /// used. Nothing, unless a backend says otherwise.
+    ///
+    /// # Errors
+    /// If the backend cannot be made ready.
+    async fn open(&self) -> StoreResult<()> {
+        Ok(())
+    }
 }
 
 /// The stores of a backend (issues 323, 446): of the entities of every kind,
@@ -435,6 +450,15 @@ impl StoreBackend {
     /// setups.
     pub fn in_memory() -> Self {
         Self::new(Arc::new(MemoryStore::new()), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
+    }
+
+    /// Makes its backend ready to be used (`Persistence::open`): once, at
+    /// start, after every kind was opened.
+    ///
+    /// # Errors
+    /// If the backend cannot be made ready.
+    pub async fn open(&self) -> StoreResult<()> {
+        self.persistence.open().await
     }
 
     /// The stores of the core's kinds.

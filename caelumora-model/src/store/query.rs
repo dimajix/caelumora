@@ -21,6 +21,16 @@ pub trait Field: Copy + Debug + Send + Sync + 'static {
     fn path(self) -> &'static [&'static str];
 }
 
+/// A field by its path alone (issue 447): how a filter crosses the seam to a
+/// backend's storage, which knows no kind's field type (`Filter::by_path`).
+pub type FieldPath = &'static [&'static str];
+
+impl Field for FieldPath {
+    fn path(self) -> &'static [&'static str] {
+        self
+    }
+}
+
 /// The fields of a kind nothing queries yet: none. Such a kind is listed by
 /// limit and cursor alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +174,22 @@ impl<F: Field> Filter<F> {
         Filter::Not(Box::new(condition))
     }
 
+    /// The same condition, its fields named by their paths (`FieldPath`):
+    /// what a storage is given, which knows no kind's field type.
+    pub fn by_path(&self) -> Filter<FieldPath> {
+        match self {
+            Filter::Eq(field, value) => Filter::Eq(field.path(), value.clone()),
+            Filter::In(field, values) => Filter::In(field.path(), values.clone()),
+            Filter::IsNull(field) => Filter::IsNull(field.path()),
+            Filter::And(conditions) => Filter::And(conditions.iter().map(Filter::by_path).collect()),
+            Filter::Or(conditions) => Filter::Or(conditions.iter().map(Filter::by_path).collect()),
+            Filter::Not(condition) => Filter::Not(Box::new(condition.by_path())),
+            Filter::Any(collection, condition) => Filter::Any(collection.path(), Box::new(condition.by_path())),
+            Filter::NamePrefix(field, prefix) => Filter::NamePrefix(field.path(), prefix.clone()),
+            Filter::Contains(field, words) => Filter::Contains(field.path(), words.clone()),
+        }
+    }
+
     /// Whether `document` - an entity as it is serialized, or an element of
     /// a collection in it - meets the condition.
     pub fn matches(&self, document: &Value) -> bool {
@@ -276,13 +302,14 @@ pub struct Page<T> {
     pub next: Option<Cursor>,
 }
 
-/// `candidates` in the order of their keys, from after the cursor of
-/// `query` on - what a list goes through, one by one, until its limit.
-/// Each key comes with what the entity is found by.
-pub(crate) fn ordered_after<T, F: Field>(mut candidates: Vec<(String, T)>, query: &Query<F>) -> impl Iterator<Item = (String, T)> {
+/// `candidates` in the order of their keys - as `str` orders them -, from
+/// after the key `after` on: what a storage that holds its documents in no
+/// order hands out in a scan (`DocumentStorage::scan`). Each key comes with
+/// what the document is found by.
+pub fn ordered_after<T>(mut candidates: Vec<(String, T)>, after: Option<&str>) -> impl Iterator<Item = (String, T)> {
     candidates.sort_by(|(l, _), (r, _)| l.cmp(r));
-    let start = match &query.after {
-        Some(cursor) => candidates.partition_point(|(key, _)| key.as_str() <= cursor.key()),
+    let start = match after {
+        Some(after) => candidates.partition_point(|(key, _)| key.as_str() <= after),
         None => 0,
     };
     candidates.into_iter().skip(start)
@@ -396,9 +423,9 @@ mod tests {
     #[test]
     fn candidates_are_gone_through_in_the_order_of_keys_after_the_cursor() {
         let candidates: Vec<(String, u32)> = vec![("c".into(), 3), ("a".into(), 1), ("b".into(), 2)];
-        let all: Vec<u32> = ordered_after(candidates.clone(), &Query::<NoField>::all()).map(|(_, n)| n).collect();
+        let all: Vec<u32> = ordered_after(candidates.clone(), None).map(|(_, n)| n).collect();
         assert_eq!(all, [1, 2, 3]);
-        let after: Vec<u32> = ordered_after(candidates, &Query::<NoField>::all().after(Cursor::after("a"))).map(|(_, n)| n).collect();
+        let after: Vec<u32> = ordered_after(candidates, Some("a")).map(|(_, n)| n).collect();
         assert_eq!(after, [2, 3]);
     }
 }

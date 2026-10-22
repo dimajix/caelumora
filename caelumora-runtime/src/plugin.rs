@@ -46,8 +46,10 @@ mod tests {
     use caelumora_model::define_id;
     use caelumora_model::group::Group;
     use caelumora_model::removal::{Deletable, Removal};
-    use caelumora_model::secret::{SecretProvider, SecretResult};
-    use crate::component::config_of_params;
+    use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
+    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::Persistence;
+    use crate::component::{config_of_params, service_of};
     use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
     use caelumora_model::store::StoreBackend;
     use caelumora_model::store::query::NoField;
@@ -244,12 +246,42 @@ mod tests {
         assert_eq!(note.text, "remember");
     }
 
+    /// Brings a backend of the stores, `probe`, kept in memory, that can be
+    /// made only with the secrets at hand - as a database that connects by
+    /// one.
+    struct Probe;
+
+    impl Plugin for Probe {
+        fn name(&self) -> &'static str {
+            "probe"
+        }
+
+        fn backends(&self, backends: &mut Backends) {
+            backends.register::<dyn Persistence, _>("probe", |_, _, services| {
+                service_of::<SecretManager>(services)?;
+                Ok(Arc::new(MemoryStore::new()))
+            });
+        }
+
+        fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The backends of the stores are made with the secrets at hand (issue
+    /// 447), which are made before them.
+    #[tokio::test]
+    async fn a_backend_of_the_stores_is_given_the_secrets() {
+        let config = AppConfig::from_yaml("persistence:\n  entity_store:\n    type: probe\n  state_store:\n    type: probe\n").unwrap();
+        RuntimeBuilder::from_config(&config, &[&Probe]).await.expect("made with the secrets").build().unwrap();
+    }
+
     #[tokio::test]
     async fn a_plugin_brings_a_backend_of_a_service_of_the_core() {
         let config = AppConfig::from_yaml("secrets:\n  providers:\n    - type: vault\n      secret: s3cr3t\n").unwrap();
-        let runtime = RuntimeBuilder::from_config(&config, &[&Vault]).unwrap().build().unwrap();
+        let runtime = RuntimeBuilder::from_config(&config, &[&Vault]).await.unwrap().build().unwrap();
         assert_eq!(runtime.secret_manager().resolve(&SecurityContext::system(), "ANY").await.unwrap(), "s3cr3t", "made by the plugin's factory");
-        let without = RuntimeBuilder::from_config(&config, &[]).map(|_| ()).expect_err("nobody brings it");
+        let without = RuntimeBuilder::from_config(&config, &[]).await.map(|_| ()).expect_err("nobody brings it");
         assert!(format!("{without:#}").contains("the secret provider 1 (vault)"), "{without:#}");
     }
 

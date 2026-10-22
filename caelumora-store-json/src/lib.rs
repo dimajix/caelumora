@@ -6,9 +6,10 @@ use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::channel::{ChannelId, ChannelState};
 use caelumora_model::user::{UserChannelState, UserId};
 use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
+use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
+use caelumora_model::value::name::ScopedName;
 use caelumora_model::store::transcript::load_named_by_turn;
 use caelumora_model::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, StoreResult};
-use caelumora_model::value::name::ScopedName;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -194,6 +195,26 @@ async fn read_json_opt<T: DeserializeOwned>(path: &Path) -> StoreResult<Option<T
         }
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(to_backend_error(err)),
+    }
+}
+
+/// What the file at `path` holds, `None` if it is gone or holds no JSON -
+/// which is logged: one broken file does not break a list.
+///
+/// # Errors
+/// If the file cannot be read.
+async fn read_body(path: &Path) -> StoreResult<Option<Value>> {
+    let text = match tokio::fs::read_to_string(path).await {
+        Ok(text) => text,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(to_backend_error(err)),
+    };
+    match serde_json::from_str(&text) {
+        Ok(body) => Ok(Some(body)),
+        Err(err) => {
+            warn!("Failed to read JSON file {:?}: {}", path, err);
+            Ok(None)
+        }
     }
 }
 
@@ -432,8 +453,33 @@ impl DocumentStorage for JsonDocuments {
         read_json_opt(&self.path(id)).await
     }
 
-    async fn ids(&self) -> StoreResult<Vec<String>> {
-        Ok(documents_in_dir(&self.dir).await?.into_iter().map(|(id, _)| id).collect())
+    /// Reads the files in the order of their names, each only when it is its
+    /// turn, and judges `filter` on what they hold; whether one is marked
+    /// deleted it leaves to the store, which would read it as its type to
+    /// tell. A file that is not JSON is left out and logged.
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
+        let mut found = Vec::new();
+        for (id, path) in ordered_after(documents_in_dir(&self.dir).await?, after) {
+            if found.len() >= limit {
+                break;
+            }
+            let Some(body) = read_body(&path).await? else { continue };
+            if filter.is_none_or(|filter| filter.matches(&body)) {
+                found.push((id, body));
+            }
+        }
+        Ok(found)
+    }
+
+    async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
+        for (_, path) in documents_in_dir(&self.dir).await? {
+            if let Some(document) = self.read(&path).await {
+                if named(&document) == Some(name) {
+                    return Ok(Some(document.body));
+                }
+            }
+        }
+        Ok(None)
     }
 
     async fn insert(&self, document: Document) -> StoreResult<()> {

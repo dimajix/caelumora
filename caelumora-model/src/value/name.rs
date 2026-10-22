@@ -134,6 +134,16 @@ impl ScopedName {
     pub fn as_str(&self) -> &str {
         self.name.as_str()
     }
+
+    /// What it is compared by, as one text (issue 447): its scope and its
+    /// name as names are compared (`fold`), apart by a line break, which no
+    /// name holds. Two scoped names are equal exactly if their keys are - so
+    /// that a store keeps names unique by their keys, a database by a unique
+    /// index. The key follows how names are folded: should that change, keys
+    /// stored before are stale.
+    pub fn key(&self) -> String {
+        format!("{}\n{}", self.scope.key(), self.name.key)
+    }
 }
 
 /// The name, without its scope: how a definition is named to people.
@@ -146,7 +156,24 @@ impl fmt::Display for ScopedName {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::SessionId;
+    use crate::user::UserId;
     use std::collections::HashSet;
+
+    /// The key of a scoped name is equal exactly where the names are (issue
+    /// 447): as names are compared, and only in one scope.
+    #[test]
+    fn two_scoped_names_have_one_key_exactly_if_they_are_equal() {
+        let (session, user) = (SessionId::new(), UserId::new());
+        let names = ["Zoë", "zoe", "Dr.  Who", "dr. who", "Other"];
+        let scopes = [Scope::GlobalScope, Scope::SessionScope { session_id: session }, Scope::UserScope { user_id: user }];
+        let all: Vec<ScopedName> = scopes.iter().flat_map(|scope| names.iter().map(|name| ScopedName::new(name, scope.clone()).unwrap())).collect();
+        for left in &all {
+            for right in &all {
+                assert_eq!(left.key() == right.key(), left == right, "{left:?} and {right:?}");
+            }
+        }
+    }
 
     fn name(text: &str) -> Name {
         Name::new(text).expect("a name")

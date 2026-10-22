@@ -51,3 +51,9 @@ history resumes as a different agent. A file store makes that a real risk under 
   by the same backend as in 03 (`Persistence`, which is `StateStore + HistoryStore +
   TranscriptStore`); the rules a store applies in memory - folding a chain, what a reader sees, a
   page - are public functions of the model for a store that does not translate them into a query.
+- **2026-10-22** — Decided with the maintainer, beside 03: the states are kept in tables of their
+  own shape - `agent_state`, `agent_channel_state`, `channel_state`, `user_channel_state`,
+  `history_entries`, `history_items`, `history_memberships`, `transcript_entries`, and
+  `prompt_texts`, `offered_tools` and `frames` written with `ON CONFLICT DO NOTHING` -, each put
+  in one transaction. The index of the work under way (388) is a column `has_work_under_way` of
+  `agent_channel_state` with a partial index, written with the state, not a table of its own.

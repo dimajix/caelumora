@@ -200,38 +200,44 @@ impl RuntimeBuilder {
     /// The builder of the runtime as `config` describes it, with `plugins`
     /// registered: the policy, learning who belongs to a group from the
     /// store it guards (issue 23), the policy of what may flow where (issue
-    /// 304), the stores, the secrets, the built-in component kinds and the
+    /// 304), the secrets, the stores, the built-in component kinds and the
     /// backends of the core and of the plugins (issue 324) - first the
     /// plugins' backends, then what is made of them, then the rest of what
-    /// the plugins bring.
+    /// the plugins bring. The secrets are made before the stores, whose
+    /// backends may need one to connect, and the backends of the stores are
+    /// opened last (`StoreBackend::open`, issue 447), once the plugins have
+    /// opened the stores of their kinds.
     ///
     /// # Errors
-    /// If a store cannot be opened, a secret provider cannot be made, or as
-    /// `new` and `plugin`.
-    pub fn from_config(config: &AppConfig, plugins: &[&dyn Plugin]) -> Result<Self> {
+    /// If a secret provider or a store cannot be made, a store cannot be
+    /// opened, or as `new` and `plugin`.
+    pub async fn from_config(config: &AppConfig, plugins: &[&dyn Plugin]) -> Result<Self> {
         let backends = Backends::with_plugins(plugins);
         // The policy is made before the store it guards, and bound to it
         // once it exists.
         let memberships = Arc::new(StoreMemberships::new());
         let access_policy = config.create_access_policy(Arc::<StoreMemberships>::clone(&memberships));
         let confidentiality = config.create_confidentiality_policy();
+        let secret_services = Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
+        let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
+        let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
         // The stores, each over the backend the configuration names (issue
-        // 446), which needs nothing of the runtime.
+        // 446), which may ask for the secrets (issue 447).
+        let store_services = secret_services.with(Arc::clone(&secret_manager));
         let persistence = |what: &str, name: &str, backend: &BackendConfig| -> Result<StoreBackend> {
-            let made = backends.make_one::<dyn Persistence>(what, name, backend, &Services::empty())?;
+            let made = backends.make_one::<dyn Persistence>(what, name, backend, &store_services)?;
             Ok(StoreBackend::new(made, Arc::clone(&access_policy), Arc::clone(&confidentiality)))
         };
         let states = persistence("state store", "state_store", &config.persistence.state_store)?;
         let backend = persistence("entity store", "entity_store", &config.persistence.entity_store)?;
         memberships.bind(&backend.entity_stores()?.groups);
-        let secret_services = Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
-        let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
-        let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
         let registry = ComponentRegistry::built_in(backend.component_store()?);
-        let mut builder = Self::new(states, backend, secret_manager, access_policy, confidentiality, config, registry, backends)?;
+        let mut builder = Self::new(states.clone(), backend.clone(), secret_manager, access_policy, confidentiality, config, registry, backends)?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
+        states.open().await.context("Cannot open the state store")?;
+        backend.open().await.context("Cannot open the entity store")?;
         Ok(builder)
     }
 
@@ -415,7 +421,7 @@ mod tests {
     async fn the_backends_the_configuration_names_are_made_when_the_runtime_is_built() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = format!("secrets:\n  providers: []\nworkspaces:\n  storage:\n    main:\n      type: local\n      root: \"{}\"\nusers:\n  providers:\n    - type: accept_any\n", dir.path().display());
-        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).unwrap().build().unwrap();
+        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).await.unwrap().build().unwrap();
         assert_eq!(runtime.workspace_manager().storages().collect::<Vec<_>>(), [("main", false)]);
         let alice = runtime.user_manager().authenticate("alice", &Credential::Password("x")).await.expect("accepted by accept_any");
         assert_eq!(alice.username, "alice");
@@ -426,7 +432,7 @@ mod tests {
             ("users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n", ["the user provider 1 (accept_any)", "staff"]),
             ("secrets:\n  providers:\n    - type: env\n    - type: vault\n", ["the secret provider 2 (vault)", "known are: env, file"]),
         ] {
-            let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(yaml).unwrap(), &[]).map(|_| ()).expect_err(yaml);
+            let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(yaml).unwrap(), &[]).await.map(|_| ()).expect_err(yaml);
             let message = format!("{refused:#}");
             assert!(names.iter().all(|name| message.contains(name)), "{yaml:?} gave: {message}");
         }
@@ -435,8 +441,8 @@ mod tests {
     /// Issue 57: the variants of the texts the configuration names are read
     /// as the runtime is built, after every plugin added its texts, and one
     /// that does not fit keeps it from being built.
-    #[test]
-    fn the_variants_of_the_texts_are_read_when_the_runtime_is_built() {
+    #[tokio::test]
+    async fn the_variants_of_the_texts_are_read_when_the_runtime_is_built() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("default")).unwrap();
         std::fs::write(dir.path().join("default").join("core.yaml"), "given_up_cause:\n  failed: it broke\n").unwrap();
@@ -444,14 +450,14 @@ mod tests {
         std::fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  left: you went\n").unwrap();
         let yaml = |variants: &str| format!("prompts:\n{variants}");
         let config = yaml(&format!("  gemma4: \"{0}/gemma4\"\n  default: \"{0}/default\"\n", dir.path().display()));
-        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).unwrap().build().unwrap();
+        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).await.unwrap().build().unwrap();
         let prompts = runtime.prompts();
         assert_eq!(prompts.render("core.given_up_cause.failed", ()).unwrap(), "it broke", "the default overridden");
         assert_eq!(prompts.render_in(Some(PromptVariant::new("gemma4").unwrap()), "core.given_up_cause.left", ()).unwrap(), "you went");
         assert_eq!(prompts.render_in(Some(PromptVariant::new("gemma4").unwrap()), "core.given_up_cause.failed", ()).unwrap(), "it broke", "a variant falls back to the overridden default");
 
         std::fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  gone: away\n").unwrap();
-        let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).unwrap().build().map(|_| ()).expect_err("no such text");
+        let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).await.unwrap().build().map(|_| ()).expect_err("no such text");
         assert!(format!("{refused:#}").contains("'core.given_up_cause.gone'"), "{refused:#}");
     }
 

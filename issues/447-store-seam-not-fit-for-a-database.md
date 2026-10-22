@@ -1,6 +1,6 @@
 # 447 — The seam of the stores is not fit for a database
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -37,12 +37,14 @@ With the maintainer, on 2026-10-22, while discussing 03:
   policy, reading the next batch until the page is full. So a database translates what it can of a
   filter and leaves the rest - `NamePrefix` and `Contains`, which compare as names are folded - to
   the store. The filter crosses the seam without the kind's field type, by the paths of its fields.
-  A storage that cannot read a document as stored, or fails, fails the scan; only a document that
-  cannot be read as its type is left out of a list and logged. `find_by_name` asks the storage for
-  the document of a name key (`named`), and then the policy.
-- **Names: a key made by the model.** `ScopedName::key()` is the one form a name is compared by -
-  its scope and its folded name -, and a `Document` carries that string. Every storage compares
-  strings; a database keeps them unique by a partial unique index (`WHERE NOT deleted`). The rule of
+  A document a storage cannot read as it is kept - a file of the JSON store that holds no JSON - is
+  left out and logged, as one that cannot be read as its type is, so that one broken document does
+  not break a list; any other failure of the storage fails the scan. `find_by_name` asks the
+  storage for the document of a name (`named`), and then the policy.
+- **Names: a key made by the model.** `ScopedName::key()` is the one form a name is compared by as
+  a single value - its scope and its folded name -, equal exactly where the names are. A `Document`
+  keeps its `ScopedName`; a storage that needs one value takes the key, so that a database keeps
+  names unique by a partial unique index (`WHERE NOT deleted`). The rule of
   issue [250](250-unique-names-per-name-space.md) stays as it is, for every kind. A key depends on
   how names are folded; should that change, the stored keys are stale, and stored data is deleted.
 - **Backends: opened asynchronously, with the secrets at hand.** `Persistence` gets an
@@ -58,7 +60,7 @@ with the columns `id`, `name_key`, `deleted` and `body` (`jsonb`); see 03.
 
 ## Steps
 
-1. **Names by key.** `ScopedName::key()`, `Document::name` a string, the storages compare keys.
+1. **Names by key.** `ScopedName::key()`, for a storage that needs a name as one value.
 2. **Lists by scan.** `DocumentStorage::scan` and `named` in place of `ids`; `CheckedStore` reads
    in batches and judges again; the filter by paths of fields.
 3. **Backends opened asynchronously.** `Persistence::open`, `RuntimeBuilder::from_config` `async`,
@@ -78,3 +80,35 @@ Each without a change of behaviour.
 
 - **2026-10-22** — Opened from the discussion of 03, 04 and 26 with the maintainer, as the
   preparation of a Postgres store behind the seam of 446.
+- **2026-10-22** — Step 1 done: `ScopedName::key()` - the scope's key (`Scope::key`, its variant
+  and ids) and the folded name, apart by a line break. A test holds that two scoped names have one
+  key exactly if they are equal. Decided with the maintainer, in place of a `Document` that carries
+  the key as its name: a string would lose what the name is; the memory and the JSON storage keep
+  comparing `ScopedName`s by `==`, and only a storage that needs one value - a column of a unique
+  index - takes the key.
+- **2026-10-22** — Step 2 done: `DocumentStorage::scan` and `named` in place of `ids`; the filter
+  crosses the seam as `Filter<FieldPath>` (`Filter::by_path`, `FieldPath` the path of a field, no
+  type of its own); `CheckedStore::page` reads batches of `SCAN_BATCH` (100), judges each document
+  against the whole filter, reads it as its type and asks the policy, and `find_by_name` asks for
+  the document of the name, after `List` as before. `Access::page` is gone - the store orders the
+  steps, `Access` answers the questions -, and `query::ordered_after` takes a key and is public,
+  for the storages. The memory storage judges filter and mark; the JSON storage the filter alone,
+  since it would have to read a document as its type to tell the mark. Observable: a page that
+  stops at its limit hands out no cursor where the scan showed nothing follows (before: whenever
+  any document of the kind followed); a list fails where the storage fails - a file of the JSON
+  store that cannot be read, not one that holds no JSON, which is left out as before; and finding
+  by name asks the policy of the one document of the name alone, not of every one of the kind,
+  which the security suite now states. A file that holds no JSON is taken as a document the
+  storage cannot read as it is kept, left out and logged, not as a failure of the storage, so that
+  one broken file does not break a list.
+- **2026-10-22** — Step 3 done, and with it the issue: `Persistence::open`, asynchronous, nothing
+  unless a backend says otherwise, reached through `StoreBackend::open`.
+  `RuntimeBuilder::from_config` is `async`: the secrets first, then the backends of the stores,
+  given the policies and the `SecretManager` as their services, then the plugins, then both backends
+  opened, a failure named by the store (`Cannot open the entity store`). Both programs await it; the
+  tests that build from a configuration are asynchronous. A runtime made by `RuntimeBuilder::new` is
+  not opened by it - its stores are its maker's, as in the tests, whose memory needs nothing. A test
+  holds that a backend of the stores is made with the secrets at hand; that `open` runs after the
+  plugins registered holds by the order of `from_config` alone, untested until a backend does
+  something in it (03).
+

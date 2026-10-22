@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
 
     let rest_plugins = rest_plugins();
     let plugins = plugins();
-    let mut builder = RuntimeBuilder::from_config(&config, &all(&rest_plugins, &plugins))?;
+    let mut builder = RuntimeBuilder::from_config(&config, &all(&rest_plugins, &plugins)).await?;
     default_kinds(builder.components())?;
     let runtime_manager = Arc::new(builder.build()?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
