@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use caelumora_model::store::documents::{DocumentOf, DocumentStorage};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::store::{EntityKind, PersistenceBackend, StateStore, StoreError, StoreResult};
+use caelumora_model::store::{EntityKind, PersistenceBackend, StateStore, StoreResult};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -69,11 +69,6 @@ impl PostgresStore {
     fn new(connection: Arc<Connection>) -> Self {
         Self { connection, documents: Default::default() }
     }
-
-    /// Why it refuses `what` of the states.
-    fn keeps_no(what: &str) -> StoreError {
-        StoreError::Backend(format!("the Postgres store keeps no {what}"))
-    }
 }
 
 /// Opens a kind in its table, `entity_<kind>`; the store of the states is
@@ -95,7 +90,7 @@ impl PersistenceBackend for PostgresStore {
     }
 
     fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
-        Err(Self::keeps_no("histories"))
+        Ok(self)
     }
 
     fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {

@@ -20,7 +20,7 @@ use std::ops::Range;
 use std::str::FromStr;
 
 /// How many nodes are read at once where a chain is read backwards.
-const BATCH: i64 = 256;
+pub(crate) const BATCH: i64 = 256;
 
 /// An entry of a chain, as its row keeps it.
 pub(crate) trait Entry: Serialize + DeserializeOwned + Clone + Send + Unpin + 'static {
@@ -126,7 +126,7 @@ impl<E: Entry> Chains<E> {
 
     /// The head of the chain `key` names; `None` if it has none, or none is
     /// kept.
-    async fn head(&self, conn: &mut PgConnection, key: &[String], name: &str) -> StoreResult<Option<Digest>> {
+    pub(crate) async fn head(&self, conn: &mut PgConnection, key: &[String], name: &str) -> StoreResult<Option<Digest>> {
         let statement = format!("SELECT head FROM {} WHERE {}", self.heads, self.of_key());
         let mut query = sqlx::query_scalar(sql(statement));
         for value in key {
@@ -138,7 +138,7 @@ impl<E: Entry> Chains<E> {
 
     /// The nodes of the chain `key` names at the positions `range` holds,
     /// oldest first or `newest_first`, at most `limit`.
-    async fn nodes(&self, conn: &mut PgConnection, key: &[String], name: &str, range: Range<Position>, newest_first: bool, limit: Option<i64>) -> StoreResult<Vec<Node<E>>> {
+    pub(crate) async fn nodes(&self, conn: &mut PgConnection, key: &[String], name: &str, range: Range<Position>, newest_first: bool, limit: Option<i64>) -> StoreResult<Vec<Node<E>>> {
         let start = self.key.len() + 1;
         let statement = format!(
             "SELECT node FROM {} WHERE {} AND seq >= ${start} AND seq < ${} ORDER BY seq {} LIMIT ${}",
@@ -197,12 +197,12 @@ impl<E: Entry> Chains<E> {
 }
 
 /// `position` as a column keeps it.
-fn seq(position: Position) -> i64 {
+pub(crate) fn seq(position: Position) -> i64 {
     i64::try_from(position.get()).unwrap_or(i64::MAX)
 }
 
 /// The position a column keeps.
-fn position(seq: i64) -> Position {
+pub(crate) fn position(seq: i64) -> Position {
     Position::new(u64::try_from(seq).unwrap_or(0))
 }
 

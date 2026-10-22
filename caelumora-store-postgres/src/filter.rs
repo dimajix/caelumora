@@ -4,9 +4,12 @@
 
 use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
 use serde_json::{Map, Value};
+use sqlx::postgres::PgArguments;
+use sqlx::query::QueryAs;
+use sqlx::Postgres;
 
-/// What a filter is translated into: a condition of SQL over the column
-/// `body` that holds for every document that meets the filter, and - where
+/// What a filter is translated into: a condition of SQL over a column of
+/// JSON - the body of a document, an item of a history - that holds for every document that meets the filter, and - where
 /// SQL cannot tell, as for names compared folded (`NamePrefix`, `Contains`) -
 /// for others besides, which the store judges again. With it, what it binds,
 /// numbered after the parameters of the query before it.
@@ -17,11 +20,11 @@ use serde_json::{Map, Value};
 /// letters. A field that is not there is `NULL` in SQL; every condition is
 /// made `false` then, as `matches` judges it, so that one negated holds.
 /// What can be asked as containment (`@>`) besides is asked so, too, which
-/// the GIN index of the body answers.
+/// a GIN index of the column answers.
 #[derive(Debug)]
 pub(crate) struct Condition {
     pub(crate) sql: String,
-    pub(crate) binds: Vec<Bound>,
+    binds: Vec<Bound>,
     /// The number of the first parameter it binds.
     first: usize,
     /// How many elements of collections it names (`Filter::Any`).
@@ -30,7 +33,7 @@ pub(crate) struct Condition {
 
 /// A value a condition binds.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Bound {
+enum Bound {
     Json(Value),
     Text(String),
     /// The path of a field, as `#>` takes it.
@@ -38,15 +41,29 @@ pub(crate) enum Bound {
 }
 
 impl Condition {
-    /// The condition of `filter`, its parameters numbered from `first`.
-    pub(crate) fn of(filter: &Filter<FieldPath>, first: usize) -> Self {
+    /// The condition of `filter` on the column `column`, its parameters
+    /// numbered from `first`.
+    pub(crate) fn of(filter: &Filter<FieldPath>, column: &str, first: usize) -> Self {
         let mut condition = Self { sql: String::new(), binds: Vec::new(), first, elements: 0 };
-        let (judged, _) = condition.judging(filter, "body");
+        let (judged, _) = condition.judging(filter, column);
         condition.sql = match contained(filter) {
-            Some(contained) => format!("body @> {} AND {judged}", condition.bind(Bound::Json(contained))),
+            Some(contained) => format!("{column} @> {} AND {judged}", condition.bind(Bound::Json(contained))),
             None => judged,
         };
         condition
+    }
+
+    /// `query`, which binds the parameters before `first`, with what the
+    /// condition binds bound after them.
+    pub(crate) fn bound<'q, O>(&self, mut query: QueryAs<'q, Postgres, O, PgArguments>) -> QueryAs<'q, Postgres, O, PgArguments> {
+        for bound in &self.binds {
+            query = match bound {
+                Bound::Json(value) => query.bind(value.clone()),
+                Bound::Text(text) => query.bind(text.clone()),
+                Bound::Path(path) => query.bind(path.clone()),
+            };
+        }
+        query
     }
 
     /// The parameter that binds `value`.
