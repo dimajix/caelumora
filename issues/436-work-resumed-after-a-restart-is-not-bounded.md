@@ -1,6 +1,6 @@
 # 436 — Work resumed after a restart runs all at once
 
-**Status:** open
+**Status:** rejected
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -47,3 +47,11 @@ calling its model in the same second, beside the first requests of the users who
 - **2026-10-20** — Opened while implementing [388](388-resume-interrupted-work-after-a-restart.md),
   where the maintainer decided to start the sessions one after another and to bound them for real in
   an issue of its own.
+- **2026-10-22** — Rejected by the maintainer: what a restart resumes is the work that was under way
+  when the server stopped, no more - the same sessions, the same turns, beside the same users. Its
+  memory is what was held before, and its calls to the models are of the order they were before;
+  that they begin in the same second is a short peak that spreads out by itself. A bound on the
+  model calls running at once would belong to the models and cover every peak, not one of the
+  restart; it is not opened as an issue until measurements
+  ([307](307-load-and-performance-tests.md)) call for it. A crash caused by a turn would come back
+  with its resumed turn, which a bound of the sessions would not prevent either.
