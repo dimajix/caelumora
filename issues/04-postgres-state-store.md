@@ -1,6 +1,6 @@
 # 04 — Postgres implementation of the `StateStore`
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Persistence
@@ -80,3 +80,23 @@ history resumes as a different agent. A file store makes that a real risk under 
   `histories`, read, taken further by `Memberships::take` and written back in the put - no table
   `history_memberships`, which would build the rule of what a share before a join gives a second
   time in SQL.
+- **2026-10-22** — Step 1: the migration of the tables of the states; the four documents and
+  deleting them, in `states`; the chains a row per node (`chains`) - the node whole as `jsonb`, a
+  transcript's with the message it holds or changes, a path followed back in batches through
+  `follow_back` -; the transcript and what was given, in `transcripts`, with the
+  `TranscriptStore`. The suite of the states, the work under way, the transcripts and what was
+  given against the database.
+- **2026-10-22** — Step 2: the items and the memberships derived by the put of the channel's
+  state, from what it added - the items it changes read, taken further as `StandingItems`, written
+  back -, and the `HistoryStore`: a page read backwards in batches, its filter in the query as far
+  as SQL can judge it (`Condition`, now over any column of JSON), what a reader sees judged by the
+  model (`seen`). The suite of the histories.
+- **2026-10-22** — Step 3, done: what an agent suspended on an approval stored - its turn with the
+  call it waits for, its transcript, what was given, the channel's history - is read back whole by
+  the store of another process over the same schema; how a channel resumes from what is stored is
+  the runtime's, and tested there over the memory store
+  (`a_turn_waiting_for_approval_can_be_decided_after_a_restart`). A runtime built from its
+  configuration keeps entities and states in Postgres over one pool; the documents and
+  `examples/config.yaml` name the backend for the states. Not done here: whether a reader is given
+  an item (`Recorded::seen_by`) is judged in Rust, not as the `WHERE` STORAGE.md foresees, so a
+  page of a reader who sees little of a long history reads many batches.

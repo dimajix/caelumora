@@ -11,10 +11,14 @@ persistence:
   entity_store:
     type: json
     path: "local/entity_store"
-  # Or the entities in Postgres (issue 03) - the states stay elsewhere. The
-  # secret named holds the URL, postgres://user:password@host:port/database,
-  # e.g. in local/secrets.json; `schema` (default: public) and
-  # `max_connections` (default: 10) may be left out.
+  # Or both in Postgres (issues 03, 04), over one pool. The secret named
+  # holds the URL, postgres://user:password@host:port/database, e.g. in
+  # local/secrets.json; `schema` (default: public) and `max_connections`
+  # (default: 10) may be left out.
+  #state_store:
+  #  type: postgres
+  #  url_secret: CAELUMORA_POSTGRES_URL
+  #  schema: caelumora
   #entity_store:
   #  type: postgres
   #  url_secret: CAELUMORA_POSTGRES_URL

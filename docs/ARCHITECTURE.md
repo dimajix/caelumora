@@ -61,9 +61,9 @@ The project is a Rust workspace, with a web UI next to it:
 *   **`caelumora-store-json`** - the stores in JSON files below a directory (`JsonFileStore`), a
     plugin that brings nothing but the backend `json` of the stores (issue 446). See
     [STORAGE.md](STORAGE.md#the-entity-store).
-*   **`caelumora-store-postgres`** - the entity store in Postgres (`PostgresStore`, with `sqlx`), a
-    plugin that brings nothing but the backend `postgres` of the stores, which keeps the entities
-    alone (issue 03). See [STORAGE.md](STORAGE.md#in-postgres).
+*   **`caelumora-store-postgres`** - the stores in Postgres (`PostgresStore`, with `sqlx`), a plugin
+    that brings nothing but the backend `postgres` of the stores, which keeps the entities and the
+    states (issues 03, 04). See [STORAGE.md](STORAGE.md#in-postgres).
 *   **`caelumora-workspace-tools`** - what an agent is given to work on the session's workspace, a
     plugin that brings nothing but its component kinds `terminal_tool`, the workspace's files and
     its shell, and `workspace_prompt_provider`, the prompt part that names them (issue 428). See

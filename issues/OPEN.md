@@ -14,7 +14,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [04](04-postgres-state-store.md) | in progress | medium | feature | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
 | [450](450-store-overwrites-a-change-made-meanwhile.md) | open | medium | feature | `CheckedStore` reads a document, asks the policy and writes in steps of their own, so a second process that changes the same entity in between is overwritten without notice, and the permission is judged on what was stored before it. |
 
 ## Sessions and channels
