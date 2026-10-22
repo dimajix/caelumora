@@ -715,6 +715,7 @@ dependencies = [
  "async-trait",
  "caelumora-model",
  "caelumora-runtime",
+ "chrono",
  "serde",
  "serde_json",
  "sqlx",

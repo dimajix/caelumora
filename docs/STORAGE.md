@@ -216,6 +216,10 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
 *   **A name prefix** (`Filter::NamePrefix`) compares a name as names are compared - regardless of
     case, accents and runs of whitespace -, for a search by what one has typed so far; **words in a
     text** (`Filter::Contains`) are compared the same way, for a search of what was written.
+*   **A number** is compared with a bound (`Filter::AtLeast`, `Filter::Below`, together
+    `Filter::within`) exactly, whatever its form - a negative one below every bound -, as `jsonb`
+    compares numbers; what is no number meets no comparison. A position in a range of a history is
+    one (issue [451](../issues/451-history-reader-judged-after-reading.md)).
 *   **Scope conditions** are made by the scope (`Scope::within`, `Scope::seen_from`), so that the
     rule lives with `Scope`.
 *   **A limit and a cursor**, in the order of the entities' ids. A page cut short hands out the
@@ -376,10 +380,13 @@ participant (issue 417), and is kept apart from the channel state's document (is
     Whether a reader is given an entry is one predicate (`Recorded::seen_by`) over what the store
     keeps of it - its sender, its recipients, whether anything of it is published, its position -
     and the reader's ranges: the channel everything; a participant what it sent, and what went to it
-    by name or to every member of its kind while it was one; an outsider what went to every user. A
-    database answers it as a `WHERE` over the items and a table of the ranges; a page counts what
-    its reader sees. The filter is data too (issue 421): a `Filter` of the entity stores' queries
-    over the fields of an item as it is recorded (`HistoryField`) - a message said, its sender, role
+    by name or to every member of its kind while it was one; an outsider what went to every user.
+    The model gives the same rule as data (`Filter::seen_by`, issue
+    [451](../issues/451-history-reader-judged-after-reading.md)), over an item as it is kept
+    (`KeptItem`: the item as recorded, its position, whether it is published), which a test holds
+    to `seen_by`; a database adds it to the `WHERE` of a page. A page counts what its reader sees.
+    The filter is data too (issue 421): a `Filter` of the entity stores' queries over the fields of
+    an item as it is kept (`HistoryField`) - a message said, its sender, role
     and words, whom it mentions, its level and compartments -, made by the reader's needs
     (`Filter::said_by`, `heard`, `containing`, `readable` for what a reader from another channel may
     read) and judged on the item before its form is chosen, so that a database adds it to the same
@@ -407,12 +414,14 @@ participant (issue 417), and is kept apart from the channel state's document (is
     history is next loaded or appended to. A message is found by scanning the items backwards, and
     a fitting rewrites every items segment: slow where a database has indexes.
 *   **In Postgres** ([04](../issues/04-postgres-state-store.md)) a history is the chain in
-    `history_entries`, the items in `history_items(channel_id, seq, message_id, item)` - found by
-    the message each said through an index -, and the head and the memberships in `histories`,
-    the memberships whole, as `jsonb`. The put of the channel's state reads the items the entries
-    it adds change - every one for a fitting -, takes them further as `StandingItems` does and
-    writes them back. A page reads the items backwards in batches, with what SQL can judge of its
-    filter in the query; what a reader sees of them the model judges (`seen`).
+    `history_entries`, the items in `history_items(channel_id, seq, message_id, item)` - each as it
+    is kept to be judged (`KeptItem`), found by the message it said through an index -, and the
+    head and the memberships in `histories`, the memberships whole, as `jsonb`. The put of the
+    channel's state reads the items the entries it adds change - every one for a fitting -, takes
+    them further as `StandingItems` does and writes them back. A page reads the items backwards in
+    batches, asking the database for those its reader is given (`Filter::seen_by`, issue
+    [451](../issues/451-history-reader-judged-after-reading.md)) that meet its filter, as far as
+    SQL can judge it; in which form the reader sees each the model decides (`seen`).
 
 ### Transcripts
 

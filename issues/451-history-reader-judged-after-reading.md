@@ -1,6 +1,6 @@
 # 451 — A page of a history judges what its reader sees only after reading it
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Persistence
@@ -46,7 +46,34 @@ database answers it as a `WHERE` (`docs/STORAGE.md`); only no store does yet.
   as data that a store judges in memory or translates (`Filter`), so the form found for one should
   serve the other.
 
+## Steps
+
+1. **Comparisons in the filter.** `Filter::AtLeast` and `Filter::Below`, a field compared with a
+   number, judged in memory and translated by the Postgres store.
+2. **The model.** The form an item is judged in (`KeptItem`: its position, whether it is
+   published, the item as recorded), the fields of the history for them, and the rule of `seen_by`
+   as a filter of the reader (`Reader::seeing`), with a test that both decide alike.
+3. **Postgres.** The items kept in that form, and the reader's filter in the query of a page.
+
 ## History
 
 - **2026-10-22** — Issue created while finishing [04](04-postgres-state-store.md), whose
   Postgres store reads a history's items in batches and judges in Rust what each reader is given.
+- **2026-10-22** — Decided with the maintainer: an item is judged in a form of its own, with its
+  position and whether it is published - derived as it is written, as the item is -, so that both
+  are fields a filter names; the filter compares a field with a number, a general extension; the
+  model gives the rule as a filter of the reader, while `seen_by` stays the code that decides in
+  memory, a test holding both together - a filter decided per item would serialize every item,
+  and the nodes of a chain are no items.
+- **2026-10-22** — Step 1: `Filter::AtLeast` and `Filter::Below` (`Filter::within`), a field
+  compared with a number exactly, judged by `matches` and translated by the Postgres store; no
+  `FieldValue` for numbers, since nothing compares one for equality.
+- **2026-10-22** — Step 2: `KeptItem`, the fields of a history for its origin, its recipients, its
+  position and whether it is published, and the rule as `Filter::seen_by` - beside
+  `Filter::readable`, named after the rule it stands for -, which a test holds to
+  `Recorded::seen_by` over every reader, sender, audience, kind of entry and position. A store in
+  memory judges a page's filter on the item as it is kept.
+- **2026-10-22** — Step 3, done: the Postgres store keeps its items as `KeptItem`, and a page asks
+  the database for the items its reader is given; a test holds what the database gives each reader
+  to what the model gives them. Items a Postgres store kept before are of the form of `Recorded`
+  and are not read any more: a history's `rebuild` writes them anew.

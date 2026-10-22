@@ -425,7 +425,8 @@ impl Recorded {
     /// to every member. The one rule by which a history is read, a predicate
     /// over what a store keeps of the entry - its sender, its recipients,
     /// whether it is published, its position - and the reader's ranges, so
-    /// that a database answers it as a `WHERE`.
+    /// that a database answers it as a `WHERE`: the model gives it as a
+    /// filter too (`Filter::seen_by`, issue 451), which decides the same.
     pub fn seen_by(&self, seq: Position, reader: &Reader, ranges: &[Range<Position>]) -> bool {
         match reader {
             Reader::Channel => true,

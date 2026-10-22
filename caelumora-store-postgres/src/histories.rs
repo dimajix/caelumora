@@ -1,13 +1,15 @@
 //! The histories of the channels (issue 379), as the Postgres store keeps
 //! them: per channel a chain in `history_entries`, its head and who was a
 //! member when (`Memberships`, issue 417) in `histories`, and the items as
-//! they stand in `history_items`, found by the message each said. A put
-//! writes the chain and derives the items and the memberships from what it
-//! added, in its transaction: the items it changes - every one, for a
-//! fitting - are read, taken further by the model's rule (`StandingItems`)
-//! and written back. What a reader sees of them is judged by the model, too
-//! (`seen`); a filter of a page is asked of the database besides, as far as
-//! SQL can judge it (`Condition`).
+//! they stand in `history_items`, each as it is kept to be judged
+//! (`KeptItem`) and found by the message it said. A put writes the chain and
+//! derives the items and the memberships from what it added, in its
+//! transaction: the items it changes - every one, for a fitting - are read,
+//! taken further by the model's rule (`StandingItems`) and written back. A
+//! page asks the database for the items its reader is given
+//! (`Filter::seen_by`, issue 451) that meet its filter, as far as SQL can
+//! judge it (`Condition`); in which form the reader sees each is the
+//! model's (`seen`).
 
 use crate::chains::{failed, position, seq, Chains, Entry, BATCH};
 use crate::connection::sql;
@@ -19,7 +21,7 @@ use caelumora_model::chain::{Node, Position};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
+use caelumora_model::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, KeptItem, Memberships, StandingItems};
 use caelumora_model::store::query::Filter;
 use caelumora_model::store::{StoreError, StoreResult};
 use serde_json::Value;
@@ -47,10 +49,10 @@ fn key(channel: ChannelId) -> ([String; 1], String) {
 }
 
 /// An item as its row holds it.
-type ItemRow = (i64, Json<Recorded>);
+type ItemRow = (i64, Json<KeptItem>);
 
-fn item((seq, Json(item)): ItemRow) -> (Position, Recorded) {
-    (position(seq), item)
+fn item((seq, Json(kept)): ItemRow) -> (Position, Recorded) {
+    (position(seq), kept.item)
 }
 
 /// Writes what `history`, that of `channel` as its state holds it, added
@@ -107,7 +109,7 @@ async fn write_items(conn: &mut PgConnection, key: &[String; 1], name: &str, ite
     }
     let seqs: Vec<i64> = items.iter().map(|(at, _)| seq(*at)).collect();
     let messages: Vec<Option<String>> = items.iter().map(|(_, item)| item.entry.said().map(|message| message.id.to_string())).collect();
-    let rows = items.iter().map(|(_, item)| serde_json::to_value(item)).collect::<Result<Vec<Value>, _>>()
+    let rows = items.into_iter().map(|(at, item)| serde_json::to_value(KeptItem::of(at, item))).collect::<Result<Vec<Value>, _>>()
         .map_err(|e| StoreError::Backend(format!("the items of {name} cannot be written: {e}")))?;
     let upsert = "INSERT INTO history_items (channel_id, seq, message_id, item) \
         SELECT $1, seq, message_id, item FROM UNNEST($2::bigint[], $3::text[], $4::jsonb[]) AS given(seq, message_id, item) \
@@ -133,14 +135,18 @@ async fn write_memberships(conn: &mut PgConnection, key: &[String; 1], name: &st
 
 #[async_trait]
 impl HistoryStore for PostgresStore {
-    /// Reads the items backwards in batches of those the filter may meet,
-    /// until the page is filled.
+    /// Reads the items backwards in batches of those the reader is given and
+    /// the filter may meet, until the page is filled.
     async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, filter: Option<&Filter<HistoryField>>) -> StoreResult<HistoryPage> {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         let head = HISTORIES.head(&mut conn, &key, &name).await?;
         let ranges = read_memberships(&mut conn, &key, &name).await?.of_reader(reader);
-        let condition = filter.map(|filter| Condition::of(&filter.by_path(), "item", 5));
+        let asked = match (Filter::seen_by(reader, &ranges), filter) {
+            (Some(given), Some(filter)) => Some(Filter::all_of([given, filter.clone()])),
+            (given, filter) => given.or_else(|| filter.cloned()),
+        };
+        let condition = asked.map(|asked| Condition::of(&asked.by_path(), "item", 5));
         let meeting = condition.as_ref().map_or("true", |condition| condition.sql.as_str());
         let statement = format!("SELECT seq, item FROM history_items WHERE channel_id = $1 AND seq >= $2 AND seq < $3 AND {meeting} ORDER BY seq DESC LIMIT $4");
         let mut before = before.unwrap_or(Position::MAX);

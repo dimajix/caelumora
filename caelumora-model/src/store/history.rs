@@ -6,10 +6,12 @@
 //! (`StateStore`); the `HistoryStore` is the read side, for whoever reads a
 //! history without holding it - always as a reader, who is given what of
 //! each entry they may see (`Recorded::as_seen_by`, issue 417): a predicate
-//! over what the store keeps of an entry and the reader's ranges, which a
-//! database answers as a `WHERE`. What else a page keeps - the messages of
-//! one sender, those heard, those of a classification the reader may copy -
-//! is a condition as data as well (`Filter<HistoryField>`, issue 421).
+//! over what the store keeps of an entry and the reader's ranges, which the
+//! model gives as data too (`Filter::seen_by`, issue 451), so that a
+//! database answers it as a `WHERE`. What else a page keeps - the messages
+//! of one sender, those heard, those of a classification the reader may
+//! copy - is a condition as data as well (`Filter<HistoryField>`, issue
+//! 421). Both are judged on an item as it is kept (`KeptItem`).
 
 use crate::actor::ActorId;
 use crate::chain::{Node, Position};
@@ -27,9 +29,9 @@ use std::fmt::Debug;
 use std::ops::Range;
 
 /// What a page of a history may be filtered by (`HistoryStore::page`,
-/// issue 421): where it lies in an item as it is recorded (`Recorded`) -
-/// what a database keeps as columns of its row. The fields of a message are
-/// there only for a message said.
+/// issue 421): where it lies in an item as it is kept (`KeptItem`) - the
+/// item as it is recorded (`Recorded`), its position and whether it is
+/// published. The fields of a message are there only for a message said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryField {
     /// The message said; absent for every other entry.
@@ -43,6 +45,21 @@ pub enum HistoryField {
     Compartments,
     /// An element of a collection itself, inside `Filter::Any`.
     Element,
+    /// Whose envelope the item was (`Recorded::sender`), the system for
+    /// what the channel says itself - not always the message's sender.
+    Origin,
+    /// Whether it went to every user, every agent, the channel's approvers
+    /// that were members at the time (`Recipients`, issue 417).
+    ToUsers,
+    ToAgents,
+    ToApprovers,
+    /// Whom it went to by name.
+    Named,
+    /// Where it lies in the chain (issue 451).
+    Position,
+    /// Whether anything of it is for others than its sender
+    /// (`HistoryEntry::is_published`).
+    Published,
 }
 
 impl Field for HistoryField {
@@ -57,6 +74,13 @@ impl Field for HistoryField {
             HistoryField::Level => &["entry", "said", "message", "classification", "level"],
             HistoryField::Compartments => &["entry", "said", "message", "classification", "compartments"],
             HistoryField::Element => &[],
+            HistoryField::Origin => &["sender"],
+            HistoryField::ToUsers => &["recipients", "users"],
+            HistoryField::ToAgents => &["recipients", "agents"],
+            HistoryField::ToApprovers => &["recipients", "approvers"],
+            HistoryField::Named => &["recipients", "named"],
+            HistoryField::Position => &["seq"],
+            HistoryField::Published => &["published"],
         }
     }
 }
@@ -107,6 +131,33 @@ impl Filter<HistoryField> {
             Reading::Whole => None,
             Reading::Nothing => Some(Filter::nothing()),
             Reading::Released(into) => Some(Filter::all_of([Filter::said(), Filter::flowing_into(into, compartments)])),
+        }
+    }
+
+    /// What `reader`, with `ranges` as theirs (`Memberships::of_reader`),
+    /// is given of a history (issue 451): the rule of `Recorded::seen_by`
+    /// as a condition over an item as it is kept (`KeptItem`), which a
+    /// database adds to the `WHERE` of a page; no condition for the channel,
+    /// which is given everything. `seen_by` decides the same in memory.
+    pub fn seen_by(reader: &Reader, ranges: &[Range<Position>]) -> Option<Self> {
+        let published = Filter::eq(HistoryField::Published, true);
+        match reader {
+            Reader::Channel => None,
+            Reader::Outsider => Some(Filter::all_of([published, Filter::eq(HistoryField::ToUsers, true)])),
+            Reader::Participant(actor) => {
+                let while_a_member = |kind| {
+                    let within = ranges.iter().map(|range| Filter::within(HistoryField::Position, range.start.get()..range.end.get())).collect();
+                    Filter::all_of([Filter::eq(kind, true), Filter::Or(within)])
+                };
+                let of_kind = match actor {
+                    ActorId::User(_) => while_a_member(HistoryField::ToUsers),
+                    ActorId::Agent(_) => while_a_member(HistoryField::ToAgents),
+                    ActorId::Approver(_) => Filter::eq(HistoryField::ToApprovers, true),
+                    ActorId::System | ActorId::None => Filter::nothing(),
+                };
+                let reaching = Filter::Or(vec![Filter::any(HistoryField::Named, Filter::eq(HistoryField::Element, *actor)), of_kind]);
+                Some(Filter::Or(vec![Filter::eq(HistoryField::Origin, *actor), Filter::all_of([published, reaching])]))
+            }
         }
     }
 
@@ -346,6 +397,26 @@ impl From<StandingItems> for Vec<(Position, Recorded)> {
     }
 }
 
+/// An item as it is kept to be judged (issue 451): the item as it is
+/// recorded, with its position and whether it is published - derived as it
+/// is made, as the item is from the chain -, so that a filter of a page
+/// names them (`HistoryField`). What a database keeps of an item, and what
+/// a store in memory judges a filter on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeptItem {
+    pub seq: Position,
+    pub published: bool,
+    #[serde(flatten)]
+    pub item: Recorded,
+}
+
+impl KeptItem {
+    /// `item`, at the position `seq`, as it is kept.
+    pub fn of(seq: Position, item: Recorded) -> Self {
+        Self { seq, published: item.entry.is_published(), item }
+    }
+}
+
 /// The item at the position `seq` as `reader`, with `ranges` as theirs
 /// (`Memberships::of_reader`), may see it, if it meets `filter`: what a
 /// store returns of an item it read.
@@ -353,8 +424,13 @@ impl From<StandingItems> for Vec<(Position, Recorded)> {
 /// # Errors
 /// `StoreError::Validation` if the item cannot be judged by `filter`.
 pub fn seen(reader: &Reader, ranges: &[Range<Position>], filter: Option<&Filter<HistoryField>>, (seq, item): &(Position, Recorded)) -> StoreResult<Option<(Position, HistoryEntry)>> {
-    if !item.seen_by(*seq, reader, ranges) || meeting(item, filter)?.is_none() {
+    if !item.seen_by(*seq, reader, ranges) {
         return Ok(None);
+    }
+    if let Some(filter) = filter {
+        if meeting(KeptItem::of(*seq, item.clone()), Some(filter))?.is_none() {
+            return Ok(None);
+        }
     }
     Ok(item.as_seen_by(*seq, reader, ranges).map(|entry| (*seq, entry)))
 }
@@ -541,6 +617,65 @@ mod tests {
         }
         let other = HistoryEntry::ResponseRequested { by: ActorId::System, reason: RequestReason::Chosen, at: Utc::now() };
         assert!(!keeps(&Filter::readable(&Reading::Released(Classification::PUBLIC), &compartments).unwrap(), other), "messages only");
+    }
+
+    /// Issue 451: the rule of what a reader is given, as a filter over an
+    /// item as it is kept, decides as `Recorded::seen_by` does - for every
+    /// reader, sender, audience, kind of entry and position, in a member's
+    /// ranges or out of them.
+    #[test]
+    fn what_a_reader_is_given_is_the_same_as_a_filter() {
+        use crate::actor::EventContext;
+        use crate::agent::AgentId;
+        use crate::approval::ApproverId;
+        use crate::history::Recipients;
+        let (alice, bob, agent) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+        let approver = ActorId::Approver(ApproverId::new());
+        let actors = [alice, bob, agent, approver, ActorId::System];
+        let entries = [
+            HistoryEntry::Said { message: make_message(id(1)) },
+            HistoryEntry::Said { message: Message { content: None, ..make_message(id(2)) } },
+            HistoryEntry::ResponseRequested { by: ActorId::System, reason: RequestReason::Chosen, at: Utc::now() },
+        ];
+        let audiences = [
+            Recipients::NOBODY, Recipients::members(false), Recipients::members(true), Recipients::APPROVERS,
+            Recipients::only(vec![bob]), Recipients::only(vec![agent]), Recipients { named: vec![agent], ..Recipients::members(false) },
+        ];
+        let rangings = [vec![], vec![Position::new(2)..Position::new(6)], vec![Position::START..Position::new(1), Position::new(8)..Position::MAX]];
+        let mut readers = vec![Reader::Channel, Reader::Outsider];
+        readers.extend(actors.iter().map(|actor| Reader::Participant(*actor)));
+        let mut decided = [0, 0];
+        for entry in &entries {
+            for sender in actors {
+                for recipients in &audiences {
+                    let item = Recorded { entry: entry.clone(), sender, recipients: recipients.clone(), context: EventContext::default(), timestamp: Utc::now() };
+                    for seq in [Position::START, Position::new(5), Position::new(9)] {
+                        let kept = serde_json::to_value(KeptItem::of(seq, item.clone())).unwrap();
+                        for reader in &readers {
+                            for ranges in &rangings {
+                                let by_filter = Filter::seen_by(reader, ranges).is_none_or(|filter| filter.matches(&kept));
+                                assert_eq!(by_filter, item.seen_by(seq, reader, ranges), "{reader:?} of {entry:?} from {sender} to {recipients:?} at {seq} in {ranges:?}");
+                                decided[usize::from(by_filter)] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(decided.iter().all(|count| *count > 1000), "either way, often: {decided:?}");
+    }
+
+    /// An item is kept with its position and whether it is published, and
+    /// read back as it was recorded; a page's filter may name both.
+    #[test]
+    fn an_item_is_kept_with_its_position_and_whether_it_is_published() {
+        let item = Recorded::new(HistoryEntry::Said { message: make_message(id(1)) }, ActorId::System, Audience::Everybody);
+        let kept = KeptItem::of(Position::new(7), item);
+        let read: KeptItem = serde_json::from_value(serde_json::to_value(&kept).unwrap()).unwrap();
+        assert_eq!((read.seq, read.published, read.item.entry.said().map(|m| m.id)), (Position::new(7), true, Some(id(1))));
+        let at = |filter: Filter<HistoryField>| seen(&Reader::Channel, &[], Some(&filter), &(kept.seq, kept.item.clone())).unwrap().is_some();
+        assert!(at(Filter::within(HistoryField::Position, 7..8)) && !at(Filter::within(HistoryField::Position, 0..7)), "by its position");
+        assert!(at(Filter::eq(HistoryField::Published, true)), "and whether it is published");
     }
 
     /// Issue 417: who was a member when is read off the chain - from a
