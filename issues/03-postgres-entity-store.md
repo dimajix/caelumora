@@ -42,6 +42,16 @@ process is impossible while identity lives in a local directory.
   `JsonFileStore`.
 - Schema migrations are checked in and applied on startup or by a documented command.
 
+## Steps
+
+1. **The crate.** `caelumora-store-postgres` with its plugin, the backend `postgres`, its
+   configuration, the pool per secret and schema, the migrations, the tables of the kinds and the
+   storage of the documents - every filter judged by the store alone; the store suite of the
+   entities against the database.
+2. **Filters in the query.** What a filter can be translated into is asked of the database - at
+   least what is asked, never less.
+3. **In the programs.** `caelumora-app` and `caelumora-tui` bring the plugin; the documents.
+
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
@@ -73,3 +83,33 @@ process is impossible while identity lives in a local directory.
   a factory that inherits none of them (`PersistenceBackend`), so that the backend `postgres` keeps
   the entities alone and refuses the state stores (`state_store`, `history_store`,
   `transcript_store`) until [04](04-postgres-state-store.md).
+- **2026-10-22** — Decided with the maintainer, revisiting the decision above: **every table of a
+  kind is made in code**, when the backend is opened or the kind first used, and entered in
+  `kinds(name, table_name, schema_version)` - the core's kinds as a plugin's, since they all have
+  one form; the migrations checked in (`sqlx`) make the tables of their own, `kinds` among them.
+  A plugin registers no migrations for its kinds: it would bring SQL of a backend it does not know,
+  the same for every kind; one that brings a Postgres backend of a service of its own may, once
+  there is one. The configuration names the secret of the connection's URL (`url_secret`, as
+  `auth.jwt_secret` names its key) and optionally a `schema` - its tables there, as the
+  `search_path` of its connections - and `max_connections`; one pool per secret and schema. Two
+  processes that change one entity at once are
+  [450](450-store-overwrites-a-change-made-meanwhile.md)'s, not solved here. The tests run against
+  the database `test/docker-compose.yml` starts, named by `CAELUMORA_TEST_POSTGRES_URL`, each in a
+  schema of its own; without it they are skipped.
+
+- **2026-10-22** — Step 1 done: the crate `caelumora-store-postgres`, with `sqlx` 0.9 (queries
+  checked at run time, migrations compiled in), its plugin `PostgresStorePlugin` registering the
+  backend `postgres` (`url_secret`, `schema`, `max_connections`) and `PostgresStore`, which keeps
+  the entities alone and refuses the state stores. A `Connection` per secret and schema, shared by
+  the plugin's backends of one runtime, resolves the secret, connects with the schema as its
+  `search_path`, makes the schema and applies the migration of `kinds` - once, when first needed,
+  which `open` is. `PgDocuments` makes the table of its kind, under an advisory lock of the kind,
+  unless `kinds` records it, and refuses one of another form (`KIND_TABLE_VERSION`); a unique
+  violation of the index of the names is `NameTaken`, of the id `Conflict`; `replace` writes as an
+  upsert, as the memory does. A scan hands out every document of the mark after the cursor, the
+  filter judged by the store alone (step 2). Since sqlx 0.9 takes a query built at run time only
+  as audited (`AssertSqlSafe`), they are made by one function (`sql`) of SQL and identifiers quoted
+  by `quoted`, every value bound. The tests run the store suite of the entities, and that two
+  backends of one schema - as two processes - share their documents and their names, that a table
+  of another form and a secret that names nothing fail the opening, and that the backend is made
+  from its parameters.
