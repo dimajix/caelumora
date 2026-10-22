@@ -90,6 +90,42 @@ the JSON store's directory, and which names to keep unique. A stored type can be
 serialized (`Stored` requires it), which is all a backend needs to keep it. A new kind is added
 without a change to the stores or to `EntityKind`.
 
+### In Postgres
+
+The plugin `caelumora-store-postgres` brings the backend `postgres` (issue
+[03](../issues/03-postgres-entity-store.md)), which keeps the entities - and the components - alone
+and refuses the state stores until issue [04](../issues/04-postgres-state-store.md), so that it is
+the entity store beside another one of the states.
+
+*   **A table per kind**, `entity_<kind>`, the prefix keeping a kind clear of the words of SQL: the
+    id (`text`, ordered `COLLATE "C"`, as `str` orders it), the key of the name (`name_key`,
+    `ScopedName::key`), whether it is marked deleted, and the body (`jsonb`). A partial unique index
+    on `name_key WHERE NOT deleted` keeps names unique across every process that writes, a GIN index
+    answers containment of the body. A subtype within a kind is a field of the document, not a
+    table.
+*   **Tables made in code.** The table of a kind is made when the backend is opened at start, or
+    when a kind opened later is first used, under a lock of the kind, and entered in
+    `kinds(name, table_name, schema_version)`; one of a form this program does not know is refused.
+    The core's kinds are made as a plugin's are, since every one has one form: a change of it counts
+    `schema_version` up and migrates every table in code. The migrations checked in (`sqlx`, in the
+    crate's `migrations/`) make the tables of the crate's own, `kinds` among them.
+*   **A connection by a secret.** The configuration names the secret that holds the URL of the
+    database, a schema - its tables there, as the `search_path` of its connections - and the size
+    of its pool. The secret is resolved when the backend is opened, so that a wrong one fails the
+    start; no message names the URL. One pool serves every backend of the plugin named by the same
+    secret and schema.
+*   **Filters in the query.** A scan asks the database what it can judge of a filter: each condition
+    as `Filter::matches` judges it, of a document as serde writes it, an element of a collection by
+    `jsonb_array_elements`, and what can be asked as containment as `body @> …` besides, for the
+    index. What compares names folded is left to the store, and so is the negation of anything that
+    is.
+*   **Two processes that change one entity at once** are not kept apart yet: the last write wins
+    (issue [450](../issues/450-store-overwrites-a-change-made-meanwhile.md)).
+
+Its tests run against a database: `test/docker-compose.yml` starts one, and the variable
+`CAELUMORA_TEST_POSTGRES_URL` names it, read as a secret; each test keeps its tables in a schema of
+its own. Without the variable they are skipped.
+
 ### Artifact content
 
 The content of artifacts lies in the storages configured under `artifacts`, each an
@@ -192,9 +228,10 @@ one that cannot be read as its type is left out of a list and logged; any other 
 storage fails the list. Finding by name asks the storage for the one document of the name that is
 not deleted (`DocumentStorage::named`), and then the policy, as a list asks.
 
-Without an index, a list without a limit still goes through every entity of the kind. Every list
-that narrows what it read says so in its query; what a query cannot say yet - a time comparison, a
-lookup by normalized name, a viewer's clearance - stays code at the caller.
+Without an index - in memory and in the JSON files -, a list without a limit still goes through
+every entity of the kind. Every list that narrows what it read says so in its query; what a query
+cannot say yet - a time comparison, a lookup by normalized name, a viewer's clearance - stays code
+at the caller.
 
 ### Deleted entities
 
@@ -550,5 +587,6 @@ The server is meant to run in several instances one day
     `AgentState` in each. Between instances they are kept in step through the global events, carried
     by an event bus the instances share.
 *   **Writes across instances** cannot be serialised by a lock in one process. The shared stores
-    will have to refuse a write made on an outdated version, and events will have to carry the
-    version they result in, so that an instance skips one older than what it has.
+    will have to refuse a write made on an outdated version (issue
+    [450](../issues/450-store-overwrites-a-change-made-meanwhile.md)), and events will have to
+    carry the version they result in, so that an instance skips one older than what it has.

@@ -13,6 +13,7 @@ use caelumora_ollama::plugin::OllamaPlugin;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
+use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -184,7 +185,7 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 /// 428), which only its runtime is built with - first the essential one,
 /// the agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(AgentsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin), Box::new(JsonStorePlugin)]
+    vec![Box::new(AgentsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin), Box::new(JsonStorePlugin), Box::new(PostgresStorePlugin)]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core

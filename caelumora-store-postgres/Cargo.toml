@@ -1,0 +1,28 @@
+[package]
+name = "caelumora-store-postgres"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caelumora-model.workspace = true
+caelumora-runtime.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Queries checked at run time (`sqlx::query`), so that building needs no
+# database; the migrations of the crate's own tables compiled in
+# (`sqlx::migrate!`).
+sqlx = { workspace = true, features = ["runtime-tokio", "tls-native-tls", "postgres", "json", "migrate", "macros"] }
+# The pool is made, and a kind's table, once, when first needed.
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+caelumora-model = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[lints]
+workspace = true

@@ -111,4 +111,6 @@ Each without a change of behaviour.
   holds that a backend of the stores is made with the secrets at hand; that `open` runs after the
   plugins registered holds by the order of `from_config` alone, untested until a backend does
   something in it (03).
-
+- **2026-10-22** — That a backend is opened after the plugins registered is held now: a test of
+  [03](03-postgres-entity-store.md) builds a runtime over Postgres from its configuration and finds
+  the tables of the core's kinds made at start.

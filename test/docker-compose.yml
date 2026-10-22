@@ -1,0 +1,27 @@
+# A Postgres for the tests of caelumora-store-postgres (issue 03) - throwaway: its data lives in
+# memory and is gone when the container stops. Reachable from this host only, on port 55432:
+#
+#   docker compose -f test/docker-compose.yml up -d
+#   export CAELUMORA_TEST_POSTGRES_URL=postgres://caelumora:caelumora@127.0.0.1:55432/caelumora_test
+#   cargo test -p caelumora-store-postgres
+#   docker compose -f test/docker-compose.yml down
+#
+# Every test makes a schema of its own and drops it again, so one database serves them all.
+name: caelumora-test-postgres
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: caelumora
+      POSTGRES_PASSWORD: caelumora
+      POSTGRES_DB: caelumora_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caelumora -d caelumora_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
