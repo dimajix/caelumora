@@ -12,7 +12,9 @@ use caelumora_model::scope::Scope;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{AccessPolicy, AllowAllPolicy, OwnershipPolicy, SecurityContext};
+use caelumora_model::store::documents::Document;
 use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
 use caelumora_model::store::suite;
 use caelumora_model::store::{EntityStoreFactory, Persistence};
 use caelumora_model::user::UserId;
@@ -170,4 +172,66 @@ fn the_entities_are_kept_in_postgres_and_the_states_not() {
     let misspelt = BackendConfig::new("postgres", json!({ "url": "postgres://somewhere" }));
     let refused = backends.make_one::<dyn PersistenceBackend>("entity store", "entity_store", &misspelt, &services).map(|_| ()).unwrap_err().to_string();
     assert!(refused.contains("the entity store (postgres)") && refused.contains("url"), "{refused}");
+}
+
+/// Whether `filter` compares names folded somewhere - what SQL cannot judge
+/// and leaves to the store.
+fn folded(filter: &Filter<FieldPath>) -> bool {
+    match filter {
+        Filter::NamePrefix(_, _) | Filter::Contains(_, _) => true,
+        Filter::And(conditions) | Filter::Or(conditions) => conditions.iter().any(folded),
+        Filter::Not(condition) | Filter::Any(_, condition) => folded(condition),
+        Filter::Eq(_, _) | Filter::In(_, _) | Filter::IsNull(_) => false,
+    }
+}
+
+/// A scan hands out every document a filter meets, as `Filter::matches`
+/// judges it - and exactly those, unless the filter compares names folded,
+/// which the database leaves to the store.
+#[tokio::test]
+async fn a_scan_hands_out_what_a_filter_meets() {
+    let Some(database) = Database::new() else { return };
+    database.connection.pool().await.unwrap();
+    let storage = PgDocuments::new(Arc::clone(&database.connection), EntityKind::new("probe")).unwrap();
+    let id = "7f1e3c1a-2d3b-4c5d-8e9f-0a1b2c3d4e5f";
+    let bodies = [
+        json!({ "a": "x" }), json!({ "a": ["x"] }), json!({ "a": { "User": "u1" } }), json!({ "a": { "User": "u2", "Extra": 1 } }),
+        json!({ "a": "GlobalScope" }), json!({ "a": null }), json!({}), json!({ "a": true }), json!({ "a": { "b": "x" } }),
+        json!({ "list": [{ "b": "x", "c": true }, { "b": "y" }] }), json!({ "list": "x" }), json!({ "list": ["x", "y"] }),
+        json!({ "a": id }), json!({ "name": "Zoë Smith" }), json!({ "a": { "Session": "s" } }), json!({ "a": { "User": ["u1"] } }),
+    ];
+    for (at, body) in bodies.iter().enumerate() {
+        storage.insert(Document { id: format!("{at:02}"), name: None, deleted: false, body: body.clone() }).await.unwrap();
+    }
+    const A: FieldPath = &["a"];
+    const AB: FieldPath = &["a", "b"];
+    const LIST: FieldPath = &["list"];
+    const B: FieldPath = &["b"];
+    const C: FieldPath = &["c"];
+    const ITSELF: FieldPath = &[];
+    const NAME: FieldPath = &["name"];
+    let x = || Filter::eq(A, "x");
+    let filters = [
+        x(), Filter::eq(A, true), Filter::eq(A, id.parse::<Uuid>().unwrap()), Filter::eq(AB, "x"),
+        Filter::eq(A, FieldValue::tagged("User", "u1")), Filter::eq(A, FieldValue::variant("User")), Filter::eq(A, FieldValue::variant("GlobalScope")),
+        Filter::eq(A, FieldValue::tagged("User", FieldValue::variant("u1"))),
+        Filter::is_in(A, ["x", "GlobalScope"]), Filter::is_in(A, Vec::<&str>::new()), Filter::IsNull(A), Filter::negated(Filter::IsNull(A)),
+        Filter::negated(x()), Filter::negated(Filter::eq(A, FieldValue::variant("User"))),
+        Filter::any(LIST, Filter::eq(B, "x")), Filter::any(LIST, Filter::all_of([Filter::eq(B, "x"), Filter::eq(C, true)])),
+        Filter::any(LIST, Filter::all_of([Filter::eq(B, "y"), Filter::eq(C, true)])), Filter::any(LIST, Filter::eq(ITSELF, "x")),
+        Filter::negated(Filter::any(LIST, Filter::eq(B, "x"))), Filter::any(LIST, Filter::negated(Filter::eq(B, "x"))),
+        Filter::all_of([]), Filter::nothing(), Filter::all_of([x(), Filter::eq(A, "y")]), Filter::Or(vec![x(), Filter::IsNull(A)]),
+        Filter::name_prefix(NAME, "zoe"), Filter::negated(Filter::name_prefix(NAME, "zoe")), Filter::all_of([Filter::name_prefix(NAME, "zoe"), x()]),
+        Filter::contains(NAME, "smith"), Filter::any(LIST, Filter::name_prefix(B, "X")),
+        Filter::negated(Filter::all_of([Filter::name_prefix(NAME, "zoe"), x()])), Filter::any(LIST, Filter::is_in(ITSELF, ["y", "z"])),
+    ];
+    for filter in filters {
+        let scanned: Vec<String> = storage.scan(Some(&filter), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
+        let meeting: Vec<String> = bodies.iter().enumerate().filter(|(_, body)| filter.matches(body)).map(|(at, _)| format!("{at:02}")).collect();
+        assert!(meeting.iter().all(|id| scanned.contains(id)), "{filter:?}: meets {meeting:?}, scanned {scanned:?}");
+        if !folded(&filter) {
+            assert_eq!(scanned, meeting, "exactly what meets {filter:?}");
+        }
+    }
+    database.drop().await;
 }

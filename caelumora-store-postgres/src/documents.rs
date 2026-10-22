@@ -1,6 +1,7 @@
 //! The documents of one kind in its table.
 
 use crate::connection::{quoted, sql, Connection};
+use crate::filter::{Bound, Condition};
 use async_trait::async_trait;
 use caelumora_model::store::documents::{Document, DocumentStorage};
 use caelumora_model::store::query::{FieldPath, Filter};
@@ -126,14 +127,23 @@ impl DocumentStorage for PgDocuments {
         sqlx::query_scalar(sql(format!("SELECT body FROM {} WHERE id = $1", self.table))).bind(id).fetch_optional(pool).await.map_err(|e| self.failed(e))
     }
 
-    /// The filter is judged by the store alone, for now: every document of
-    /// the mark after `after` is handed out (issue 03, step 2).
-    async fn scan(&self, _filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
+    /// What of `filter` SQL can judge is judged by the database
+    /// (`Condition`), the rest by the store.
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
         let pool = self.ready().await?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        sqlx::query_as(sql(format!("SELECT id, body FROM {} WHERE deleted = $1 AND ($2::text IS NULL OR id > $2) ORDER BY id LIMIT $3", self.table)))
-            .bind(deleted).bind(after).bind(limit)
-            .fetch_all(pool).await.map_err(|e| self.failed(e))
+        let condition = filter.map(|filter| Condition::of(filter, 4));
+        let meeting = condition.as_ref().map_or("true", |condition| condition.sql.as_str());
+        let statement = format!("SELECT id, body FROM {} WHERE deleted = $1 AND ($2::text IS NULL OR id > $2) AND {meeting} ORDER BY id LIMIT $3", self.table);
+        let mut query = sqlx::query_as(sql(statement)).bind(deleted).bind(after).bind(limit);
+        for bound in condition.map(|condition| condition.binds).unwrap_or_default() {
+            query = match bound {
+                Bound::Json(value) => query.bind(value),
+                Bound::Text(text) => query.bind(text),
+                Bound::Path(path) => query.bind(path),
+            };
+        }
+        query.fetch_all(pool).await.map_err(|e| self.failed(e))
     }
 
     async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {

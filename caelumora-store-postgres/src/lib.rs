@@ -14,6 +14,7 @@
 
 mod connection;
 mod documents;
+mod filter;
 mod plugin;
 
 pub use plugin::PostgresStorePlugin;

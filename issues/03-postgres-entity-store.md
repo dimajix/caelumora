@@ -113,3 +113,12 @@ process is impossible while identity lives in a local directory.
   backends of one schema - as two processes - share their documents and their names, that a table
   of another form and a secret that names nothing fail the opening, and that the backend is made
   from its parameters.
+- **2026-10-22** — Step 2 done: a scan asks the database what it can judge of a filter
+  (`Condition`). Each condition is translated as `Filter::matches` judges it, of a document as serde
+  writes it - which every document in a table is, since the store alone writes them -, a field that
+  is not there made `false` (`COALESCE`), so that one negated holds; an element of a collection by
+  `EXISTS` over `jsonb_array_elements`; what compares names folded (`NamePrefix`, `Contains`) is
+  `true`, and so is the negation of what holds for more besides, its parameters taken back. What
+  can be asked as containment is asked so besides (`body @> …`), which the GIN index answers. A
+  test holds, for documents and filters of every form, that a scan hands out what a filter meets,
+  and exactly that unless it compares names folded.
