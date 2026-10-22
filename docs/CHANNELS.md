@@ -127,7 +127,8 @@ under way: a turn stored at a step it goes on from, or a remote task the remote 
 state store keeps an index of them (see [STORAGE.md](STORAGE.md#work-under-way)), so nothing else is
 loaded. Nobody asked for these sessions, so the runtime opens them in its own name; what the agents
 then do is done in their own names, as at every start. They are started one after another, beside
-the first requests, and not bounded otherwise.
+the first requests, and not bounded otherwise: what they resume is the work that ran when the
+server stopped, no more (issue [436](../issues/436-work-resumed-after-a-restart-is-not-bounded.md)).
 
 Not started is a session whose agents only wait for a person - an approval, a question, a remote
 task that asked back -, since the person's answer starts it; nor one deleted. A message delivered to
