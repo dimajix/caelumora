@@ -10,7 +10,9 @@ use crate::store::{StoreError, StoreResult};
 use crate::value::name::fold;
 use serde::Serialize;
 use serde_json::Value;
+use std::cmp::Ordering;
 use std::fmt::Debug;
+use std::ops::Range;
 use uuid::Uuid;
 
 /// A field of a kind that a query may name: where it lies in the document
@@ -107,8 +109,8 @@ impl From<bool> for FieldValue {
 }
 
 /// A condition on the documents of a kind. Purely declarative: equality,
-/// membership, absence, the boolean operators, and whether any element of
-/// a collection meets a condition of its own.
+/// membership, absence, comparison with a number, the boolean operators,
+/// and whether any element of a collection meets a condition of its own.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Filter<F: Field> {
     Eq(F, FieldValue),
@@ -131,6 +133,12 @@ pub enum Filter<F: Field> {
     /// was written (issue 421). A database compares the folded forms with
     /// `LIKE '%…%'`.
     Contains(F, String),
+    /// The field is a number of at least the bound (issue 451): a position
+    /// from where a range begins.
+    AtLeast(F, u64),
+    /// The field is a number below the bound: a position before the end of
+    /// a range.
+    Below(F, u64),
 }
 
 impl<F: Field> Filter<F> {
@@ -157,6 +165,15 @@ impl<F: Field> Filter<F> {
     /// `field`, a text, contains `words` as names are compared.
     pub fn contains(field: F, words: &str) -> Self {
         Filter::Contains(field, words.to_string())
+    }
+
+    /// `field` is a number within `range`; no bound at the end if it ends
+    /// at `u64::MAX`, after every number.
+    pub fn within(field: F, range: Range<u64>) -> Self {
+        match range.end {
+            u64::MAX => Filter::AtLeast(field, range.start),
+            end => Filter::all_of([Filter::AtLeast(field, range.start), Filter::Below(field, end)]),
+        }
     }
 
     /// Every one of `conditions`; any document if there is none.
@@ -187,6 +204,8 @@ impl<F: Field> Filter<F> {
             Filter::Any(collection, condition) => Filter::Any(collection.path(), Box::new(condition.by_path())),
             Filter::NamePrefix(field, prefix) => Filter::NamePrefix(field.path(), prefix.clone()),
             Filter::Contains(field, words) => Filter::Contains(field.path(), words.clone()),
+            Filter::AtLeast(field, bound) => Filter::AtLeast(field.path(), *bound),
+            Filter::Below(field, bound) => Filter::Below(field.path(), *bound),
         }
     }
 
@@ -206,7 +225,20 @@ impl<F: Field> Filter<F> {
             },
             Filter::NamePrefix(field, prefix) => lookup(document, *field).and_then(Value::as_str).is_some_and(|name| fold(name).starts_with(&fold(prefix))),
             Filter::Contains(field, words) => lookup(document, *field).and_then(Value::as_str).is_some_and(|text| fold(text).contains(&fold(words))),
+            Filter::AtLeast(field, bound) => lookup(document, *field).and_then(|found| compared(found, *bound)).is_some_and(Ordering::is_ge),
+            Filter::Below(field, bound) => lookup(document, *field).and_then(|found| compared(found, *bound)).is_some_and(Ordering::is_lt),
         }
+    }
+}
+
+/// How `found` compares with `bound`, if it is a number - exactly, as a
+/// database compares numbers: a negative one below every bound.
+fn compared(found: &Value, bound: u64) -> Option<Ordering> {
+    let Value::Number(number) = found else { return None };
+    match (number.as_u64(), number.as_i64()) {
+        (Some(whole), _) => Some(whole.cmp(&bound)),
+        (None, Some(_)) => Some(Ordering::Less),
+        (None, None) => number.as_f64().and_then(|fraction| fraction.partial_cmp(&(bound as f64))),
     }
 }
 
@@ -393,6 +425,21 @@ mod tests {
         assert!(Filter::Or(vec![Filter::eq(Doc::Owner, "bob"), Filter::IsNull(Doc::Missing)]).matches(&document));
         assert!(Filter::<Doc>::all_of([]).matches(&document) && !Filter::<Doc>::nothing().matches(&document));
         assert!(Filter::eq(Doc::Owner, true).matches(&json!({ "owner": { "id": true } })) && !Filter::eq(Doc::Owner, true).matches(&document), "a flag");
+    }
+
+    /// A number is compared with a bound exactly, whatever its form; what
+    /// is no number meets no comparison (issue 451).
+    #[test]
+    fn a_number_is_compared_with_a_bound() {
+        let at = |value: Value| json!({ "owner": { "id": value } });
+        let range = Filter::within(Doc::Owner, 3..5);
+        assert!(range.matches(&at(json!(3))) && range.matches(&at(json!(4))), "from its start");
+        assert!(!range.matches(&at(json!(5))) && !range.matches(&at(json!(2))), "up to its end");
+        assert!(range.matches(&at(json!(4.5))) && !range.matches(&at(json!(2.5))), "a fraction too");
+        assert!(!range.matches(&at(json!(-1))) && Filter::Below(Doc::Owner, 0).matches(&at(json!(-1))), "a negative number below every bound");
+        assert!(Filter::within(Doc::Owner, 3..u64::MAX).matches(&at(json!(u64::MAX))), "open at the end");
+        assert!(!range.matches(&at(json!("4"))) && !Filter::AtLeast(Doc::Missing, 0).matches(&at(json!(4))), "a number only, where there is one");
+        assert!(Filter::negated(Filter::AtLeast(Doc::Missing, 0)).matches(&at(json!(4))));
     }
 
     /// A value meets what serde writes: an id the string of its UUID, a

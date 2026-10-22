@@ -119,8 +119,19 @@ impl Condition {
                 let elements = format!("CASE WHEN jsonb_typeof({found}) = 'array' THEN {found} ELSE '[]'::jsonb END");
                 (format!("EXISTS (SELECT 1 FROM jsonb_array_elements({elements}) AS {element}(v) WHERE {judged})"), exact)
             }
+            Filter::AtLeast(field, bound) => self.comparing(at, field, ">=", *bound),
+            Filter::Below(field, bound) => self.comparing(at, field, "<", *bound),
             Filter::NamePrefix(_, _) | Filter::Contains(_, _) => ("true".to_string(), false),
         }
+    }
+
+    /// Whether the JSON at `field` is a number that compares with `bound`
+    /// by `operator`: jsonb compares numbers exactly, and a value of another
+    /// type in an order of its own, which is why its type is asked first.
+    fn comparing(&mut self, at: &str, field: FieldPath, operator: &str, bound: u64) -> (String, bool) {
+        let found = self.at(at, field);
+        let bound = self.bind(Bound::Json(Value::from(bound)));
+        (format!("COALESCE(jsonb_typeof({found}) = 'number' AND {found} {operator} {bound}, false)"), true)
     }
 
     /// `conditions` joined by `operator`, `empty` if there are none.

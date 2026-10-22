@@ -216,6 +216,10 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
 *   **A name prefix** (`Filter::NamePrefix`) compares a name as names are compared - regardless of
     case, accents and runs of whitespace -, for a search by what one has typed so far; **words in a
     text** (`Filter::Contains`) are compared the same way, for a search of what was written.
+*   **A number** is compared with a bound (`Filter::AtLeast`, `Filter::Below`, together
+    `Filter::within`) exactly, whatever its form - a negative one below every bound -, as `jsonb`
+    compares numbers; what is no number meets no comparison. A position in a range of a history is
+    one (issue [451](../issues/451-history-reader-judged-after-reading.md)).
 *   **Scope conditions** are made by the scope (`Scope::within`, `Scope::seen_from`), so that the
     rule lives with `Scope`.
 *   **A limit and a cursor**, in the order of the entities' ids. A page cut short hands out the

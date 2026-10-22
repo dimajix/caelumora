@@ -1,6 +1,6 @@
 # 451 — A page of a history judges what its reader sees only after reading it
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** low
 **Area:** Persistence
@@ -46,7 +46,22 @@ database answers it as a `WHERE` (`docs/STORAGE.md`); only no store does yet.
   as data that a store judges in memory or translates (`Filter`), so the form found for one should
   serve the other.
 
+## Steps
+
+1. **Comparisons in the filter.** `Filter::AtLeast` and `Filter::Below`, a field compared with a
+   number, judged in memory and translated by the Postgres store.
+2. **The model.** The form an item is judged in (`KeptItem`: its position, whether it is
+   published, the item as recorded), the fields of the history for them, and the rule of `seen_by`
+   as a filter of the reader (`Reader::seeing`), with a test that both decide alike.
+3. **Postgres.** The items kept in that form, and the reader's filter in the query of a page.
+
 ## History
 
 - **2026-10-22** — Issue created while finishing [04](04-postgres-state-store.md), whose
   Postgres store reads a history's items in batches and judges in Rust what each reader is given.
+- **2026-10-22** — Decided with the maintainer: an item is judged in a form of its own, with its
+  position and whether it is published - derived as it is written, as the item is -, so that both
+  are fields a filter names; the filter compares a field with a number, a general extension; the
+  model gives the rule as a filter of the reader, while `seen_by` stays the code that decides in
+  memory, a test holding both together - a filter decided per item would serialize every item,
+  and the nodes of a chain are no items.

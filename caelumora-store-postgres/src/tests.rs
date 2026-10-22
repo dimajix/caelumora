@@ -268,7 +268,7 @@ fn folded(filter: &Filter<FieldPath>) -> bool {
         Filter::NamePrefix(_, _) | Filter::Contains(_, _) => true,
         Filter::And(conditions) | Filter::Or(conditions) => conditions.iter().any(folded),
         Filter::Not(condition) | Filter::Any(_, condition) => folded(condition),
-        Filter::Eq(_, _) | Filter::In(_, _) | Filter::IsNull(_) => false,
+        Filter::Eq(_, _) | Filter::In(_, _) | Filter::IsNull(_) | Filter::AtLeast(_, _) | Filter::Below(_, _) => false,
     }
 }
 
@@ -286,6 +286,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         json!({ "a": "GlobalScope" }), json!({ "a": null }), json!({}), json!({ "a": true }), json!({ "a": { "b": "x" } }),
         json!({ "list": [{ "b": "x", "c": true }, { "b": "y" }] }), json!({ "list": "x" }), json!({ "list": ["x", "y"] }),
         json!({ "a": id }), json!({ "name": "Zoë Smith" }), json!({ "a": { "Session": "s" } }), json!({ "a": { "User": ["u1"] } }),
+        json!({ "a": 3 }), json!({ "a": 7 }), json!({ "a": 4.5 }), json!({ "a": -1 }), json!({ "list": [{ "b": 2 }, { "b": 9 }] }),
     ];
     for (at, body) in bodies.iter().enumerate() {
         storage.insert(Document { id: format!("{at:02}"), name: None, deleted: false, body: body.clone() }).await.unwrap();
@@ -311,6 +312,8 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         Filter::name_prefix(NAME, "zoe"), Filter::negated(Filter::name_prefix(NAME, "zoe")), Filter::all_of([Filter::name_prefix(NAME, "zoe"), x()]),
         Filter::contains(NAME, "smith"), Filter::any(LIST, Filter::name_prefix(B, "X")),
         Filter::negated(Filter::all_of([Filter::name_prefix(NAME, "zoe"), x()])), Filter::any(LIST, Filter::is_in(ITSELF, ["y", "z"])),
+        Filter::within(A, 3..5), Filter::within(A, 4..u64::MAX), Filter::Below(A, 0), Filter::negated(Filter::within(A, 3..5)),
+        Filter::any(LIST, Filter::within(B, 5..10)),
     ];
     for filter in filters {
         let scanned: Vec<String> = storage.scan(Some(&filter), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
