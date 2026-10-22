@@ -1,6 +1,6 @@
 # 447 — The seam of the stores is not fit for a database
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -40,9 +40,10 @@ With the maintainer, on 2026-10-22, while discussing 03:
   A storage that cannot read a document as stored, or fails, fails the scan; only a document that
   cannot be read as its type is left out of a list and logged. `find_by_name` asks the storage for
   the document of a name key (`named`), and then the policy.
-- **Names: a key made by the model.** `ScopedName::key()` is the one form a name is compared by -
-  its scope and its folded name -, and a `Document` carries that string. Every storage compares
-  strings; a database keeps them unique by a partial unique index (`WHERE NOT deleted`). The rule of
+- **Names: a key made by the model.** `ScopedName::key()` is the one form a name is compared by as
+  a single value - its scope and its folded name -, equal exactly where the names are. A `Document`
+  keeps its `ScopedName`; a storage that needs one value takes the key, so that a database keeps
+  names unique by a partial unique index (`WHERE NOT deleted`). The rule of
   issue [250](250-unique-names-per-name-space.md) stays as it is, for every kind. A key depends on
   how names are folded; should that change, the stored keys are stale, and stored data is deleted.
 - **Backends: opened asynchronously, with the secrets at hand.** `Persistence` gets an
@@ -58,7 +59,7 @@ with the columns `id`, `name_key`, `deleted` and `body` (`jsonb`); see 03.
 
 ## Steps
 
-1. **Names by key.** `ScopedName::key()`, `Document::name` a string, the storages compare keys.
+1. **Names by key.** `ScopedName::key()`, for a storage that needs a name as one value.
 2. **Lists by scan.** `DocumentStorage::scan` and `named` in place of `ids`; `CheckedStore` reads
    in batches and judges again; the filter by paths of fields.
 3. **Backends opened asynchronously.** `Persistence::open`, `RuntimeBuilder::from_config` `async`,
@@ -78,3 +79,9 @@ Each without a change of behaviour.
 
 - **2026-10-22** — Opened from the discussion of 03, 04 and 26 with the maintainer, as the
   preparation of a Postgres store behind the seam of 446.
+- **2026-10-22** — Step 1 done: `ScopedName::key()` - the scope's key (`Scope::key`, its variant
+  and ids) and the folded name, apart by a line break. A test holds that two scoped names have one
+  key exactly if they are equal. Decided with the maintainer, in place of a `Document` that carries
+  the key as its name: a string would lose what the name is; the memory and the JSON storage keep
+  comparing `ScopedName`s by `==`, and only a storage that needs one value - a column of a unique
+  index - takes the key.

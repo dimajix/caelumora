@@ -54,3 +54,18 @@ process is impossible while identity lives in a local directory.
   open here: a list pushed into the query (the trait has only ids and single reads), the key of a
   name for a unique index, and the secrets the connection needs, which the backends of the stores
   are not yet given (`RuntimeBuilder::from_config` makes them before the `SecretManager`).
+- **2026-10-22** — Decided with the maintainer: the store is a crate of its own whose plugin
+  registers the backend `postgres`, behind the seam of 446 as prepared by
+  [447](447-store-seam-not-fit-for-a-database.md). **One table per kind**, `entity_<kind>` - the
+  prefix keeps a kind clear of the words of SQL (`user`, `group`) -, each with the columns `id`
+  (`text`, ordered `COLLATE "C"`), `name_key`, `deleted` and `body` (`jsonb`), a partial unique
+  index on `name_key WHERE NOT deleted` and a GIN index on `body`; a subtype within a kind - a
+  personality internal or external, a group a team or a session's participants - is a field of the
+  document, not a table. The tables of the core's kinds are made by the migrations, those of a
+  plugin's kinds when the backend is opened; changes to their common shape are migrated in code,
+  over every table, tracked in `kinds(name, table, schema_version)`. Names stay unique as 250
+  decided, for every kind; the column `name_key` holds the key the model makes of a document's
+  name (`ScopedName::key`). Lists are scanned in batches - a storage may hand out more than a
+  filter asks, the store judges again -, and the connection is named by a secret, resolved when
+  the backend is opened at start; one pool per secret, shared by every backend of the plugin, the
+  user backend of 26 among them.

@@ -30,7 +30,10 @@ pub struct Document {
     pub id: String,
     /// Its name, if its kind keeps names unique in their scope
     /// (`Stored::unique_name`): no other document of the kind that is not
-    /// deleted may have it.
+    /// deleted may have it. A storage compares names by `==`, or - where it
+    /// needs one value, as a column of a unique index - by their keys
+    /// (`ScopedName::key`, issue 447), which are equal exactly where the
+    /// names are.
     pub name: Option<ScopedName>,
     pub deleted: bool,
     pub body: Value,

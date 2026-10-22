@@ -122,7 +122,9 @@ a session's name is not unique.
     under the kind's lock in the JSON files, by a unique index in a database -, so that it holds
     against every writer of the storage. The store hands the storage the name with the document
     (`Document`); a storage that keeps bodies alone reads it back with what it was given when it
-    was opened (`DocumentOf`). The store suite states the rule for every kind.
+    was opened (`DocumentOf`). Where a storage needs a name as one value - a column of a unique
+    index -, it takes its key: its scope and its folded name in one text (`ScopedName::key`, issue
+    447), equal exactly where the names are. The store suite states the rule for every kind.
 
 **Values with rules.** A text whose content has rules - a `Name`, a `Language`, the free texts
 people write for others (`Text<R>`) - has a type made only through its constructor and checked again

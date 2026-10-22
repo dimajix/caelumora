@@ -65,6 +65,19 @@ impl Scope {
         }
     }
 
+    /// The scope as one text that tells it from every other (issue 447): its
+    /// variant and its ids - what the key of a name in it begins with
+    /// (`ScopedName::key`).
+    pub(crate) fn key(&self) -> String {
+        match self {
+            Scope::ChannelScope { session_id, channel_id } => format!("channel:{session_id}:{channel_id}"),
+            Scope::SessionScope { session_id } => format!("session:{session_id}"),
+            Scope::UserScope { user_id } => format!("user:{user_id}"),
+            Scope::GroupScope { group_id } => format!("group:{group_id}"),
+            Scope::GlobalScope => "global".to_string(),
+        }
+    }
+
     /// How far in it lies: what a lookup prefers, the innermost first.
     fn depth(&self) -> u8 {
         match self {
