@@ -5,9 +5,6 @@ use crate::role::Roles;
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
 use crate::security::{AllowAllPolicy, Memberships, OwnershipPolicy, AccessPolicy};
-use crate::store::{StoreBackend, StoreError};
-use crate::store::json::JsonFileStore;
-use crate::store::memory::MemoryStore;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,8 +21,6 @@ pub enum ConfigError {
     Io(#[from] Error),
     #[error("failed to parse config: {0}")]
     Parse(#[from] serde_saphyr::Error),
-    #[error(transparent)]
-    Store(#[from] StoreError),
     /// Sections that do not fit together - a role naming a compartment that
     /// is not configured, say.
     #[error("invalid configuration: {0}")]
@@ -34,45 +29,22 @@ pub enum ConfigError {
 
 pub type ConfigResult<T> = Result<T, ConfigError>;
 
-/// Where a store keeps its data.
-#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum PersistenceBackend {
-    /// In memory, gone when the process ends. The default.
-    #[default]
-    Memory,
-    /// One JSON file per document below `path` (`JsonFileStore`); a state's
-    /// journal is folded into its snapshot once it is `journal_floor` bytes
-    /// large and larger than the snapshot (issue 193), 64 KiB unless named.
-    Json {
-        path: PathBuf,
-        #[serde(default)]
-        journal_floor: Option<u64>,
-    },
-}
-
-impl PersistenceBackend {
-    /// Opens the store this backend describes. Both kinds of store serve
-    /// as entity and as state store; the caller picks the face it needs.
-    fn open(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
-        Ok(match self {
-            Self::Memory => Arc::new(MemoryStore::with_policies(access_policy, confidentiality)).into(),
-            Self::Json { path, journal_floor } => {
-                let store = JsonFileStore::new(path, access_policy, confidentiality)?;
-                Arc::new(match journal_floor {
-                    Some(bytes) => store.with_journal_floor(*bytes),
-                    None => store,
-                }).into()
-            }
-        })
-    }
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
+/// Where the stores keep their data (issue 446): the backend of the
+/// entities and the components, and that of the states, each a backend
+/// (`dyn Persistence`) - the core's `memory` and `json`, or a plugin's.
+#[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct PersistenceConfig {
-    pub entity_store: PersistenceBackend,
-    pub state_store: PersistenceBackend,
+    pub entity_store: BackendConfig,
+    pub state_store: BackendConfig,
+}
+
+/// Without a `persistence` section, or a store of it, a store is kept in
+/// memory, gone when the process ends.
+impl Default for PersistenceConfig {
+    fn default() -> Self {
+        Self { entity_store: BackendConfig::new("memory", Value::Null), state_store: BackendConfig::new("memory", Value::Null) }
+    }
 }
 
 /// A backend of a service (issue 324): its `type`, by which the runtime
@@ -402,24 +374,6 @@ impl AppConfig {
             None => rules,
         })
     }
-
-    /// The store of the entities and of the preconfigured components, as
-    /// configured under `persistence.entity_store` (issue 323).
-    ///
-    /// # Errors
-    /// `ConfigError::Store` if the store cannot be opened.
-    pub fn open_entity_store(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
-        self.persistence.entity_store.open(access_policy, confidentiality)
-    }
-
-    /// The store of the states and their histories (issue 379), as
-    /// configured under `persistence.state_store`.
-    ///
-    /// # Errors
-    /// `ConfigError::Store` if the store cannot be opened.
-    pub fn open_state_store(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
-        self.persistence.state_store.open(access_policy, confidentiality)
-    }
 }
 
 #[cfg(test)]
@@ -438,18 +392,15 @@ persistence:
     type: memory
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.persistence.entity_store, PersistenceBackend::Json { path: PathBuf::from("local/entity_store"), journal_floor: None });
-        assert_eq!(config.persistence.state_store, PersistenceBackend::Memory);
-
-        let with_floor = AppConfig::from_yaml("persistence:\n  state_store:\n    type: json\n    path: \"s\"\n    journal_floor: 1024\n").unwrap();
-        assert_eq!(with_floor.persistence.state_store, PersistenceBackend::Json { path: PathBuf::from("s"), journal_floor: Some(1024) });
+        assert_eq!(config.persistence.entity_store, BackendConfig::new("json", serde_json::json!({ "path": "local/entity_store" })));
+        assert_eq!(config.persistence.state_store, BackendConfig::new("memory", Value::Null));
     }
 
     #[test]
     fn a_missing_section_takes_its_default() {
         for config in [AppConfig::default(), AppConfig::from_yaml("{}").unwrap(), AppConfig::from_yaml("persistence: {}").unwrap()] {
-            assert_eq!(config.persistence.entity_store, PersistenceBackend::Memory);
-            assert_eq!(config.persistence.state_store, PersistenceBackend::Memory);
+            assert_eq!(config.persistence.entity_store, BackendConfig::new("memory", Value::Null));
+            assert_eq!(config.persistence.state_store, BackendConfig::new("memory", Value::Null));
             assert_eq!(config.secrets.providers, SecretsConfig::default().providers);
             assert!(config.users.providers.is_empty(), "no user provider unless configured");
         }
@@ -475,14 +426,11 @@ persistence:
     fn an_unknown_key_is_an_error_naming_it() {
         for yaml in [
             "persistence:\n  entity_stor:\n    type: memory\n",
-            "persistence:\n  entity_store:\n    type: json\n    pth: local\n",
             "auth:\n  token_lifetime: 60\n",
         ] {
             let message = AppConfig::from_yaml(yaml).expect_err(yaml).to_string();
             assert!(message.contains("unknown field"), "{yaml:?} gave: {message}");
         }
-        let message = AppConfig::from_yaml("persistence:\n  state_store:\n    type: file\n").expect_err("unknown backend").to_string();
-        assert!(message.contains("unknown variant"), "gave: {message}");
         // A section it does not know is a plugin's, refused by the runtime
         // if no plugin claims it.
         let config = AppConfig::from_yaml("secret:\n  providers: []\n").unwrap();
@@ -493,7 +441,7 @@ persistence:
     fn the_example_config_loads() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml");
         let config = AppConfig::load(path).expect("examples/config.yaml is a valid configuration");
-        assert!(matches!(config.persistence.entity_store, PersistenceBackend::Json { .. }));
+        assert_eq!(config.persistence.entity_store.kind, "json");
         assert_eq!(config.seed, [PathBuf::from("examples/seed.yaml")], "the example seeds the demo data");
     }
 

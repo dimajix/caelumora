@@ -1,24 +1,21 @@
-use crate::agent::{AgentChannelState, AgentId, AgentState};
-use crate::channel::{ChannelId, ChannelState};
-use crate::component::StoredComponents;
-use crate::confidentiality::ConfidentialityPolicy;
-use crate::user::{UserChannelState, UserId};
-use crate::removal::{Deletable, Removal};
-use crate::security::{ActionType, AccessPolicy};
-use crate::store::access::{name_free, Access};
-use crate::store::transcript::load_named_by_turn;
-use crate::store::query::{Field, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
-use crate::type_map::TypeMap;
-use crate::value::name::ScopedName;
+//! The JSON store (issue 446): a backend of the stores that keeps every
+//! document and every state in files below a directory (`JsonFileStore`),
+//! registered as the backend `json` by its plugin (`JsonStorePlugin`).
+
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_model::channel::{ChannelId, ChannelState};
+use caelumora_model::user::{UserChannelState, UserId};
+use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
+use caelumora_model::store::transcript::load_named_by_turn;
+use caelumora_model::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, StoreResult};
+use caelumora_model::value::name::ScopedName;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
-use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt::{self, Debug, Display};
 use std::fs;
-use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 use tokio::io::AsyncWriteExt;
@@ -27,12 +24,38 @@ use tracing::{debug, info, warn};
 
 mod chains;
 mod histories;
+pub mod plugin;
 mod transcripts;
 
 /// A journal is folded into its snapshot once it is at least as large as
 /// the snapshot, and at least this large (issue 193): small states are not
 /// written whole at every other put. `journal_floor` of the configuration.
 pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
+
+/// The parameters of the backend `json` (issue 446): the directory the
+/// files lie below, and the size from which a state's journal is folded
+/// into its snapshot, `DEFAULT_JOURNAL_FLOOR` unless named.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonStoreConfig {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub journal_floor: Option<u64>,
+}
+
+impl JsonStoreConfig {
+    /// The store of the files this configuration names.
+    ///
+    /// # Errors
+    /// As `JsonFileStore::new`.
+    pub fn store(&self) -> StoreResult<JsonFileStore> {
+        let store = JsonFileStore::new(&self.path)?;
+        Ok(match self.journal_floor {
+            Some(bytes) => store.with_journal_floor(bytes),
+            None => store,
+        })
+    }
+}
 
 /// One JSON file per document (`EntityStore`), and per state a snapshot
 /// and a journal (`StateStore`, issue 193): the state as it was last written
@@ -49,40 +72,21 @@ pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
 pub struct JsonFileStore {
     root: PathBuf,
     journal_floor: u64,
-    policies: Policies,
-    /// The store of every kind asked for, by its type.
-    kinds: RwLock<TypeMap>,
-    components: JsonEntityStore<StoredComponents>,
+    /// The storage of every kind asked for, by its name.
+    documents: RwLock<HashMap<EntityKind, Arc<JsonDocuments>>>,
 }
 
 impl JsonFileStore {
-    /// A store of the files under `root` that asks `access_policy` about
-    /// every access to an entity, and `confidentiality` whether the caller
-    /// is cleared for what is reached by clearance.
-    pub fn new(root: impl Into<PathBuf>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> StoreResult<Self> {
-        let root = root.into();
-        info!("Creating JSON file store at {:?}", root);
-        let policies = (access_policy, confidentiality);
-        let store = Self {
-            journal_floor: DEFAULT_JOURNAL_FLOOR,
-            components: JsonEntityStore::new(&root, &policies)?,
-            policies,
-            kinds: Default::default(),
-            root,
-        };
-        store.ensure_layout()?;
-        // The directories of the core's kinds, made now, so that a store
-        // that cannot keep them is not opened at all.
-        EntityStores::open(&store)?;
-        Ok(store)
-    }
-
-    /// The stores of the core's entities, one per kind (issue 323).
+    /// A store of the files under `root`.
     ///
     /// # Errors
-    /// If the directory of one cannot be made.
-    pub fn entity_stores(&self) -> StoreResult<EntityStores> {
-        EntityStores::open(self)
+    /// If the directories of the states cannot be made.
+    pub fn new(root: impl Into<PathBuf>) -> StoreResult<Self> {
+        let root = root.into();
+        info!("Creating JSON file store at {:?}", root);
+        let store = Self { journal_floor: DEFAULT_JOURNAL_FLOOR, documents: Default::default(), root };
+        store.ensure_layout()?;
+        Ok(store)
     }
 
     /// With a journal folded into its snapshot once it is `bytes` large, if
@@ -196,8 +200,7 @@ async fn read_json_opt<T: DeserializeOwned>(path: &Path) -> StoreResult<Option<T
 /// The documents in `dir` - every `*.json` file -, each with its key, the
 /// file's name without `.json`, and its path; temporary files of writes in
 /// progress, or left behind by a crash, are not among them. Only the
-/// directory is read: a document is read when it is its turn
-/// (`read_meeting`).
+/// directory is read: a document is read when it is its turn.
 async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(String, PathBuf)>> {
     let mut documents = Vec::new();
     let mut entries = tokio::fs::read_dir(dir).await.map_err(to_backend_error)?;
@@ -219,31 +222,6 @@ async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(String, PathBuf)>> {
         documents.push((key, path));
     }
     Ok(documents)
-}
-
-/// The document at `path` as a `T`, if it meets `filter` - judged on it as
-/// JSON, before it is read as its type. `None` as well if it is gone,
-/// deleted since its directory was read, or cannot be read, which is
-/// logged: one broken document does not break a list.
-async fn read_meeting<T: DeserializeOwned, F: Field>(path: PathBuf, filter: Option<&Filter<F>>) -> StoreResult<Option<T>> {
-    let document = match read_json_opt::<Value>(&path).await {
-        Ok(Some(document)) => document,
-        Ok(None) => return Ok(None),
-        Err(err) => {
-            warn!("Failed to read JSON file {:?}: {}", path, err);
-            return Ok(None);
-        }
-    };
-    if filter.is_some_and(|filter| !filter.matches(&document)) {
-        return Ok(None);
-    }
-    match serde_json::from_value::<T>(document) {
-        Ok(value) => Ok(Some(value)),
-        Err(err) => {
-            warn!("Failed to read the document {:?}: {}", path, err);
-            Ok(None)
-        }
-    }
 }
 
 async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
@@ -347,232 +325,160 @@ fn sanitize_file_component(value: &str) -> String {
         .collect()
 }
 
-use crate::security::SecurityContext;
 use serde_json::Value;
 use std::io::ErrorKind;
 use tokio::fs::OpenOptions;
 use uuid::Uuid;
 
-/// Refuses `value` if another document in `dir` has its name (issue 250).
-async fn name_free_in<T: Stored + DeserializeOwned>(dir: &Path, value: &T) -> StoreResult<()> {
-    for (_, path) in documents_in_dir(dir).await? {
-        if let Some(other) = read_meeting::<T, NoField>(path, None).await? {
-            name_free(value, [&other])?;
+/// Opens a kind in the directory of its name, `entities/<kind>`.
+impl Persistence for JsonFileStore {
+    fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
+        let mut all = self.documents.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(storage) = all.get(&kind) {
+            return Ok(Arc::<JsonDocuments>::clone(storage));
         }
-    }
-    Ok(())
-}
-
-/// Opens a kind in the directory of its name.
-impl EntityStoreFactory for JsonFileStore {
-    type Error = StoreError;
-
-    fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
-        let mut kinds = self.kinds.write().unwrap_or_else(PoisonError::into_inner);
-        kinds.get_or_try_insert(|| Ok(Arc::new(JsonEntityStore::<T>::new(&self.root, &self.policies)?) as Arc<dyn EntityStore<T>>))
+        let storage = Arc::new(JsonDocuments::new(&self.root, kind, document_of)?);
+        all.insert(kind, Arc::clone(&storage));
+        Ok(storage)
     }
 }
 
-/// The entities of one kind as JSON files (issue 323), one per document in
-/// the kind's directory, `entities/<kind>`, named by its id; checked as
-/// every kind is (`store::access`). A write of a kind whose names are
-/// unique holds the kind's lock from reading what is stored to writing,
-/// and checks the others of the kind.
-pub struct JsonEntityStore<T> {
+/// The documents of one kind as JSON files (issue 446), one per document in
+/// the kind's directory, `entities/<kind>`, named by its id. A write of a
+/// document with a name holds the kind's lock from reading the others to
+/// writing it, so that no two take one name.
+struct JsonDocuments {
+    kind: EntityKind,
     dir: PathBuf,
-    access_policy: Arc<dyn AccessPolicy>,
-    /// Who is cleared for what is reached by clearance (issue 322).
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// What a document read is told by: its id, its name, its mark.
+    document_of: DocumentOf,
     /// Held by the writes that may take a name, so that no two take one:
     /// within this process, which is the only one that writes the files.
     names: Mutex<()>,
-    kind: PhantomData<fn() -> T>,
 }
 
-impl<T: Stored> Debug for JsonEntityStore<T> {
+impl Debug for JsonDocuments {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("JsonEntityStore").field("kind", &T::KIND).field("dir", &self.dir).finish_non_exhaustive()
+        f.debug_struct("JsonDocuments").field("kind", &self.kind).field("dir", &self.dir).finish_non_exhaustive()
     }
 }
 
-impl<T: Stored> JsonEntityStore<T> {
-    /// The store of the kind's documents under `root`, asking the
-    /// `AccessPolicy` and the `ConfidentialityPolicy` of `policies`.
+impl JsonDocuments {
+    /// The storage of the documents of `kind` under `root`.
     ///
     /// # Errors
     /// If its directory cannot be made.
-    fn new(root: &Path, policies: &Policies) -> StoreResult<Self> {
-        let dir = root.join("entities").join(T::KIND.name());
+    fn new(root: &Path, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Self> {
+        let dir = root.join("entities").join(kind.name());
         fs::create_dir_all(&dir).map_err(to_backend_error)?;
-        Ok(Self { dir, access_policy: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), names: Mutex::new(()), kind: PhantomData })
-    }
-
-    fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(self.access_policy.as_ref(), self.confidentiality.as_ref(), ctx)
+        Ok(Self { kind, dir, document_of, names: Mutex::new(()) })
     }
 
     /// Where the document of `id` is.
-    fn path(&self, id: &T::Id) -> PathBuf {
-        self.dir.join(format!("{}.json", sanitize_file_component(&id.to_string())))
+    fn path(&self, id: &str) -> PathBuf {
+        self.dir.join(format!("{}.json", sanitize_file_component(id)))
     }
 
-    /// The kind's lock for names, if `value` has one to take.
-    async fn names_lock(&self, value: &T) -> Option<MutexGuard<'_, ()>> {
-        match value.unique_name() {
+    /// The kind's lock for names, if `document` has one to take.
+    async fn names_lock(&self, document: &Document) -> Option<MutexGuard<'_, ()>> {
+        match named(document) {
             Some(_) => Some(self.names.lock().await),
             None => None,
         }
     }
 
-    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
-        let id = value.id();
-        let path = self.path(&id);
-        let _names = self.names_lock(value).await;
-        self.access(ctx).create(value).await?;
+    /// The document at `path`; `None` if there is none, or it cannot be read
+    /// or told, which is logged.
+    async fn read(&self, path: &Path) -> Option<Document> {
+        let body = match read_json_opt::<Value>(path).await {
+            Ok(body) => body?,
+            Err(err) => {
+                warn!("Failed to read JSON file {:?}: {}", path, err);
+                return None;
+            }
+        };
+        match (self.document_of)(body) {
+            Ok(document) => Some(document),
+            Err(err) => {
+                warn!("Failed to read the document {:?}: {}", path, err);
+                None
+            }
+        }
+    }
+
+    /// Refuses `document` if another document of the kind that is not
+    /// deleted has its name (issue 250). Called under the kind's lock.
+    async fn name_free(&self, document: &Document) -> StoreResult<()> {
+        let Some(name) = named(document) else { return Ok(()) };
+        for (_, path) in documents_in_dir(&self.dir).await? {
+            if let Some(other) = self.read(&path).await {
+                if other.id != document.id && named(&other) == Some(name) {
+                    return Err(StoreError::NameTaken { entity: self.kind.name() });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The name `document` takes: its name, unless it is deleted.
+fn named(document: &Document) -> Option<&ScopedName> {
+    document.name.as_ref().filter(|_| !document.deleted)
+}
+
+#[async_trait]
+impl DocumentStorage for JsonDocuments {
+    async fn get(&self, id: &str) -> StoreResult<Option<Value>> {
+        read_json_opt(&self.path(id)).await
+    }
+
+    async fn ids(&self) -> StoreResult<Vec<String>> {
+        Ok(documents_in_dir(&self.dir).await?.into_iter().map(|(id, _)| id).collect())
+    }
+
+    async fn insert(&self, document: Document) -> StoreResult<()> {
+        let path = self.path(&document.id);
+        let _names = self.names_lock(&document).await;
         if tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
-            return Err(StoreError::Conflict(format!("{} {} already exists", T::KIND, id)));
+            return Err(StoreError::Conflict(format!("{} {} already exists", self.kind, document.id)));
         }
-        name_free_in(&self.dir, value).await?;
-        debug!("Writing {} {} to {}", T::KIND, id, path.display());
-        write_json_atomic(&path, value).await
+        self.name_free(&document).await?;
+        debug!("Writing {} {} to {}", self.kind, document.id, path.display());
+        write_json_atomic(&path, &document.body).await
     }
 
-    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        let found = read_json_opt::<T>(&self.path(&id)).await?;
-        self.access(ctx).read(found, id.to_string()).await
+    /// Reads the others of the kind only if `document` takes another name
+    /// than it has as stored: whatever else changes takes nobody's name.
+    async fn replace(&self, document: Document) -> StoreResult<()> {
+        let path = self.path(&document.id);
+        let _names = self.names_lock(&document).await;
+        if named(&document).is_some() {
+            let stored = self.read(&path).await;
+            if stored.as_ref().and_then(named) != named(&document) {
+                self.name_free(&document).await?;
+            }
+        }
+        debug!("Writing {} {} to {}", self.kind, document.id, path.display());
+        write_json_atomic(&path, &document.body).await
     }
 
-    /// Reads the others of the kind only if `value` is named otherwise than
-    /// it is stored: whatever else changes takes nobody's name.
-    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
-        let id = value.id();
-        let path = self.path(&id);
-        let _names = self.names_lock(value).await;
-        let stored = read_json_opt::<T>(&path).await?;
-        self.access(ctx).change(stored.as_ref(), value, id.to_string()).await?;
-        if stored.is_some_and(|stored| stored.unique_name() != value.unique_name()) {
-            name_free_in(&self.dir, value).await?;
-        }
-        debug!("Writing {} {} to {}", T::KIND, id, path.display());
-        write_json_atomic(&path, value).await
-    }
-
-    /// Removes the document for good: deleting a kind that is not marked.
-    async fn remove(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        let path = self.path(&id);
-        let stored = read_json_opt::<T>(&path).await?;
-        if !self.access(ctx).delete(stored.as_ref()).await? {
-            return Ok(false);
-        }
-        debug!("Deleting {} at {}", T::KIND, path.display());
+    async fn remove(&self, id: &str) -> StoreResult<bool> {
+        let path = self.path(id);
+        debug!("Deleting {} at {}", self.kind, path.display());
         delete_if_exists(&path).await
     }
 
-    /// The page `query` asks for, among what is deleted if `deleted`.
-    async fn page(&self, ctx: &SecurityContext, query: &Query<T::Field>, deleted: bool) -> StoreResult<Page<T>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::List(T::KIND)).await?;
-        let filter = query.filter.as_ref();
-        access.page(documents_in_dir(&self.dir).await?, query, deleted, |path| read_meeting::<T, T::Field>(path, filter)).await
-    }
-}
-
-#[async_trait]
-impl<T: Deletable> EntityStore<T> for JsonEntityStore<T> {
-    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
-        JsonEntityStore::create(self, ctx, value).await
-    }
-
-    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        JsonEntityStore::get(self, ctx, id).await
-    }
-
-    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
-        JsonEntityStore::update(self, ctx, value).await
-    }
-
-    /// Marks the document deleted, by the caller and now (issue 164),
-    /// rewriting it where it is.
-    async fn delete(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        let path = self.path(&id);
-        let stored = read_json_opt::<T>(&path).await?;
-        if !self.access(ctx).delete(stored.as_ref()).await? {
+    /// Reads the document right before: restored meanwhile, it stays. A file
+    /// cannot be removed on that condition atomically; whoever restores and
+    /// purges at once serialises them (`SessionManager`).
+    async fn remove_deleted(&self, id: &str) -> StoreResult<bool> {
+        let path = self.path(id);
+        let Some(body) = read_json_opt::<Value>(&path).await? else { return Ok(false) };
+        if !(self.document_of)(body)?.deleted {
             return Ok(false);
         }
-        let Some(mut marked) = stored else { return Ok(false) };
-        marked.set_deleted(Some(Removal::now(ctx.caller_id)));
-        debug!("Marking {} at {} deleted", T::KIND, path.display());
-        write_json_atomic(&path, &marked).await?;
-        Ok(true)
-    }
-
-    async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
-        self.page(ctx, query, false).await
-    }
-
-    async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        let path = self.path(&id);
-        // Taken before reading: what is restored may take a name.
-        let _names = self.names.lock().await;
-        let stored = read_json_opt::<T>(&path).await?;
-        let mut restored = self.access(ctx).restore(stored, id.to_string()).await?;
-        restored.set_deleted(None);
-        name_free_in(&self.dir, &restored).await?;
-        debug!("Restoring {} at {}", T::KIND, path.display());
-        write_json_atomic(&path, &restored).await?;
-        Ok(restored)
-    }
-
-    async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        let path = self.path(&id);
-        let stored = read_json_opt::<T>(&path).await?;
-        if !self.access(ctx).purge(stored.as_ref()).await? {
-            return Ok(false);
-        }
-        // Read once more right before: restored while the purge was asked
-        // about, it stays. A file cannot be removed on that condition
-        // atomically; whoever restores and purges at once serialises them
-        // (`SessionManager`).
-        if read_json_opt::<T>(&path).await?.is_none_or(|value| value.deleted().is_none()) {
-            return Ok(false);
-        }
-        debug!("Purging {} at {}", T::KIND, path.display());
+        debug!("Purging {} at {}", self.kind, path.display());
         delete_if_exists(&path).await
-    }
-
-    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        let found = read_json_opt::<T>(&self.path(&id)).await?;
-        self.access(ctx).read_deleted(found, id.to_string()).await
-    }
-
-    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
-        self.page(ctx, query, true).await
-    }
-
-    async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T> {
-        let all = self.page(ctx, &Query::all(), false).await?.items;
-        all.into_iter().find(|value| value.unique_name().as_ref() == Some(name))
-            .ok_or_else(|| StoreError::NotFound { entity: T::KIND.name(), id: name.to_string() })
-    }
-}
-
-/// Preconfigured components, kept like the entities (issue 164).
-#[async_trait]
-impl ComponentStore for JsonFileStore {
-    async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.components.create(ctx, value).await
-    }
-    async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
-        self.components.get(ctx, id.to_string()).await
-    }
-    async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.components.update(ctx, value).await
-    }
-    async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.components.remove(ctx, id.to_string()).await
-    }
-    async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
-        self.components.page(ctx, query, false).await
     }
 }
 
@@ -742,38 +648,53 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::chain::Position;
-    use crate::turn::TurnState;
-    use crate::session::{Session, SessionId};
+    use caelumora_model::chain::Position;
+    use caelumora_model::turn::TurnState;
+    use caelumora_model::session::{Session, SessionId};
     use super::*;
     use chrono::Utc;
-    use crate::security::SecurityAttributes;
-    use crate::store::suite;
+    use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::store::suite;
+    use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreBackend, Stored};
+    use caelumora_model::store::query::Query;
+    use caelumora_model::removal::Deletable;
+    use caelumora_model::security::{AccessPolicy, SecurityContext};
     use tempfile::tempdir;
     use uuid::Uuid;
-    use crate::confidentiality::{ConfidentialityRules, Classification};
-    use crate::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
+    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
 
     fn store(dir: &Path) -> JsonFileStore {
-        JsonFileStore::new(dir, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap()
+        JsonFileStore::new(dir).unwrap()
     }
 
-    /// The store of the kind `T` in the files of `store`, with what only it
-    /// has: where its documents lie.
-    fn of_kind<T: Stored>(store: &JsonFileStore) -> JsonEntityStore<T> {
-        JsonEntityStore::new(&store.root, &store.policies).unwrap()
+    /// The stores of the files under `dir`, checked by `policy`.
+    fn checked(dir: &Path, policy: Arc<dyn AccessPolicy>) -> StoreBackend {
+        StoreBackend::new(Arc::new(store(dir)), policy, Arc::new(ConfidentialityRules::default()))
+    }
+
+    /// The store of the kind `T` in the files under `dir`, which permits
+    /// everything.
+    fn of_kind<T: Deletable>(dir: &Path) -> Arc<dyn EntityStore<T>> {
+        checked(dir, Arc::new(AllowAllPolicy::new())).entity_store().unwrap()
+    }
+
+    /// Where the document `id` of the kind `T` lies in the files under
+    /// `dir`.
+    fn path_of<T: Stored>(dir: &Path, id: &T::Id) -> PathBuf {
+        dir.join("entities").join(T::KIND.name()).join(format!("{id}.json"))
     }
 
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
         let dir = tempdir().unwrap();
-        suite::entity_store_behaves(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
+        suite::entity_store_behaves(&checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn answers_queries() {
         let dir = tempdir().unwrap();
-        let store = store(dir.path());
+        let store = checked(dir.path(), Arc::new(AllowAllPolicy::new()));
         suite::queries_behave(&store.entity_stores().unwrap()).await;
         suite::queries_reach_parts(store.entity_store::<suite::Folder>().unwrap().as_ref()).await;
     }
@@ -809,28 +730,27 @@ mod tests {
     #[tokio::test]
     async fn behaves_as_a_component_store() {
         let dir = tempdir().unwrap();
-        suite::component_store_behaves(&store(dir.path())).await;
+        suite::component_store_behaves(checked(dir.path(), Arc::new(AllowAllPolicy::new())).component_store().unwrap().as_ref()).await;
     }
 
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
         let dir = tempdir().unwrap();
-        suite::deleting_marks(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
+        suite::deleting_marks(&checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn keeps_names_unique() {
         let dir = tempdir().unwrap();
-        suite::names_are_unique(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
+        suite::names_are_unique(&checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap()).await;
         let dir = tempdir().unwrap();
-        let owners = JsonFileStore::new(dir.path(), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
-        suite::names_are_unique_beyond_what_is_read(&Arc::new(owners).entity_stores().unwrap()).await;
+        suite::names_are_unique_beyond_what_is_read(&checked(dir.path(), Arc::new(OwnershipPolicy::new())).entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn a_document_stored_before_marks_existed_loads_and_one_not_deleted_is_written_without() {
         let dir = tempdir().unwrap();
-        let sessions = of_kind::<Session>(&store(dir.path()));
+        let sessions = of_kind::<Session>(dir.path());
         let system = SecurityContext::system();
         let session = Session {
             summary: None, briefing: None, language: None, time_zone: None,
@@ -841,7 +761,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(), deleted: None,
         };
         sessions.create(&system, &session).await.unwrap();
-        let text = tokio::fs::read_to_string(sessions.path(&session.id)).await.unwrap();
+        let text = tokio::fs::read_to_string(path_of::<Session>(dir.path(), &session.id)).await.unwrap();
         assert!(!text.contains("deleted"), "{text}");
         assert!(sessions.get(&system, session.id).await.unwrap().deleted.is_none());
     }
@@ -850,9 +770,9 @@ mod tests {
     async fn concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files() {
         // Entities may be written at the same time - by two requests that
         // change one (issue 62); a state has one writer (issue 215).
-        use crate::agent::{Personality, PersonalityId};
+        use caelumora_model::agent::{Personality, PersonalityId};
         let dir = tempdir().unwrap();
-        let personalities = Arc::new(of_kind::<Personality>(&store(dir.path())));
+        let personalities = of_kind::<Personality>(dir.path());
         let system = SecurityContext::system();
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
@@ -872,7 +792,7 @@ mod tests {
             result.unwrap().expect("no writer loses its temporary file to another");
         }
 
-        let path = personalities.path(&personality.id);
+        let path = path_of::<Personality>(dir.path(), &personality.id);
         let names: Vec<String> = std::fs::read_dir(path.parent().unwrap()).unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
@@ -885,10 +805,10 @@ mod tests {
     async fn of_concurrent_writes_under_one_name_one_takes_it() {
         // Checked and written under the kind's lock (issue 250): nothing
         // writes between another's check and its write.
-        use crate::actor::ActorId;
-        use crate::agent::{Agent, Personality, PersonalityId};
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::agent::{Agent, Personality, PersonalityId};
         let dir = tempdir().unwrap();
-        let agents = Arc::new(of_kind::<Agent>(&store(dir.path())));
+        let agents = of_kind::<Agent>(dir.path());
         let system = SecurityContext::system();
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
@@ -916,12 +836,11 @@ mod tests {
 
     #[tokio::test]
     async fn deleting_a_session_marks_its_file_and_purging_removes_it_leaving_its_state_to_the_state_store() {
-        use crate::channel::{Channel, ChannelId};
+        use caelumora_model::channel::{Channel, ChannelId};
 
         let dir = tempdir().unwrap();
-        let access_policy = Arc::new(AllowAllPolicy::new());
-        let store = JsonFileStore::new(dir.path(), access_policy, Arc::new(ConfidentialityRules::default())).unwrap();
-        let sessions = of_kind::<Session>(&store);
+        let store = store(dir.path());
+        let sessions = of_kind::<Session>(dir.path());
         let ctx = SecurityContext::default();
 
         let session_id = SessionId(Uuid::new_v4());
@@ -966,14 +885,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(sessions.path(&session_id).exists());
+        assert!(path_of::<Session>(dir.path(), &session_id).exists());
         assert!(store.agent_channel_state_dir(channel_id).exists());
 
         assert!(sessions.delete(&ctx, session_id).await.unwrap());
-        assert!(sessions.path(&session_id).exists(), "deleting marks the file");
+        assert!(path_of::<Session>(dir.path(), &session_id).exists(), "deleting marks the file");
         assert!(store.agent_channel_state_dir(channel_id).exists(), "the state is the state store's");
         assert!(sessions.purge(&ctx, session_id).await.unwrap());
-        assert!(!sessions.path(&session_id).exists(), "purging removes it");
+        assert!(!path_of::<Session>(dir.path(), &session_id).exists(), "purging removes it");
 
         store.put_channel_state(channel_id, &mut ChannelState::new(channel_id)).await.unwrap();
         store.delete_channel_state(channel_id).await.unwrap();
@@ -991,9 +910,7 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_skips_corrupted_files() {
         let dir = tempdir().unwrap();
-        let access_policy = Arc::new(AllowAllPolicy::new());
-        let store = JsonFileStore::new(dir.path(), access_policy, Arc::new(ConfidentialityRules::default())).unwrap();
-        let sessions = of_kind::<Session>(&store);
+        let sessions = of_kind::<Session>(dir.path());
         let ctx = SecurityContext::default();
 
         let s1 = Session {
@@ -1014,7 +931,7 @@ mod tests {
         sessions.create(&ctx, &s1).await.unwrap();
 
         // Create a corrupted JSON file
-        let corrupted_path = sessions.dir.join("corrupted.json");
+        let corrupted_path = dir.path().join("entities/session/corrupted.json");
         fs::write(corrupted_path, "invalid json").unwrap();
 
         // This should NOT fail, it should return s1 and log a warning
@@ -1023,13 +940,13 @@ mod tests {
         assert_eq!(sessions[0].id, s1.id);
     }
 
-    use crate::history::Reader;
-    use crate::message::tests::{id, make_message};
-    use crate::note::{NoteChange, NoteId};
-    use crate::actor::ActorState;
-    use crate::channel::moderation_components;
-    use crate::value::name::Name;
-    use crate::value::text::Description;
+    use caelumora_model::history::Reader;
+    use caelumora_model::message::testing::{id, make_message};
+    use caelumora_model::note::{NoteChange, NoteId};
+    use caelumora_model::actor::ActorState;
+    use caelumora_model::channel::moderation_components;
+    use caelumora_model::value::name::Name;
+    use caelumora_model::value::text::Description;
     use tokio::task::JoinSet;
 
     /// The lines of the journal of the agent channel state of `agent` in
@@ -1153,7 +1070,7 @@ mod tests {
         let lines = std::fs::read_to_string(&journal).unwrap();
 
         // As if the crash came after the snapshot and before the journal was emptied.
-        let folding = JsonFileStore::new(dir.path(), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap().with_journal_floor(0);
+        let folding = JsonFileStore::new(dir.path()).unwrap().with_journal_floor(0);
         folding.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert!(!journal.exists());
         std::fs::write(&journal, &lines).unwrap();
@@ -1167,7 +1084,7 @@ mod tests {
 
     #[tokio::test]
     async fn items_behind_their_chain_and_entries_past_its_head_are_what_a_crash_leaves() {
-        use crate::store::history::HistoryStore;
+        use caelumora_model::store::history::HistoryStore;
         let dir = tempdir().unwrap();
         let store = store(dir.path());
         let channel = ChannelId::new();

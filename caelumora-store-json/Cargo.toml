@@ -1,0 +1,27 @@
+[package]
+name = "caelumora-store-json"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caelumora-model.workspace = true
+caelumora-runtime.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The files are read and written asynchronously, and names kept unique
+# under a lock per kind (issue 250).
+tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+caelumora-model = { workspace = true, features = ["test-support"] }
+chrono.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
+
+[lints]
+workspace = true

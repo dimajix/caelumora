@@ -14,6 +14,7 @@ members = [
     "caelumora-mcp",
     "caelumora-a2a",
     "caelumora-open-terminal",
+    "caelumora-store-json",
     "caelumora-workspace-tools",
     "caelumora-ollama",
     "caelumora-decision",
@@ -89,6 +90,7 @@ caelumora-artifacts = { path = "caelumora-artifacts", default-features = false }
 caelumora-mcp = { path = "caelumora-mcp" }
 caelumora-a2a = { path = "caelumora-a2a" }
 caelumora-open-terminal = { path = "caelumora-open-terminal" }
+caelumora-store-json = { path = "caelumora-store-json" }
 caelumora-workspace-tools = { path = "caelumora-workspace-tools" }
 caelumora-ollama = { path = "caelumora-ollama" }
 caelumora-decision = { path = "caelumora-decision" }

@@ -18,8 +18,8 @@ than taken for a switch.
 ### Backends
 
 Where a service is served by one of a choice of backends - a storage of workspaces or of artifacts,
-a secret provider, a user provider - the backend is named by its `type`, with its parameters beside
-it (`BackendConfig`, issue 324):
+a secret provider, a user provider, a store - the backend is named by its `type`, with its
+parameters beside it (`BackendConfig`, issues 324, 446):
 
 ```yaml
 workspaces:
@@ -35,11 +35,10 @@ registers, a parameter its backend does not know or one that does not fit are no
 file is read but when the runtime is built - still at start-up, before anything runs, with a
 message naming the backend: `the storage of workspaces 'files' (local)`, or for a chain its
 position, `the secret provider 2 (vault)`. An unknown type is answered with the types there are.
-The persistence (`persistence`) is named the same way, but is the core's alone.
 
 | Section | What it configures | Default |
 |---|---|---|
-| `persistence` | Where the `EntityStore` (`entity_store`) and the `StateStore` (`state_store`) keep their data: `type: json` with a `path`, and optionally `journal_floor`, the size in bytes a journal reaches before it is folded into its snapshot; or `type: memory`. The two may differ. The `ComponentStore` is kept where the entity store is. See [STORAGE.md](STORAGE.md). | `memory` for both - gone when the process ends; `journal_floor` 65536 |
+| `persistence` | Where the `EntityStore` (`entity_store`) and the `StateStore` (`state_store`) keep their data, each a [backend](#backends): `type: json` with a `path`, and optionally `journal_floor`, the size in bytes a journal reaches before it is folded into its snapshot; or `type: memory`. The two may differ. The `ComponentStore` is kept where the entity store is. See [STORAGE.md](STORAGE.md). | `memory` for both - gone when the process ends; `journal_floor` 65536 |
 | `seed` | Files of demo data - preconfigured components, personalities and session templates, and the sections of the plugins, `skills` among them - put into the stores at startup, only what they do not have yet, by id. A section of a seed file that no plugin claims is an error. | none |
 | `secrets` | The chain of secret providers, each a [backend](#backends), tried in order: `type: file` with a `path` (a flat JSON key/value file), `type: env`. See [SECURITY.md](SECURITY.md#secrets). | `local/secrets.json`, then the environment |
 | `users` | The chain of user providers, each a [backend](#backends): `type: file` with a `path`, a YAML file of users written by hand, with their ids, roles by name and Argon2 password hashes; or `type: accept_any`, a development stand-in that accepts any username, with any password - or none, from the TUI; it gives the users named under `roles` their roles and everybody else `default_roles`, by the roles' names. See [SECURITY.md](SECURITY.md#users). | none - nobody can log in |
@@ -76,7 +75,9 @@ its workspaces apart).
 **`shell: true` runs what an agent's model writes on Caelumora's host, as its user, with nothing
 between but the directory, approval and the rules of a place - for development only.**
 The two Open Terminal storages are the plugin `caelumora-open-terminal`, which `caelumora-app` and
-`caelumora-tui` list; `open_terminal_docker` needs its feature `docker` (on by default).
+`caelumora-tui` list; `open_terminal_docker` needs its feature `docker` (on by default). The stores
+in JSON files, `type: json` under `persistence`, are the plugin `caelumora-store-json`, which both
+programs list too; `memory` is the core's.
 
 **`open_terminal_docker` needs the Docker daemon of Caelumora's environment, whose socket is root on
 the host.**

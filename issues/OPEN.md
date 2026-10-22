@@ -16,7 +16,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [03](03-postgres-entity-store.md) | open | medium | feature | `EntityStore` has only in-memory and JSON-file implementations; a Postgres one is the prerequisite for everything multi-process. |
 | [04](04-postgres-state-store.md) | open | medium | feature | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
-| [446](446-stores-check-access-each-and-are-enumerated.md) | open | medium | refactoring | The memory and the JSON store each implement every operation on entities with its access checks, and the model opens them by a closed enum, so a third store - Postgres - would repeat the checks and could not live in a crate of its own. |
 
 ## Sessions and channels
 

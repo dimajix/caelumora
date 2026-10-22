@@ -199,7 +199,7 @@ impl SessionController {
 mod tests {
     use super::*;
     use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::ValueError;
     use chrono::{Duration, Utc};
@@ -239,15 +239,15 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_session_is_stored_first() {
         let session = session();
-        let store = Arc::new(MemoryStore::new());
+        let store = StoreBackend::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().sessions.create(&ctx, &session).await.unwrap();
-        let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores());
+        store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
+        let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
 
         controller.update_name(&ctx, "renamed").await.unwrap();
 
         assert_eq!(controller.name(), "renamed");
-        assert_eq!(store.entity_stores().sessions.get(&ctx, session.id).await.unwrap().name, "renamed");
+        assert_eq!(store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().name, "renamed");
     }
 
     /// Issue 358: whatever changes the session moves `updated_at`, an update
@@ -256,11 +256,11 @@ mod tests {
     async fn every_change_moves_updated_at() {
         let long_ago = Utc::now() - Duration::days(1);
         let session = Session { updated_at: long_ago, ..session() };
-        let store = Arc::new(MemoryStore::new());
+        let store = StoreBackend::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().sessions.create(&ctx, &session).await.unwrap();
-        let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores());
-        let stored = || async { store.entity_stores().sessions.get(&ctx, session.id).await.unwrap().updated_at };
+        store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
+        let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
+        let stored = || async { store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().updated_at };
 
         controller.update_name(&ctx, "renamed").await.unwrap();
         let renamed = stored().await;
@@ -273,14 +273,14 @@ mod tests {
     #[tokio::test]
     async fn a_description_is_checked_as_it_is_applied() {
         let session = session();
-        let store = Arc::new(MemoryStore::new());
+        let store = StoreBackend::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().sessions.create(&ctx, &session).await.unwrap();
+        store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
         let announced = Arc::new(Announced::default());
-        let controller = SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), &store.entity_stores());
+        let controller = SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), &store.entity_stores().unwrap());
 
         controller.update_description(&ctx, Some("Release 2.0"), Some("")).await.unwrap();
-        let stored = store.entity_stores().sessions.get(&ctx, session.id).await.unwrap();
+        let stored = store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap();
         assert_eq!((stored.summary.as_ref().map(|s| s.as_str()), stored.briefing), (Some("Release 2.0"), None), "empty is none");
         assert!(matches!(announced.0.lock().unwrap().as_slice(), [event] if matches!(event.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()), Some(SessionUpdateEvent::DescriptionChanged { .. }))), "announced");
 
@@ -289,7 +289,7 @@ mod tests {
 
         let renamed = controller.update_name(&ctx, " ").await;
         assert!(matches!(&renamed, Err(StoreError::Invalid(ValueError::Blank { field: "name" }))), "a name is checked so, too: {renamed:?}");
-        assert_eq!(store.entity_stores().sessions.get(&ctx, session.id).await.unwrap().summary, stored.summary, "unchanged by what is refused");
+        assert_eq!(store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().summary, stored.summary, "unchanged by what is refused");
         assert_eq!(announced.0.lock().unwrap().len(), 1);
     }
 }

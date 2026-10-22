@@ -18,7 +18,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, StateStore};
+use caelumora_model::store::{EntityStore, EntityStoreFactory};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::tool::{ToolCall, ToolVisibility};
 use caelumora_model::value::name::ScopedName;
@@ -311,11 +311,11 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
     let using: Vec<&String> = asked.iter().filter(|line| line.contains("UseSkill")).collect();
     assert_eq!(using, ["alice as helper, asked by bob: UseSkill(alice's) yes"], "for its owner, asked by him");
 
-    let state = world.store.get_agent_channel_state(helper, main.id()).await.unwrap();
+    let state = world.store.state_store().get_agent_channel_state(helper, main.id()).await.unwrap();
     let given = state.transcript.messages().into_iter().last().expect("given");
     assert!(given.content.as_deref().is_some_and(|c| c.starts_with("[Skill: release-notes]\n1. Collect.")), "{given:?}");
     assert_eq!((given.sender_id, given.role), (ActorId::User(world.bob), MessageRole::User), "in his name");
-    let history = world.store.get_channel_state(main.id()).await.unwrap().history;
+    let history = world.store.state_store().get_channel_state(main.id()).await.unwrap().history;
     assert!(messages_of(&history).iter().all(|m| !m.content.as_deref().unwrap_or_default().contains("Collect.")), "nothing of the text in the channel's history");
     assert!(items_of(&history).iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { command, issuer, .. } if command == "skill" && *issuer == ActorId::User(world.bob))), "but the command");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();

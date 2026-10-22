@@ -351,7 +351,7 @@ impl From<StandingItems> for Vec<(Position, Recorded)> {
 ///
 /// # Errors
 /// `StoreError::Validation` if the item cannot be judged by `filter`.
-pub(crate) fn seen(reader: &Reader, ranges: &[Range<Position>], filter: Option<&Filter<HistoryField>>, (seq, item): &(Position, Recorded)) -> StoreResult<Option<(Position, HistoryEntry)>> {
+pub fn seen(reader: &Reader, ranges: &[Range<Position>], filter: Option<&Filter<HistoryField>>, (seq, item): &(Position, Recorded)) -> StoreResult<Option<(Position, HistoryEntry)>> {
     if !item.seen_by(*seq, reader, ranges) || meeting(item, filter)?.is_none() {
         return Ok(None);
     }
@@ -361,7 +361,7 @@ pub(crate) fn seen(reader: &Reader, ranges: &[Range<Position>], filter: Option<&
 /// The entries of `nodes` that `reader`, with `ranges` as theirs, may see,
 /// as they may see them, each in its node with what else was recorded of
 /// it: what a store returns of the chain it read.
-pub(crate) fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes: impl IntoIterator<Item = &'a Node<Recorded>>) -> Vec<Node<Recorded>> {
+pub fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes: impl IntoIterator<Item = &'a Node<Recorded>>) -> Vec<Node<Recorded>> {
     nodes.into_iter().filter_map(|node| {
         let Recorded { sender, recipients, context, timestamp, .. } = &node.entry;
         let entry = node.entry.as_seen_by(node.seq, reader, ranges)?;
@@ -375,7 +375,7 @@ pub(crate) fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes:
 /// before its end, newest first - back to the end of the turn before of
 /// the same actor: an agent's turns do not overlap, so none of the turn's
 /// messages lies before it. Empty if `ended` is no turn's end.
-pub(crate) fn answer_of<'a>(ended: &HistoryEntry, older: impl IntoIterator<Item = &'a Node<Recorded>>, reader: &Reader, ranges: &[Range<Position>]) -> Vec<Message> {
+pub fn answer_of<'a>(ended: &HistoryEntry, older: impl IntoIterator<Item = &'a Node<Recorded>>, reader: &Reader, ranges: &[Range<Position>]) -> Vec<Message> {
     let HistoryEntry::TurnFinished { turn_id, actor, .. } = ended else { return Vec::new() };
     let mut answer: Vec<Message> = older.into_iter()
         .take_while(|node| !node.entry.entry.ends_turn_of(*actor))
@@ -394,7 +394,7 @@ pub(crate) fn answer_of<'a>(ended: &HistoryEntry, older: impl IntoIterator<Item 
 ///
 /// # Errors
 /// The first error among the items it reads.
-pub(crate) fn page_of(newest: impl IntoIterator<Item = StoreResult<Option<(Position, HistoryEntry)>>>, from: Position, limit: usize, digest: Option<Digest>) -> StoreResult<HistoryPage> {
+pub fn page_of(newest: impl IntoIterator<Item = StoreResult<Option<(Position, HistoryEntry)>>>, from: Position, limit: usize, digest: Option<Digest>) -> StoreResult<HistoryPage> {
     let limit = limit.max(1);
     let mut read: Vec<(Position, HistoryEntry)> = Vec::new();
     for item in newest {
@@ -424,7 +424,7 @@ mod tests {
     use crate::user::UserId;
     use crate::history::{Audience, History};
     use crate::message::Message;
-    use crate::message::tests::{id, make_message};
+    use crate::message::testing::{id, make_message};
     use chrono::Utc;
 
     fn label(item: &HistoryEntry) -> String {

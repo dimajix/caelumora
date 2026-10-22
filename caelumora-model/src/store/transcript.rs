@@ -86,7 +86,7 @@ pub trait TranscriptStore: Debug + Send + Sync {
 /// the prompt texts and the tool sets its turn under way names (issue
 /// 383): what a turn cut off by a crash is resumed with. A state between
 /// turns holds none.
-pub(crate) async fn load_named_by_turn(transcripts: &dyn TranscriptStore, agent: AgentId, channel: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
+pub async fn load_named_by_turn(transcripts: &dyn TranscriptStore, agent: AgentId, channel: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
     let Some(turn) = &state.turn else { return Ok(()) };
     let (prompts, offered_tools) = transcripts.named_by(agent, channel, &turn.work.context).await?;
     state.prompts = prompts;
@@ -95,6 +95,6 @@ pub(crate) async fn load_named_by_turn(transcripts: &dyn TranscriptStore, agent:
 }
 
 /// How a transcript is named where something about it fails.
-pub(crate) fn transcript_of(agent: AgentId, channel: ChannelId) -> String {
+pub fn transcript_of(agent: AgentId, channel: ChannelId) -> String {
     format!("the transcript of agent {agent} in channel {channel}")
 }

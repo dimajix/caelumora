@@ -185,7 +185,7 @@ mod tests {
         session.add_participant(&as_user(&alice), bob_id, Some((main.id(), HistoryAccess::All))).await.expect("the owner may");
         assert!(session.session().participants.iter().any(|p| p.actor_id() == bob_id), "in the session");
         assert!(main.participants().iter().any(|m| m.id == bob_id), "and in the channel");
-        let members = store.entity_stores().groups.get(&SecurityContext::system(), GroupId::of_session(session.id())).await.unwrap().members;
+        let members = store.entity_stores().unwrap().groups.get(&SecurityContext::system(), GroupId::of_session(session.id())).await.unwrap().members;
         assert!(members.contains(&bob_id), "the group of its participants follows");
         assert!(manager.views(Viewer::new(as_user(&bob))).session(session.id()).await.is_ok(), "so he reads it now");
         assert!(drain(&mut events).iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id()

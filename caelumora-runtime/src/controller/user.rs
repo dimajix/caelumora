@@ -229,6 +229,7 @@ mod tests {
     use caelumora_model::role::RoleId;
     use caelumora_model::user::UserUpdateEvent;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::security::OwnershipPolicy;
     use std::sync::Mutex;
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
@@ -257,13 +258,13 @@ mod tests {
     }
 
     /// The controller of `user`, keeping everything in `store`.
-    fn controller_in(store: &Arc<MemoryStore>, user: &User, event_publisher: Arc<dyn EventPublisher>) -> UserController {
-        UserController::new(user.clone(), None, event_publisher, &store.entity_stores(), Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store))
+    fn controller_in(store: &StoreBackend, user: &User, event_publisher: Arc<dyn EventPublisher>) -> UserController {
+        UserController::new(user.clone(), None, event_publisher, &store.entity_stores().unwrap(), store.state_store(), store.history_store())
     }
 
     #[tokio::test]
     async fn a_profile_is_stored_first_then_taken_over_and_announced() {
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
@@ -273,7 +274,7 @@ mod tests {
             let profile = controller.update_profile(&hers, Some(text), None).await.expect("her own, created once and changed after");
             assert_eq!(profile.introduction.as_ref().map(Introduction::as_str), Some(text));
             assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some(text), "live");
-            assert_eq!(store.entity_stores().user_profiles.get(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
+            assert_eq!(store.entity_stores().unwrap().user_profiles.get(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
         }
         assert!(matches!(announced.0.lock().unwrap().as_slice(), [_, event] if matches!(event.about::<UserProfile>(), Some((id, change)) if id == user.id && change.update::<UserProfile>().is_some_and(|p| p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team.")))));
     }
@@ -283,7 +284,7 @@ mod tests {
     #[test]
     fn the_roles_follow_their_announcement() {
         let user = alice();
-        let controller = controller_in(&Arc::new(MemoryStore::new()), &user, Arc::new(Announced::default()));
+        let controller = controller_in(&StoreBackend::in_memory(), &user, Arc::new(Announced::default()));
         let staff = RoleId::new();
         controller.process_global_event(&GlobalEvent::updated::<User>(&UserId::new(), &UserUpdateEvent::RolesChanged(vec![staff])));
         assert!(controller.load().roles.is_empty(), "not someone else's");
@@ -295,7 +296,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_profile_changes_nothing() {
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
@@ -315,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn a_rule_is_added_and_taken_back_by_the_user_alone() {
         use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let user = alice();
         let controller = controller_in(&store, &user, Arc::new(()));
         let hers = as_user(user.id);
@@ -325,7 +326,7 @@ mod tests {
         assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied(_))), "not by someone else");
         controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
         assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "live");
-        assert_eq!(store.entity_stores().user_profiles.get(&hers, user.id).await.unwrap().approval_rules(), std::slice::from_ref(&rule), "stored");
+        assert_eq!(store.entity_stores().unwrap().user_profiles.get(&hers, user.id).await.unwrap().approval_rules(), std::slice::from_ref(&rule), "stored");
         assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."), "the rest stays");
         controller.update_profile(&hers, None, None).await.unwrap();
         assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "and stays through a change of the rest");
@@ -340,7 +341,7 @@ mod tests {
     #[tokio::test]
     async fn a_profile_changed_elsewhere_is_taken_over() {
         let user = alice();
-        let controller = controller_in(&Arc::new(MemoryStore::new()), &user, Arc::new(()));
+        let controller = controller_in(&StoreBackend::in_memory(), &user, Arc::new(()));
         let changed = UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));
 
         controller.process_global_event(&GlobalEvent::updated::<UserProfile>(&UserId::new(), &UserProfile::new(UserId::new(), Some(Introduction::new("not hers").unwrap()))));

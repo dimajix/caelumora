@@ -34,16 +34,29 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
 
 Each kind is kept by a store of its own, `EntityStore<T>` (issue
 [323](../issues/323-kinds-enumerated-in-the-core.md)), with the same operations for every kind.
-There are two implementations: `MemoryEntityStore<T>`, for tests, and `JsonEntityStore<T>`, which
-keeps one JSON file per document in the kind's directory, `entities/<kind>/<id>.json`, and holds
-the kind's lock for names. `MemoryStore` and `JsonFileStore` open one of them for any kind that is
-asked for (`EntityStoreFactory::entity_store::<T>()`), once, beside the runtime state: whoever asks
-for a kind again - the core, a plugin - is given the same store. What the configuration opens is a
-`StoreBackend` (`AppConfig::open_entity_store`), which gives the stores of the entities, the
-component store and the state store, and refuses a kind whose name another kind has. The stores of
-the core's kinds are `EntityStores`, which the runtime is given; a plugin asks for the store of its
-kind while it registers. A manager is made with `&EntityStores` - or the store of its kind - and
-keeps the stores of the kinds it uses as fields, as every service is held.
+
+**A backend keeps, the model checks** (issue
+[446](../issues/446-stores-check-access-each-and-are-enumerated.md)). A backend - `MemoryStore`, for
+tests, or `JsonFileStore`, of the plugin `caelumora-store-json` - is a `Persistence`: it keeps the
+documents of every kind, each kind in a `DocumentStorage` of its own, and the states with their
+histories and transcripts, and asks nothing. A storage keeps documents serialized, by id, and is not
+generic, so that a backend opens the storage of any kind, a plugin's too, without knowing its type:
+the memory store keeps them in a map, the JSON store one file per document in the kind's directory,
+`entities/<kind>/<id>.json`. What every kind's store does - read the document as its type, ask the
+policies, order the steps - is written once, in the model (`CheckedStore`, over `store::access`),
+for every backend alike.
+
+What the runtime opens is a `StoreBackend`: the backend the configuration names under
+`persistence.entity_store` - a backend of the `Backends` like every other, the core's `memory` and
+`json` or a plugin's (`dyn Persistence`, see [CONFIGURATION.md](CONFIGURATION.md#backends)) - and
+the two policies; the states likewise under `persistence.state_store`. It opens the store of a kind
+for whoever asks (`EntityStoreFactory::entity_store::<T>()`), once - whoever asks for a kind again,
+the core or a plugin, is given the same store -, refuses a kind whose name another kind has, and
+gives the component store and the state store. The stores of the core's kinds are `EntityStores`,
+which the runtime is given; a plugin asks for the store of its kind while it registers. A manager is
+made with `&EntityStores` - or the store of its kind - and keeps the stores of the kinds it uses as
+fields, as every service is held. Tests make their stores the same way, `StoreBackend::in_memory()`
+for stores that permit everything.
 
 Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an `EntityKind`
 named by a string (`"skill"`) that is unique among the kinds; its id and the fields a query names;
@@ -105,9 +118,11 @@ a session's name is not unique.
 *   The check reads every one of the kind that is not deleted, also those the caller may not read
     (see [SECURITY.md](SECURITY.md#how-stores-check)). What is deleted holds no name: restoring it
     is checked as creating it is.
-*   It is made in the same step as the write, under a lock of the store.
-*   Both stores build their writing operations around one core that takes the check as a hook; a new
-    named kind is wired to the named variants, and the store suite states the rule for every kind.
+*   It is made by the storage, in the same step as the write - under the write lock in memory,
+    under the kind's lock in the JSON files, by a unique index in a database -, so that it holds
+    against every writer of the storage. The store hands the storage the name with the document
+    (`Document`); a storage that keeps bodies alone reads it back with what it was given when it
+    was opened (`DocumentOf`). The store suite states the rule for every kind.
 
 **Values with rules.** A text whose content has rules - a `Name`, a `Language`, the free texts
 people write for others (`Text<R>`) - has a type made only through its constructor and checked again

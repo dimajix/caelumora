@@ -49,7 +49,7 @@ mod tests {
     use caelumora_model::secret::{SecretProvider, SecretResult};
     use crate::component::config_of_params;
     use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
-    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored};
     use caelumora_model::type_map::TypeKey;
@@ -219,9 +219,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_plugin_brings_its_kind_its_manager_its_component_and_its_sections() {
-        let store = Arc::new(MemoryStore::new());
+        let store = StoreBackend::in_memory();
         let config = AppConfig::from_yaml("notes:\n  greeting: hello\n").unwrap();
-        let runtime = TestRuntime { store: Arc::clone(&store), config, plugins: vec![&Notes], ..Default::default() }.build();
+        let runtime = TestRuntime { store: store.clone(), config, plugins: vec![&Notes], ..Default::default() }.build();
 
         let notebook = runtime.services().get::<Notebook>().expect("its manager, a service");
         assert_eq!(notebook.greeting, "hello", "its section of the configuration");

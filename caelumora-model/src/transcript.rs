@@ -127,7 +127,7 @@ where
 /// by a store, which holds every branch (`TranscriptStore::message`, issue
 /// 380); on the active path, what a change of it is checked against
 /// (`Transcript::standing`).
-pub(crate) fn known<'a>(mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>, id: MessageId) -> Option<Message> {
+pub fn known<'a>(mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>, id: MessageId) -> Option<Message> {
     let mut message = nodes.by_ref().find_map(|node| node.entry.message().filter(|m| m.id == id)).cloned()?;
     nodes.filter(|node| node.entry.changed() == Some(id)).for_each(|node| node.entry.apply_to(&mut message));
     Some(message)
@@ -388,7 +388,7 @@ mod tests {
     use super::*;
     use crate::digest::{self, message_chain};
     use crate::workspace::{Workspace, WorkspaceId};
-    use crate::message::tests::{id, make_message};
+    use crate::message::testing::{id, make_message};
     use chrono::Duration;
     use crate::confidentiality::Confidentiality;
     use serde_json::Value;

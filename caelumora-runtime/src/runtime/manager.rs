@@ -101,8 +101,8 @@ impl RuntimeManager {
     /// `RuntimeBuilder::build`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        states: impl Into<StoreBackend>,
-        backend: impl Into<StoreBackend>,
+        states: StoreBackend,
+        backend: StoreBackend,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,

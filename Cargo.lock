@@ -406,6 +406,7 @@ dependencies = [
  "caelumora-rest-server",
  "caelumora-runtime",
  "caelumora-skills",
+ "caelumora-store-json",
  "caelumora-workspace-tools",
  "clap",
  "mime_guess",
@@ -665,6 +666,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-store-json"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "caelumora-model",
+ "caelumora-runtime",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-tui"
 version = "0.1.0"
 dependencies = [
@@ -680,6 +698,7 @@ dependencies = [
  "caelumora-open-terminal",
  "caelumora-runtime",
  "caelumora-skills",
+ "caelumora-store-json",
  "caelumora-workspace-tools",
  "chrono",
  "clap",

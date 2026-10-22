@@ -45,3 +45,12 @@ process is impossible while identity lives in a local directory.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-10-22** — [446](446-stores-check-access-each-and-are-enumerated.md) made the seam a
+  Postgres store is built on: a crate of its own whose plugin registers a backend of the stores
+  (`dyn Persistence`), keeping each kind's documents in a `DocumentStorage` - by id, with the name
+  unique in its scope (`Document::name`) and the mark of a deletion beside the body, which a table
+  keeps as columns -, while the checks stay the model's (`CheckedStore`). It runs the store suite
+  (`caelumora_model::store::suite`, feature `test-support`) as `caelumora-store-json` does. Still
+  open here: a list pushed into the query (the trait has only ids and single reads), the key of a
+  name for a unique index, and the secrets the connection needs, which the backends of the stores
+  are not yet given (`RuntimeBuilder::from_config` makes them before the `SecretManager`).

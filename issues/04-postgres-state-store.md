@@ -47,3 +47,7 @@ history resumes as a different agent. A file store makes that a real risk under 
   (digest, parent, entry, and the branch remembered where it is not the newest), the head and a
   small part a column of the state's row; a `get` reads the rows in the order they were added and
   builds the chain through `Chain::apply`. The suite of `store_impl::suite` checks the contract.
+- **2026-10-22** — [446](446-stores-check-access-each-and-are-enumerated.md): the states are kept
+  by the same backend as in 03 (`Persistence`, which is `StateStore + HistoryStore +
+  TranscriptStore`); the rules a store applies in memory - folding a chain, what a reader sees, a
+  page - are public functions of the model for a store that does not translate them into a query.

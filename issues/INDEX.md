@@ -49,7 +49,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [421](421-history-filter-as-data.md) | done | `HistoryStore::page` takes `Keep`, a Rust closure, for what a viewer may read and what a search looks for; a database cannot turn it into a `WHERE`, so it has to become data. |
 | [426](426-context-ref-kept-once.md) | done | Every message a turn says is stored in its channel's history with the whole `ContextRef` it was produced from - a digest per prompt part, the knowledge read, the model profile - repeated nearly unchanged from message to message, often larger than the message itself. |
 | [440](440-agent-position-in-history-not-journaled.md) | done | The journal of an agent's channel state records neither what of the channel's history the agent took in (`heard`) nor its last message (`last_message`), so a state loaded again stands where its last snapshot left it, and its channel delivers everything since once more - old requests to respond among it, which every agent then answers again. |
-| [446](446-stores-check-access-each-and-are-enumerated.md) | open | The memory and the JSON store each implement every operation on entities with its access checks, and the model opens them by a closed enum, so a third store - Postgres - would repeat the checks and could not live in a crate of its own. |
+| [446](446-stores-check-access-each-and-are-enumerated.md) | done | The memory and the JSON store each implement every operation on entities with its access checks, and the model opens them by a closed enum, so a third store - Postgres - would repeat the checks and could not live in a crate of its own. |
 
 ## Sessions and channels
 

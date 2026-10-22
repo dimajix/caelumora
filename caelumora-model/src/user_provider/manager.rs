@@ -123,7 +123,7 @@ mod tests {
     use async_trait::async_trait;
     use crate::role::RoleId;
     use crate::security::SecurityAttributes;
-    use crate::store::memory::MemoryStore;
+    use crate::store::StoreBackend;
     use crate::value::name::Name;
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -152,7 +152,7 @@ mod tests {
 
     /// A manager of `providers`, keeping records in a store of its own.
     fn chain(providers: Vec<Arc<dyn UserProvider>>) -> UserManager {
-        UserManager::new(providers, Arc::new(MemoryStore::new()).entity_stores().users, Arc::new(Announced::default()))
+        UserManager::new(providers, StoreBackend::in_memory().entity_stores().unwrap().users, Arc::new(Announced::default()))
     }
 
     fn user(name: &str) -> User {
@@ -297,7 +297,7 @@ mod tests {
     /// announced, nothing written where nothing changed.
     #[tokio::test]
     async fn the_manager_keeps_and_announces_the_records_the_providers_answer() {
-        let store = Arc::new(MemoryStore::new()).entity_stores().users;
+        let store = StoreBackend::in_memory().entity_stores().unwrap().users;
         let announced = Arc::new(Announced::default());
         // A manager whose one provider knows `user` with the password "a".
         let answering = |user: &User| UserManager::new(vec![Arc::new(MapUserProvider::new(&[(user, "a")]))], Arc::clone(&store), Arc::<Announced>::clone(&announced));

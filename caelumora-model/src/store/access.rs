@@ -27,7 +27,8 @@
 //!   marked is neither restored nor purged.
 //! - **Names** (issue 250): what is `Scoped` is created, renamed and
 //!   restored only under a name that no other one of its kind has in its
-//!   scope (`name_free`) - checked against every document of the kind that
+//!   scope - kept by the storage in the step that writes
+//!   (`DocumentStorage`, issue 446), against every document of the kind that
 //!   is not deleted, also those the caller may not read, and answered with
 //!   `NameTaken`, which tells that the name is taken, not by what.
 //!
@@ -203,17 +204,6 @@ fn present<T: Stored>(value: &T) -> bool {
     value.deleted().is_none()
 }
 
-/// Refuses `value` if one of `others` that is not deleted has its name in
-/// its scope (issue 250). `others` may hold `value`'s own document only as
-/// it is stored: absent, deleted or under another name.
-pub(crate) fn name_free<'a, T: Stored + 'a>(value: &T, others: impl IntoIterator<Item = &'a T>) -> StoreResult<()> {
-    let Some(name) = value.unique_name() else { return Ok(()) };
-    match others.into_iter().filter(|other| present(*other)).any(|other| other.unique_name().as_ref() == Some(&name)) {
-        false => Ok(()),
-        true => Err(StoreError::NameTaken { entity: T::KIND.name() }),
-    }
-}
-
 /// Refuses `value` if it carries the mark of a deletion: only deleting
 /// sets it (issue 164), not whoever writes a document.
 fn unmarked<T: Stored>(value: &T) -> StoreResult<()> {
@@ -240,6 +230,7 @@ mod tests {
     use crate::store::{StoreError, Stored};
     use crate::store::query::{NoField, Query};
     use crate::store::memory::MemoryStore;
+    use crate::store::StoreBackend;
     use crate::user::UserId;
     use crate::value::name::Name;
     use std::sync::Arc;
@@ -324,7 +315,7 @@ mod tests {
         let staff = RoleId::new();
         let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(AllowAllPolicy::new()), Arc::new(rules))).entity_stores().workspaces;
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(AllowAllPolicy::new()), Arc::new(rules)).entity_stores().unwrap().workspaces;
         let owner = UserId::new();
         let cleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default()).with_roles(vec![staff], None);
         let uncleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -346,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_the_caller_may_not_read_does_not_exist_for_them() {
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (_, carol_ctx) = user();
@@ -361,7 +352,7 @@ mod tests {
 
     #[tokio::test]
     async fn changes_are_checked_against_what_is_stored() {
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (carol, carol_ctx) = user();
@@ -385,7 +376,7 @@ mod tests {
     #[tokio::test]
     async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
         use crate::security::OwnershipPolicy;
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let hers = session(alice, vec![bob]);
@@ -410,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn nobody_creates_in_someone_elses_name() {
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, _) = user();
         let (_, bob_ctx) = user();
         assert!(matches!(store.create(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied(_))));
@@ -423,7 +414,7 @@ mod tests {
         use crate::user::User;
         use crate::value::name::ScopedName;
 
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().users;
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().users;
         let system = SecurityContext::system();
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());

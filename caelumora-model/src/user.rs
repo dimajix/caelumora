@@ -406,9 +406,10 @@ mod tests {
         use crate::channel::ChannelId;
         use crate::store::StoreError;
         use crate::store::memory::MemoryStore;
+        use crate::store::StoreBackend;
         use std::sync::Arc;
 
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().user_profiles;
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().user_profiles;
         let (alice, bob) = (UserId::new(), UserId::new());
         let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
 

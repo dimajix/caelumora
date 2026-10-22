@@ -12,14 +12,14 @@
 
 use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
 use super::{delete_if_exists, read_json_opt, write_json_atomic, JsonFileStore};
-use crate::actor::ActorId;
-use crate::chain::{Node, Position};
-use crate::channel::ChannelId;
-use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
-use crate::message::{Message, MessageId};
-use crate::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
-use crate::store::query::Filter;
-use crate::store::{StoreError, StoreResult};
+use caelumora_model::actor::ActorId;
+use caelumora_model::chain::{Node, Position};
+use caelumora_model::channel::ChannelId;
+use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_model::message::{Message, MessageId};
+use caelumora_model::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
+use caelumora_model::store::query::Filter;
+use caelumora_model::store::{StoreError, StoreResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};

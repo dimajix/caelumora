@@ -18,7 +18,7 @@ use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId, Participant};
 use std::sync::Arc;
 use caelumora_model::value::name::ScopedName;
-use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::store::StoreBackend;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_runtime::session::SessionManager;
 use caelumora_runtime::session::testing::*;
@@ -72,7 +72,7 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::scope::Scope;
 
-    let store = Arc::new(MemoryStore::new());
+    let store = StoreBackend::in_memory();
     let personality = Personality {
         description: None,
         introduction: None,
@@ -86,15 +86,15 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
         security_attributes: Default::default(),
         deleted: None,
     };
-    store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
+    store.entity_stores().unwrap().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
     let alice = user("alice");
     let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), personality.id, context.initiator_id);
     let agent_id = agent.id;
-    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
-    store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
+    store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
+    store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
-    let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
+    let mut registry = test_registry(store.component_store().unwrap());
     registry.register(
         ComponentKind::new("test_remote").provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>(),
         move |_descriptor, _context| {
@@ -1226,8 +1226,8 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
 
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob."), answer("Back.")]));
-    let store = Arc::new(MemoryStore::new());
-    let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
+    let store = StoreBackend::in_memory();
+    let mut registry = test_registry(store.component_store().unwrap());
     registry.register(
         ComponentKind::new("test_remote").provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>(),
         { let remote = Arc::clone(&remote); move |_descriptor, _context| {
@@ -1237,7 +1237,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
             Ok(facets)
         } },
     );
-    let runtime = TestRuntime { store: Arc::clone(&store), registry: Some(registry), plugins: vec![&AgentsPlugin], ..Default::default() }.build();
+    let runtime = TestRuntime { store: store.clone(), registry: Some(registry), plugins: vec![&AgentsPlugin], ..Default::default() }.build();
     let manager = SessionManager::new(Arc::clone(&runtime));
     let system = SecurityContext::system();
 
@@ -1252,9 +1252,9 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
         deleted: None,
     };
-    store.entity_stores().personalities.create(&system, &personality).await.unwrap();
+    store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
     let hermes = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
-    store.entity_stores().agents.create(&system, &hermes).await.unwrap();
+    store.entity_stores().unwrap().agents.create(&system, &hermes).await.unwrap();
 
     let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let mut session = make_session("roster", ActorId::None);

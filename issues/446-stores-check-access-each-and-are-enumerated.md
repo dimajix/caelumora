@@ -1,6 +1,6 @@
 # 446 — Every store checks access itself and is opened by a closed enum, so no store can live in a crate of its own
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -103,10 +103,10 @@ With `Persistence` a trait object, the reason of 324 is gone: the configuration 
 
 `caelumora-store-json`, with `JsonFileStore`, which implements `Persistence` and nothing else, and a
 plugin that registers the backend `json` (`Plugin::backends`), as `caelumora-open-terminal`
-registers its storage. The memory store stays in the model: every test of every crate uses it, and it needs
-nothing outside the model. The store suite becomes public behind a feature `test-support`, so that
-every backend's crate runs it, Postgres too. What the binaries register is theirs: `caelumora-app`
-brings the plugin.
+registers its storage. The memory store stays in the model: every test of every crate uses it, and
+it needs nothing outside the model. The store suite becomes public behind a feature
+`test-support`, so that every backend's crate runs it, Postgres too. What the binaries register is
+theirs: `caelumora-app` brings the plugin.
 
 ## Steps
 
@@ -137,3 +137,33 @@ brings the plugin.
   `name_free` public, to be taken back with the seam. Revisits the decision of 324 that the
   persistence stays a closed enum, whose reason - stores generic over their kinds - the seam
   removes.
+- **2026-10-22** — Step 1 done: `store::documents` holds `Document`, `DocumentStorage` and the one
+  `CheckedStore<T>`, which serves every kind's `EntityStore` and the `ComponentStore`; `name_free`
+  is gone from `store::access`, the rule of names is the storages', in the step that writes. The
+  memory and the JSON store are backends of the trait `Persistence` - `documents(kind,
+  document_of)` beside the three traits of the states - and hold no policy, no cache of kinds and
+  no `EntityStoreFactory` any more; `MemoryStore::with_policies` is gone. `StoreBackend` is a
+  `Persistence` and the policies (`StoreBackend::new`, `StoreBackend::in_memory`), opens each kind
+  once and gives the faces by upcasting; `component_store` can fail now. `PersistenceBackend::open`
+  opens the stores of the core's kinds and the components at once, as `JsonFileStore::new` did.
+  The tests make their stores through `StoreBackend`. Observable besides: the JSON files of
+  entities are written from the document as `serde_json::Value`, so their keys are sorted; what is
+  read is the same, and nothing stored has to be deleted.
+- **2026-10-22** — Step 2 done: `dyn Persistence` is a service of the `Backends`; the core
+  registers `memory` and `json`, whose parameters are `JsonStoreConfig` beside the JSON store.
+  `persistence.entity_store` and `state_store` are `BackendConfig`s, `memory` unless configured;
+  `PersistenceBackend`, `AppConfig::open_entity_store`, `open_state_store` and `ConfigError::Store`
+  are gone. `RuntimeBuilder::from_config` makes the two backends first (`Backends::make_one`, new
+  beside `make_named` and `make_chain`) and a `StoreBackend` of each with the policies. The YAML is
+  unchanged; what changed is when a wrong one is refused: an unknown type or parameter of a store is
+  refused as the runtime is built, naming the store - `the entity store (json)` -, as for every
+  backend, no longer as the file is read.
+- **2026-10-22** — Step 3 done, and with it the issue: the JSON store is the crate
+  `caelumora-store-json`, its backend `json` registered by `JsonStorePlugin`, which `caelumora-app`
+  and `caelumora-tui` list; `Backends::built_in` registers `memory` alone. The store suite is public
+  behind `test-support` (`caelumora_model::store::suite`), with the messages it writes
+  (`message::testing`), and the JSON crate runs it; the functions of the state side it needs -
+  `store::kept_chain`, `seen`, `seen_nodes`, `answer_of`, `page_of`, `load_named_by_turn`,
+  `transcript_of`, `transcript::known`, `HistoryEntry::is_item` and `changed` - are public. The
+  model no longer needs `io-util` and `sync` of `tokio`. The test of the runtime that needed a
+  document that cannot be read writes it to the memory store's storage, past the store.

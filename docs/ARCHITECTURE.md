@@ -58,6 +58,9 @@ The project is a Rust workspace, with a web UI next to it:
     `open_terminal_shared` and `open_terminal_docker`, a plugin that brings nothing but these
     backends, the Docker one with `bollard` behind the feature `docker` (issue 327). See
     [WORKSPACE.md](WORKSPACE.md#storages).
+*   **`caelumora-store-json`** - the stores in JSON files below a directory (`JsonFileStore`), a
+    plugin that brings nothing but the backend `json` of the stores (issue 446). See
+    [STORAGE.md](STORAGE.md#the-entity-store).
 *   **`caelumora-workspace-tools`** - what an agent is given to work on the session's workspace, a
     plugin that brings nothing but its component kinds `terminal_tool`, the workspace's files and
     its shell, and `workspace_prompt_provider`, the prompt part that names them (issue 428). See
@@ -86,8 +89,8 @@ the model; the core knows none. A plugin is one crate, cut into layers by Cargo 
 crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second
 `caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
 ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`, `caelumora-ollama`, `caelumora-decision` and
-`caelumora-workspace-tools` are ones that bring component kinds alone, `caelumora-open-terminal` one
-that brings backends alone.
+`caelumora-workspace-tools` are ones that bring component kinds alone, `caelumora-open-terminal` and
+`caelumora-store-json` ones that bring backends alone.
 The agents are a plugin too, an essential one (issue 370): `caelumora-agents` registers the kinds of
 agent, whose actors the channel builds (`AgentKinds`), and the kinds of their components; without
 it, the program is a chat between users. The plugins whose components serve an agent's facets -
@@ -100,23 +103,25 @@ Details: [PLUGINS.md](PLUGINS.md).
 ## Backends
 
 Some services of the core are served by one of a choice of **backends**, named in the configuration
-by their `type` (issue 324): the storages of workspaces (`TerminalProvider`), the secret providers
-(`SecretProvider`) and the user providers (`UserProvider`). A backend is made by the factory
-registered under its type for its service, in `Backends` (`caelumora_runtime::backend`), which reads
-its parameters and asks the services it is given for what it needs. The core registers its own
-(`Backends::built_in`); a plugin adds one by registering its factory in `Plugin::backends`, which is
-asked before anything is made - so a new storage or provider is a crate linked into the program, and
-no edit of the core, as the Open Terminal storages of `caelumora-open-terminal` are (issue 327). The
-backends are made once, when the runtime is built (`RuntimeBuilder::from_config`): the secret
-providers first, then the storages and the user providers with the secrets and the records of the
+by their `type` (issue 324): the stores (`Persistence`, issue 446), the storages of workspaces
+(`TerminalProvider`), the secret providers (`SecretProvider`) and the user providers
+(`UserProvider`). A backend is made by the factory registered under its type for its service, in
+`Backends` (`caelumora_runtime::backend`), which reads its parameters and asks the services it is
+given for what it needs. The core registers its own (`Backends::built_in`); a plugin adds one by
+registering its factory in `Plugin::backends`, which is asked before anything is made - so a new
+storage or provider is a crate linked into the program, and no edit of the core, as the Open
+Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are made once, when the
+runtime is built (`RuntimeBuilder::from_config`): the stores first, which need nothing, then the
+secret providers, then the storages and the user providers with the secrets and the records of the
 users at hand. A plugin's service may be served by backends too - the storages of artifacts
 (`ArtifactStorage`) -: the plugin makes them from its section while it registers
 (`RuntimeBuilder::make_named`), and another crate may register one for it (issue 328). Unlike a
 component, a backend serves the whole process and lives in no container, which is why it is no
 component.
 
-The persistence is not among them: its stores open a store for any kind, generic over the kind, so
-it stays a closed choice of the core (`PersistenceBackend`, see [STORAGE.md](STORAGE.md)).
+The stores are such backends since what a backend keeps is not generic: documents of any kind and
+states (`Persistence`); the runtime makes a `StoreBackend` of each, with the policies (see
+[STORAGE.md](STORAGE.md#the-entity-store)).
 
 Details: [CONFIGURATION.md](CONFIGURATION.md#backends).
 
@@ -301,6 +306,11 @@ Two stores, configured separately:
     does not hold, and the prompt texts and tool sets its model was given (see
     [STORAGE.md](STORAGE.md#histories), [STORAGE.md](STORAGE.md#transcripts),
     [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
+
+A backend - in memory, JSON files - only keeps: documents of any kind and states, without asking
+anything (`Persistence`). Who may do what with an entity is checked once, in the model, for every
+backend alike; the `StoreBackend` is a backend with the policies (see
+[STORAGE.md](STORAGE.md#the-entity-store)).
 
 Every document and every kind of state has exactly **one writer**, which changes it under a lock,
 stores it and only then announces the change. For an entity, that is its manager or its controller,

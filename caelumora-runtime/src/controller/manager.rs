@@ -282,7 +282,7 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::StoreError;
-    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::user::{User, UserUpdateEvent};
     use caelumora_model::workspace::WorkspaceUpdateEvent;
     use caelumora_model::security::{AclEntry, Grant, Subject};
@@ -290,14 +290,14 @@ mod tests {
     use caelumora_model::confidentiality::{ConfidentialityRules, Visibility};
     use caelumora_model::approval::ApproverId;
 
-    fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
-        let store = Arc::new(MemoryStore::new());
+    fn manager() -> (StoreBackend, Arc<EventBus>, ControllerManager) {
+        let store = StoreBackend::in_memory();
         let bus = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
-        let manager = ControllerManager::new(store.entity_stores(), Arc::clone(&bus), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default(), Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store));
+        let manager = ControllerManager::new(store.entity_stores().unwrap(), Arc::clone(&bus), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default(), store.state_store(), store.history_store());
         (store, bus, manager)
     }
 
-    async fn agent_in(store: &Arc<MemoryStore>) -> Agent {
+    async fn agent_in(store: &StoreBackend) -> Agent {
         let personality = Personality {
             description: None,
             introduction: None,
@@ -311,15 +311,15 @@ mod tests {
             hears_during_turn: Default::default(),
             deleted: None,
         };
-        store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
+        store.entity_stores().unwrap().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
-        store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
 
-    async fn user_in(store: &Arc<MemoryStore>) -> User {
+    async fn user_in(store: &StoreBackend) -> User {
         let user = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
-        store.entity_stores().users.create(&SecurityContext::system(), &user).await.unwrap();
+        store.entity_stores().unwrap().users.create(&SecurityContext::system(), &user).await.unwrap();
         user
     }
 
@@ -360,7 +360,7 @@ mod tests {
         drop(first);
         let mut renamed = agent.clone();
         renamed.name.name = Name::new("renamed").unwrap();
-        store.entity_stores().agents.update(&SecurityContext::system(), &renamed).await.unwrap();
+        store.entity_stores().unwrap().agents.update(&SecurityContext::system(), &renamed).await.unwrap();
         assert_eq!(manager.agent_controller(agent.id).await.unwrap().name(), "renamed");
 
         let gone = manager.agent_controller(AgentId::new()).await;
@@ -381,12 +381,12 @@ mod tests {
 
         let mut narrowed = Personality::clone(&first.load());
         narrowed.roles = Some(vec![RoleId::new()]);
-        store.entity_stores().personalities.update(&system, &narrowed).await.unwrap();
+        store.entity_stores().unwrap().personalities.update(&system, &narrowed).await.unwrap();
         assert_eq!(first.load().roles, None, "not taken in by itself");
         manager.personality_controller(agent.personality_id).await.unwrap();
         assert_eq!(first.load().roles, narrowed.roles, "taken in when asked for, for all that hold it");
 
-        store.entity_stores().personalities.delete(&system, agent.personality_id).await.unwrap();
+        store.entity_stores().unwrap().personalities.delete(&system, agent.personality_id).await.unwrap();
         let deleted = manager.personality_controller(agent.personality_id).await;
         assert!(matches!(deleted, Err(StoreError::NotFound { .. })), "a deleted one is not handed out, got {deleted:?}");
         assert_eq!(first.load().roles, narrowed.roles, "but kept for those that hold it");
@@ -430,7 +430,7 @@ mod tests {
         let (store, bus, manager) = manager();
         let owner = UserId::new();
         let workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(), "main", Default::default(), owner);
-        store.entity_stores().workspaces.create(&SecurityContext::system(), &workspace).await.unwrap();
+        store.entity_stores().unwrap().workspaces.create(&SecurityContext::system(), &workspace).await.unwrap();
         let controller = manager.workspace_controller(workspace.id).await.unwrap();
         assert!(Arc::ptr_eq(&controller, &manager.workspace_controller(workspace.id).await.unwrap()), "every session gets the same one");
 
@@ -438,7 +438,7 @@ mod tests {
         let mut changed = workspace.clone();
         changed.name.name = Name::new("notes").unwrap();
         changed.security_attributes.acl = vec![AclEntry { subject: Subject::Actor(ActorId::User(UserId::new())), grant: Grant::Read }];
-        store.entity_stores().workspaces.update(&SecurityContext::system(), &changed).await.unwrap();
+        store.entity_stores().unwrap().workspaces.update(&SecurityContext::system(), &changed).await.unwrap();
         bus.publish(GlobalEvent::updated::<Workspace>(&workspace.id, &WorkspaceUpdateEvent::AccessChanged), Default::default());
 
         eventually(|| controller.load().name.name.as_str() == "notes" && controller.load().security_attributes.acl.len() == 1).await;
@@ -454,7 +454,7 @@ mod tests {
         let (store, _bus, manager) = manager();
         let staff = RoleId::new();
         let alice = User { roles: vec![staff], ..user_in(&store).await };
-        store.entity_stores().users.update(&SecurityContext::system(), &alice).await.unwrap();
+        store.entity_stores().unwrap().users.update(&SecurityContext::system(), &alice).await.unwrap();
         let (session, channel) = (SessionId::new(), ChannelId::new());
 
         let hers = manager.owner_context(ActorId::User(alice.id), session, channel).await.unwrap();

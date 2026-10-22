@@ -261,7 +261,7 @@ mod tests {
     use caelumora_model::message::{Message, MessageEvent};
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::tool::Tool;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::work::Work;
@@ -299,8 +299,8 @@ mod tests {
     async fn the_texts_are_given_in_the_variant_of_the_model() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator_tool:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
-        let store = Arc::new(MemoryStore::new());
-        let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
+        let store = StoreBackend::in_memory();
+        let mut registry = test_registry(store.component_store().unwrap());
         registry.register(ComponentKind::new("gemma").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), |_, _| {
             let model = Arc::new(Gemma);
             let mut facets = ComponentFacets::empty();

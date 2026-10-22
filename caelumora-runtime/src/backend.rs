@@ -1,18 +1,16 @@
 //! Backends (issue 324): what serves a service - a storage of workspaces
 //! (`dyn TerminalProvider`) or of a plugin's (a storage of artifacts, issue
 //! 328), a user provider (`dyn UserProvider`), a secret provider (`dyn
-//! SecretProvider`) -
-//! named in the configuration by its type (`BackendConfig`) and made by the
-//! factory registered under that type for the service: the core's
-//! (`Backends::built_in`) or a plugin's (`Plugin::backends`).
+//! SecretProvider`), what the stores keep their data in (`dyn Persistence`,
+//! issue 446) - named in the configuration by its type (`BackendConfig`) and
+//! made by the factory registered under that type for the service: the
+//! core's (`Backends::built_in`) or a plugin's (`Plugin::backends`).
 //!
 //! Built to look like the `ComponentRegistry` where the two do the same: a
 //! type is a name, its parameters are read by `config_of_params`, and what
 //! a backend needs of the runtime it asks the services it is given for.
 //! Unlike a component, a backend is made once for the process, from the
 //! configuration, before any container exists - which is why it is none.
-//! The persistence (`PersistenceBackend`) is no backend of this kind: its
-//! stores are generic over the kinds they keep, and stay the core's.
 
 use crate::component::{config_of_params, service_of, ComponentError, ComponentResult};
 use crate::plugin::Plugin;
@@ -22,7 +20,8 @@ use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::file::{FileSecretConfig, FileSecretProvider};
 use caelumora_model::secret::SecretProvider;
-use caelumora_model::store::EntityStore;
+use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::store::{EntityStore, Persistence};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::user::User;
 use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
@@ -65,10 +64,16 @@ impl Backends {
         Self::default()
     }
 
-    /// The core's backends: the storages of `terminal`, the secrets of a
-    /// file and of the environment, and the users of a file and `accept_any`.
+    /// The core's backends: the stores in memory, the storages of
+    /// `terminal`, the secrets of a file and of the environment, and the
+    /// users of a file and `accept_any`. The stores in JSON files are a
+    /// plugin's (`caelumora-store-json`, issue 446).
     pub fn built_in() -> Self {
         let mut backends = Self::new();
+        backends.register::<dyn Persistence, _>("memory", |_, params, _| {
+            config_of_params::<NoParams>(params)?;
+            Ok(Arc::new(MemoryStore::new()))
+        });
         register_backends(&mut backends);
         backends.register::<dyn SecretProvider, _>("file", |_, params, _| {
             let config: FileSecretConfig = config_of_params(params)?;
@@ -144,6 +149,15 @@ impl Backends {
             .collect()
     }
 
+    /// The one backend of `T` that `config` names, configured as `name`;
+    /// `what` names it in messages - "entity store".
+    ///
+    /// # Errors
+    /// `ComponentError::Backend` naming it if it cannot be made.
+    pub fn make_one<T: ?Sized + 'static>(&self, what: &str, name: &str, config: &BackendConfig, services: &Services) -> ComponentResult<Arc<T>> {
+        self.make(&format!("the {what}"), name, config, services)
+    }
+
     /// The backend `config` names, configured as `name`, described as
     /// `backend` in messages.
     fn make<T: ?Sized + 'static>(&self, backend: &str, name: &str, config: &BackendConfig, services: &Services) -> ComponentResult<Arc<T>> {
@@ -172,7 +186,7 @@ mod tests {
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::{EntityStoreFactory, StoreBackend};
     use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
     use serde_json::json;
@@ -226,6 +240,24 @@ mod tests {
         assert!(other_service.contains("no backend of this type is known"), "the types of another service are not its: {other_service}");
     }
 
+    /// The stores keep their data in memory unless a plugin brings another
+    /// backend (issue 446); a store that cannot be made is refused naming
+    /// it.
+    #[tokio::test]
+    async fn the_stores_keep_their_data_in_memory() {
+        let memory = BackendConfig::new("memory", json!(null));
+        let kept = Backends::built_in().make_one::<dyn Persistence>("entity store", "entity_store", &memory, &Services::empty()).unwrap();
+        let stores = StoreBackend::new(kept, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        stores.entity_store::<User>().expect("any kind is kept");
+
+        let with_params = BackendConfig::new("memory", json!({ "path": "x" }));
+        let refused = Backends::built_in().make_one::<dyn Persistence>("entity store", "entity_store", &with_params, &Services::empty()).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("the entity store (memory)") && refused.contains("path"), "{refused}");
+        let unknown = BackendConfig::new("json", json!({ "path": "x" }));
+        let refused = Backends::built_in().make_one::<dyn Persistence>("state store", "state_store", &unknown, &Services::empty()).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("the state store (json)") && refused.contains("known are: memory"), "without its plugin: {refused}");
+    }
+
     #[tokio::test]
     async fn the_secrets_come_from_a_file_and_from_the_environment() {
         let dir = tempfile::tempdir().unwrap();
@@ -251,7 +283,7 @@ mod tests {
         // The hash of "wonderland", made cheaply.
         let hash = "$argon2id$v=19$m=8,t=1,p=1$Y2FlbHVtb3JhLXRlc3RzIQ$O5O4BCrndw3DwlDMCkis9v7MtqH5yH38HhXnJ6aRr2M";
         std::fs::write(&file, format!("users:\n  - id: {alice}\n    username: alice\n    roles: [hr]\n    password_hash: \"{hash}\"\n")).unwrap();
-        let users = Arc::new(MemoryStore::new()).entity_stores().users;
+        let users = StoreBackend::in_memory().entity_stores().unwrap().users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
         let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(ConfidentialityRules::default().with_roles(roles));
@@ -269,7 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn accept_any_gives_the_configured_roles_and_refuses_others() {
-        let users = Arc::new(MemoryStore::new()).entity_stores().users;
+        let users = StoreBackend::in_memory().entity_stores().unwrap().users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
         let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(ConfidentialityRules::default().with_roles(roles));

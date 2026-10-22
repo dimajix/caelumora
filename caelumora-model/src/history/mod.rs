@@ -654,7 +654,7 @@ impl HistoryEntry {
     /// recorded only to be delivered again (issue 223) - a command or a
     /// request to answer again asked of an agent, approvals and questions -
     /// is neither: never in a page, shown live alone.
-    pub(crate) fn is_item(&self) -> bool {
+    pub fn is_item(&self) -> bool {
         match self {
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
@@ -735,7 +735,7 @@ impl HistoryEntry {
     }
 
     /// The message it modifies, takes back or reclassifies, if it does.
-    pub(crate) fn changed(&self) -> Option<MessageId> {
+    pub fn changed(&self) -> Option<MessageId> {
         match self {
             HistoryEntry::Modified { message } => Some(message.id),
             HistoryEntry::Revoked { message, .. } | HistoryEntry::Reclassified { message, .. } => Some(*message),
@@ -913,7 +913,7 @@ mod tests {
     use crate::context::FrameRef;
     use crate::confidentiality::Confidentiality;
     use crate::digest::message_chain;
-    use crate::message::tests::{id, make_message};
+    use crate::message::testing::{id, make_message};
     use crate::agent::AgentId;
     use crate::message::MessageRole;
     use crate::user::UserId;

@@ -25,7 +25,7 @@ use caelumora_model::component::ComponentConfig;
 use caelumora_model::message::Message;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::store::StoreBackend;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::{Name, ScopedName};
 use std::ops::Range;
@@ -69,7 +69,7 @@ pub struct Stuck {
 
 /// Alice and her agent `helper` of a personality with `components`,
 /// stored in `store`: her context, the agent and her.
-pub async fn alice_and_an_agent(store: &MemoryStore, components: ComponentConfig) -> (SecurityContext, AgentId, UserId) {
+pub async fn alice_and_an_agent(store: &StoreBackend, components: ComponentConfig) -> (SecurityContext, AgentId, UserId) {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
 
@@ -86,12 +86,12 @@ pub async fn alice_and_an_agent(store: &MemoryStore, components: ComponentConfig
         security_attributes: Default::default(),
         deleted: None,
     };
-    store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
+    store.entity_stores().unwrap().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
     let alice = user("alice");
     let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, context.initiator_id);
-    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
-    store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
+    store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
+    store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
     (context, agent.id, alice.id)
 }
 

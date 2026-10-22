@@ -1,13 +1,13 @@
 pub(crate) mod access;
+pub mod documents;
 pub mod history;
-pub mod json;
-pub(crate) mod kept_chain;
+pub mod kept_chain;
 pub mod memberships;
 pub mod memory;
 pub mod query;
 pub mod transcript;
-#[cfg(test)]
-pub(crate) mod suite;
+#[cfg(any(test, feature = "test-support"))]
+pub mod suite;
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -34,10 +34,12 @@ use crate::group::Group;
 use crate::intern::intern;
 use crate::store::history::HistoryStore;
 use crate::store::transcript::TranscriptStore;
-use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use crate::store::query::{Field, NoField, Page, Query};
-use crate::type_map::TypeKey;
+use crate::type_map::{TypeKey, TypeMap};
+use crate::store::documents::{CheckedStore, Document, DocumentOf, DocumentStorage};
+use crate::security::AllowAllPolicy;
+use crate::confidentiality::ConfidentialityRules;
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 use std::fmt;
@@ -383,27 +385,56 @@ impl EntityStores {
     }
 }
 
-/// The store of the configured backend (issue 323): of the entities of
-/// every kind, of the preconfigured components and of the states. It opens
-/// the store of a kind for whoever asks - the core, a plugin - and refuses a
-/// kind whose name another kind has already, since the name is what a kind
-/// is kept, asked about and announced by (`EntityKind`).
-#[derive(Debug, Clone)]
-pub struct StoreBackend {
-    store: Backend,
-    /// The kinds opened, by name.
-    kinds: Arc<Mutex<HashMap<EntityKind, TypeKey>>>,
+/// A backend of the stores (issue 446) - the memory, the JSON files -: what
+/// keeps the documents of every kind (`DocumentStorage`), the states and the
+/// histories and transcripts they hold, without asking anything. The checks
+/// are the `StoreBackend`'s, which is made of a backend and the policies.
+pub trait Persistence: StateStore + HistoryStore + TranscriptStore {
+    /// The storage of the documents of `kind`, opened once - asked again,
+    /// the same one, so that whoever writes a kind writes one storage.
+    /// `document_of` tells a document of the kind as a storage that keeps
+    /// bodies alone reads it back.
+    ///
+    /// # Errors
+    /// If the storage cannot be opened.
+    fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>>;
 }
 
+/// The stores of a backend (issues 323, 446): of the entities of every kind,
+/// of the preconfigured components and of the states - the entities and the
+/// components checked by the policies it was made with, the same way for
+/// every backend (`CheckedStore`). It opens the store of a kind for whoever
+/// asks - the core, a plugin -, once, and refuses a kind whose name another
+/// kind has already, since the name is what a kind is kept, asked about and
+/// announced by (`EntityKind`).
 #[derive(Debug, Clone)]
-enum Backend {
-    Memory(Arc<MemoryStore>),
-    Json(Arc<JsonFileStore>),
+pub struct StoreBackend {
+    persistence: Arc<dyn Persistence>,
+    policies: Policies,
+    /// The stores of the kinds opened.
+    opened: Arc<Mutex<Opened>>,
+}
+
+/// The kinds a `StoreBackend` opened: their stores by type, and the type of
+/// each by its name.
+#[derive(Debug, Default)]
+struct Opened {
+    stores: TypeMap,
+    kinds: HashMap<EntityKind, TypeKey>,
 }
 
 impl StoreBackend {
-    fn of(store: Backend) -> Self {
-        Self { store, kinds: Default::default() }
+    /// The stores of `persistence`, asking `access_policy` about every
+    /// access to an entity, and `confidentiality` whether the caller is
+    /// cleared for what is reached by clearance.
+    pub fn new(persistence: Arc<dyn Persistence>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+        Self { persistence, policies: (access_policy, confidentiality), opened: Default::default() }
+    }
+
+    /// Stores in memory that permit everything - for tests and throwaway
+    /// setups.
+    pub fn in_memory() -> Self {
+        Self::new(Arc::new(MemoryStore::new()), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
     }
 
     /// The stores of the core's kinds.
@@ -416,49 +447,46 @@ impl StoreBackend {
 
     /// The store of the preconfigured components, kept where the entities
     /// are.
-    pub fn component_store(&self) -> Arc<dyn ComponentStore> {
-        match &self.store {
-            Backend::Memory(store) => Arc::<MemoryStore>::clone(store),
-            Backend::Json(store) => Arc::<JsonFileStore>::clone(store),
-        }
+    ///
+    /// # Errors
+    /// If it cannot be opened.
+    pub fn component_store(&self) -> StoreResult<Arc<dyn ComponentStore>> {
+        Ok(self.checked::<StoredComponents>()?)
     }
 
     /// The store of the states.
     pub fn state_store(&self) -> Arc<dyn StateStore> {
-        match &self.store {
-            Backend::Memory(store) => Arc::<MemoryStore>::clone(store),
-            Backend::Json(store) => Arc::<JsonFileStore>::clone(store),
-        }
+        Arc::clone(&self.persistence) as Arc<dyn StateStore>
     }
 
     /// The read side of the histories the states hold (issue 379), kept
     /// where the states are.
     pub fn history_store(&self) -> Arc<dyn HistoryStore> {
-        match &self.store {
-            Backend::Memory(store) => Arc::<MemoryStore>::clone(store),
-            Backend::Json(store) => Arc::<JsonFileStore>::clone(store),
-        }
+        Arc::clone(&self.persistence) as Arc<dyn HistoryStore>
     }
 
     /// The read side of the agents' transcripts the states hold (issue
     /// 380), kept where the states are.
     pub fn transcript_store(&self) -> Arc<dyn TranscriptStore> {
-        match &self.store {
-            Backend::Memory(store) => Arc::<MemoryStore>::clone(store),
-            Backend::Json(store) => Arc::<JsonFileStore>::clone(store),
+        Arc::clone(&self.persistence) as Arc<dyn TranscriptStore>
+    }
+
+    /// The store of the kind `T`, opened once.
+    ///
+    /// # Errors
+    /// `StoreError::Conflict` if another kind has the name of `T`; whatever
+    /// opening its storage fails with.
+    fn checked<T: Stored>(&self) -> StoreResult<Arc<CheckedStore<T>>> {
+        let kind = TypeKey::of::<T>();
+        let mut opened = self.opened.lock().unwrap_or_else(PoisonError::into_inner);
+        let named = *opened.kinds.entry(T::KIND).or_insert(kind);
+        if named.id != kind.id {
+            return Err(StoreError::Conflict(format!("the kinds {} and {} are both named '{}'", named.name(), kind.name(), T::KIND)));
         }
-    }
-}
-
-impl From<Arc<MemoryStore>> for StoreBackend {
-    fn from(store: Arc<MemoryStore>) -> Self {
-        Self::of(Backend::Memory(store))
-    }
-}
-
-impl From<Arc<JsonFileStore>> for StoreBackend {
-    fn from(store: Arc<JsonFileStore>) -> Self {
-        Self::of(Backend::Json(store))
+        opened.stores.get_or_try_insert(|| {
+            let storage = self.persistence.documents(T::KIND, Document::read::<T>)?;
+            Ok(Arc::new(CheckedStore::<T>::new(storage, &self.policies)))
+        })
     }
 }
 
@@ -469,18 +497,7 @@ impl EntityStoreFactory for StoreBackend {
     /// `StoreError::Conflict` if another kind has the name of `T`; whatever
     /// opening it fails with.
     fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
-        let kind = TypeKey::of::<T>();
-        {
-            let mut kinds = self.kinds.lock().unwrap_or_else(PoisonError::into_inner);
-            let named = *kinds.entry(T::KIND).or_insert(kind);
-            if named.id != kind.id {
-                return Err(StoreError::Conflict(format!("the kinds {} and {} are both named '{}'", named.name(), kind.name(), T::KIND)));
-            }
-        }
-        match &self.store {
-            Backend::Memory(store) => store.entity_store().map_err(|never| match never {}),
-            Backend::Json(store) => store.entity_store(),
-        }
+        Ok(self.checked::<T>()?)
     }
 }
 
@@ -604,7 +621,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
-        let store = Arc::new(MemoryStore::new()).entity_stores().sessions;
+        let store = StoreBackend::in_memory().entity_stores().unwrap().sessions;
         let ctx = SecurityContext::default();
 
         store.create(&ctx, &session1).await.unwrap();
@@ -681,20 +698,17 @@ mod tests {
     #[tokio::test]
     async fn a_backend_opens_a_kind_once_for_everybody_and_no_two_kinds_of_one_name() {
         let memory = Arc::new(MemoryStore::new());
-        let backend = StoreBackend::from(Arc::clone(&memory));
+        let backend = StoreBackend::new(Arc::<MemoryStore>::clone(&memory), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let notes = backend.entity_store::<Note>().unwrap();
         let note = Note { id: NoteId::new(), security_attributes: SecurityAttributes::default(), deleted: None };
         notes.create(&SecurityContext::system(), &note).await.unwrap();
         let again = backend.entity_store::<Note>().unwrap();
         assert!(again.get(&SecurityContext::system(), note.id).await.is_ok(), "the same store, asked again");
         let core = backend.entity_stores().unwrap();
-        assert!(Arc::ptr_eq(&core.groups, &memory.entity_stores().groups), "the core's kinds, too");
+        assert!(Arc::ptr_eq(&core.groups, &backend.entity_stores().unwrap().groups), "the core's kinds, too");
         let refused = backend.entity_store::<Impostor>().expect_err("named as the groups are");
         assert!(matches!(&refused, StoreError::Conflict(why) if why.contains("'group'")), "{refused}");
-
-        let dir = tempfile::tempdir().unwrap();
-        let json = StoreBackend::from(Arc::new(JsonFileStore::new(dir.path(), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap()));
-        json.entity_store::<Note>().unwrap().create(&SecurityContext::system(), &note).await.unwrap();
-        assert!(dir.path().join("entities/note").join(format!("{}.json", note.id)).is_file(), "kept under its name");
+        let other = StoreBackend::new(memory, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        assert!(other.entity_store::<Note>().unwrap().get(&SecurityContext::system(), note.id).await.is_ok(), "one storage of a kind in a backend");
     }
 }

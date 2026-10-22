@@ -26,6 +26,7 @@ use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_a2a::plugin::A2aPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
+use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
 use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
 use caelumora_ollama::plugin::OllamaPlugin;
@@ -491,7 +492,7 @@ struct Args {
 /// The plugins the terminal builds its runtime with (issue 323) - first the
 /// essential one, the agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(AgentsPlugin), Box::new(SkillsPlugin), Box::new(ArtifactsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin)]
+    vec![Box::new(AgentsPlugin), Box::new(SkillsPlugin), Box::new(ArtifactsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin), Box::new(JsonStorePlugin)]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core
