@@ -74,7 +74,6 @@ mod tests {
     use caelumora_model::value::name::{ScopedName, Name};
     use caelumora_model::agent::{Personality, PersonalityId};
     use caelumora_model::scope::Scope;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::Visibility;

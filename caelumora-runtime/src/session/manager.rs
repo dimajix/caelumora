@@ -757,7 +757,6 @@ mod tests {
     use caelumora_model::scope::Scope;
     use std::sync::Arc;
     use caelumora_model::value::name::ScopedName;
-    
     use caelumora_model::store::StoreBackend;
     use crate::session::{SessionError, SessionManager};
     use crate::session::testing::*;

@@ -85,7 +85,6 @@ mod tests {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::component::ComponentConfig;
     use caelumora_model::scope::Scope;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::value::name::ScopedName;
 

@@ -162,7 +162,6 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::{ChannelId, Session, SessionId};
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::user::{User, UserId, UserProfile};
     use caelumora_model::value::text::Introduction;

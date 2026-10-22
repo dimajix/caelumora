@@ -49,7 +49,6 @@ mod tests {
     use caelumora_model::secret::{SecretProvider, SecretResult};
     use crate::component::config_of_params;
     use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored};

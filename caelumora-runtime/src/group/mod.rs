@@ -194,7 +194,6 @@ mod tests {
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::json::JsonFileStore;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::channel::ChannelId;

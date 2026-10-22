@@ -261,7 +261,6 @@ mod tests {
     use caelumora_model::message::{Message, MessageEvent};
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::security::SecurityContext;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::tool::Tool;
     use caelumora_model::type_map::TypeKey;

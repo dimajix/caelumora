@@ -809,7 +809,6 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use caelumora_model::session::Session;
     use caelumora_model::snapshot::Detail;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};

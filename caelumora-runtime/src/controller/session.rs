@@ -199,7 +199,6 @@ impl SessionController {
 mod tests {
     use super::*;
     use caelumora_model::security::SecurityAttributes;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::ValueError;

@@ -100,23 +100,25 @@ Details: [PLUGINS.md](PLUGINS.md).
 ## Backends
 
 Some services of the core are served by one of a choice of **backends**, named in the configuration
-by their `type` (issue 324): the storages of workspaces (`TerminalProvider`), the secret providers
-(`SecretProvider`) and the user providers (`UserProvider`). A backend is made by the factory
-registered under its type for its service, in `Backends` (`caelumora_runtime::backend`), which reads
-its parameters and asks the services it is given for what it needs. The core registers its own
-(`Backends::built_in`); a plugin adds one by registering its factory in `Plugin::backends`, which is
-asked before anything is made - so a new storage or provider is a crate linked into the program, and
-no edit of the core, as the Open Terminal storages of `caelumora-open-terminal` are (issue 327). The
-backends are made once, when the runtime is built (`RuntimeBuilder::from_config`): the secret
-providers first, then the storages and the user providers with the secrets and the records of the
+by their `type` (issue 324): the stores (`Persistence`, issue 446), the storages of workspaces
+(`TerminalProvider`), the secret providers (`SecretProvider`) and the user providers
+(`UserProvider`). A backend is made by the factory registered under its type for its service, in
+`Backends` (`caelumora_runtime::backend`), which reads its parameters and asks the services it is
+given for what it needs. The core registers its own (`Backends::built_in`); a plugin adds one by
+registering its factory in `Plugin::backends`, which is asked before anything is made - so a new
+storage or provider is a crate linked into the program, and no edit of the core, as the Open
+Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are made once, when the
+runtime is built (`RuntimeBuilder::from_config`): the stores first, which need nothing, then the
+secret providers, then the storages and the user providers with the secrets and the records of the
 users at hand. A plugin's service may be served by backends too - the storages of artifacts
 (`ArtifactStorage`) -: the plugin makes them from its section while it registers
 (`RuntimeBuilder::make_named`), and another crate may register one for it (issue 328). Unlike a
 component, a backend serves the whole process and lives in no container, which is why it is no
 component.
 
-The persistence is not among them: its stores open a store for any kind, generic over the kind, so
-it stays a closed choice of the core (`PersistenceBackend`, see [STORAGE.md](STORAGE.md)).
+The stores are such backends since what a backend keeps is not generic: documents of any kind and
+states (`Persistence`); the runtime makes a `StoreBackend` of each, with the policies (see
+[STORAGE.md](STORAGE.md#the-entity-store)).
 
 Details: [CONFIGURATION.md](CONFIGURATION.md#backends).
 

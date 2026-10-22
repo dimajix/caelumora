@@ -365,7 +365,6 @@ mod tests {
     use super::*;
     use crate::component::testing::*;
     use crate::component::ComponentKind;
-    
     use caelumora_model::store::StoreBackend;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

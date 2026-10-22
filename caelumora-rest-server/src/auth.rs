@@ -439,7 +439,6 @@ mod tests {
     use axum::body::Body;
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_runtime::event::EventBus;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::user_provider::UserProvider;
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;

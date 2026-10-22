@@ -415,7 +415,6 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::security::{OwnershipPolicy, Grant, Subject};
     use caelumora_model::session::SessionId;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::{User, UserId};

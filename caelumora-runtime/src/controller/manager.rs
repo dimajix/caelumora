@@ -282,7 +282,6 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::StoreError;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::user::{User, UserUpdateEvent};
     use caelumora_model::workspace::WorkspaceUpdateEvent;

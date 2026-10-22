@@ -7,7 +7,7 @@ use crate::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, S
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt::{self, Debug, Display};
@@ -26,6 +26,31 @@ mod transcripts;
 /// the snapshot, and at least this large (issue 193): small states are not
 /// written whole at every other put. `journal_floor` of the configuration.
 pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
+
+/// The parameters of the backend `json` (issue 446): the directory the
+/// files lie below, and the size from which a state's journal is folded
+/// into its snapshot, `DEFAULT_JOURNAL_FLOOR` unless named.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonStoreConfig {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub journal_floor: Option<u64>,
+}
+
+impl JsonStoreConfig {
+    /// The store of the files this configuration names.
+    ///
+    /// # Errors
+    /// As `JsonFileStore::new`.
+    pub fn store(&self) -> StoreResult<JsonFileStore> {
+        let store = JsonFileStore::new(&self.path)?;
+        Ok(match self.journal_floor {
+            Some(bytes) => store.with_journal_floor(bytes),
+            None => store,
+        })
+    }
+}
 
 /// One JSON file per document (`EntityStore`), and per state a snapshot
 /// and a journal (`StateStore`, issue 193): the state as it was last written

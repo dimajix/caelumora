@@ -544,7 +544,6 @@ mod tests {
     use crate::component::ComponentContainer;
     use caelumora_model::component::{ComponentFailPolicy, StoredComponents};
     use caelumora_model::session::SessionId;
-    
     use caelumora_model::store::StoreBackend;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};

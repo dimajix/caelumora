@@ -45,13 +45,15 @@ map, the JSON store one file per document in the kind's directory, `entities/<ki
 What every kind's store does - read the document as its type, ask the policies, order the steps -
 is written once, in the model (`CheckedStore`, over `store::access`), for every backend alike.
 
-What the configuration opens is a `StoreBackend` (`AppConfig::open_entity_store`): a backend and the
-two policies. It opens the store of a kind for whoever asks
-(`EntityStoreFactory::entity_store::<T>()`), once - whoever asks for a kind again, the core or a
-plugin, is given the same store -, refuses a kind whose name another kind has, and gives the
-component store and the state store. The stores of the core's kinds are `EntityStores`, which the
-runtime is given; a plugin asks for the store of its kind while it registers. A manager is made
-with `&EntityStores` - or the store of its kind - and keeps the stores of the kinds it uses as
+What the runtime opens is a `StoreBackend`: the backend the configuration names under
+`persistence.entity_store` - a backend of the `Backends` like every other, the core's `memory` and
+`json` or a plugin's (`dyn Persistence`, see [CONFIGURATION.md](CONFIGURATION.md#backends)) - and
+the two policies; the states likewise under `persistence.state_store`. It opens the store of a kind
+for whoever asks (`EntityStoreFactory::entity_store::<T>()`), once - whoever asks for a kind again,
+the core or a plugin, is given the same store -, refuses a kind whose name another kind has, and
+gives the component store and the state store. The stores of the core's kinds are `EntityStores`,
+which the runtime is given; a plugin asks for the store of its kind while it registers. A manager is
+made with `&EntityStores` - or the store of its kind - and keeps the stores of the kinds it uses as
 fields, as every service is held. Tests make their stores the same way, `StoreBackend::in_memory()`
 for stores that permit everything.
 

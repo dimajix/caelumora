@@ -1,18 +1,16 @@
 //! Backends (issue 324): what serves a service - a storage of workspaces
 //! (`dyn TerminalProvider`) or of a plugin's (a storage of artifacts, issue
 //! 328), a user provider (`dyn UserProvider`), a secret provider (`dyn
-//! SecretProvider`) -
-//! named in the configuration by its type (`BackendConfig`) and made by the
-//! factory registered under that type for the service: the core's
-//! (`Backends::built_in`) or a plugin's (`Plugin::backends`).
+//! SecretProvider`), what the stores keep their data in (`dyn Persistence`,
+//! issue 446) - named in the configuration by its type (`BackendConfig`) and
+//! made by the factory registered under that type for the service: the
+//! core's (`Backends::built_in`) or a plugin's (`Plugin::backends`).
 //!
 //! Built to look like the `ComponentRegistry` where the two do the same: a
 //! type is a name, its parameters are read by `config_of_params`, and what
 //! a backend needs of the runtime it asks the services it is given for.
 //! Unlike a component, a backend is made once for the process, from the
 //! configuration, before any container exists - which is why it is none.
-//! The persistence (`PersistenceBackend`) is no backend of this kind: its
-//! stores are generic over the kinds they keep, and stay the core's.
 
 use crate::component::{config_of_params, service_of, ComponentError, ComponentResult};
 use crate::plugin::Plugin;
@@ -22,7 +20,9 @@ use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::file::{FileSecretConfig, FileSecretProvider};
 use caelumora_model::secret::SecretProvider;
-use caelumora_model::store::EntityStore;
+use caelumora_model::store::json::JsonStoreConfig;
+use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::store::{EntityStore, Persistence};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::user::User;
 use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
@@ -65,10 +65,20 @@ impl Backends {
         Self::default()
     }
 
-    /// The core's backends: the storages of `terminal`, the secrets of a
-    /// file and of the environment, and the users of a file and `accept_any`.
+    /// The core's backends: the stores in memory and in JSON files, the
+    /// storages of `terminal`, the secrets of a file and of the environment,
+    /// and the users of a file and `accept_any`.
     pub fn built_in() -> Self {
         let mut backends = Self::new();
+        backends.register::<dyn Persistence, _>("memory", |_, params, _| {
+            config_of_params::<NoParams>(params)?;
+            Ok(Arc::new(MemoryStore::new()))
+        });
+        backends.register::<dyn Persistence, _>("json", |_, params, _| {
+            let config: JsonStoreConfig = config_of_params(params)?;
+            let store = config.store().map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+            Ok(Arc::new(store))
+        });
         register_backends(&mut backends);
         backends.register::<dyn SecretProvider, _>("file", |_, params, _| {
             let config: FileSecretConfig = config_of_params(params)?;
@@ -144,6 +154,15 @@ impl Backends {
             .collect()
     }
 
+    /// The one backend of `T` that `config` names, configured as `name`;
+    /// `what` names it in messages - "entity store".
+    ///
+    /// # Errors
+    /// `ComponentError::Backend` naming it if it cannot be made.
+    pub fn make_one<T: ?Sized + 'static>(&self, what: &str, name: &str, config: &BackendConfig, services: &Services) -> ComponentResult<Arc<T>> {
+        self.make(&format!("the {what}"), name, config, services)
+    }
+
     /// The backend `config` names, configured as `name`, described as
     /// `backend` in messages.
     fn make<T: ?Sized + 'static>(&self, backend: &str, name: &str, config: &BackendConfig, services: &Services) -> ComponentResult<Arc<T>> {
@@ -172,8 +191,7 @@ mod tests {
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
-    
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::{EntityStoreFactory, StoreBackend};
     use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
     use serde_json::json;
@@ -225,6 +243,27 @@ mod tests {
         assert!(refused.contains("the greeter 1 (fixed)") && refused.contains("greting"), "{refused}");
         let other_service = Backends::built_in().make_chain::<dyn Greeter>("greeter", &[BackendConfig::new("env", json!({}))], &Services::empty()).map(|_| ()).unwrap_err().to_string();
         assert!(other_service.contains("no backend of this type is known"), "the types of another service are not its: {other_service}");
+    }
+
+    /// The stores keep their data in memory or in JSON files (issue 446),
+    /// each made from its parameters and refused naming the store.
+    #[tokio::test]
+    async fn the_stores_keep_their_data_in_memory_or_in_json_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = BackendConfig::new("json", json!({ "path": dir.path(), "journal_floor": 1024 }));
+        let files = Backends::built_in().make_one::<dyn Persistence>("entity store", "entity_store", &json, &Services::empty()).unwrap();
+        let stores = StoreBackend::new(files, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        stores.entity_store::<User>().expect("its kinds are opened in its files");
+        assert!(dir.path().join("entities/user").is_dir(), "below its path");
+        let memory = BackendConfig::new("memory", json!(null));
+        assert!(Backends::built_in().make_one::<dyn Persistence>("state store", "state_store", &memory, &Services::empty()).is_ok());
+
+        let misspelt = BackendConfig::new("json", json!({ "pth": dir.path() }));
+        let refused = Backends::built_in().make_one::<dyn Persistence>("entity store", "entity_store", &misspelt, &Services::empty()).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("the entity store (json)") && refused.contains("pth"), "{refused}");
+        let unknown = BackendConfig::new("file", json!({}));
+        let refused = Backends::built_in().make_one::<dyn Persistence>("state store", "state_store", &unknown, &Services::empty()).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("the state store (file)") && refused.contains("known are: json, memory"), "{refused}");
     }
 
     #[tokio::test]

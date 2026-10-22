@@ -18,7 +18,7 @@ use caelumora_model::removal::Deletable;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, StateStore, StoreBackend, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, Persistence, StateStore, StoreBackend, StoreResult};
 use crate::plugin::Plugin;
 use crate::seed::SeedSection;
 use serde::de::DeserializeOwned;
@@ -215,8 +215,14 @@ impl RuntimeBuilder {
         let memberships = Arc::new(StoreMemberships::new());
         let access_policy = config.create_access_policy(Arc::<StoreMemberships>::clone(&memberships));
         let confidentiality = config.create_confidentiality_policy();
-        let states = config.open_state_store(Arc::clone(&access_policy), Arc::clone(&confidentiality))?;
-        let backend = config.open_entity_store(Arc::clone(&access_policy), Arc::clone(&confidentiality))?;
+        // The stores, each over the backend the configuration names (issue
+        // 446), which needs nothing of the runtime.
+        let persistence = |what: &str, name: &str, backend: &BackendConfig| -> Result<StoreBackend> {
+            let made = backends.make_one::<dyn Persistence>(what, name, backend, &Services::empty())?;
+            Ok(StoreBackend::new(made, Arc::clone(&access_policy), Arc::clone(&confidentiality)))
+        };
+        let states = persistence("state store", "state_store", &config.persistence.state_store)?;
+        let backend = persistence("entity store", "entity_store", &config.persistence.entity_store)?;
         memberships.bind(&backend.entity_stores()?.groups);
         let secret_services = Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
         let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;

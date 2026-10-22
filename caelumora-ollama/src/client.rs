@@ -854,7 +854,6 @@ mod tests {
     use tokio::net::TcpListener;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::SecurityContext;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::type_map::TypeKey;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};

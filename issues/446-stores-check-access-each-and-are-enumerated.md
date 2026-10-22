@@ -149,3 +149,12 @@ theirs: `caelumora-app` brings the plugin.
   The tests make their stores through `StoreBackend`. Observable besides: the JSON files of
   entities are written from the document as `serde_json::Value`, so their keys are sorted; what is
   read is the same, and nothing stored has to be deleted.
+- **2026-10-22** — Step 2 done: `dyn Persistence` is a service of the `Backends`; the core
+  registers `memory` and `json`, whose parameters are `JsonStoreConfig` beside the JSON store.
+  `persistence.entity_store` and `state_store` are `BackendConfig`s, `memory` unless configured;
+  `PersistenceBackend`, `AppConfig::open_entity_store`, `open_state_store` and `ConfigError::Store`
+  are gone. `RuntimeBuilder::from_config` makes the two backends first (`Backends::make_one`, new
+  beside `make_named` and `make_chain`) and a `StoreBackend` of each with the policies. The YAML is
+  unchanged; what changed is when a wrong one is refused: an unknown type or parameter of a store is
+  refused as the runtime is built, naming the store - `the entity store (json)` -, as for every
+  backend, no longer as the file is read.

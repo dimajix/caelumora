@@ -226,7 +226,6 @@ mod tests {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::store::query::Query;
     use caelumora_model::store::EntityStoreFactory;

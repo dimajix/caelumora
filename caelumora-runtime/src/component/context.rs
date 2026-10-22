@@ -121,7 +121,6 @@ mod tests {
     use crate::component::testing::*;
     use crate::component::{ComponentContainer, ComponentKind, ComponentRegistry};
     use caelumora_model::security::AccessPolicy;
-    
     use caelumora_model::store::StoreBackend;
     use std::sync::Mutex;
 

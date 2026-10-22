@@ -137,7 +137,6 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::{Session, SessionId};
-    
     use caelumora_model::store::StoreBackend;
     use chrono::Utc;
     use caelumora_model::work::Work;

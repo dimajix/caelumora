@@ -246,7 +246,6 @@ pub(crate) mod tests {
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::SecurityContext;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::type_map::TypeKey;
     use serde_json::json;

@@ -416,7 +416,6 @@ mod tests {
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::UserId;
     use caelumora_model::confidentiality::Classification;
-    
     use caelumora_model::store::StoreBackend;
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::work::TurnId;
