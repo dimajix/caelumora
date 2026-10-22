@@ -16,6 +16,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [03](03-postgres-entity-store.md) | open | medium | feature | `EntityStore` has only in-memory and JSON-file implementations; a Postgres one is the prerequisite for everything multi-process. |
 | [04](04-postgres-state-store.md) | open | medium | feature | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
+| [447](447-store-seam-not-fit-for-a-database.md) | open | medium | refactoring | A storage of documents is listed by reading every id and then each document on its own, compares names as values only it can hold, and a backend cannot open asynchronously or reach a secret, so a database behind the seam of issue 446 would read a kind row by row, could keep no unique index of names and could not connect. |
 
 ## Sessions and channels
 

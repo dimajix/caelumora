@@ -1,0 +1,80 @@
+# 447 — The seam of the stores is not fit for a database
+
+**Status:** open
+**Type:** refactoring
+**Priority:** medium
+**Area:** Persistence
+**Summary:** A storage of documents is listed by reading every id and then each document on its own, compares names as values only it can hold, and a backend cannot open asynchronously or reach a secret, so a database behind the seam of issue 446 would read a kind row by row, could keep no unique index of names and could not connect.
+
+## The problem
+
+Issue [446](446-stores-check-access-each-and-are-enumerated.md) put every backend of the stores
+behind one seam: a `DocumentStorage` per kind, under the one `CheckedStore`, and a `Persistence`
+made by the `Backends`. Three things about that seam fit the memory and the JSON files, but not a
+database ([03](03-postgres-entity-store.md), [04](04-postgres-state-store.md)):
+
+- **Lists read one document at a time.** `DocumentStorage` offers `ids()` and `get(id)`;
+  `CheckedStore::page` sorts the ids, reads the documents one by one, judges the filter and asks the
+  policy until the page is full. In a database that is one query for every id of the kind and one
+  per document. `find_by_name` lists every document of the kind to find one.
+- **Names are compared as values.** A `Document` carries its name as a `ScopedName`, which is
+  compared by its scope and its folded name (`Name`'s key, private). A database keeps a name unique
+  by a unique index over a column, which needs the name as one value it can compare - and the rule
+  how it is formed is the model's, not every backend's.
+- **A backend is made synchronously and before the secrets.** A factory of the `Backends` is a
+  plain function, `RuntimeBuilder::from_config` is synchronous and makes the stores before the
+  `SecretManager`. A database connects, applies its migrations and resolves the secret its
+  connection is named by - all asynchronously, and the last with the secrets at hand.
+
+## Decided
+
+With the maintainer, on 2026-10-22, while discussing 03:
+
+- **Lists: a scan in batches.** `DocumentStorage::scan` hands out documents in the order of their
+  ids, as `str` orders them (in Postgres `COLLATE "C"`), after a cursor, up to a number, among what
+  is deleted or not, and meeting a filter - or more: a storage may hand out a superset, never less,
+  and the `CheckedStore` judges every document against the whole filter again before it asks the
+  policy, reading the next batch until the page is full. So a database translates what it can of a
+  filter and leaves the rest - `NamePrefix` and `Contains`, which compare as names are folded - to
+  the store. The filter crosses the seam without the kind's field type, by the paths of its fields.
+  A storage that cannot read a document as stored, or fails, fails the scan; only a document that
+  cannot be read as its type is left out of a list and logged. `find_by_name` asks the storage for
+  the document of a name key (`named`), and then the policy.
+- **Names: a key made by the model.** `ScopedName::key()` is the one form a name is compared by -
+  its scope and its folded name -, and a `Document` carries that string. Every storage compares
+  strings; a database keeps them unique by a partial unique index (`WHERE NOT deleted`). The rule of
+  issue [250](250-unique-names-per-name-space.md) stays as it is, for every kind. A key depends on
+  how names are folded; should that change, the stored keys are stale, and stored data is deleted.
+- **Backends: opened asynchronously, with the secrets at hand.** `Persistence` gets an
+  `async fn open(&self)`, which does nothing unless a backend says otherwise.
+  `RuntimeBuilder::from_config` becomes `async`: it makes the secrets first - they need only the
+  policies -, then the backends of the stores, which may ask for the `SecretManager` among the
+  services they are given, then registers the plugins - which open the stores of their kinds -, and
+  then opens the backends, so that a database creates what the kinds opened need, applies its
+  migrations and connects before anything runs, and a wrong secret fails at start.
+
+For 03 itself it was decided at the same time: one table per kind, named `entity_<kind>`, each
+with the columns `id`, `name_key`, `deleted` and `body` (`jsonb`); see 03.
+
+## Steps
+
+1. **Names by key.** `ScopedName::key()`, `Document::name` a string, the storages compare keys.
+2. **Lists by scan.** `DocumentStorage::scan` and `named` in place of `ids`; `CheckedStore` reads
+   in batches and judges again; the filter by paths of fields.
+3. **Backends opened asynchronously.** `Persistence::open`, `RuntimeBuilder::from_config` `async`,
+   the secrets before the stores and offered to their backends.
+
+Each without a change of behaviour.
+
+## Done when
+
+- A storage is listed in batches, and a name is found by its key.
+- The key of a name is made in the model alone.
+- A backend of the stores is opened asynchronously at start, after the plugins registered, and can
+  reach the secrets.
+- `docs/STORAGE.md` and `docs/ARCHITECTURE.md` say so.
+
+## History
+
+- **2026-10-22** — Opened from the discussion of 03, 04 and 26 with the maintainer, as the
+  preparation of a Postgres store behind the seam of 446.
