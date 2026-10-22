@@ -152,7 +152,8 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::memory::MemoryStore;
+    
+    use caelumora_model::store::StoreBackend;
     use chrono::Utc;
     use caelumora_model::work::Work;
 
@@ -190,8 +191,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_descriptions_are_read_at_every_turn_and_classified_as_their_place() {
-        let store = Arc::new(MemoryStore::new());
-        let runtime = TestRuntime { store: Arc::clone(&store), plugins: vec![&TestAgents], ..Default::default() }.build();
+        let store = StoreBackend::in_memory();
+        let runtime = TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 
         let personality = Personality {
@@ -199,9 +200,9 @@ mod tests {
             kind: Default::default(), roles: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, hears_during_turn: Default::default(), deleted: None,
         };
-        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
+        store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
-        store.entity_stores().agents.create(&system, &agent).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let confidential = Classification::general(Confidentiality::Confidential);
         let mut channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), confidential.clone(), None);
@@ -215,8 +216,8 @@ mod tests {
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };
-        store.entity_stores().sessions.create(&system, &session).await.unwrap();
-        store.entity_stores().channels.create(&system, &channel).await.unwrap();
+        store.entity_stores().unwrap().sessions.create(&system, &session).await.unwrap();
+        store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
         let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
 
         let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);

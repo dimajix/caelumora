@@ -30,7 +30,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::{ComponentStore, StoreError, Stored};
+use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::{UserId, UserProfile, User};
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
@@ -883,7 +883,7 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
 async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     let world = World::new().await;
     let policy = StoredComponents::new("bobs-policy", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.create_components(&World::as_user(world.bob), &policy).await.expect("bob keeps his policy");
+    world.store.component_store().unwrap().create_components(&World::as_user(world.bob), &policy).await.expect("bob keeps his policy");
     let session = world.shared_session(&[], &[]).await;
     let spec = |name: &str| ChannelSpec {
         name: name.to_string(),
@@ -905,7 +905,7 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     ]), "read as she names it, and again as the channel is built in its owner's name - hers; then its founder joins");
 
     let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..policy };
-    world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
+    world.store.component_store().unwrap().update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("other"))).await;
     assert!(matches!(refused.err().and_then(|e| e.downcast::<SessionError>().ok()), Some(SessionError::InvalidComponents(_))));
     assert_eq!(asked, checks(&["alice: GetComponents(bob's) no"]));
@@ -921,7 +921,7 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
 async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     let world = World::new().await;
     let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("echo", "echo_tool")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
+    world.store.component_store().unwrap().create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
     let session = world.shared_session(&[], &[]).await;
     let spec = ChannelSpec {
         name: "tooled".to_string(),
@@ -952,7 +952,7 @@ async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_r
         });
     }).await;
     let operated = StoredComponents::new("operated", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "operated_policy")] }, attributes(None, &[world.alice]));
-    world.store.create_components(&World::system(), &operated).await.expect("the operator's");
+    world.store.component_store().unwrap().create_components(&World::system(), &operated).await.expect("the operator's");
     let session = world.shared_session(&[], &[]).await;
     let spec = |name: &str, policy: ComponentDescriptor| ChannelSpec {
         name: name.to_string(),

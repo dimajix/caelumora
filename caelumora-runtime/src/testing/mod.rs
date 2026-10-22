@@ -181,8 +181,9 @@ pub fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttribut
 /// Its secrets are always none, under its access policy.
 pub struct TestRuntime<'a> {
     /// What the entities are kept in and, unless `state_store` is another,
-    /// the agents' states: a new, empty store.
-    pub store: Arc<MemoryStore>,
+    /// the agents' states: new, empty stores in memory that permit
+    /// everything.
+    pub store: StoreBackend,
     /// What the agents' states and the histories are kept in, if not in
     /// `store`.
     pub state_store: Option<StoreBackend>,
@@ -204,7 +205,7 @@ static ANSWERING_OK: LazyLock<ScriptedAgents> = LazyLock::new(|| ScriptedAgents(
 impl Default for TestRuntime<'_> {
     fn default() -> Self {
         Self {
-            store: Arc::new(MemoryStore::new()),
+            store: StoreBackend::in_memory(),
             state_store: None,
             access_policy: Arc::new(AllowAllPolicy::new()),
             confidentiality: Arc::new(ConfidentialityRules::default()),
@@ -226,8 +227,11 @@ impl TestRuntime<'_> {
     /// # Errors
     /// As `RuntimeManager::new`.
     pub fn try_build(self) -> Result<RuntimeManager> {
-        let state_store = self.state_store.unwrap_or_else(|| StoreBackend::from(Arc::<MemoryStore>::clone(&self.store)));
-        let registry = self.registry.unwrap_or_else(|| test_registry(Arc::<MemoryStore>::clone(&self.store)));
+        let state_store = self.state_store.unwrap_or_else(|| self.store.clone());
+        let registry = match self.registry {
+            Some(registry) => registry,
+            None => test_registry(self.store.component_store()?),
+        };
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
         RuntimeManager::new(state_store, self.store, secrets, self.access_policy, self.confidentiality, &self.config, registry, &self.plugins)
     }
@@ -240,7 +244,7 @@ pub static STAFF: LazyLock<RoleId> = LazyLock::new(RoleId::new);
 /// on the staff, carol a stranger to everything of theirs.
 pub struct World {
     pub access_policy: Arc<Recorder>,
-    pub store: Arc<MemoryStore>,
+    pub store: StoreBackend,
     pub runtime: Arc<RuntimeManager>,
     pub manager: Arc<SessionManager>,
     pub alice: UserId,
@@ -277,15 +281,15 @@ impl World {
         let memberships = Arc::new(StoreMemberships::new());
         let recorder = Arc::new(Recorder { access_policy: OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let access_policy: Arc<dyn AccessPolicy> = Arc::<Recorder>::clone(&recorder);
-        let store = Arc::new(MemoryStore::with_policies(Arc::clone(&access_policy), Arc::<Recorder>::clone(&recorder)));
-        memberships.bind(&store.entity_stores().groups);
-        let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
+        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::clone(&access_policy), Arc::<Recorder>::clone(&recorder));
+        memberships.bind(&store.entity_stores().unwrap().groups);
+        let mut registry = test_registry(store.component_store().unwrap());
         register(&mut registry);
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new("local", json!({ "root": files.path().join("shell"), "shell": true, "destination": { "level": "internal" } }));
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), BackendConfig::new("local", json!({ "root": files.path() }))), ("shell".to_string(), shell)].into(), ..Default::default() };
         let config = AppConfig { workspaces, plugins: sections(files.path()), ..Default::default() };
-        let runtime = TestRuntime { store: Arc::clone(&store), access_policy, confidentiality: Arc::<Recorder>::clone(&recorder), config, registry: Some(registry), plugins: plugins.to_vec(), ..Default::default() }.build();
+        let runtime = TestRuntime { store: store.clone(), access_policy, confidentiality: Arc::<Recorder>::clone(&recorder), config, registry: Some(registry), plugins: plugins.to_vec(), ..Default::default() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { access_policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;

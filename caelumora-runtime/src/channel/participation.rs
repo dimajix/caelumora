@@ -302,7 +302,7 @@ mod tests {
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         // An agent of `owner` whose personality is of `kind` and names `roles`.
         let agent = |name: &'static str, owner: ActorId, kind: PersonalityKind, roles: Option<&'static [&'static str]>| {
-            let store = Arc::clone(&store);
+            let store = store.clone();
             let system = system.clone();
             let ids = ids.clone();
             async move {
@@ -313,9 +313,9 @@ mod tests {
                     security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
                     deleted: None,
                 };
-                store.entity_stores().personalities.create(&system, &personality).await.unwrap();
+                store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
                 let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality.id, owner);
-                store.entity_stores().agents.create(&system, &agent).await.unwrap();
+                store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
                 ActorId::Agent(agent.id)
             }
         };

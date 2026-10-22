@@ -415,7 +415,8 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::security::{OwnershipPolicy, Grant, Subject};
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::memory::MemoryStore;
+    
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::{User, UserId};
     use serde_json::json;
@@ -441,12 +442,12 @@ mod tests {
     /// `Approving` with `strategy`, `users` users - the first owning the
     /// channel - and an agent of `agent`, given the users.
     async fn approving(strategy: ApprovalStrategy, users: usize, agent: impl FnOnce(&[UserId]) -> SecurityAttributes) -> Approving {
-        let store = Arc::new(MemoryStore::new());
+        let store = StoreBackend::in_memory();
         let system = SecurityContext::system();
         let mut ids = Vec::new();
         for n in 0..users {
             let user = User { id: UserId::new(), username: Name::new(format!("user{n}")).unwrap(), email: String::new(), roles: vec![], deleted: None };
-            store.entity_stores().users.create(&system, &user).await.unwrap();
+            store.entity_stores().unwrap().users.create(&system, &user).await.unwrap();
             ids.push(user.id);
         }
         let personality = Personality {
@@ -462,13 +463,13 @@ mod tests {
             hears_during_turn: Default::default(),
             deleted: None,
         };
-        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
+        store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let attributes = agent(&ids);
         let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), personality.id, attributes.owner_id);
         stored.security_attributes = attributes;
-        store.entity_stores().agents.create(&system, &stored).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&system, &stored).await.unwrap();
 
-        let runtime = TestRuntime { store: Arc::clone(&store), access_policy: Arc::new(OwnershipPolicy::new()), ..Default::default() }.build();
+        let runtime = TestRuntime { store: store.clone(), access_policy: Arc::new(OwnershipPolicy::new()), ..Default::default() }.build();
         let approver = Approver::new(strategy);
         let participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         let channel = Channel {
@@ -487,7 +488,7 @@ mod tests {
             deleted: None,
             former: Vec::new(),
         };
-        store.entity_stores().channels.create(&system, &channel).await.unwrap();
+        store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
         let session_id = channel.session_id;
         let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(Arc::clone(&runtime), bare_session(session_id), channel)).await.unwrap();
         let actor: Arc<dyn Any + Send + Sync> = channel.actor(ActorId::Approver(approver.id)).unwrap();

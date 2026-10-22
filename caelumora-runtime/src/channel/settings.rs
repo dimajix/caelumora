@@ -226,7 +226,7 @@ mod tests {
 
         main.update_name(&as_user(alice), "lobby").await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
-        assert_eq!(store.entity_stores().channels.get(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
+        assert_eq!(store.entity_stores().unwrap().channels.get(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
         manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
     }
 

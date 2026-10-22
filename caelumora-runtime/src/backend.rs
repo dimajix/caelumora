@@ -172,7 +172,8 @@ mod tests {
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::store::memory::MemoryStore;
+    
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
     use serde_json::json;
@@ -251,7 +252,7 @@ mod tests {
         // The hash of "wonderland", made cheaply.
         let hash = "$argon2id$v=19$m=8,t=1,p=1$Y2FlbHVtb3JhLXRlc3RzIQ$O5O4BCrndw3DwlDMCkis9v7MtqH5yH38HhXnJ6aRr2M";
         std::fs::write(&file, format!("users:\n  - id: {alice}\n    username: alice\n    roles: [hr]\n    password_hash: \"{hash}\"\n")).unwrap();
-        let users = Arc::new(MemoryStore::new()).entity_stores().users;
+        let users = StoreBackend::in_memory().entity_stores().unwrap().users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
         let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(ConfidentialityRules::default().with_roles(roles));
@@ -269,7 +270,7 @@ mod tests {
 
     #[tokio::test]
     async fn accept_any_gives_the_configured_roles_and_refuses_others() {
-        let users = Arc::new(MemoryStore::new()).entity_stores().users;
+        let users = StoreBackend::in_memory().entity_stores().unwrap().users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
         let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(ConfidentialityRules::default().with_roles(roles));

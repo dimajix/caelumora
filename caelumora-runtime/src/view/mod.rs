@@ -809,7 +809,8 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use caelumora_model::session::Session;
     use caelumora_model::snapshot::Detail;
-    use caelumora_model::store::memory::MemoryStore;
+    
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::value::text::Introduction;
@@ -828,18 +829,17 @@ mod tests {
 
     /// Stores `session` as the runtime does, with the group of its
     /// participants (issue 286).
-    async fn stored_session(store: &Arc<MemoryStore>, session: &Session) {
-        store.entity_stores().sessions.create(&SecurityContext::system(), session).await.unwrap();
-        keep_participants(store.entity_stores().groups.as_ref(), Group::of_session(session)).await.unwrap();
+    async fn stored_session(store: &StoreBackend, session: &Session) {
+        store.entity_stores().unwrap().sessions.create(&SecurityContext::system(), session).await.unwrap();
+        keep_participants(store.entity_stores().unwrap().groups.as_ref(), Group::of_session(session)).await.unwrap();
     }
 
     /// Stores `channel` as the runtime does, with the group of its
     /// participants.
-    async fn stored_channel(store: &Arc<MemoryStore>, channel: &Channel) {
-        use caelumora_model::store::StateStore;
-        store.entity_stores().channels.create(&SecurityContext::system(), channel).await.unwrap();
-        keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(channel)).await.unwrap();
-        store.put_channel_state(channel.id, &mut founded(channel)).await.unwrap();
+    async fn stored_channel(store: &StoreBackend, channel: &Channel) {
+        store.entity_stores().unwrap().channels.create(&SecurityContext::system(), channel).await.unwrap();
+        keep_participants(store.entity_stores().unwrap().groups.as_ref(), Group::of_channel(channel)).await.unwrap();
+        store.state_store().put_channel_state(channel.id, &mut founded(channel)).await.unwrap();
     }
 
     /// Another channel like `template`, named `name`: an id of its own,
@@ -850,11 +850,11 @@ mod tests {
         Channel { id, name: Name::new(name).unwrap(), security_attributes, ..template.clone() }
     }
 
-    async fn an_agent_of(store: &Arc<MemoryStore>, owner: ActorId) -> Agent {
+    async fn an_agent_of(store: &StoreBackend, owner: ActorId) -> Agent {
         an_agent_of_kind(store, owner, Default::default()).await
     }
 
-    async fn an_agent_of_kind(store: &Arc<MemoryStore>, owner: ActorId, kind: PersonalityKind) -> Agent {
+    async fn an_agent_of_kind(store: &StoreBackend, owner: ActorId, kind: PersonalityKind) -> Agent {
         let personality = Personality {
             description: None,
             introduction: None,
@@ -868,16 +868,15 @@ mod tests {
             security_attributes: Default::default(),
             deleted: None,
         };
-        store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
+        store.entity_stores().unwrap().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), personality.id, owner);
-        store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
 
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
         use caelumora_model::message::{Message, MessageId};
-        use caelumora_model::store::StateStore;
 
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
@@ -899,11 +898,11 @@ mod tests {
         let frame = state.keep_frame(&given.frame);
         let later = said("later");
         state.transcript.extend(vec![later.clone()]);
-        store.put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
+        store.state_store().put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
         // Its channel's history, as it records what was said (issue 417).
-        let mut channel_state = store.get_channel_state(channel.id).await.unwrap();
+        let mut channel_state = store.state_store().get_channel_state(channel.id).await.unwrap();
         channel_state.history.extend(vec![question.clone(), answer.clone().produced_from_context(given.transcript, frame), later]);
-        store.put_channel_state(channel.id, &mut channel_state).await.unwrap();
+        store.state_store().put_channel_state(channel.id, &mut channel_state).await.unwrap();
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(remote.id)).await.unwrap();
@@ -1035,16 +1034,16 @@ mod tests {
         let system = SecurityContext::system();
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         // Carol owns the agent but takes no part in the session.
-        store.entity_stores().users.create(&system, &carol).await.unwrap();
+        store.entity_stores().unwrap().users.create(&system, &carol).await.unwrap();
         let remote = an_agent_of_kind(&store, ActorId::User(carol.id), PersonalityKind::External).await;
-        let mut personality = store.entity_stores().personalities.get(&system, remote.personality_id).await.unwrap();
+        let mut personality = store.entity_stores().unwrap().personalities.get(&system, remote.personality_id).await.unwrap();
         personality.introduction = Some(Introduction::new("Answers questions about the weather.").unwrap());
-        store.entity_stores().personalities.update(&system, &personality).await.unwrap();
+        store.entity_stores().unwrap().personalities.update(&system, &personality).await.unwrap();
         let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(remote.id));
         let channel = main_channel(&session);
-        store.entity_stores().user_profiles.create(&system, &UserProfile::new(alice.id, Some(Introduction::new("I run the project.").unwrap()))).await.unwrap();
+        store.entity_stores().unwrap().user_profiles.create(&system, &UserProfile::new(alice.id, Some(Introduction::new("I run the project.").unwrap()))).await.unwrap();
         stored_session(&store, &session).await;
         stored_channel(&store, &channel).await;
 
@@ -1072,7 +1071,7 @@ mod tests {
     async fn what_is_new_to_a_user_is_counted_from_what_they_read() {
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::snapshot::Unread;
-        use caelumora_model::store::{StateStore, StoreError};
+        use caelumora_model::store::StoreError;
         use caelumora_model::user::User;
 
         let (store, manager) = owned_runtime(Default::default());
@@ -1090,8 +1089,8 @@ mod tests {
         let notice = Message { role: MessageRole::System, ..said(&bob, "a notice") };
         let asking = Message { mentions: vec![ActorId::User(alice.id)], ..said(&bob, "@alice, a question") };
         // Alice and dave from the start, bob joined after dave's hello (issue 417).
-        store.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
-        keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(&channel)).await.unwrap();
+        store.entity_stores().unwrap().channels.create(&SecurityContext::system(), &channel).await.unwrap();
+        keep_participants(store.entity_stores().unwrap().groups.as_ref(), Group::of_channel(&channel)).await.unwrap();
         let joined = |who: &User| Recorded::new(HistoryEntry::ParticipantJoined { participant: ActorId::User(who.id), name: who.username.to_string(), by: ActorId::User(alice.id), by_name: "alice".to_string(), at: Utc::now() }, ActorId::User(alice.id), Audience::Everybody);
         let mut state = ChannelState::new(channel.id);
         state.history.enter(joined(&alice));
@@ -1099,7 +1098,7 @@ mod tests {
         state.history.push(hello.clone());
         state.history.enter(joined(&bob));
         state.history.extend(vec![hers.clone(), step.clone(), notice, asking.clone()]);
-        store.put_channel_state(channel.id, &mut state).await.unwrap();
+        store.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
         let unread_of = |viewer: &User| {
             let (manager, viewer) = (&manager, viewer.id);
@@ -1128,7 +1127,7 @@ mod tests {
         assert_eq!(unread_of(&alice).await, unread(0, false, Some(asking.id)));
         mark(&alice, hello.id).await.expect("an older one is no error");
         assert_eq!(unread_of(&alice).await, unread(0, false, Some(asking.id)), "but does not move the mark back");
-        assert_eq!(store.get_user_channel_state(bob.id, channel.id).await.unwrap().read, None, "hers alone");
+        assert_eq!(store.state_store().get_user_channel_state(bob.id, channel.id).await.unwrap().read, None, "hers alone");
 
         let not_found = |result: Result<(), StoreError>, entity: &str| matches!(result, Err(StoreError::NotFound { entity: found, .. }) if found == entity);
         assert!(not_found(mark(&bob, hello.id).await, "message"), "not before where his view begins");
@@ -1146,7 +1145,6 @@ mod tests {
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
-        use caelumora_model::store::StateStore;
 
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1162,8 +1160,8 @@ mod tests {
         let (first, second) = (said("first"), said("second"));
         // And so does the agent, though alice, for whom it acts, sees it all
         // (issue 417).
-        store.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
-        keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(&channel)).await.unwrap();
+        store.entity_stores().unwrap().channels.create(&SecurityContext::system(), &channel).await.unwrap();
+        keep_participants(store.entity_stores().unwrap().groups.as_ref(), Group::of_channel(&channel)).await.unwrap();
         let alice_id = ActorId::User(alice.id);
         let joined = |who: ActorId| Recorded::new(HistoryEntry::ParticipantJoined { participant: who, name: who.to_string(), by: alice_id, by_name: "alice".to_string(), at: Utc::now() }, alice_id, Audience::Everybody);
         let mut state = ChannelState::new(channel.id);
@@ -1172,13 +1170,13 @@ mod tests {
         state.history.enter(joined(ActorId::User(bob.id)));
         state.history.enter(joined(ActorId::Agent(helper.id)));
         state.history.push(second.clone());
-        store.put_channel_state(channel.id, &mut state).await.unwrap();
+        store.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
         // What the agent noted and saw.
         let mut agent_state = AgentChannelState::default();
         agent_state.notes.push(Change::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         agent_state.private_notes.push(Change::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         agent_state.transcript.push(first.clone());
-        store.put_agent_channel_state(helper.id, channel.id, &mut agent_state).await.unwrap();
+        store.state_store().put_agent_channel_state(helper.id, channel.id, &mut agent_state).await.unwrap();
 
         let reach = |viewer: Viewer| {
             let manager = &manager;
@@ -1232,7 +1230,6 @@ mod tests {
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::privacy::SessionPrivacy;
         use caelumora_model::removal::Removal;
-        use caelumora_model::store::StateStore;
 
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1256,14 +1253,14 @@ mod tests {
             stored_channel(&store, channel).await;
         }
         // Classified as team is: the flow rule alone would let team read it all.
-        let mut state = store.get_channel_state(hers.id).await.unwrap();
+        let mut state = store.state_store().get_channel_state(hers.id).await.unwrap();
         state.history.extend(vec![Message { id: MessageId::new(), content: Some("hers alone".to_string()), ..Message::new(hers.classification.clone()) }]);
-        store.put_channel_state(hers.id, &mut state).await.unwrap();
+        store.state_store().put_channel_state(hers.id, &mut state).await.unwrap();
         let mut agent_state = AgentChannelState::default();
         let note = |text: &str| Change::Add { id: NoteId(1), text: text.to_string(), classification: hers.classification.clone() };
         agent_state.notes.push(note("noted for all"), NoteOrigin::default(), MessageId::default());
         agent_state.private_notes.push(note("noted for itself"), NoteOrigin::default(), MessageId::default());
-        store.put_agent_channel_state(helper.id, hers.id, &mut agent_state).await.unwrap();
+        store.state_store().put_agent_channel_state(helper.id, hers.id, &mut agent_state).await.unwrap();
 
         let context = SecurityContext::new(ActorId::User(bob.id), session.id, team.id).next(ActorId::Agent(helper.id), ActorId::User(bob.id), ActorId::User(bob.id));
         let from = Place { channel: team.id, classification: team.classification.clone(), session: SessionPrivacy::of(&session) };
@@ -1282,7 +1279,6 @@ mod tests {
         use caelumora_model::ledger::Change;
         use caelumora_model::message::MessageId;
         use caelumora_model::note::{NoteId, NoteOrigin};
-        use caelumora_model::store::StateStore;
 
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1305,7 +1301,7 @@ mod tests {
         for (channel, text) in [(&zeta, "noted in zeta"), (&alpha, "noted in alpha")] {
             let mut state = AgentChannelState::default();
             state.private_notes.push(Change::Add { id: NoteId(1), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
-            store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
+            store.state_store().put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
         }
 
         let read = |viewer: Viewer| {
@@ -1324,7 +1320,6 @@ mod tests {
         use caelumora_model::ledger::Change;
         use caelumora_model::message::MessageId;
         use caelumora_model::note::{NoteId, NoteOrigin};
-        use caelumora_model::store::StateStore;
 
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
@@ -1340,8 +1335,8 @@ mod tests {
         // (issue 206).
         let mut kept = AgentChannelState::default();
         kept.notes.push(Change::Add { id: NoteId(1), text: "kept".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
-        store.put_agent_channel_state(helper.id, channel.id, &mut kept).await.unwrap();
-        assert!(store.entity_stores().personalities.delete(&system, helper.personality_id).await.unwrap());
+        store.state_store().put_agent_channel_state(helper.id, channel.id, &mut kept).await.unwrap();
+        assert!(store.entity_stores().unwrap().personalities.delete(&system, helper.personality_id).await.unwrap());
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
@@ -1357,7 +1352,6 @@ mod tests {
     #[tokio::test]
     async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
         use caelumora_model::actor::ActorState;
-        use caelumora_model::store::StateStore;
         use caelumora_model::tool::{ToolCall, ToolCallState};
         use caelumora_model::turn::TurnState;
 
@@ -1380,7 +1374,7 @@ mod tests {
         turn.work.event_context.sender_id = ActorId::Agent(helper.id);
         turn.tool_calls = vec![waiting.clone(), ToolCallState::approved(call("echo"))];
         let mut state = AgentChannelState { processing_state: ActorState::WaitingForUser, turn: Some(turn), ..Default::default() };
-        store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
+        store.state_store().put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
 
         let main = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let pending = main.pending_approvals().await.unwrap();
@@ -1395,7 +1389,6 @@ mod tests {
         use caelumora_model::message::{Message, MessageId, TokenUsage};
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::snapshot::ChannelParticipantSnapshot;
-        use caelumora_model::store::StateStore;
         use caelumora_model::tool::{ToolCall, ToolCallState};
         use caelumora_model::turn::TurnState;
 
@@ -1425,7 +1418,7 @@ mod tests {
         let call = ToolCall { id: Some("delete".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
         turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string(), false, Some(ToolMatcher::everything()), None)];
         state.turn = Some(turn);
-        store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
+        store.state_store().put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
 
         let views = manager.views(as_user(alice.id));
         let main = views.session(session.id).await.unwrap().channel(channel.id).await.unwrap();
@@ -1453,7 +1446,6 @@ mod tests {
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::privacy::SessionPrivacy;
-        use caelumora_model::store::StateStore;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (store, manager) = owned_runtime(ConfidentialityRules::new(compartments));
@@ -1481,20 +1473,20 @@ mod tests {
 
         // Said and noted in secret: one of each released to everyone.
         let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(classification.clone()) };
-        let mut state = store.get_channel_state(secret.id).await.unwrap();
+        let mut state = store.state_store().get_channel_state(secret.id).await.unwrap();
         let plan = said("the plan", &secret.classification);
         state.history.extend(vec![plan.clone(), said("the date", &public.classification)]);
         let ended = HistoryEntry::TurnGivenUp { turn_id: TurnId::new(), actor: ActorId::Agent(helper.id), reason: GivenUpReason::Left, at: Utc::now() };
         state.history.record(ended);
-        store.put_channel_state(secret.id, &mut state).await.unwrap();
+        store.state_store().put_channel_state(secret.id, &mut state).await.unwrap();
         let mut agent_state = AgentChannelState::default();
         let note = |id, text: &str, classification: &Classification| Change::Add { id: NoteId(id), text: text.to_string(), classification: classification.clone() };
         agent_state.notes.push(note(1, "noted secretly", &secret.classification), NoteOrigin::default(), MessageId::default());
         agent_state.notes.push(note(2, "noted openly", &public.classification), NoteOrigin::default(), MessageId::default());
-        store.put_agent_channel_state(helper.id, secret.id, &mut agent_state).await.unwrap();
-        let mut state = store.get_channel_state(team.id).await.unwrap();
+        store.state_store().put_agent_channel_state(helper.id, secret.id, &mut agent_state).await.unwrap();
+        let mut state = store.state_store().get_channel_state(team.id).await.unwrap();
         state.history.extend(vec![said("internal", &team.classification)]);
-        store.put_channel_state(team.id, &mut state).await.unwrap();
+        store.state_store().put_channel_state(team.id, &mut state).await.unwrap();
 
         // The agent, reading from one of its channels, as its components do.
         let reading_from = |channel: &Channel| {
@@ -1538,7 +1530,6 @@ mod tests {
     #[tokio::test]
     async fn a_participant_that_left_is_still_reached_by_what_it_said_and_a_gone_channel_is_told_from_one_never_there() {
         use caelumora_model::message::{Message, MessageId};
-        use caelumora_model::store::StateStore;
 
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
@@ -1549,9 +1540,9 @@ mod tests {
         let channel = main_channel(&session);
         stored_session(&store, &session).await;
         stored_channel(&store, &channel).await;
-        let mut state = store.get_channel_state(channel.id).await.unwrap();
+        let mut state = store.state_store().get_channel_state(channel.id).await.unwrap();
         state.history.extend(vec![Message { id: MessageId::new(), sender_id: ActorId::Agent(helper.id), content: Some("I was here".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }]);
-        store.put_channel_state(channel.id, &mut state).await.unwrap();
+        store.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
         let views = manager.views(as_user(alice.id));
         let reached = views.channel_of(session.id, channel.id).await.unwrap().there().expect("there");
@@ -1574,13 +1565,13 @@ mod tests {
         deleted.id = ChannelId::new();
         deleted.name = Name::new("deleted").unwrap();
         stored_channel(&store, &deleted).await;
-        store.entity_stores().channels.delete(&alice_ctx, deleted.id).await.unwrap();
+        store.entity_stores().unwrap().channels.delete(&alice_ctx, deleted.id).await.unwrap();
         match views.channel_of(session.id, deleted.id).await.unwrap() {
             Reached::Gone(removal) => assert_eq!(removal.by, ActorId::User(alice.id)),
             other => panic!("gone, not {other:?}"),
         }
         assert!(matches!(stranger.channel_of(session.id, deleted.id).await.unwrap(), Reached::Never), "not to a stranger");
-        store.entity_stores().sessions.delete(&alice_ctx, session.id).await.unwrap();
+        store.entity_stores().unwrap().sessions.delete(&alice_ctx, session.id).await.unwrap();
         assert!(matches!(views.channel_of(session.id, channel.id).await.unwrap(), Reached::Gone(_)), "gone with its session");
         assert!(matches!(stranger.channel_of(session.id, channel.id).await.unwrap(), Reached::Never));
     }
@@ -1602,8 +1593,8 @@ mod tests {
         for channel in [&main, &internal, &secret] {
             stored_channel(&store, channel).await;
         }
-        store.entity_stores().channels.delete(&SecurityContext::system(), internal.id).await.unwrap();
-        store.entity_stores().channels.delete(&SecurityContext::system(), secret.id).await.unwrap();
+        store.entity_stores().unwrap().channels.delete(&SecurityContext::system(), internal.id).await.unwrap();
+        store.entity_stores().unwrap().channels.delete(&SecurityContext::system(), secret.id).await.unwrap();
 
         // Alice owns both, and is cleared for internal alone (issue 304).
         let hers = manager.views(Viewer::new(SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default()).with_roles(vec![staff], None)));
@@ -1623,7 +1614,7 @@ mod tests {
         stored_channel(&store, &channel).await;
         stored_channel(&store, &side).await;
         let alice_ctx = as_user(alice.id).context().clone();
-        store.entity_stores().channels.delete(&alice_ctx, side.id).await.unwrap();
+        store.entity_stores().unwrap().channels.delete(&alice_ctx, side.id).await.unwrap();
 
         let hers = manager.views(as_user(alice.id));
         let channels = hers.session(session.id).await.unwrap().deleted_channels().await.unwrap();
@@ -1633,7 +1624,7 @@ mod tests {
         let his = manager.views(as_user(bob.id));
         assert!(his.session(session.id).await.unwrap().deleted_channels().await.unwrap().is_empty(), "not a contributor's trash");
 
-        store.entity_stores().sessions.delete(&alice_ctx, session.id).await.unwrap();
+        store.entity_stores().unwrap().sessions.delete(&alice_ctx, session.id).await.unwrap();
         let sessions = hers.deleted_sessions().await.unwrap();
         assert_eq!(sessions.iter().map(|s| s.id).collect::<Vec<_>>(), [session.id]);
         assert!(sessions[0].can_restore && !sessions[0].can_purge, "purging is not the owner's");
@@ -1806,8 +1797,8 @@ mod tests {
     async fn a_participant_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
         use caelumora_model::actor::{ActorEvent, ActorId};
 
-        let store = Arc::new(MemoryStore::new());
-        let runtime = TestRuntime { store: Arc::clone(&store), plugins: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }.build();
+        let store = StoreBackend::in_memory();
+        let runtime = TestRuntime { store: store.clone(), plugins: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 
@@ -1820,9 +1811,9 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
             deleted: None,
         };
-        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
+        store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
-        store.entity_stores().agents.create(&system, &thinker).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&system, &thinker).await.unwrap();
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());

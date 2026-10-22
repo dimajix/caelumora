@@ -15,7 +15,7 @@ use caelumora_model::confidentiality::{Classification, Confidentiality, Visibili
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{Session, SessionId};
-use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::store::StoreBackend;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::workspace::Workspace;
@@ -49,12 +49,12 @@ impl WithWorkspace {
 }
 
 pub async fn session_with_workspace() -> WithWorkspace {
-    let store = Arc::new(MemoryStore::new());
+    let store = StoreBackend::in_memory();
     let files = tempfile::tempdir().unwrap();
     let internal = Classification::general(Confidentiality::Internal);
     let storage = BackendConfig::new("local", json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }));
     let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
-    let runtime = TestRuntime { store: Arc::clone(&store), config: AppConfig { workspaces, ..Default::default() }, ..Default::default() }.build();
+    let runtime = TestRuntime { store: store.clone(), config: AppConfig { workspaces, ..Default::default() }, ..Default::default() }.build();
     let system = SecurityContext::system();
 
     let owner = UserId::new();
@@ -66,9 +66,9 @@ pub async fn session_with_workspace() -> WithWorkspace {
         kind: Default::default(), roles: None, introduction: None, components: Default::default(),
         security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, hears_during_turn: Default::default(), deleted: None,
     };
-    store.entity_stores().personalities.create(&system, &personality).await.unwrap();
+    store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
     let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(owner));
-    store.entity_stores().agents.create(&system, &agent).await.unwrap();
+    store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
     let session_id = SessionId::new();
     let mut channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None);
     channel.participants = vec![Participant::User(owner), Participant::Agent(agent.id)];
@@ -82,8 +82,8 @@ pub async fn session_with_workspace() -> WithWorkspace {
         commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
         deleted: None,
     };
-    store.entity_stores().sessions.create(&system, &session).await.unwrap();
-    store.entity_stores().channels.create(&system, &channel).await.unwrap();
+    store.entity_stores().unwrap().sessions.create(&system, &session).await.unwrap();
+    store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
     let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
     let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner), ActorId::User(owner));
     WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }

@@ -1,6 +1,6 @@
 # 446 — Every store checks access itself and is opened by a closed enum, so no store can live in a crate of its own
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -103,10 +103,10 @@ With `Persistence` a trait object, the reason of 324 is gone: the configuration 
 
 `caelumora-store-json`, with `JsonFileStore`, which implements `Persistence` and nothing else, and a
 plugin that registers the backend `json` (`Plugin::backends`), as `caelumora-open-terminal`
-registers its storage. The memory store stays in the model: every test of every crate uses it, and it needs
-nothing outside the model. The store suite becomes public behind a feature `test-support`, so that
-every backend's crate runs it, Postgres too. What the binaries register is theirs: `caelumora-app`
-brings the plugin.
+registers its storage. The memory store stays in the model: every test of every crate uses it, and
+it needs nothing outside the model. The store suite becomes public behind a feature
+`test-support`, so that every backend's crate runs it, Postgres too. What the binaries register is
+theirs: `caelumora-app` brings the plugin.
 
 ## Steps
 
@@ -137,3 +137,15 @@ brings the plugin.
   `name_free` public, to be taken back with the seam. Revisits the decision of 324 that the
   persistence stays a closed enum, whose reason - stores generic over their kinds - the seam
   removes.
+- **2026-10-22** — Step 1 done: `store::documents` holds `Document`, `DocumentStorage` and the one
+  `CheckedStore<T>`, which serves every kind's `EntityStore` and the `ComponentStore`; `name_free`
+  is gone from `store::access`, the rule of names is the storages', in the step that writes. The
+  memory and the JSON store are backends of the trait `Persistence` - `documents(kind,
+  document_of)` beside the three traits of the states - and hold no policy, no cache of kinds and
+  no `EntityStoreFactory` any more; `MemoryStore::with_policies` is gone. `StoreBackend` is a
+  `Persistence` and the policies (`StoreBackend::new`, `StoreBackend::in_memory`), opens each kind
+  once and gives the faces by upcasting; `component_store` can fail now. `PersistenceBackend::open`
+  opens the stores of the core's kinds and the components at once, as `JsonFileStore::new` did.
+  The tests make their stores through `StoreBackend`. Observable besides: the JSON files of
+  entities are written from the document as `serde_json::Value`, so their keys are sorted; what is
+  read is the same, and nothing stored has to be deleted.

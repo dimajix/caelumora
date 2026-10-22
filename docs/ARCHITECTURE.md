@@ -302,6 +302,11 @@ Two stores, configured separately:
     [STORAGE.md](STORAGE.md#histories), [STORAGE.md](STORAGE.md#transcripts),
     [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
 
+A backend - in memory, JSON files - only keeps: documents of any kind and states, without asking
+anything (`Persistence`). Who may do what with an entity is checked once, in the model, for every
+backend alike; the `StoreBackend` is a backend with the policies (see
+[STORAGE.md](STORAGE.md#the-entity-store)).
+
 Every document and every kind of state has exactly **one writer**, which changes it under a lock,
 stores it and only then announces the change. For an entity, that is its manager or its controller,
 by what is changed (below); for state, the channel loop, the agent's actor in its channel, or the

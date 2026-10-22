@@ -139,7 +139,7 @@ impl UserProvider for AcceptAnyUserProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::memory::MemoryStore;
+    use crate::store::StoreBackend;
     use crate::user_provider::UserManager;
 
     /// The provider in a chain of its own, whose manager keeps the records
@@ -149,7 +149,7 @@ mod tests {
     }
 
     fn store() -> Arc<dyn EntityStore<User>> {
-        Arc::new(MemoryStore::new()).entity_stores().users
+        StoreBackend::in_memory().entity_stores().unwrap().users
     }
 
     #[tokio::test]

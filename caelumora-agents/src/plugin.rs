@@ -70,7 +70,7 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::agent::PersonalityKind;
     use caelumora_model::config::AppConfig;
-    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::type_map::TypeKey;
     use std::sync::Arc;
     use serde_json::Value;
@@ -93,7 +93,7 @@ mod tests {
     /// moderator; each takes what it asks for and what that needs.
     #[tokio::test]
     async fn a_channel_takes_no_tool_and_an_agent_no_moderator() {
-        let registry = Arc::new(test_registry(Arc::new(MemoryStore::new())));
+        let registry = Arc::new(test_registry(StoreBackend::in_memory().component_store().unwrap()));
         // The texts its tools are made with.
         let context = ComponentContext::new(SecurityContext::default(), Services::empty().with(testing::catalogue()));
 

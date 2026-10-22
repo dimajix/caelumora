@@ -36,7 +36,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::group::GroupId;
 use caelumora_model::security::{AclEntry, Grant, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::{ComponentStore, StateStore, StoreError};
+use caelumora_model::store::StoreError;
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::UserId;
 use caelumora_model::work::TurnId;
@@ -257,7 +257,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
 async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let world = agent_testing::world().await;
     let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
+    world.store.component_store().unwrap().create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
     hers.components = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] };
     world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &hers).await.unwrap();
@@ -271,7 +271,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..tools };
-    world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns them");
+    world.store.component_store().unwrap().update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns them");
     let (reopened, asked) = world.asked(world.manager.open(&World::as_user(world.alice), session.id())).await;
     let reopened = reopened.expect("the session still opens: bob cannot stop alice's session so");
     assert!(asked.contains(&"alice as helper: GetComponents(bob's) no".to_string()), "{asked:?}");
@@ -586,7 +586,7 @@ async fn which_tools_an_agent_has_is_read_by_the_participants_of_its_channel() {
 async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
     let world = agent_testing::world().await;
     let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.create_components(&World::as_user(world.bob), &tools).await.unwrap();
+    world.store.component_store().unwrap().create_components(&World::as_user(world.bob), &tools).await.unwrap();
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
     hers.components = ComponentConfig { component_nodes: vec![
         ComponentDescriptor::new("stop", "stop_tool"),
@@ -1683,7 +1683,7 @@ async fn with_a_task_bob_asked_for(calls: &Arc<Mutex<Vec<&'static str>>>) -> (Wo
         calls_made(calls, 1).await;
     }).await;
     tokio::time::timeout(Duration::from_secs(5), async {
-        while world.store.get_agent_channel_state(hermes, main.id()).await.unwrap().remote.open_tasks.is_empty() {
+        while world.store.state_store().get_agent_channel_state(hermes, main.id()).await.unwrap().remote.open_tasks.is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the task is stored");

@@ -11,8 +11,7 @@ use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::channel::Channel;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::memory::MemoryStore;
-use caelumora_model::store::ComponentStore;
+use caelumora_model::store::StoreBackend;
 use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
@@ -110,8 +109,8 @@ fn names(tools: &[Tool]) -> Vec<String> {
 
 /// A runtime over `store` with the plugin of MCP servers, as the programs
 /// build theirs.
-fn runtime(store: &Arc<MemoryStore>) -> Arc<RuntimeManager> {
-    TestRuntime { store: Arc::clone(store), plugins: vec![&McpPlugin], ..Default::default() }.build()
+fn runtime(store: &StoreBackend) -> Arc<RuntimeManager> {
+    TestRuntime { store: store.clone(), plugins: vec![&McpPlugin], ..Default::default() }.build()
 }
 
 /// The tool provider of the one MCP tool component configured with
@@ -133,7 +132,7 @@ async fn executed(provider: &dyn ToolProvider, name: &str, params: Value) -> Too
 
 /// A container with one MCP tool component configured with `params`.
 async fn build_container(params: Value) -> ComponentContainer {
-    let runtime_manager = runtime(&Arc::new(MemoryStore::new()));
+    let runtime_manager = runtime(&StoreBackend::in_memory());
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
 
@@ -155,7 +154,7 @@ async fn build_container(params: Value) -> ComponentContainer {
 fn detached_actor_runtime() -> ActorRuntime {
     let session = bare_session(SessionId::new());
     let channel = Channel::build(session.id, ActorId::None, Name::new("detached").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
-    detached_actor_runtime_in(runtime(&Arc::new(MemoryStore::new())), session, channel)
+    detached_actor_runtime_in(runtime(&StoreBackend::in_memory()), session, channel)
 }
 
 #[tokio::test]
@@ -217,11 +216,13 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let store = Arc::new(MemoryStore::new());
+    let store = StoreBackend::in_memory();
 
     // Preconfigured components live in the ComponentStore rather than in application-level
     // config, so seed it directly.
     store
+        .component_store()
+        .unwrap()
         .create_components(
             &SecurityContext::default(),
             &StoredComponents::new("shared-echo", ComponentConfig {

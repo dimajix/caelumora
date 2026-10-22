@@ -74,7 +74,8 @@ mod tests {
     use caelumora_model::value::name::{ScopedName, Name};
     use caelumora_model::agent::{Personality, PersonalityId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::memory::MemoryStore;
+    
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::Visibility;
 
@@ -94,15 +95,15 @@ mod tests {
             deleted: None,
         };
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
-        let store = Arc::new(MemoryStore::new());
+        let store = StoreBackend::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().agents.create(&ctx, &agent).await.unwrap();
-        let controller = AgentController::new(agent.clone(), None, Arc::new(()), &store.entity_stores());
+        store.entity_stores().unwrap().agents.create(&ctx, &agent).await.unwrap();
+        let controller = AgentController::new(agent.clone(), None, Arc::new(()), &store.entity_stores().unwrap());
 
         controller.update_name(&ctx, "new_name").await.unwrap();
 
         assert_eq!(controller.name(), "new_name");
-        assert_eq!(store.entity_stores().agents.get(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
+        assert_eq!(store.entity_stores().unwrap().agents.get(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
     }
 
     /// Issue 304: an agent acts with its owner's roles as they are now - a
@@ -115,11 +116,11 @@ mod tests {
         use caelumora_model::user::{User, UserId, UserUpdateEvent};
         let (staff, hr) = (RoleId::new(), RoleId::new());
         let alice = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: vec![staff], deleted: None };
-        let store = Arc::new(MemoryStore::new());
-        let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), &store.entity_stores(), Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store)));
+        let store = StoreBackend::in_memory();
+        let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), &store.entity_stores().unwrap(), store.state_store(), store.history_store()));
         let personality = Personality { roles: Some(vec![staff]), ..plain() };
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
-        let controller = AgentController::new(agent, Some(Arc::clone(&owner)), Arc::new(()), &store.entity_stores());
+        let controller = AgentController::new(agent, Some(Arc::clone(&owner)), Arc::new(()), &store.entity_stores().unwrap());
         let (session, channel) = (Default::default(), Default::default());
 
         let context = controller.security_context(session, channel, personality.limiting_roles());

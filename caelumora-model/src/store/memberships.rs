@@ -67,7 +67,7 @@ impl Memberships for StoreMemberships {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::memory::MemoryStore;
+    use crate::store::StoreBackend;
     use crate::user::UserId;
     use crate::value::name::ScopedName;
 
@@ -78,7 +78,7 @@ mod tests {
         let bob = ActorId::User(UserId::new());
         let team = Group { members: vec![bob], ..Group::team(ScopedName::new("project", Default::default()).unwrap(), alice) };
         assert!(memberships.members_of(team.id).await.is_empty(), "nobody before a store is bound");
-        let store = Arc::new(MemoryStore::new()).entity_stores().groups;
+        let store = StoreBackend::in_memory().entity_stores().unwrap().groups;
         memberships.bind(&store);
         store.create(&SecurityContext::system(), &team).await.unwrap();
         assert_eq!(memberships.members_of(team.id).await, [bob]);

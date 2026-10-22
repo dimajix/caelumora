@@ -194,7 +194,8 @@ mod tests {
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::json::JsonFileStore;
-    use caelumora_model::store::memory::MemoryStore;
+    
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::channel::ChannelId;
     use caelumora_model::group::GroupField;
@@ -266,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_participants_follow_again_once_their_group_was_left_in_the_trash() {
-        let groups = MemoryStore::new().entity_stores().groups;
+        let groups = StoreBackend::in_memory().entity_stores().unwrap().groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
         let bob = ActorId::User(UserId::new());
@@ -286,7 +287,7 @@ mod tests {
     /// trash, has them as it has itself.
     #[tokio::test]
     async fn the_participants_go_and_come_back_all_or_none() {
-        let stores = MemoryStore::new().entity_stores();
+        let stores = StoreBackend::in_memory().entity_stores().unwrap();
         let failing = Arc::new(Failing { inner: Arc::clone(&stores.groups), passing: AtomicUsize::new(usize::MAX) });
         let events = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let manager = GroupManager::new(&EntityStores { groups: Arc::<Failing>::clone(&failing), ..stores.clone() }, events, Arc::new(AllowAllPolicy::new()));
@@ -324,7 +325,7 @@ mod tests {
     #[tokio::test]
     async fn only_the_entries_naming_a_group_known_to_be_gone_are_dropped() {
         let dir = tempfile::tempdir().unwrap();
-        let groups = JsonFileStore::new(dir.path(), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap().entity_stores().unwrap().groups;
+        let groups = StoreBackend::new(Arc::new(JsonFileStore::new(dir.path()).unwrap()), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
         let team = |name: &str| Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner);

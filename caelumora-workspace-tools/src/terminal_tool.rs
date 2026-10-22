@@ -246,7 +246,8 @@ pub(crate) mod tests {
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::store::memory::MemoryStore;
+    
+    use caelumora_model::store::StoreBackend;
     use caelumora_model::type_map::TypeKey;
     use serde_json::json;
 
@@ -281,7 +282,7 @@ pub(crate) mod tests {
     /// takes its default.
     #[tokio::test]
     async fn is_built_without_parameters() {
-        let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
         // The agents' kinds, with a model whose profile names the variant.
         with_agent_kinds(&mut registry);
         register(&mut registry);

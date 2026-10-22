@@ -7,41 +7,31 @@ use crate::user::{UserChannelState, UserId};
 use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
-use crate::component::StoredComponents;
-use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-use crate::removal::{Deletable, Removal};
-use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
-use crate::store::access::{name_free, Access};
+use crate::store::documents::{Document, DocumentOf, DocumentStorage};
 use crate::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
 use crate::store::kept_chain::KeptChain;
 use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::transcript::{known, Transcript, TranscriptEntry};
-use crate::store::query::{self, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
+use crate::store::query::Filter;
+use crate::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, StoreResult};
 use crate::tool::ToolSet;
-use crate::type_map::TypeMap;
-use crate::value::name::ScopedName;
 use async_trait::async_trait;
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::convert::Infallible;
-use std::fmt::{self, Debug};
-use std::future::ready;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 use tracing::info;
 
-/// Every kind's entities, the preconfigured components and the runtime
-/// state, in memory: a store per kind (`MemoryEntityStore`, issue 323),
-/// opened when it is first asked for, and maps for the states - their
-/// documents, and apart their histories, each whole with its items as they
-/// stand (issue 379), the agents' transcripts, each whole (issue 380), and
-/// the prompt texts and tool sets their models were given (issue 383).
-#[derive(Debug)]
+/// A backend in memory (issue 446): the documents of every kind, a storage
+/// per kind (`MemoryDocuments`) opened when it is first asked for, and maps
+/// for the states - their documents, and apart their histories, each whole
+/// with its items as they stand (issue 379), the agents' transcripts, each
+/// whole (issue 380), and the prompt texts and tool sets their models were
+/// given (issue 383).
+#[derive(Debug, Default)]
 pub struct MemoryStore {
-    policies: Policies,
-    /// The store of every kind asked for, by its type.
-    kinds: RwLock<TypeMap>,
-    components: MemoryEntityStore<StoredComponents>,
+    /// The storage of every kind asked for, by its name.
+    documents: RwLock<HashMap<EntityKind, Arc<MemoryDocuments>>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
@@ -69,36 +59,11 @@ struct KeptHistory {
     memberships: Memberships,
 }
 
-impl Default for MemoryStore {
-    fn default() -> Self {
-        Self::with_policies(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
-    }
-}
-
 impl MemoryStore {
-    /// A store that permits everything - for tests and throwaway setups.
+    /// An empty store.
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// A store that asks `access_policy` about every access to an
-    /// entity, and `confidentiality` whether the caller is cleared for what
-    /// is reached by clearance.
-    pub fn with_policies(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         info!("Creating memory store");
-        let policies = (access_policy, confidentiality);
-        Self {
-            components: MemoryEntityStore::new(&policies),
-            policies,
-            kinds: Default::default(),
-            agent_states: Default::default(),
-            user_channel_states: Default::default(),
-            agent_channel_states: Default::default(),
-            channel_states: Default::default(),
-            histories: Default::default(),
-            transcripts: Default::default(),
-            given: Default::default(),
-        }
+        Self::default()
     }
 
     /// Appends what `history`, that of `channel` as its state holds it,
@@ -197,21 +162,14 @@ impl MemoryStore {
         document
     }
 
-    /// The stores of the core's entities, one per kind (issue 323).
-    pub fn entity_stores(&self) -> EntityStores {
-        match EntityStores::open(self) {
-            Ok(stores) => stores,
-            Err(never) => match never {},
-        }
-    }
 }
 
-/// Opens a kind in memory, which cannot fail.
-impl EntityStoreFactory for MemoryStore {
-    type Error = Infallible;
-
-    fn entity_store<T: Deletable>(&self) -> Result<Arc<dyn EntityStore<T>>, Infallible> {
-        write_lock(&self.kinds, |kinds| kinds.get_or_try_insert(|| Ok(Arc::new(MemoryEntityStore::<T>::new(&self.policies)) as Arc<dyn EntityStore<T>>)))
+/// Opens the storage of a kind in memory, which cannot fail; a document is
+/// kept with what it was told, so `document_of` is not needed.
+impl Persistence for MemoryStore {
+    fn documents(&self, kind: EntityKind, _document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
+        let storage = write_lock(&self.documents, |all| Arc::clone(all.entry(kind).or_insert_with(|| Arc::new(MemoryDocuments::new(kind)))));
+        Ok(storage)
     }
 }
 
@@ -237,177 +195,68 @@ where
     }
 }
 
-/// The entities of one kind in memory (issue 323), checked as every kind is
-/// (`store::access`).
-pub struct MemoryEntityStore<T: Stored> {
-    access_policy: Arc<dyn AccessPolicy>,
-    /// Who is cleared for what is reached by clearance (issue 322).
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
-    entities: RwLock<HashMap<T::Id, T>>,
+/// The documents of one kind in memory (issue 446), each kept as it was
+/// told, by its id.
+#[derive(Debug)]
+struct MemoryDocuments {
+    kind: EntityKind,
+    documents: RwLock<HashMap<String, Document>>,
 }
 
-impl<T: Stored> Debug for MemoryEntityStore<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MemoryEntityStore").field("kind", &T::KIND).finish_non_exhaustive()
+impl MemoryDocuments {
+    fn new(kind: EntityKind) -> Self {
+        Self { kind, documents: Default::default() }
+    }
+
+    /// Refuses `document` if another of `documents` that is not deleted has
+    /// its name (issue 250).
+    fn name_free(&self, documents: &HashMap<String, Document>, document: &Document) -> StoreResult<()> {
+        let Some(name) = document.name.as_ref().filter(|_| !document.deleted) else { return Ok(()) };
+        match documents.values().any(|other| other.id != document.id && !other.deleted && other.name.as_ref() == Some(name)) {
+            false => Ok(()),
+            true => Err(StoreError::NameTaken { entity: self.kind.name() }),
+        }
     }
 }
 
-impl<T: Stored> MemoryEntityStore<T> {
-    /// An empty store that asks the `AccessPolicy` and the
-    /// `ConfidentialityPolicy` of `policies`.
-    fn new(policies: &Policies) -> Self {
-        Self { access_policy: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), entities: Default::default() }
+#[async_trait]
+impl DocumentStorage for MemoryDocuments {
+    async fn get(&self, id: &str) -> StoreResult<Option<Value>> {
+        Ok(read_lock(&self.documents, |all| all.get(id).map(|document| document.body.clone())))
     }
 
-    fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(self.access_policy.as_ref(), self.confidentiality.as_ref(), ctx)
+    async fn ids(&self) -> StoreResult<Vec<String>> {
+        Ok(read_lock(&self.documents, |all| all.keys().cloned().collect()))
     }
 
-    fn stored(&self, id: &T::Id) -> Option<T> {
-        read_lock(&self.entities, |v| v.get(id).cloned())
-    }
-
-    /// Stores `value` as `update` and `restore` do: the others of its kind
-    /// checked for its name and it written, in one step.
-    fn write(&self, value: &T) -> StoreResult<()> {
-        let id = value.id();
-        write_lock(&self.entities, |v| {
-            name_free(value, v.iter().filter(|(other, _)| **other != id).map(|(_, other)| other))?;
-            v.insert(id, value.clone());
-            Ok(())
-        })
-    }
-
-    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
-        self.access(ctx).create(value).await?;
-        let id = value.id();
-        write_lock(&self.entities, |v| {
-            if v.contains_key(&id) {
-                return Err(StoreError::Conflict(format!("{} {} already exists", T::KIND, id)));
+    async fn insert(&self, document: Document) -> StoreResult<()> {
+        write_lock(&self.documents, |all| {
+            if all.contains_key(&document.id) {
+                return Err(StoreError::Conflict(format!("{} {} already exists", self.kind, document.id)));
             }
-            name_free(value, v.values())?;
-            v.insert(id, value.clone());
+            self.name_free(all, &document)?;
+            all.insert(document.id.clone(), document);
             Ok(())
         })
     }
 
-    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        self.access(ctx).read(self.stored(&id), id.to_string()).await
+    async fn replace(&self, document: Document) -> StoreResult<()> {
+        write_lock(&self.documents, |all| {
+            self.name_free(all, &document)?;
+            all.insert(document.id.clone(), document);
+            Ok(())
+        })
     }
 
-    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
-        let id = value.id();
-        self.access(ctx).change(self.stored(&id).as_ref(), value, id.to_string()).await?;
-        self.write(value)
+    async fn remove(&self, id: &str) -> StoreResult<bool> {
+        Ok(write_lock(&self.documents, |all| all.remove(id).is_some()))
     }
 
-    /// Removes the entity for good: deleting a kind that is not marked.
-    async fn remove(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        if !self.access(ctx).delete(self.stored(&id).as_ref()).await? {
-            return Ok(false);
-        }
-        Ok(write_lock(&self.entities, |v| v.remove(&id).is_some()))
-    }
-
-    /// The entity of `id`, if it is there and meets `filter`.
-    fn meeting(&self, id: &T::Id, filter: Option<&Filter<T::Field>>) -> StoreResult<Option<T>> {
-        match self.stored(id) {
-            Some(value) => query::meeting(value, filter),
-            None => Ok(None),
-        }
-    }
-
-    /// The page `query` asks for, among what is deleted if `deleted`.
-    async fn page(&self, ctx: &SecurityContext, query: &Query<T::Field>, deleted: bool) -> StoreResult<Page<T>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::List(T::KIND)).await?;
-        let keys = read_lock(&self.entities, |v| v.keys().map(|id| (id.to_string(), id.clone())).collect());
-        let filter = query.filter.as_ref();
-        access.page(keys, query, deleted, |id: T::Id| ready(self.meeting(&id, filter))).await
-    }
-}
-
-#[async_trait]
-impl<T: Deletable> EntityStore<T> for MemoryEntityStore<T> {
-    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
-        MemoryEntityStore::create(self, ctx, value).await
-    }
-
-    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        MemoryEntityStore::get(self, ctx, id).await
-    }
-
-    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
-        MemoryEntityStore::update(self, ctx, value).await
-    }
-
-    /// Marks the entity deleted, by the caller and now (issue 164).
-    async fn delete(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        let stored = self.stored(&id);
-        if !self.access(ctx).delete(stored.as_ref()).await? {
-            return Ok(false);
-        }
-        let Some(mut marked) = stored else { return Ok(false) };
-        marked.set_deleted(Some(Removal::now(ctx.caller_id)));
-        write_lock(&self.entities, |v| v.insert(id, marked));
-        Ok(true)
-    }
-
-    async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
-        self.page(ctx, query, false).await
-    }
-
-    async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        let mut restored = self.access(ctx).restore(self.stored(&id), id.to_string()).await?;
-        restored.set_deleted(None);
-        self.write(&restored)?;
-        Ok(restored)
-    }
-
-    async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        if !self.access(ctx).purge(self.stored(&id).as_ref()).await? {
-            return Ok(false);
-        }
-        // Only if it is still marked: restored while the purge was asked
-        // about, it stays.
-        Ok(write_lock(&self.entities, |v| {
-            let marked = v.get(&id).is_some_and(|value| value.deleted().is_some());
-            marked && v.remove(&id).is_some()
+    async fn remove_deleted(&self, id: &str) -> StoreResult<bool> {
+        Ok(write_lock(&self.documents, |all| {
+            let marked = all.get(id).is_some_and(|document| document.deleted);
+            marked && all.remove(id).is_some()
         }))
-    }
-
-    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        self.access(ctx).read_deleted(self.stored(&id), id.to_string()).await
-    }
-
-    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
-        self.page(ctx, query, true).await
-    }
-
-    async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T> {
-        let all = self.page(ctx, &Query::all(), false).await?.items;
-        all.into_iter().find(|value| value.unique_name().as_ref() == Some(name))
-            .ok_or_else(|| StoreError::NotFound { entity: T::KIND.name(), id: name.to_string() })
-    }
-}
-
-/// Preconfigured components, kept like the entities (issue 164).
-#[async_trait]
-impl ComponentStore for MemoryStore {
-    async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.components.create(ctx, value).await
-    }
-    async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
-        self.components.get(ctx, id.to_string()).await
-    }
-    async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.components.update(ctx, value).await
-    }
-    async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.components.remove(ctx, id.to_string()).await
-    }
-    async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
-        self.components.page(ctx, query, false).await
     }
 }
 
@@ -591,21 +440,28 @@ impl TranscriptStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::store::suite;
+    use crate::store::{EntityStoreFactory, StoreBackend};
+    use crate::store::query::Query;
     use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
-    use crate::security::OwnershipPolicy;
+    use crate::security::{OwnershipPolicy, SecurityContext};
+    use crate::value::name::ScopedName;
+
+    /// The stores of a memory store, as the owners' policy checks them.
+    fn owners() -> StoreBackend {
+        StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))
+    }
 
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
-        suite::entity_store_behaves(&Arc::new(MemoryStore::new()).entity_stores()).await;
+        suite::entity_store_behaves(&StoreBackend::in_memory().entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn answers_queries() {
-        let store = Arc::new(MemoryStore::new());
-        suite::queries_behave(&store.entity_stores()).await;
-        let Ok(folders) = store.entity_store::<suite::Folder>();
-        suite::queries_reach_parts(folders.as_ref()).await;
+        let store = StoreBackend::in_memory();
+        suite::queries_behave(&store.entity_stores().unwrap()).await;
+        suite::queries_reach_parts(store.entity_store::<suite::Folder>().unwrap().as_ref()).await;
     }
 
     /// A limit counts what the caller may read (issue 293): the policy is
@@ -615,9 +471,8 @@ mod tests {
         use crate::actor::ActorId;
         use crate::confidentiality::Classification;
         use crate::scope::Scope;
-        use crate::security::OwnershipPolicy;
         use crate::workspace::Workspace;
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().workspaces;
+        let store = owners().entity_stores().unwrap().workspaces;
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
@@ -667,18 +522,17 @@ mod tests {
 
     #[tokio::test]
     async fn behaves_as_a_component_store() {
-        suite::component_store_behaves(&MemoryStore::new()).await;
+        suite::component_store_behaves(StoreBackend::in_memory().component_store().unwrap().as_ref()).await;
     }
 
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
-        suite::deleting_marks(&Arc::new(MemoryStore::new()).entity_stores()).await;
+        suite::deleting_marks(&StoreBackend::in_memory().entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn keeps_names_unique() {
-        suite::names_are_unique(&Arc::new(MemoryStore::new()).entity_stores()).await;
-        let owners = MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
-        suite::names_are_unique_beyond_what_is_read(&Arc::new(owners).entity_stores()).await;
+        suite::names_are_unique(&StoreBackend::in_memory().entity_stores().unwrap()).await;
+        suite::names_are_unique_beyond_what_is_read(&owners().entity_stores().unwrap()).await;
     }
 }

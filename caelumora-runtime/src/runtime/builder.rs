@@ -117,8 +117,8 @@ impl RuntimeBuilder {
     /// workspaces or a user provider cannot be made.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        states: impl Into<StoreBackend>,
-        backend: impl Into<StoreBackend>,
+        states: StoreBackend,
+        backend: StoreBackend,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -126,8 +126,6 @@ impl RuntimeBuilder {
         component_registry: ComponentRegistry,
         backends: Backends,
     ) -> Result<Self> {
-        let backend = backend.into();
-        let states = states.into();
         let state_store = states.state_store();
         let history_store = states.history_store();
         let transcript_store = states.transcript_store();
@@ -223,7 +221,7 @@ impl RuntimeBuilder {
         let secret_services = Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
         let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
         let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
-        let registry = ComponentRegistry::built_in(backend.component_store());
+        let registry = ComponentRegistry::built_in(backend.component_store()?);
         let mut builder = Self::new(states, backend, secret_manager, access_policy, confidentiality, config, registry, backends)?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
@@ -377,7 +375,7 @@ impl RuntimeBuilder {
             history_store: self.history_store,
             transcript_store: self.transcript_store,
             entity_stores: self.entity_stores,
-            component_store: self.backend.component_store(),
+            component_store: self.backend.component_store()?,
             secret_manager: self.secret_manager,
             user_manager: self.user_manager,
             component_registry: Arc::new(self.component_registry),

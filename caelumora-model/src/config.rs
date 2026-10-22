@@ -5,7 +5,7 @@ use crate::role::Roles;
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
 use crate::security::{AllowAllPolicy, Memberships, OwnershipPolicy, AccessPolicy};
-use crate::store::{StoreBackend, StoreError};
+use crate::store::{Persistence, StoreBackend, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use serde::Deserialize;
@@ -54,17 +54,23 @@ pub enum PersistenceBackend {
 impl PersistenceBackend {
     /// Opens the store this backend describes. Both kinds of store serve
     /// as entity and as state store; the caller picks the face it needs.
+    /// The stores of the core's kinds and the components are opened at
+    /// once, so that a store that cannot keep them is not opened at all.
     fn open(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
-        Ok(match self {
-            Self::Memory => Arc::new(MemoryStore::with_policies(access_policy, confidentiality)).into(),
+        let persistence: Arc<dyn Persistence> = match self {
+            Self::Memory => Arc::new(MemoryStore::new()),
             Self::Json { path, journal_floor } => {
-                let store = JsonFileStore::new(path, access_policy, confidentiality)?;
+                let store = JsonFileStore::new(path)?;
                 Arc::new(match journal_floor {
                     Some(bytes) => store.with_journal_floor(*bytes),
                     None => store,
-                }).into()
+                })
             }
-        })
+        };
+        let backend = StoreBackend::new(persistence, access_policy, confidentiality);
+        backend.entity_stores()?;
+        backend.component_store()?;
+        Ok(backend)
     }
 }
 
