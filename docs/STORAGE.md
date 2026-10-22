@@ -414,12 +414,14 @@ participant (issue 417), and is kept apart from the channel state's document (is
     history is next loaded or appended to. A message is found by scanning the items backwards, and
     a fitting rewrites every items segment: slow where a database has indexes.
 *   **In Postgres** ([04](../issues/04-postgres-state-store.md)) a history is the chain in
-    `history_entries`, the items in `history_items(channel_id, seq, message_id, item)` - found by
-    the message each said through an index -, and the head and the memberships in `histories`,
-    the memberships whole, as `jsonb`. The put of the channel's state reads the items the entries
-    it adds change - every one for a fitting -, takes them further as `StandingItems` does and
-    writes them back. A page reads the items backwards in batches, with what SQL can judge of its
-    filter in the query; what a reader sees of them the model judges (`seen`).
+    `history_entries`, the items in `history_items(channel_id, seq, message_id, item)` - each as it
+    is kept to be judged (`KeptItem`), found by the message it said through an index -, and the
+    head and the memberships in `histories`, the memberships whole, as `jsonb`. The put of the
+    channel's state reads the items the entries it adds change - every one for a fitting -, takes
+    them further as `StandingItems` does and writes them back. A page reads the items backwards in
+    batches, asking the database for those its reader is given (`Filter::seen_by`, issue
+    [451](../issues/451-history-reader-judged-after-reading.md)) that meet its filter, as far as
+    SQL can judge it; in which form the reader sees each the model decides (`seen`).
 
 ### Transcripts
 

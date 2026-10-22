@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::connection::{quoted, sql};
+use crate::filter::Condition;
 use crate::plugin::PostgresStorePlugin;
 use caelumora_model::actor::{ActorId, ActorState, EventContext};
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
@@ -13,7 +14,9 @@ use caelumora_model::channel::{ChannelId, ChannelState};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::digest;
-use caelumora_model::history::{HistoryEntry, Reader};
+use caelumora_model::approval::ApproverId;
+use caelumora_model::history::{Audience, HistoryEntry, Reader, Recorded};
+use caelumora_model::store::history::Memberships;
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_model::work::Work;
@@ -32,6 +35,7 @@ use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::runtime::{RuntimeBuilder, Services};
+use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -258,6 +262,57 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     assert_eq!(history.digest(), channel_state.history.digest(), "the channel's history");
     let page = restarted.page(channel, &Reader::Channel, Position::START, None, 10, None).await.unwrap();
     assert_eq!(page.entries().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>(), ["look it up"]);
+    database.drop().await;
+}
+
+/// The database gives a reader of a history what the model gives them
+/// (issue 451): what they sent, what went to them by name, what went to
+/// every member while they were one, an approver what went to the
+/// approvers, an outsider what went to every user - each only if anything
+/// of it is published.
+#[tokio::test]
+async fn the_database_gives_a_reader_what_the_model_gives_them() {
+    let Some(database) = Database::new() else { return };
+    let store = database.backend();
+    let channel = ChannelId::new();
+    let (alice, bob, agent) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+    let approver = ActorId::Approver(ApproverId::new());
+    let joined = |participant| HistoryEntry::ParticipantJoined { participant, name: String::new(), by: participant, by_name: String::new(), at: Utc::now() };
+    let said = |by: ActorId, content: Option<&str>| HistoryEntry::Said { message: Message { sender_id: by, content: content.map(str::to_string), ..Message::new(Classification::CHANNEL_DEFAULT) } };
+    let mut state = ChannelState::new(channel);
+    for (entry, sender, audience) in [
+        (joined(alice), alice, Audience::Everybody),
+        (said(alice, Some("hello")), alice, Audience::Everybody),
+        (HistoryEntry::HistoryShared { participant: bob, from: Position::new(1), by: alice, by_name: String::new(), at: Utc::now() }, ActorId::System, Audience::Everybody),
+        (joined(bob), alice, Audience::Everybody),
+        (said(agent, Some("to alice")), agent, Audience::Only(vec![alice])),
+        (said(bob, None), bob, Audience::Everybody),
+        (said(agent, Some("to the approvers")), agent, Audience::Only(vec![approver])),
+        (HistoryEntry::ParticipantLeft { participant: alice, name: String::new(), by: alice, by_name: String::new(), until: Position::new(6), at: Utc::now() }, alice, Audience::Everybody),
+        (said(bob, Some("after her")), bob, Audience::Everybody),
+    ] {
+        state.history.enter(Recorded::new(entry, sender, audience));
+    }
+    store.put_channel_state(channel, &mut state).await.unwrap();
+    let asked_of_all = |state: &ChannelState| state.history.all_entries().filter(|node| node.entry.entry.is_item()).count();
+    let pool = database.connection.pool().await.unwrap();
+    let memberships = Memberships::of(state.history.all_entries());
+    for reader in [Reader::Channel, Reader::Outsider, Reader::Participant(alice), Reader::Participant(bob), Reader::Participant(agent), Reader::Participant(approver)] {
+        let ranges = memberships.of_reader(&reader);
+        let given: Vec<i64> = state.history.all_entries()
+            .filter(|node| node.entry.entry.is_item() && node.entry.seen_by(node.seq, &reader, &ranges))
+            .map(|node| i64::try_from(node.seq.get()).unwrap()).collect();
+        let condition = Filter::seen_by(&reader, &ranges).map(|rule| Condition::of(&rule.by_path(), "item", 2));
+        let meeting = condition.as_ref().map_or("true", |condition| condition.sql.as_str());
+        let query = sqlx::query_as(sql(format!("SELECT seq FROM history_items WHERE channel_id = $1 AND {meeting} ORDER BY seq"))).bind(channel.to_string());
+        let query = match &condition {
+            Some(condition) => condition.bound(query),
+            None => query,
+        };
+        let asked: Vec<(i64,)> = query.fetch_all(pool).await.unwrap();
+        assert_eq!(asked.into_iter().map(|(seq,)| seq).collect::<Vec<_>>(), given, "{reader:?}");
+        assert!(!given.is_empty() && (matches!(reader, Reader::Channel) || given.len() < asked_of_all(&state)), "{reader:?} is given some, less than everything");
+    }
     database.drop().await;
 }
 

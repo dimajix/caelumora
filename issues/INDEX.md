@@ -53,7 +53,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [447](447-store-seam-not-fit-for-a-database.md) | done | A storage of documents is listed by reading every id and then each document on its own, compares names as values only it can hold, and a backend cannot open asynchronously or reach a secret, so a database behind the seam of issue 446 would read a kind row by row, could keep no unique index of names and could not connect. |
 | [448](448-persistence-inherits-the-state-stores.md) | done | The trait `Persistence` inherits `StateStore`, `HistoryStore` and `TranscriptStore` to add two methods, so a backend configured for the entities has to be a state store as well, the runtime holds two `StoreBackend`s of which half is unused each - and the checked layer the runtime uses is called the backend, the backend `Persistence`. |
 | [450](450-store-overwrites-a-change-made-meanwhile.md) | open | `CheckedStore` reads a document, asks the policy and writes in steps of their own, so a second process that changes the same entity in between is overwritten without notice, and the permission is judged on what was stored before it. |
-| [451](451-history-reader-judged-after-reading.md) | in progress | Whether a reader is given an item of a history is judged in Rust after the store read it, so a page of a reader who sees little of a long history reads it far back, also in Postgres. |
+| [451](451-history-reader-judged-after-reading.md) | done | Whether a reader is given an item of a history is judged in Rust after the store read it, so a page of a reader who sees little of a long history reads it far back, also in Postgres. |
 
 ## Sessions and channels
 
