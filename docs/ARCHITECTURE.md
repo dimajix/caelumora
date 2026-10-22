@@ -111,13 +111,15 @@ given for what it needs. The core registers its own (`Backends::built_in`); a pl
 registering its factory in `Plugin::backends`, which is asked before anything is made - so a new
 storage or provider is a crate linked into the program, and no edit of the core, as the Open
 Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are made once, when the
-runtime is built (`RuntimeBuilder::from_config`): the stores first, which need nothing, then the
-secret providers, then the storages and the user providers with the secrets and the records of the
-users at hand. A plugin's service may be served by backends too - the storages of artifacts
-(`ArtifactStorage`) -: the plugin makes them from its section while it registers
-(`RuntimeBuilder::make_named`), and another crate may register one for it (issue 328). Unlike a
-component, a backend serves the whole process and lives in no container, which is why it is no
-component.
+runtime is built (`RuntimeBuilder::from_config`): the secret providers first, which need only the
+policies, then the stores, which may ask for the secrets - a database connects by one -, then the
+storages and the user providers with the secrets and the records of the users at hand. The stores'
+backends are opened last, once the plugins registered and opened the stores of their kinds
+(`Persistence::open`, issue 447), so that one that cannot be made ready fails the start. A plugin's
+service may be served by backends too - the storages of artifacts (`ArtifactStorage`) -: the plugin
+makes them from its section while it registers (`RuntimeBuilder::make_named`), and another crate may
+register one for it (issue 328). Unlike a component, a backend serves the whole process and lives in
+no container, which is why it is no component.
 
 The stores are such backends since what a backend keeps is not generic: documents of any kind and
 states (`Persistence`); the runtime makes a `StoreBackend` of each, with the policies (see

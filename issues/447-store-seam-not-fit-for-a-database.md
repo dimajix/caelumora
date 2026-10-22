@@ -1,6 +1,6 @@
 # 447 — The seam of the stores is not fit for a database
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -101,4 +101,14 @@ Each without a change of behaviour.
   which the security suite now states. A file that holds no JSON is taken as a document the
   storage cannot read as it is kept, left out and logged, not as a failure of the storage, so that
   one broken file does not break a list.
+- **2026-10-22** — Step 3 done, and with it the issue: `Persistence::open`, asynchronous, nothing
+  unless a backend says otherwise, reached through `StoreBackend::open`.
+  `RuntimeBuilder::from_config` is `async`: the secrets first, then the backends of the stores,
+  given the policies and the `SecretManager` as their services, then the plugins, then both backends
+  opened, a failure named by the store (`Cannot open the entity store`). Both programs await it; the
+  tests that build from a configuration are asynchronous. A runtime made by `RuntimeBuilder::new` is
+  not opened by it - its stores are its maker's, as in the tests, whose memory needs nothing. A test
+  holds that a backend of the stores is made with the secrets at hand; that `open` runs after the
+  plugins registered holds by the order of `from_config` alone, untested until a backend does
+  something in it (03).
 

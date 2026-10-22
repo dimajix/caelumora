@@ -46,6 +46,15 @@ the memory store keeps them in a map, the JSON store one file per document in th
 policies, order the steps - is written once, in the model (`CheckedStore`, over `store::access`),
 for every backend alike.
 
+A backend is made ready once, at start (`Persistence::open`, issue
+[447](../issues/447-store-seam-not-fit-for-a-database.md)): after every plugin registered, so after
+the kinds of the core and of the plugins were opened, and before anything reads or writes. A
+database connects there - by a secret, which the backend is given when it is made -, applies its
+migrations and makes what its kinds need; the memory and the JSON files need nothing. A kind opened
+later is the backend's to make ready when it is first used. `RuntimeBuilder::from_config` opens the
+backends it makes; whoever makes a runtime of stores of their own (`RuntimeBuilder::new`) opens
+them (`StoreBackend::open`).
+
 What the runtime opens is a `StoreBackend`: the backend the configuration names under
 `persistence.entity_store` - a backend of the `Backends` like every other, the core's `memory` and
 `json` or a plugin's (`dyn Persistence`, see [CONFIGURATION.md](CONFIGURATION.md#backends)) - and

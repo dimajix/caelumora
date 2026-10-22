@@ -523,7 +523,7 @@ async fn main() -> Result<()> {
 
     let plugins = plugins();
     let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
-    let mut builder = RuntimeBuilder::from_config(&config, &plugins)?;
+    let mut builder = RuntimeBuilder::from_config(&config, &plugins).await?;
     default_kinds(builder.components())?;
     let runtime = Arc::new(builder.build()?);
     runtime.seed(&config.seed).await?;

@@ -193,16 +193,16 @@ async fn the_storages_of_the_section_are_made_when_the_plugin_registers() {
     let without = World::with(&[&TestAgents, &ArtifactsPlugin], |_| {}).await;
     assert!(!manager(&without).is_configured(), "no storage unless configured");
 
-    let refused = |section: Value| {
+    async fn refused(section: Value) -> String {
         let config = AppConfig { plugins: [("artifacts".to_string(), section)].into(), ..Default::default() };
-        let built = RuntimeBuilder::from_config(&config, &[&ArtifactsPlugin]).map(|_| ());
+        let built = RuntimeBuilder::from_config(&config, &[&ArtifactsPlugin]).await.map(|_| ());
         format!("{:#}", built.expect_err("refused"))
-    };
-    let message = refused(json!({ "storage": { "kept": { "type": "local" } } }));
+    }
+    let message = refused(json!({ "storage": { "kept": { "type": "local" } } })).await;
     assert!(message.contains("the storage of artifacts 'kept' (local)") && message.contains("root"), "{message}");
-    let message = refused(json!({ "storage": { "kept": { "type": "s3" } } }));
+    let message = refused(json!({ "storage": { "kept": { "type": "s3" } } })).await;
     assert!(message.contains("known are: local"), "{message}");
-    let message = refused(json!({ "storage": { "a": { "type": "local", "root": "a" }, "b": { "type": "local", "root": "b" } } }));
+    let message = refused(json!({ "storage": { "a": { "type": "local", "root": "a" }, "b": { "type": "local", "root": "b" } } })).await;
     assert!(message.contains("publish_to"), "which one, among several, must be said: {message}");
 }
 
