@@ -488,6 +488,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [428](428-workspace-tools-in-a-crate-of-their-own.md) | done | The `terminal_tool` and the `workspace_prompt_provider`, which give an agent the session's workspace, are part of the agents crate, while the tools of other subjects - artifacts, skills, MCP - are plugins. |
 | [429](429-message-framing-configured-three-times.md) | open | `ollama_client`, `a2a_agent` and `decision_policy` each declare `sender_format`, `sender_style` and - the first two - `message_times` with their defaults in a configuration of their own and copy them into a `ModelProfile` by hand, so that a new setting of the framing is added in three places and missing in one goes unnoticed. |
 | [445](445-model-parameters-repeated-per-personality.md) | done | A personality that needs one parameter of its model changed - the variant of the texts it is given, say - has to write out a model of its own with every parameter of the configured default, which then no longer follows a change of the default. |
+| [449](449-runtime-given-the-policies-twice.md) | open | `RuntimeBuilder::new` and `RuntimeManager::new` take the `AccessPolicy` and the `ConfidentialityPolicy` beside a `Persistence` that was made with them, and nothing but a doc comment says that they have to be the same instances - tests already run with stores that permit everything under a runtime that checks. |
 
 ## Integrations
 
