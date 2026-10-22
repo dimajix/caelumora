@@ -380,10 +380,13 @@ participant (issue 417), and is kept apart from the channel state's document (is
     Whether a reader is given an entry is one predicate (`Recorded::seen_by`) over what the store
     keeps of it - its sender, its recipients, whether anything of it is published, its position -
     and the reader's ranges: the channel everything; a participant what it sent, and what went to it
-    by name or to every member of its kind while it was one; an outsider what went to every user. A
-    database answers it as a `WHERE` over the items and a table of the ranges; a page counts what
-    its reader sees. The filter is data too (issue 421): a `Filter` of the entity stores' queries
-    over the fields of an item as it is recorded (`HistoryField`) - a message said, its sender, role
+    by name or to every member of its kind while it was one; an outsider what went to every user.
+    The model gives the same rule as data (`Filter::seen_by`, issue
+    [451](../issues/451-history-reader-judged-after-reading.md)), over an item as it is kept
+    (`KeptItem`: the item as recorded, its position, whether it is published), which a test holds
+    to `seen_by`; a database adds it to the `WHERE` of a page. A page counts what its reader sees.
+    The filter is data too (issue 421): a `Filter` of the entity stores' queries over the fields of
+    an item as it is kept (`HistoryField`) - a message said, its sender, role
     and words, whom it mentions, its level and compartments -, made by the reader's needs
     (`Filter::said_by`, `heard`, `containing`, `readable` for what a reader from another channel may
     read) and judged on the item before its form is chosen, so that a database adds it to the same
