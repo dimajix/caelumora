@@ -160,19 +160,42 @@ async fn a_secret_that_names_nothing_fails_the_start() {
 }
 
 /// The backend is made from its parameters, refuses wrong ones naming the
-/// store, and keeps the entities alone.
+/// store, and keeps the entities and the states, but no histories yet.
 #[test]
-fn the_entities_are_kept_in_postgres_and_the_states_not() {
+fn the_backend_is_made_from_its_parameters() {
     let backends = Backends::with_plugins(&[&PostgresStorePlugin]);
     let services = Services::empty().with(secrets());
     let postgres = BackendConfig::new("postgres", json!({ "url_secret": URL_SECRET, "schema": "caelumora", "max_connections": 2 }));
     let made = backends.make_one::<dyn PersistenceBackend>("entity store", "entity_store", &postgres, &services).unwrap();
-    let alone = Persistence::new(Arc::clone(&made), made, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).map(|_| ()).expect_err("keeps no states");
-    assert!(alone.to_string().contains("keeps no states"), "{alone}");
+    let alone = Persistence::new(Arc::clone(&made), made, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).map(|_| ()).expect_err("keeps no histories");
+    assert!(alone.to_string().contains("keeps no histories"), "{alone}");
 
     let misspelt = BackendConfig::new("postgres", json!({ "url": "postgres://somewhere" }));
     let refused = backends.make_one::<dyn PersistenceBackend>("entity store", "entity_store", &misspelt, &services).map(|_| ()).unwrap_err().to_string();
     assert!(refused.contains("the entity store (postgres)") && refused.contains("url"), "{refused}");
+}
+
+#[tokio::test]
+async fn behaves_as_a_state_store() {
+    let Some(database) = Database::new() else { return };
+    suite::state_store_behaves(database.backend().as_ref()).await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn indexes_the_work_under_way() {
+    let Some(database) = Database::new() else { return };
+    suite::work_under_way_is_indexed(database.backend().as_ref()).await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn keeps_the_transcripts() {
+    let Some(database) = Database::new() else { return };
+    let store = database.backend();
+    suite::transcript_store_behaves(store.as_ref(), store.as_ref()).await;
+    suite::given_store_behaves(store.as_ref(), store.as_ref()).await;
+    database.drop().await;
 }
 
 /// Whether `filter` compares names folded somewhere - what SQL cannot judge

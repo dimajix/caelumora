@@ -1,10 +1,12 @@
-//! The store of the entities in Postgres (issue 03): a backend of the
-//! stores (`PersistenceBackend`) that keeps the documents of every kind in a
-//! table of its own, `entity_<kind>`, and no states (issue 04). What is
-//! asked and in which order is the model's, as for every backend
+//! The stores in Postgres (issues 03, 04): a backend of the stores
+//! (`PersistenceBackend`) that keeps the documents of every kind in a table
+//! of its own, `entity_<kind>`, and the states in tables of their own shape
+//! (`states`), with the transcripts (`transcripts`) and the histories
+//! (`histories`), each chain a row per node (`chains`). What is asked of the
+//! entities and in which order is the model's, as for every backend
 //! (`CheckedStore`); the database keeps what is kept unique - an id, a name
 //! in its scope - by its indexes, so that it holds against every process
-//! that writes it.
+//! that writes it. Each put of a state is one transaction.
 //!
 //! The connection is named by a secret (`PostgresStoreConfig::url_secret`),
 //! resolved when the backend is opened at start; then the pool is made, the
@@ -12,10 +14,14 @@
 //! opened are made. A kind opened later gets its table when it is first
 //! used.
 
+mod chains;
 mod connection;
 mod documents;
 mod filter;
+mod histories;
 pub mod plugin;
+mod states;
+mod transcripts;
 
 use crate::connection::Connection;
 use crate::documents::PgDocuments;
@@ -50,8 +56,8 @@ const DEFAULT_SCHEMA: &str = "public";
 /// The size of the pool of a configuration that names none.
 const DEFAULT_MAX_CONNECTIONS: u32 = 10;
 
-/// The entities in Postgres: the storage of each kind asked for, over one
-/// connection.
+/// The entities and the states in Postgres, over one connection: the
+/// storage of each kind asked for, and the states as `states` keeps them.
 #[derive(Debug)]
 pub struct PostgresStore {
     connection: Arc<Connection>,
@@ -70,7 +76,8 @@ impl PostgresStore {
     }
 }
 
-/// Opens a kind in its table, `entity_<kind>`; keeps no states.
+/// Opens a kind in its table, `entity_<kind>`; the store of the states is
+/// the Postgres store itself.
 #[async_trait]
 impl PersistenceBackend for PostgresStore {
     fn documents(&self, kind: EntityKind, _document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
@@ -84,7 +91,7 @@ impl PersistenceBackend for PostgresStore {
     }
 
     fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {
-        Err(Self::keeps_no("states"))
+        Ok(self)
     }
 
     fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
@@ -92,7 +99,7 @@ impl PersistenceBackend for PostgresStore {
     }
 
     fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
-        Err(Self::keeps_no("transcripts"))
+        Ok(self)
     }
 
     /// Connects, applies the migrations and makes the tables of the kinds
