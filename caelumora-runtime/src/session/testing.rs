@@ -6,8 +6,7 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use crate::testing::TestRuntime;
 use caelumora_model::security::{OwnershipPolicy, AccessPolicy};
 use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::memory::MemoryStore;
-use caelumora_model::store::StoreBackend;
+use caelumora_model::store::Persistence;
 use std::sync::Arc;
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
 use caelumora_model::value::name::Name;
@@ -51,11 +50,11 @@ pub async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Part
 /// A runtime under the ownership policy, which learns who belongs to a
 /// group from its store (issue 23), with `rules` as the confidentiality
 /// policy beside it (issue 304), and a manager on it.
-pub fn owned_runtime(rules: ConfidentialityRules) -> (StoreBackend, Arc<SessionManager>) {
+pub fn owned_runtime(rules: ConfidentialityRules) -> (Persistence, Arc<SessionManager>) {
     let memberships = Arc::new(StoreMemberships::new());
     let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
     let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
-    let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::clone(&access_policy), Arc::clone(&confidentiality));
+    let store = Persistence::in_memory_with(Arc::clone(&access_policy), Arc::clone(&confidentiality));
     memberships.bind(&store.entity_stores().unwrap().groups);
     let runtime = TestRuntime { store: store.clone(), access_policy, confidentiality, ..Default::default() }.build();
     (store, Arc::new(SessionManager::new(runtime)))

@@ -14,7 +14,7 @@ use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStor
 use crate::transcript::{known, Transcript, TranscriptEntry};
 use crate::store::query::{ordered_after, FieldPath, Filter};
 use crate::value::name::ScopedName;
-use crate::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, StoreResult};
+use crate::store::{EntityKind, Journaled, PersistenceBackend, StateStore, StoreError, StoreResult};
 use crate::tool::ToolSet;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -166,11 +166,24 @@ impl MemoryStore {
 }
 
 /// Opens the storage of a kind in memory, which cannot fail; a document is
-/// kept with what it was told, so `document_of` is not needed.
-impl Persistence for MemoryStore {
+/// kept with what it was told, so `document_of` is not needed. The store of
+/// the states is the memory store itself.
+impl PersistenceBackend for MemoryStore {
     fn documents(&self, kind: EntityKind, _document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
         let storage = write_lock(&self.documents, |all| Arc::clone(all.entry(kind).or_insert_with(|| Arc::new(MemoryDocuments::new(kind)))));
         Ok(storage)
+    }
+
+    fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {
+        Ok(self)
+    }
+
+    fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
+        Ok(self)
+    }
+
+    fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
+        Ok(self)
     }
 }
 
@@ -453,7 +466,7 @@ impl TranscriptStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::store::suite;
-    use crate::store::{EntityStoreFactory, StoreBackend};
+    use crate::store::{EntityStoreFactory, Persistence};
     use crate::store::query::Query;
     use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
@@ -461,18 +474,18 @@ mod tests {
     use crate::value::name::ScopedName;
 
     /// The stores of a memory store, as the owners' policy checks them.
-    fn owners() -> StoreBackend {
-        StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))
+    fn owners() -> Persistence {
+        Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))
     }
 
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
-        suite::entity_store_behaves(&StoreBackend::in_memory().entity_stores().unwrap()).await;
+        suite::entity_store_behaves(&Persistence::in_memory().entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn answers_queries() {
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         suite::queries_behave(&store.entity_stores().unwrap()).await;
         suite::queries_reach_parts(store.entity_store::<suite::Folder>().unwrap().as_ref()).await;
     }
@@ -535,17 +548,17 @@ mod tests {
 
     #[tokio::test]
     async fn behaves_as_a_component_store() {
-        suite::component_store_behaves(StoreBackend::in_memory().component_store().unwrap().as_ref()).await;
+        suite::component_store_behaves(Persistence::in_memory().component_store().unwrap().as_ref()).await;
     }
 
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
-        suite::deleting_marks(&StoreBackend::in_memory().entity_stores().unwrap()).await;
+        suite::deleting_marks(&Persistence::in_memory().entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn keeps_names_unique() {
-        suite::names_are_unique(&StoreBackend::in_memory().entity_stores().unwrap()).await;
+        suite::names_are_unique(&Persistence::in_memory().entity_stores().unwrap()).await;
         suite::names_are_unique_beyond_what_is_read(&owners().entity_stores().unwrap()).await;
     }
 }

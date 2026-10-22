@@ -809,7 +809,7 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use caelumora_model::session::Session;
     use caelumora_model::snapshot::Detail;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::value::text::Introduction;
@@ -828,14 +828,14 @@ mod tests {
 
     /// Stores `session` as the runtime does, with the group of its
     /// participants (issue 286).
-    async fn stored_session(store: &StoreBackend, session: &Session) {
+    async fn stored_session(store: &Persistence, session: &Session) {
         store.entity_stores().unwrap().sessions.create(&SecurityContext::system(), session).await.unwrap();
         keep_participants(store.entity_stores().unwrap().groups.as_ref(), Group::of_session(session)).await.unwrap();
     }
 
     /// Stores `channel` as the runtime does, with the group of its
     /// participants.
-    async fn stored_channel(store: &StoreBackend, channel: &Channel) {
+    async fn stored_channel(store: &Persistence, channel: &Channel) {
         store.entity_stores().unwrap().channels.create(&SecurityContext::system(), channel).await.unwrap();
         keep_participants(store.entity_stores().unwrap().groups.as_ref(), Group::of_channel(channel)).await.unwrap();
         store.state_store().put_channel_state(channel.id, &mut founded(channel)).await.unwrap();
@@ -849,11 +849,11 @@ mod tests {
         Channel { id, name: Name::new(name).unwrap(), security_attributes, ..template.clone() }
     }
 
-    async fn an_agent_of(store: &StoreBackend, owner: ActorId) -> Agent {
+    async fn an_agent_of(store: &Persistence, owner: ActorId) -> Agent {
         an_agent_of_kind(store, owner, Default::default()).await
     }
 
-    async fn an_agent_of_kind(store: &StoreBackend, owner: ActorId, kind: PersonalityKind) -> Agent {
+    async fn an_agent_of_kind(store: &Persistence, owner: ActorId, kind: PersonalityKind) -> Agent {
         let personality = Personality {
             description: None,
             introduction: None,
@@ -1796,7 +1796,7 @@ mod tests {
     async fn a_participant_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
         use caelumora_model::actor::{ActorEvent, ActorId};
 
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let runtime = TestRuntime { store: store.clone(), plugins: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();

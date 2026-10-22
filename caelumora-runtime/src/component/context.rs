@@ -121,12 +121,12 @@ mod tests {
     use crate::component::testing::*;
     use crate::component::{ComponentContainer, ComponentKind, ComponentRegistry};
     use caelumora_model::security::AccessPolicy;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use std::sync::Mutex;
 
         #[tokio::test]
         async fn a_component_gets_every_other_that_provides_what_it_asks_for_in_the_order_of_the_configuration() {
-            let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
             registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| Ok(named(&descriptor.id)));
             let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
             let recorded = Arc::clone(&seen);
@@ -155,7 +155,7 @@ mod tests {
         /// `blind` does not.
         #[tokio::test]
         async fn a_component_is_given_the_services_its_kind_uses_alone() {
-            let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
             registry.register(ComponentKind::new("seeing").provides::<dyn Named>().uses::<dyn AccessPolicy>(), |node, context| {
                 context.service::<dyn AccessPolicy>()?;
                 Ok(named(&node.id))
@@ -176,7 +176,7 @@ mod tests {
         /// owner for those it built its container for (issue 337).
         #[tokio::test]
         async fn a_facet_that_was_not_declared_is_refused() {
-            let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
             registry.register_async(ComponentKind::new("greedy").provides::<dyn Named>(), |descriptor, context| async move {
                 context.all::<dyn Named>().await?;
                 Ok(named(&descriptor.id))

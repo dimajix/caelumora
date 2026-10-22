@@ -415,7 +415,7 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::security::{OwnershipPolicy, Grant, Subject};
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::{User, UserId};
     use serde_json::json;
@@ -441,7 +441,7 @@ mod tests {
     /// `Approving` with `strategy`, `users` users - the first owning the
     /// channel - and an agent of `agent`, given the users.
     async fn approving(strategy: ApprovalStrategy, users: usize, agent: impl FnOnce(&[UserId]) -> SecurityAttributes) -> Approving {
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let system = SecurityContext::system();
         let mut ids = Vec::new();
         for n in 0..users {

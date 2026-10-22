@@ -85,7 +85,7 @@ mod tests {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::component::ComponentConfig;
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::value::name::ScopedName;
 
     /// The names of `facets`, to compare them by.
@@ -104,7 +104,7 @@ mod tests {
     /// Builds the actor of an agent of `personality` with `kinds`, in a
     /// channel of no running session.
     async fn built(kinds: &AgentKinds, personality: Personality) -> Result<Box<dyn Actor>> {
-        let stores = StoreBackend::in_memory().entity_stores().unwrap();
+        let stores = Persistence::in_memory().entity_stores().unwrap();
         let agent = Agent::new(ScopedName::new("agent", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), &stores));
         kinds.build(agent, Arc::new(PersonalityController::new(personality)), detached_actor_runtime()).await

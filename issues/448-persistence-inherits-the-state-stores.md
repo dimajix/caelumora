@@ -1,6 +1,6 @@
 # 448 — A backend of the stores is every state store at once, and the names of the two layers are swapped
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -77,3 +77,23 @@ No change of behaviour or of the configuration.
 
 - **2026-10-22** — Opened from the discussion of [03](03-postgres-entity-store.md) with the
   maintainer, as the preparation of a Postgres store of the entities alone.
+- **2026-10-22** — Step 1 done: `StoreBackend` is `Persistence`, its field `backend`; the trait of
+  the backends is `PersistenceBackend`, registered as `dyn PersistenceBackend`. The code and
+  `docs/STORAGE.md` and `docs/ARCHITECTURE.md` name them so; the issues keep the names of their
+  time.
+- **2026-10-22** — Step 2 done, and with it the issue: `PersistenceBackend` inherits nothing; it
+  offers `documents`, `state_store`, `history_store` and `transcript_store`, the last three taking
+  the backend as `Arc<Self>`, so that the memory and the JSON store, which are the three state
+  stores, hand out themselves. `Persistence::new(entities, states, access_policy, confidentiality)`
+  takes the three state stores of `states` when it is made, together, and keeps them - and fails,
+  if that backend keeps none -, so that what it hands out of the states cannot fail;
+  `Persistence::over` makes it of one backend in both roles, `Persistence::in_memory_with` is
+  `in_memory` with the policies of a test, both of which cannot fail, and `Persistence::open` opens
+  the backend of the states, then that of the entities, if it is another instance.
+  `RuntimeBuilder::new` and `RuntimeManager::new` take one `Persistence`, of which the builder takes
+  the state stores rather than keeping copies; `TestRuntime` lost its `state_store`, and the one
+  test that keeps the states apart makes its `Persistence` of two memory stores. A test plugin with
+  a backend of the entities alone shows that it serves beside a backend of the states and fails the
+  start as the state store. Observable: a failure to open names the stores together (`Cannot open
+  the stores`), not the entity or the state store; a backend that keeps no states fails as the
+  runtime is built (`Cannot make the state store`).

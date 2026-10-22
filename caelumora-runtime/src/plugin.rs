@@ -48,10 +48,13 @@ mod tests {
     use caelumora_model::removal::{Deletable, Removal};
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{PersistenceBackend, StateStore, StoreResult};
+    use caelumora_model::store::documents::{DocumentOf, DocumentStorage};
+    use caelumora_model::store::history::HistoryStore;
+    use caelumora_model::store::transcript::TranscriptStore;
     use crate::component::{config_of_params, service_of};
     use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored};
     use caelumora_model::type_map::TypeKey;
@@ -221,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_plugin_brings_its_kind_its_manager_its_component_and_its_sections() {
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let config = AppConfig::from_yaml("notes:\n  greeting: hello\n").unwrap();
         let runtime = TestRuntime { store: store.clone(), config, plugins: vec![&Notes], ..Default::default() }.build();
 
@@ -257,7 +260,7 @@ mod tests {
         }
 
         fn backends(&self, backends: &mut Backends) {
-            backends.register::<dyn Persistence, _>("probe", |_, _, services| {
+            backends.register::<dyn PersistenceBackend, _>("probe", |_, _, services| {
                 service_of::<SecretManager>(services)?;
                 Ok(Arc::new(MemoryStore::new()))
             });
@@ -274,6 +277,57 @@ mod tests {
     async fn a_backend_of_the_stores_is_given_the_secrets() {
         let config = AppConfig::from_yaml("persistence:\n  entity_store:\n    type: probe\n  state_store:\n    type: probe\n").unwrap();
         RuntimeBuilder::from_config(&config, &[&Probe]).await.expect("made with the secrets").build().unwrap();
+    }
+
+    /// Brings a backend of the stores, `ledger`, that keeps the entities
+    /// alone - as a database of the entities, before it keeps the states.
+    struct Ledger;
+
+    #[derive(Debug)]
+    struct EntitiesAlone(MemoryStore);
+
+    impl PersistenceBackend for EntitiesAlone {
+        fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
+            self.0.documents(kind, document_of)
+        }
+
+        fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {
+            Err(StoreError::Backend("the ledger keeps no states".to_string()))
+        }
+
+        fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
+            Err(StoreError::Backend("the ledger keeps no histories".to_string()))
+        }
+
+        fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
+            Err(StoreError::Backend("the ledger keeps no transcripts".to_string()))
+        }
+    }
+
+    impl Plugin for Ledger {
+        fn name(&self) -> &'static str {
+            "ledger"
+        }
+
+        fn backends(&self, backends: &mut Backends) {
+            backends.register::<dyn PersistenceBackend, _>("ledger", |_, _, _| Ok(Arc::new(EntitiesAlone(MemoryStore::new()))));
+        }
+
+        fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A backend that keeps the entities alone is the entity store beside
+    /// another of the states (issue 448), and fails the start as the state
+    /// store, naming it.
+    #[tokio::test]
+    async fn a_backend_of_the_entities_alone_is_no_state_store() {
+        let beside = AppConfig::from_yaml("persistence:\n  entity_store:\n    type: ledger\n  state_store:\n    type: memory\n").unwrap();
+        RuntimeBuilder::from_config(&beside, &[&Ledger]).await.expect("the states kept in memory").build().unwrap();
+        let alone = AppConfig::from_yaml("persistence:\n  entity_store:\n    type: ledger\n  state_store:\n    type: ledger\n").unwrap();
+        let refused = RuntimeBuilder::from_config(&alone, &[&Ledger]).await.map(|_| ()).expect_err("it keeps no states");
+        assert!(format!("{refused:#}").contains("Cannot make the state store: backend: the ledger keeps no states"), "{refused:#}");
     }
 
     #[tokio::test]

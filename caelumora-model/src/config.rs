@@ -31,7 +31,7 @@ pub type ConfigResult<T> = Result<T, ConfigError>;
 
 /// Where the stores keep their data (issue 446): the backend of the
 /// entities and the components, and that of the states, each a backend
-/// (`dyn Persistence`) - the core's `memory` and `json`, or a plugin's.
+/// (`dyn PersistenceBackend`) - the core's `memory` and `json`, or a plugin's.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct PersistenceConfig {

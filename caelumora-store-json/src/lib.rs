@@ -8,8 +8,9 @@ use caelumora_model::user::{UserChannelState, UserId};
 use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
 use caelumora_model::value::name::ScopedName;
-use caelumora_model::store::transcript::load_named_by_turn;
-use caelumora_model::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, StoreResult};
+use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::transcript::{load_named_by_turn, TranscriptStore};
+use caelumora_model::store::{EntityKind, Journaled, PersistenceBackend, StateStore, StoreError, StoreResult};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -351,8 +352,9 @@ use std::io::ErrorKind;
 use tokio::fs::OpenOptions;
 use uuid::Uuid;
 
-/// Opens a kind in the directory of its name, `entities/<kind>`.
-impl Persistence for JsonFileStore {
+/// Opens a kind in the directory of its name, `entities/<kind>`. The store of
+/// the states is the JSON file store itself.
+impl PersistenceBackend for JsonFileStore {
     fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
         let mut all = self.documents.write().unwrap_or_else(PoisonError::into_inner);
         if let Some(storage) = all.get(&kind) {
@@ -361,6 +363,18 @@ impl Persistence for JsonFileStore {
         let storage = Arc::new(JsonDocuments::new(&self.root, kind, document_of)?);
         all.insert(kind, Arc::clone(&storage));
         Ok(storage)
+    }
+
+    fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {
+        Ok(self)
+    }
+
+    fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
+        Ok(self)
+    }
+
+    fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
+        Ok(self)
     }
 }
 
@@ -701,7 +715,7 @@ mod tests {
     use chrono::Utc;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::suite;
-    use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreBackend, Stored};
+    use caelumora_model::store::{EntityStore, EntityStoreFactory, Persistence, Stored};
     use caelumora_model::store::query::Query;
     use caelumora_model::removal::Deletable;
     use caelumora_model::security::{AccessPolicy, SecurityContext};
@@ -715,8 +729,8 @@ mod tests {
     }
 
     /// The stores of the files under `dir`, checked by `policy`.
-    fn checked(dir: &Path, policy: Arc<dyn AccessPolicy>) -> StoreBackend {
-        StoreBackend::new(Arc::new(store(dir)), policy, Arc::new(ConfidentialityRules::default()))
+    fn checked(dir: &Path, policy: Arc<dyn AccessPolicy>) -> Persistence {
+        Persistence::over(Arc::new(store(dir)), policy, Arc::new(ConfidentialityRules::default())).unwrap()
     }
 
     /// The store of the kind `T` in the files under `dir`, which permits

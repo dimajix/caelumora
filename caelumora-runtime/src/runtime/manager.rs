@@ -17,7 +17,7 @@ use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::UserManager;
 use crate::backend::Backends;
 use caelumora_model::session::Session;
-use caelumora_model::store::{ComponentStore, EntityStores, StateStore, StoreBackend};
+use caelumora_model::store::{ComponentStore, EntityStores, StateStore, Persistence};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::type_map::TypeKey;
@@ -99,10 +99,8 @@ impl RuntimeManager {
     /// # Errors
     /// As `RuntimeBuilder::new`, `RuntimeBuilder::plugin` and
     /// `RuntimeBuilder::build`.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        states: StoreBackend,
-        backend: StoreBackend,
+        persistence: Persistence,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -110,7 +108,7 @@ impl RuntimeManager {
         component_registry: ComponentRegistry,
         plugins: &[&dyn Plugin],
     ) -> Result<Self> {
-        let mut builder = RuntimeBuilder::new(states, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::with_plugins(plugins))?;
+        let mut builder = RuntimeBuilder::new(persistence, secret_manager, access_policy, confidentiality, config, component_registry, Backends::with_plugins(plugins))?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }

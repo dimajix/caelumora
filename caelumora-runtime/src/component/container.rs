@@ -365,12 +365,12 @@ mod tests {
     use super::*;
     use crate::component::testing::*;
     use crate::component::ComponentKind;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
         #[tokio::test]
         async fn components_that_need_each_other_are_refused_naming_both() {
-            let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
             registry.register_async(ComponentKind::new("chicken").provides::<dyn Named>().needs::<dyn Other>(), |descriptor, context| async move {
                 context.all::<dyn Other>().await?;
                 Ok(named(&descriptor.id))
@@ -392,7 +392,7 @@ mod tests {
 
         #[tokio::test]
         async fn a_component_must_provide_what_its_kind_declares() {
-            let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
             registry.register(ComponentKind::new("liar").provides::<dyn Named>(), |_, _| Ok(ComponentFacets::empty()));
             let registry = Arc::new(registry);
 
@@ -446,7 +446,7 @@ mod tests {
         /// declared or the configuration's.
         #[tokio::test]
         async fn a_default_of_two_singles_is_built_once_for_both() {
-            let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
             let built = Arc::new(AtomicUsize::new(0));
             let counted = Arc::clone(&built);
             registry.register(ComponentKind::new("pair").provides::<dyn Choice>().provides::<dyn Other>(), move |descriptor, _| {

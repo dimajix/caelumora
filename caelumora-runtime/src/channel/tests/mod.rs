@@ -21,7 +21,7 @@ use caelumora_model::agent::AgentId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::AllowAllPolicy;
-use caelumora_model::store::StoreBackend;
+use caelumora_model::store::Persistence;
 use caelumora_model::user::User;
 use crate::moderator::{Moderator, Routing};
 use caelumora_model::history::Audience;
@@ -36,7 +36,7 @@ pub(super) use crate::channel::testing::*;
 /// A channel of `users`, who are recorded in the store its actors are
 /// read from.
 pub(super) async fn channel_with(users: &[&User], access_policy: Arc<dyn AccessPolicy>) -> Arc<ChannelLoop> {
-    let store = StoreBackend::in_memory();
+    let store = Persistence::in_memory();
     let mut participants = Vec::new();
     for user in users {
         store.entity_stores().unwrap().users.create(&SecurityContext::system(), user).await.unwrap();
@@ -46,13 +46,13 @@ pub(super) async fn channel_with(users: &[&User], access_policy: Arc<dyn AccessP
 }
 
 /// A channel of `participants`, whose actors are read from `store`.
-async fn channel_of(store: StoreBackend, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>) -> Arc<ChannelLoop> {
+async fn channel_of(store: Persistence, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>) -> Arc<ChannelLoop> {
     let registry = test_registry(store.component_store().unwrap());
     channel_built(store, participants, access_policy, registry, moderation_components(None, Some("broadcast_policy"))).await
 }
 
 /// A channel of `participants` with `components`, built by `registry`.
-async fn channel_built(store: StoreBackend, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>, registry: ComponentRegistry, components: ComponentConfig) -> Arc<ChannelLoop> {
+async fn channel_built(store: Persistence, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>, registry: ComponentRegistry, components: ComponentConfig) -> Arc<ChannelLoop> {
     let runtime = TestRuntime { store, access_policy, registry: Some(registry), ..Default::default() }.build();
     let channel = Channel {
         summary: None, briefing: None,
@@ -85,7 +85,7 @@ async fn channel_built(store: StoreBackend, participants: Vec<Participant>, acce
 #[tokio::test]
 async fn a_participant_that_no_longer_exists_is_left_out() {
     let alice = user("alice");
-    let store = StoreBackend::in_memory();
+    let store = Persistence::in_memory();
     store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
     let (gone_user, gone_agent) = (UserId::new(), AgentId::new());
 
@@ -135,7 +135,7 @@ impl Moderator for AskBack {
 /// kind of its own (issue 174).
 pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn Moderator>) -> Arc<ChannelLoop> {
     use crate::component::{ComponentFacets, ComponentKind};
-    let store = StoreBackend::in_memory();
+    let store = Persistence::in_memory();
     let mut participants = Vec::new();
     for user in users {
         store.entity_stores().unwrap().users.create(&SecurityContext::system(), user).await.unwrap();
@@ -187,7 +187,7 @@ pub(super) async fn stuck_in_a_turn() -> Stuck {
 /// channel does with an agent among its participants, whatever the agent
 /// does in its turns.
 pub(super) async fn scripted_channel(script: Script) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
-    let store = StoreBackend::in_memory();
+    let store = Persistence::in_memory();
     let (context, agent, alice) = alice_and_an_agent(&store, ComponentConfig::default()).await;
     let runtime = TestRuntime { store, plugins: vec![&ScriptedAgents(script)], ..Default::default() }.build();
     (channel_of_alice_and(runtime, alice, agent).await, context, agent, alice)

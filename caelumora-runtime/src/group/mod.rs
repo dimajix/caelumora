@@ -196,8 +196,8 @@ mod tests {
     use caelumora_model::store::documents::Document;
     use serde_json::Value;
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::{Persistence, Stored};
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::{PersistenceBackend, Stored};
+    use caelumora_model::store::Persistence;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::channel::ChannelId;
     use caelumora_model::group::GroupField;
@@ -261,7 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_participants_follow_again_once_their_group_was_left_in_the_trash() {
-        let groups = StoreBackend::in_memory().entity_stores().unwrap().groups;
+        let groups = Persistence::in_memory().entity_stores().unwrap().groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
         let bob = ActorId::User(UserId::new());
@@ -281,7 +281,7 @@ mod tests {
     /// trash, has them as it has itself.
     #[tokio::test]
     async fn the_participants_go_and_come_back_all_or_none() {
-        let stores = StoreBackend::in_memory().entity_stores().unwrap();
+        let stores = Persistence::in_memory().entity_stores().unwrap();
         let failing = Arc::new(Failing { inner: Arc::clone(&stores.groups), passing: AtomicUsize::new(usize::MAX) });
         let events = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let manager = GroupManager::new(&EntityStores { groups: Arc::<Failing>::clone(&failing), ..stores.clone() }, events, Arc::new(AllowAllPolicy::new()));
@@ -319,7 +319,7 @@ mod tests {
     #[tokio::test]
     async fn only_the_entries_naming_a_group_known_to_be_gone_are_dropped() {
         let memory = Arc::new(MemoryStore::new());
-        let groups = StoreBackend::new(Arc::<MemoryStore>::clone(&memory), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().groups;
+        let groups = Persistence::over(Arc::<MemoryStore>::clone(&memory), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap().entity_stores().unwrap().groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
         let team = |name: &str| Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner);

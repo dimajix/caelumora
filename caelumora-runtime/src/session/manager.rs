@@ -747,17 +747,18 @@ mod tests {
     use caelumora_model::agent::Agent;
     use crate::agent::AgentError;
     use caelumora_model::channel::{self, Channel, moderation_components};
-    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::value::language::Language;
     use caelumora_model::value::ValueError;
     use caelumora_model::value::time_zone::TimeZone;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext, Grant, Subject};
+    use caelumora_model::security::{AllowAllPolicy, SecurityAttributes, SecurityContext, Grant, Subject};
     use crate::view::Viewer;
     use caelumora_model::store::StoreError;
     use caelumora_model::scope::Scope;
     use std::sync::Arc;
     use caelumora_model::value::name::ScopedName;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::{Persistence, StateStore};
+    use caelumora_model::store::memory::MemoryStore;
     use crate::session::{SessionError, SessionManager};
     use crate::session::testing::*;
     use caelumora_model::event::EntityChange;
@@ -1142,19 +1143,19 @@ mod tests {
 
     #[tokio::test]
     async fn a_deleted_session_keeps_its_state_until_it_is_purged_and_can_be_restored() {
-        let entities = StoreBackend::in_memory();
-        let states = StoreBackend::in_memory();
-        let runtime = TestRuntime { store: entities.clone(), state_store: Some(states.clone()), ..Default::default() }.build();
+        let (entities, states) = (Arc::new(MemoryStore::new()), Arc::new(MemoryStore::new()));
+        let store = Persistence::new(entities, Arc::<MemoryStore>::clone(&states), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
+        let runtime = TestRuntime { store: store.clone(), ..Default::default() }.build();
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", ActorId::None);
         let (id, channel_id) = (session.id, session.channels[0]);
         create(&manager, &ctx, session).await.unwrap();
-        assert!(states.state_store().get_channel_state(channel_id).await.is_ok(), "the channel keeps its state in the state store");
+        assert!(states.get_channel_state(channel_id).await.is_ok(), "the channel keeps its state in the state store");
 
         manager.delete(&ctx, id).await.unwrap();
-        assert!(entities.entity_stores().unwrap().sessions.get(&ctx, id).await.is_err(), "not there");
-        assert!(states.state_store().get_channel_state(channel_id).await.is_ok(), "but kept, with its channels' state (issue 164)");
+        assert!(store.entity_stores().unwrap().sessions.get(&ctx, id).await.is_err(), "not there");
+        assert!(states.get_channel_state(channel_id).await.is_ok(), "but kept, with its channels' state (issue 164)");
         manager.restore(&ctx, id).await.expect("restored");
         manager.open(&ctx, id).await.expect("and opened as any stored session");
         assert!(manager.restore(&ctx, id).await.is_err(), "not deleted");
@@ -1163,14 +1164,14 @@ mod tests {
         // A channel deleted from it before goes with it, too.
         let side = manager.open(&ctx, id).await.unwrap().create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
         manager.open(&ctx, id).await.unwrap().delete_channel(&ctx, side).await.unwrap();
-        assert!(states.state_store().get_channel_state(side).await.is_ok(), "kept with the deleted channel");
+        assert!(states.get_channel_state(side).await.is_ok(), "kept with the deleted channel");
         manager.delete(&ctx, id).await.unwrap();
         manager.purge(&ctx, id).await.expect("purged");
-        assert!(entities.entity_stores().unwrap().sessions.get_deleted(&ctx, id).await.is_err(), "nothing left to restore");
-        assert!(states.state_store().get_channel_state(channel_id).await.is_err(), "deleted from the state store, not only from the entity store");
-        assert!(entities.entity_stores().unwrap().channels.get(&ctx, channel_id).await.is_err(), "its channels go with it (issue 70)");
-        assert!(entities.entity_stores().unwrap().channels.get_deleted(&ctx, side).await.is_err(), "also those deleted from it before");
-        assert!(states.state_store().get_channel_state(side).await.is_err(), "with their state");
+        assert!(store.entity_stores().unwrap().sessions.get_deleted(&ctx, id).await.is_err(), "nothing left to restore");
+        assert!(states.get_channel_state(channel_id).await.is_err(), "deleted from the state store, not only from the entity store");
+        assert!(store.entity_stores().unwrap().channels.get(&ctx, channel_id).await.is_err(), "its channels go with it (issue 70)");
+        assert!(store.entity_stores().unwrap().channels.get_deleted(&ctx, side).await.is_err(), "also those deleted from it before");
+        assert!(states.get_channel_state(side).await.is_err(), "with their state");
     }
 
     #[tokio::test]
@@ -1283,7 +1284,7 @@ mod tests {
         use crate::testing::{Script, ScriptedAgents};
         use caelumora_model::agent::{Personality, PersonalityId, PersonalityKind};
 
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let runtime = TestRuntime { store: store.clone(), plugins: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();

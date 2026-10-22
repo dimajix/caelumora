@@ -69,3 +69,7 @@ process is impossible while identity lives in a local directory.
   filter asks, the store judges again -, and the connection is named by a secret, resolved when
   the backend is opened at start; one pool per secret, shared by every backend of the plugin, the
   user backend of 26 among them.
+- **2026-10-22** — [448](448-persistence-inherits-the-state-stores.md) made a backend of the stores
+  a factory that inherits none of them (`PersistenceBackend`), so that the backend `postgres` keeps
+  the entities alone and refuses the state stores (`state_store`, `history_store`,
+  `transcript_store`) until [04](04-postgres-state-store.md).

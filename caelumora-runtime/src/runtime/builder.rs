@@ -15,10 +15,8 @@ use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
 use crate::backend::Backends;
 use caelumora_model::removal::Deletable;
-use caelumora_model::store::history::HistoryStore;
-use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, Persistence, StateStore, StoreBackend, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, PersistenceBackend, Persistence, StoreResult};
 use crate::plugin::Plugin;
 use crate::seed::SeedSection;
 use serde::de::DeserializeOwned;
@@ -43,10 +41,7 @@ use serde_json::Value;
 /// the services they provide, the members of a scope, their sections of
 /// the configuration and of the seed. `build` makes the runtime of it.
 pub struct RuntimeBuilder {
-    backend: StoreBackend,
-    state_store: Arc<dyn StateStore>,
-    history_store: Arc<dyn HistoryStore>,
-    transcript_store: Arc<dyn TranscriptStore>,
+    persistence: Persistence,
     entity_stores: EntityStores,
     secret_manager: Arc<SecretManager>,
     user_manager: Arc<UserManager>,
@@ -96,29 +91,27 @@ impl RuntimeBuilder {
     /// whole process was configured with: it decides tool calls and what may
     /// be done to a channel, so it must be the same instance the stores were
     /// built with, not a second one made up here; so is `confidentiality`,
-    /// which decides what may flow where (issue 304). `backend` keeps the
-    /// entities of every kind, the core's and the plugins'. Of `config`, the
-    /// runtime takes what it runs by itself, so that a binary cannot drop a
-    /// configured part for a default: the global user commands (`commands`),
-    /// the components that replace built-in defaults of facets of which an
-    /// agent has one (`component_defaults`, issue 99), what the system
-    /// restricts of tool calls (`approvals`, issue 13), the storages
-    /// workspaces are made in (`workspaces`, issue 253), the user providers
-    /// (`users`) and the sections of the plugins. `component_registry` holds the
-    /// component kinds agents and sessions are built from -
-    /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
-    /// such as a model of its own (issue 130). `backends` makes the
-    /// storages and the user providers `config` names (issue 324), and
+    /// which decides what may flow where (issue 304). `persistence` keeps the
+    /// entities of every kind, the core's and the plugins', and the states.
+    /// Of `config`, the runtime takes what it runs by itself, so that a
+    /// binary cannot drop a configured part for a default: the global user
+    /// commands (`commands`), the components that replace built-in defaults
+    /// of facets of which an agent has one (`component_defaults`, issue 99),
+    /// what the system restricts of tool calls (`approvals`, issue 13), the
+    /// storages workspaces are made in (`workspaces`, issue 253), the user
+    /// providers (`users`) and the sections of the plugins.
+    /// `component_registry` holds the component kinds agents and sessions are
+    /// built from - `ComponentRegistry::built_in`, to which a test may add
+    /// stand-ins, such as a model of its own (issue 130). `backends` makes
+    /// the storages and the user providers `config` names (issue 324), and
     /// later the backends of a plugin's service (`make_named`):
     /// `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
     /// If a store of the core's kinds cannot be opened, or a storage of
     /// workspaces or a user provider cannot be made.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        states: StoreBackend,
-        backend: StoreBackend,
+        persistence: Persistence,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -126,10 +119,8 @@ impl RuntimeBuilder {
         component_registry: ComponentRegistry,
         backends: Backends,
     ) -> Result<Self> {
-        let state_store = states.state_store();
-        let history_store = states.history_store();
-        let transcript_store = states.transcript_store();
-        let entity_stores = backend.entity_stores()?;
+        let state_store = persistence.state_store();
+        let entity_stores = persistence.entity_stores()?;
         let event_bus = Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
         // What a backend may ask for: the policies, the secrets and, for a
         // user provider, the records of the users.
@@ -139,7 +130,7 @@ impl RuntimeBuilder {
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&entity_stores.users));
         let storages = Arc::new(backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?);
-        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), Arc::clone(&storages), Arc::clone(&state_store), Arc::clone(&history_store)));
+        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), Arc::clone(&storages), Arc::clone(&state_store), persistence.history_store()));
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let command_reaper = CommandReaper::new(&entity_stores, &event_bus, Arc::clone(&controller_manager), Arc::clone(&storages))?;
         let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), storages, &config.workspaces));
@@ -164,10 +155,7 @@ impl RuntimeBuilder {
         let mut prompts = PromptCatalogue::new();
         prompts.add(CORE, CORE_PROMPTS)?;
         Ok(Self {
-            backend,
-            state_store,
-            history_store,
-            transcript_store,
+            persistence,
             entity_stores,
             secret_manager,
             user_manager,
@@ -205,7 +193,7 @@ impl RuntimeBuilder {
     /// plugins' backends, then what is made of them, then the rest of what
     /// the plugins bring. The secrets are made before the stores, whose
     /// backends may need one to connect, and the backends of the stores are
-    /// opened last (`StoreBackend::open`, issue 447), once the plugins have
+    /// opened last (`Persistence::open`, issue 447), once the plugins have
     /// opened the stores of their kinds.
     ///
     /// # Errors
@@ -221,23 +209,20 @@ impl RuntimeBuilder {
         let secret_services = Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
         let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
         let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
-        // The stores, each over the backend the configuration names (issue
-        // 446), which may ask for the secrets (issue 447).
+        // The stores, over the backends the configuration names (issue 446),
+        // which may ask for the secrets (issue 447).
         let store_services = secret_services.with(Arc::clone(&secret_manager));
-        let persistence = |what: &str, name: &str, backend: &BackendConfig| -> Result<StoreBackend> {
-            let made = backends.make_one::<dyn Persistence>(what, name, backend, &store_services)?;
-            Ok(StoreBackend::new(made, Arc::clone(&access_policy), Arc::clone(&confidentiality)))
-        };
-        let states = persistence("state store", "state_store", &config.persistence.state_store)?;
-        let backend = persistence("entity store", "entity_store", &config.persistence.entity_store)?;
-        memberships.bind(&backend.entity_stores()?.groups);
-        let registry = ComponentRegistry::built_in(backend.component_store()?);
-        let mut builder = Self::new(states.clone(), backend.clone(), secret_manager, access_policy, confidentiality, config, registry, backends)?;
+        let backend = |what: &str, name: &str, backend: &BackendConfig| backends.make_one::<dyn PersistenceBackend>(what, name, backend, &store_services);
+        let states = backend("state store", "state_store", &config.persistence.state_store)?;
+        let entities = backend("entity store", "entity_store", &config.persistence.entity_store)?;
+        let persistence = Persistence::new(entities, states, Arc::clone(&access_policy), Arc::clone(&confidentiality)).context("Cannot make the state store")?;
+        memberships.bind(&persistence.entity_stores()?.groups);
+        let registry = ComponentRegistry::built_in(persistence.component_store()?);
+        let mut builder = Self::new(persistence.clone(), secret_manager, access_policy, confidentiality, config, registry, backends)?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
-        states.open().await.context("Cannot open the state store")?;
-        backend.open().await.context("Cannot open the entity store")?;
+        persistence.open().await.context("Cannot open the stores")?;
         Ok(builder)
     }
 
@@ -256,7 +241,7 @@ impl RuntimeBuilder {
     /// `StoreError::Conflict` if another kind has its name; if it cannot be
     /// opened.
     pub fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
-        self.backend.entity_store()
+        self.persistence.entity_store()
     }
 
     /// The stores of the core's kinds.
@@ -383,11 +368,11 @@ impl RuntimeBuilder {
         Ok(RuntimeManager {
             access_policy: self.access_policy,
             confidentiality: self.confidentiality,
-            state_store: self.state_store,
-            history_store: self.history_store,
-            transcript_store: self.transcript_store,
+            state_store: self.persistence.state_store(),
+            history_store: self.persistence.history_store(),
+            transcript_store: self.persistence.transcript_store(),
             entity_stores: self.entity_stores,
-            component_store: self.backend.component_store()?,
+            component_store: self.persistence.component_store()?,
             secret_manager: self.secret_manager,
             user_manager: self.user_manager,
             component_registry: Arc::new(self.component_registry),

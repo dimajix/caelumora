@@ -162,7 +162,7 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::{ChannelId, Session, SessionId};
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::user::{User, UserId, UserProfile};
     use caelumora_model::value::text::Introduction;
     use chrono::Utc;
@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(one_line(&Introduction::new("I run\n- the budget.\n").unwrap()), "I run - the budget.");
     }
 
-    async fn personality(store: &StoreBackend, introduction: Option<&str>) -> Personality {
+    async fn personality(store: &Persistence, introduction: Option<&str>) -> Personality {
         // Named apart: a name is unique in its scope (issue 250).
         let id = PersonalityId::new();
         let personality = Personality {
@@ -237,7 +237,7 @@ mod tests {
         personality
     }
 
-    async fn agent(store: &StoreBackend, name: &str, personality: &Personality) -> Agent {
+    async fn agent(store: &Persistence, name: &str, personality: &Personality) -> Agent {
         let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
@@ -245,7 +245,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_participants_of_the_channel_are_read_with_their_introductions() {
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let runtime = TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 

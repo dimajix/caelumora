@@ -439,7 +439,7 @@ mod tests {
     use axum::body::Body;
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_runtime::event::EventBus;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::user_provider::UserProvider;
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use tower::ServiceExt;
@@ -456,7 +456,7 @@ mod tests {
     }
 
     /// Auth asking `providers`, the users recorded in `store` (issue 306).
-    fn auth(store: StoreBackend, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
+    fn auth(store: Persistence, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
         let stores = store.entity_stores().unwrap();
         let events = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let controllers = Arc::new(ControllerManager::new(stores.clone(), Arc::<EventBus>::clone(&events), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default(), store.state_store(), store.history_store()));
@@ -465,7 +465,7 @@ mod tests {
 
     /// Auth that accepts anybody, finding and recording users in one store.
     fn accepting_any() -> Arc<Auth> {
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let users = Arc::clone(&store.entity_stores().unwrap().users);
         auth(store, vec![Arc::new(AcceptAnyUserProvider::new(users))])
     }
@@ -630,7 +630,7 @@ mod tests {
 
     #[tokio::test]
     async fn login_fails_without_providers() {
-        let app = router(auth(StoreBackend::in_memory(), vec![]));
+        let app = router(auth(Persistence::in_memory(), vec![]));
         let response = app.oneshot(post_json("/auth/login", r#"{"username":"alice","password":"x"}"#)).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert!(cookie_value(&response).is_none());

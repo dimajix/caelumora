@@ -197,8 +197,7 @@ mod tests {
     use crate::session::{Session, SessionId};
     use crate::store::{StoreError, Stored};
     use crate::store::query::Query;
-    use crate::store::memory::MemoryStore;
-    use crate::store::StoreBackend;
+    use crate::store::Persistence;
     use crate::user::UserId;
     use crate::value::name::Name;
     use std::sync::Arc;
@@ -261,7 +260,7 @@ mod tests {
         let staff = RoleId::new();
         let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
-        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(AllowAllPolicy::new()), Arc::new(rules)).entity_stores().unwrap().workspaces;
+        let store = Persistence::in_memory_with(Arc::new(AllowAllPolicy::new()), Arc::new(rules)).entity_stores().unwrap().workspaces;
         let owner = UserId::new();
         let cleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default()).with_roles(vec![staff], None);
         let uncleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -283,7 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_the_caller_may_not_read_does_not_exist_for_them() {
-        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
+        let store = Persistence::in_memory_with(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (_, carol_ctx) = user();
@@ -298,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn changes_are_checked_against_what_is_stored() {
-        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
+        let store = Persistence::in_memory_with(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (carol, carol_ctx) = user();
@@ -322,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
         use crate::security::OwnershipPolicy;
-        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
+        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let hers = session(alice, vec![bob]);
@@ -347,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn nobody_creates_in_someone_elses_name() {
-        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
+        let store = Persistence::in_memory_with(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, _) = user();
         let (_, bob_ctx) = user();
         assert!(matches!(store.create(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied(_))));
@@ -360,7 +359,7 @@ mod tests {
         use crate::user::User;
         use crate::value::name::ScopedName;
 
-        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().users;
+        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().users;
         let system = SecurityContext::system();
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());

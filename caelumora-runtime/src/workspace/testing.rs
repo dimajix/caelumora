@@ -15,7 +15,7 @@ use caelumora_model::confidentiality::{Classification, Confidentiality, Visibili
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{Session, SessionId};
-use caelumora_model::store::StoreBackend;
+use caelumora_model::store::Persistence;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::workspace::Workspace;
@@ -49,7 +49,7 @@ impl WithWorkspace {
 }
 
 pub async fn session_with_workspace() -> WithWorkspace {
-    let store = StoreBackend::in_memory();
+    let store = Persistence::in_memory();
     let files = tempfile::tempdir().unwrap();
     let internal = Classification::general(Confidentiality::Internal);
     let storage = BackendConfig::new("local", json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }));
