@@ -379,7 +379,7 @@ mod tests {
     use caelumora_model::actor::{ActorEvent, EventContext};
     use caelumora_model::agent::AgentId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_runtime::channel::ChannelLoop;
     use caelumora_model::confidentiality::{ConfidentialityRules, Confidentiality};
     use caelumora_model::message::{MessageId, MessageRole};
@@ -634,7 +634,7 @@ mod tests {
     /// names it only through a `ref` (`ComponentKind::operator_only`).
     #[tokio::test]
     async fn a_request_does_not_write_it_itself() {
-        let mut registry = ComponentRegistry::built_in(StoreBackend::in_memory().component_store().unwrap());
+        let mut registry = ComponentRegistry::built_in(Persistence::in_memory().component_store().unwrap());
         register(&mut registry);
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("responders", DECISION_POLICY_KIND)] };
         let refused = registry.require_acceptable(&config, ChannelLoop::COMPONENT_FACETS, &SecurityContext::default()).await;

@@ -282,7 +282,7 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::StoreError;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::user::{User, UserUpdateEvent};
     use caelumora_model::workspace::WorkspaceUpdateEvent;
     use caelumora_model::security::{AclEntry, Grant, Subject};
@@ -290,14 +290,14 @@ mod tests {
     use caelumora_model::confidentiality::{ConfidentialityRules, Visibility};
     use caelumora_model::approval::ApproverId;
 
-    fn manager() -> (StoreBackend, Arc<EventBus>, ControllerManager) {
-        let store = StoreBackend::in_memory();
+    fn manager() -> (Persistence, Arc<EventBus>, ControllerManager) {
+        let store = Persistence::in_memory();
         let bus = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let manager = ControllerManager::new(store.entity_stores().unwrap(), Arc::clone(&bus), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default(), store.state_store(), store.history_store());
         (store, bus, manager)
     }
 
-    async fn agent_in(store: &StoreBackend) -> Agent {
+    async fn agent_in(store: &Persistence) -> Agent {
         let personality = Personality {
             description: None,
             introduction: None,
@@ -317,7 +317,7 @@ mod tests {
         agent
     }
 
-    async fn user_in(store: &StoreBackend) -> User {
+    async fn user_in(store: &Persistence) -> User {
         let user = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         store.entity_stores().unwrap().users.create(&SecurityContext::system(), &user).await.unwrap();
         user

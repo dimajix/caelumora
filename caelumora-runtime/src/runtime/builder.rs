@@ -18,7 +18,7 @@ use caelumora_model::removal::Deletable;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, Persistence, StateStore, StoreBackend, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, PersistenceBackend, StateStore, Persistence, StoreResult};
 use crate::plugin::Plugin;
 use crate::seed::SeedSection;
 use serde::de::DeserializeOwned;
@@ -43,7 +43,7 @@ use serde_json::Value;
 /// the services they provide, the members of a scope, their sections of
 /// the configuration and of the seed. `build` makes the runtime of it.
 pub struct RuntimeBuilder {
-    backend: StoreBackend,
+    backend: Persistence,
     state_store: Arc<dyn StateStore>,
     history_store: Arc<dyn HistoryStore>,
     transcript_store: Arc<dyn TranscriptStore>,
@@ -117,8 +117,8 @@ impl RuntimeBuilder {
     /// workspaces or a user provider cannot be made.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        states: StoreBackend,
-        backend: StoreBackend,
+        states: Persistence,
+        backend: Persistence,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -205,7 +205,7 @@ impl RuntimeBuilder {
     /// plugins' backends, then what is made of them, then the rest of what
     /// the plugins bring. The secrets are made before the stores, whose
     /// backends may need one to connect, and the backends of the stores are
-    /// opened last (`StoreBackend::open`, issue 447), once the plugins have
+    /// opened last (`Persistence::open`, issue 447), once the plugins have
     /// opened the stores of their kinds.
     ///
     /// # Errors
@@ -224,9 +224,9 @@ impl RuntimeBuilder {
         // The stores, each over the backend the configuration names (issue
         // 446), which may ask for the secrets (issue 447).
         let store_services = secret_services.with(Arc::clone(&secret_manager));
-        let persistence = |what: &str, name: &str, backend: &BackendConfig| -> Result<StoreBackend> {
-            let made = backends.make_one::<dyn Persistence>(what, name, backend, &store_services)?;
-            Ok(StoreBackend::new(made, Arc::clone(&access_policy), Arc::clone(&confidentiality)))
+        let persistence = |what: &str, name: &str, backend: &BackendConfig| -> Result<Persistence> {
+            let made = backends.make_one::<dyn PersistenceBackend>(what, name, backend, &store_services)?;
+            Ok(Persistence::new(made, Arc::clone(&access_policy), Arc::clone(&confidentiality)))
         };
         let states = persistence("state store", "state_store", &config.persistence.state_store)?;
         let backend = persistence("entity store", "entity_store", &config.persistence.entity_store)?;

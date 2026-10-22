@@ -42,7 +42,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{ActionType, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{ComponentStore, StoreBackend, StoreError};
+use caelumora_model::store::{ComponentStore, Persistence, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
@@ -183,10 +183,10 @@ pub struct TestRuntime<'a> {
     /// What the entities are kept in and, unless `state_store` is another,
     /// the agents' states: new, empty stores in memory that permit
     /// everything.
-    pub store: StoreBackend,
+    pub store: Persistence,
     /// What the agents' states and the histories are kept in, if not in
     /// `store`.
-    pub state_store: Option<StoreBackend>,
+    pub state_store: Option<Persistence>,
     /// Allows everything.
     pub access_policy: Arc<dyn AccessPolicy>,
     /// The default rules.
@@ -205,7 +205,7 @@ static ANSWERING_OK: LazyLock<ScriptedAgents> = LazyLock::new(|| ScriptedAgents(
 impl Default for TestRuntime<'_> {
     fn default() -> Self {
         Self {
-            store: StoreBackend::in_memory(),
+            store: Persistence::in_memory(),
             state_store: None,
             access_policy: Arc::new(AllowAllPolicy::new()),
             confidentiality: Arc::new(ConfidentialityRules::default()),
@@ -244,7 +244,7 @@ pub static STAFF: LazyLock<RoleId> = LazyLock::new(RoleId::new);
 /// on the staff, carol a stranger to everything of theirs.
 pub struct World {
     pub access_policy: Arc<Recorder>,
-    pub store: StoreBackend,
+    pub store: Persistence,
     pub runtime: Arc<RuntimeManager>,
     pub manager: Arc<SessionManager>,
     pub alice: UserId,
@@ -281,7 +281,7 @@ impl World {
         let memberships = Arc::new(StoreMemberships::new());
         let recorder = Arc::new(Recorder { access_policy: OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let access_policy: Arc<dyn AccessPolicy> = Arc::<Recorder>::clone(&recorder);
-        let store = StoreBackend::new(Arc::new(MemoryStore::new()), Arc::clone(&access_policy), Arc::<Recorder>::clone(&recorder));
+        let store = Persistence::new(Arc::new(MemoryStore::new()), Arc::clone(&access_policy), Arc::<Recorder>::clone(&recorder));
         memberships.bind(&store.entity_stores().unwrap().groups);
         let mut registry = test_registry(store.component_store().unwrap());
         register(&mut registry);

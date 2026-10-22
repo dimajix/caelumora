@@ -17,7 +17,7 @@ use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::UserManager;
 use crate::backend::Backends;
 use caelumora_model::session::Session;
-use caelumora_model::store::{ComponentStore, EntityStores, StateStore, StoreBackend};
+use caelumora_model::store::{ComponentStore, EntityStores, StateStore, Persistence};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::type_map::TypeKey;
@@ -101,8 +101,8 @@ impl RuntimeManager {
     /// `RuntimeBuilder::build`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        states: StoreBackend,
-        backend: StoreBackend,
+        states: Persistence,
+        backend: Persistence,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,

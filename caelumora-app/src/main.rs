@@ -227,7 +227,7 @@ mod tests {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::store::query::Query;
     use caelumora_model::store::EntityStoreFactory;
     use caelumora_model::template::ParticipantTemplate;
@@ -258,7 +258,7 @@ mod tests {
     /// seed's models build (issue 445), and its variants of the texts, which
     /// they are given (issue 57) - read from where the program runs, the
     /// root of the sources.
-    fn runtime(store: &StoreBackend) -> RuntimeManager {
+    fn runtime(store: &Persistence) -> RuntimeManager {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let prompts = config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
@@ -268,7 +268,7 @@ mod tests {
 
     /// The runtime of the program, with its plugins, over `store`, as
     /// `config` configures it.
-    fn runtime_of(store: &StoreBackend, config: &AppConfig) -> RuntimeManager {
+    fn runtime_of(store: &Persistence, config: &AppConfig) -> RuntimeManager {
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
@@ -286,7 +286,7 @@ mod tests {
     /// plugin (issue 329).
     #[test]
     fn the_default_model_is_served_by_ollama() {
-        let runtime = runtime_of(&StoreBackend::in_memory(), &AppConfig::default());
+        let runtime = runtime_of(&Persistence::in_memory(), &AppConfig::default());
         assert_eq!(runtime.component_registry().kind_of::<dyn LLMClient>(&ComponentConfig::default()).as_deref(), Some(OLLAMA_CLIENT_KIND));
     }
 
@@ -294,7 +294,7 @@ mod tests {
     async fn the_example_seed_is_complete_and_seeding_twice_changes_nothing() {
         let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
         assert!(!seed.personalities.is_empty() && !seed.session_templates.is_empty());
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let runtime = runtime(&store);
         let stores = store.entity_stores().unwrap();
         let system = SecurityContext::system();
@@ -332,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn every_personality_of_the_example_seed_can_be_built() {
         let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let runtime = runtime(&store);
         runtime.seed(&[example("seed.yaml")]).await.unwrap();
         // The services a runtime gives them (issue 296).
@@ -351,7 +351,7 @@ mod tests {
     #[tokio::test]
     async fn every_channel_of_the_example_seed_can_be_built() {
         let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let runtime = runtime(&store);
         runtime.seed(&[example("seed.yaml")]).await.unwrap();
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
@@ -366,7 +366,7 @@ mod tests {
     /// nobody answers at the endpoint.
     #[tokio::test]
     async fn the_tools_of_an_mcp_server_are_a_component_of_the_program() {
-        let runtime = runtime(&StoreBackend::in_memory());
+        let runtime = runtime(&Persistence::in_memory());
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } }), ..ComponentDescriptor::new("tracker", MCP_TOOL_KIND) }] };
         let container = ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], runtime.component_registry(), &context).await.expect("the kind is known");

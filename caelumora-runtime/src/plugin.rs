@@ -48,10 +48,10 @@ mod tests {
     use caelumora_model::removal::{Deletable, Removal};
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::PersistenceBackend;
     use crate::component::{config_of_params, service_of};
     use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored};
     use caelumora_model::type_map::TypeKey;
@@ -221,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_plugin_brings_its_kind_its_manager_its_component_and_its_sections() {
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let config = AppConfig::from_yaml("notes:\n  greeting: hello\n").unwrap();
         let runtime = TestRuntime { store: store.clone(), config, plugins: vec![&Notes], ..Default::default() }.build();
 
@@ -257,7 +257,7 @@ mod tests {
         }
 
         fn backends(&self, backends: &mut Backends) {
-            backends.register::<dyn Persistence, _>("probe", |_, _, services| {
+            backends.register::<dyn PersistenceBackend, _>("probe", |_, _, services| {
                 service_of::<SecretManager>(services)?;
                 Ok(Arc::new(MemoryStore::new()))
             });

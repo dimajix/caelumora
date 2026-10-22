@@ -544,7 +544,7 @@ mod tests {
     use crate::component::ComponentContainer;
     use caelumora_model::component::{ComponentFailPolicy, StoredComponents};
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -555,7 +555,7 @@ mod tests {
 
         /// A store holding the preconfigured components `id`, the list `nodes`.
         async fn store_with(preconfigured: &[(&str, &[(&str, &str)])]) -> Arc<dyn ComponentStore> {
-            let store = StoreBackend::in_memory().component_store().unwrap();
+            let store = Persistence::in_memory().component_store().unwrap();
             for (id, nodes) in preconfigured {
                 store.create_components(&SecurityContext::default(), &StoredComponents::new(id, config(nodes), Default::default())).await.unwrap();
             }
@@ -646,7 +646,7 @@ mod tests {
 
         #[tokio::test]
         async fn a_ref_to_nothing_stored_is_refused_as_unavailable() {
-            let registry = named_registry(StoreBackend::in_memory().component_store().unwrap());
+            let registry = named_registry(Persistence::in_memory().component_store().unwrap());
             let config = ComponentConfig { component_nodes: vec![reference("ref-a", "does-not-exist")] };
             let error = ComponentContainer::from_config(&config, ASKED, &registry, &test_context()).await.unwrap_err();
             assert!(matches!(causes(&error)[..], [ComponentError::Build { .. }, ComponentError::Unavailable { .. }]), "{error}");
@@ -656,7 +656,7 @@ mod tests {
 
         #[tokio::test]
         async fn preconfigured_components_cannot_include_a_ref() {
-            let store = StoreBackend::in_memory().component_store().unwrap();
+            let store = Persistence::in_memory().component_store().unwrap();
             let nested = ComponentConfig { component_nodes: vec![descriptor("plain", "named", json!(null)), reference("inner", "b")] };
             store.create_components(&SecurityContext::default(), &StoredComponents::new("a", nested, Default::default())).await.unwrap();
             let registry = named_registry(store);
@@ -671,7 +671,7 @@ mod tests {
         /// needing `Choice`; and the single `Choice`, whose default kind
         /// `choosing` needs `Other`, and `other`, which needs nothing.
         fn needing() -> (Arc<ComponentRegistry>, Arc<AtomicUsize>) {
-            let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
             let built = Arc::new(AtomicUsize::new(0));
             let counted = Arc::clone(&built);
             let choice = |id: &str| ComponentFacets::empty().with(Arc::new(Name(id.to_string())) as Arc<dyn Choice>);
@@ -815,7 +815,7 @@ mod tests {
         /// written.
         #[tokio::test]
         async fn a_component_builds_on_the_containers_own_default_and_within_a_ref_as_well() {
-            let store = StoreBackend::in_memory().component_store().unwrap();
+            let store = Persistence::in_memory().component_store().unwrap();
             let shared = StoredComponents::new("shared", ComponentConfig { component_nodes: vec![on_default("listed", "model", json!(null))] }, Default::default());
             store.create_components(&SecurityContext::default(), &shared).await.unwrap();
             let (choices, _) = choices();

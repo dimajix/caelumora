@@ -757,7 +757,7 @@ mod tests {
     use caelumora_model::scope::Scope;
     use std::sync::Arc;
     use caelumora_model::value::name::ScopedName;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use crate::session::{SessionError, SessionManager};
     use crate::session::testing::*;
     use caelumora_model::event::EntityChange;
@@ -1142,8 +1142,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_deleted_session_keeps_its_state_until_it_is_purged_and_can_be_restored() {
-        let entities = StoreBackend::in_memory();
-        let states = StoreBackend::in_memory();
+        let entities = Persistence::in_memory();
+        let states = Persistence::in_memory();
         let runtime = TestRuntime { store: entities.clone(), state_store: Some(states.clone()), ..Default::default() }.build();
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
@@ -1283,7 +1283,7 @@ mod tests {
         use crate::testing::{Script, ScriptedAgents};
         use caelumora_model::agent::{Personality, PersonalityId, PersonalityKind};
 
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let runtime = TestRuntime { store: store.clone(), plugins: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();

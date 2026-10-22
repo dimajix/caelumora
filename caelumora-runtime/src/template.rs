@@ -181,7 +181,7 @@ mod tests {
     use crate::event::EventBus;
     use crate::session::testing::bare_session;
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplateId, TemplateError};
     use caelumora_model::user::User;
     use std::sync::{Arc, OnceLock};
@@ -221,7 +221,7 @@ mod tests {
         ParticipantTemplate::Agent { name: Name::new("helper").unwrap(), scope: ScopeTemplate::GlobalScope, personality_id }
     }
 
-    async fn store_with_personality(store: StoreBackend) -> (StoreBackend, PersonalityId) {
+    async fn store_with_personality(store: Persistence) -> (Persistence, PersonalityId) {
         let personality = Personality {
             description: None,
             introduction: None,
@@ -242,7 +242,7 @@ mod tests {
     /// The participants of `template` as `create_from_template` finds them
     /// in `store` or makes them there: its users and approvers, then - once
     /// the session is stored, owned by `owner` - its agents (`agent`).
-    async fn resolve(store: &StoreBackend, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> Result<Vec<(String, Participant)>> {
+    async fn resolve(store: &Persistence, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> Result<Vec<(String, Participant)>> {
         let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
         let events = Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::new(ConfidentialityRules::default())));
         let agents = AgentManager::new(&store.entity_stores().unwrap(), store.state_store(), events, access_policy);
@@ -266,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_is_created_only_when_the_lookup_finds_none() {
         let owner = UserId::new();
-        let (store, personality) = store_with_personality(StoreBackend::in_memory()).await;
+        let (store, personality) = store_with_personality(Persistence::in_memory()).await;
         let template = template(vec![helper(personality)]);
 
         // None there yet: one is made, owned by the creator, and found the next time.
@@ -279,7 +279,7 @@ mod tests {
         assert_eq!(agent.security_attributes.owner_id, ActorId::User(owner));
 
         // A lookup that fails is an error, not a reason to make another.
-        let (store, personality) = store_with_personality(StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(NoAgentLookup), Arc::new(ConfidentialityRules::default()))).await;
+        let (store, personality) = store_with_personality(Persistence::new(Arc::new(MemoryStore::new()), Arc::new(NoAgentLookup), Arc::new(ConfidentialityRules::default()))).await;
         let refused = resolve(&store, &as_user(owner), &self::template(vec![helper(personality)]), SessionId::new(), owner).await
             .expect_err("the lookup is refused");
         assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied(_))), "{refused}");
@@ -288,7 +288,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_is_reused_only_in_the_scope_asked_for_and_of_its_personality() {
         let owner = UserId::new();
-        let (store, personality) = store_with_personality(StoreBackend::in_memory()).await;
+        let (store, personality) = store_with_personality(Persistence::in_memory()).await;
         let system = SecurityContext::system();
         let plain = store.entity_stores().unwrap().personalities.get(&system, personality).await.unwrap();
         let other = Personality { id: PersonalityId::new(), name: ScopedName::new("other", Default::default()).unwrap(), ..plain.clone() };
@@ -336,7 +336,7 @@ mod tests {
             if matches!(action, ActionType::Entity { kind: Agent::KIND, verb: Verb::Create, .. }) && !self.made.swap(true, Ordering::SeqCst) {
                 let (Some(store), Some(personality)) = (self.store.get(), self.personality.get()) else { return true };
                 let other = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
-                let store = StoreBackend::new(Arc::<MemoryStore>::clone(store), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+                let store = Persistence::new(Arc::<MemoryStore>::clone(store), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
                 store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &other).await.unwrap();
             }
             true
@@ -349,7 +349,7 @@ mod tests {
         let manager = Arc::new(MadeMeanwhile::default());
         let memory = Arc::new(MemoryStore::new());
         manager.store.set(Arc::clone(&memory)).unwrap();
-        let (store, personality) = store_with_personality(StoreBackend::new(memory, Arc::<MadeMeanwhile>::clone(&manager), Arc::new(ConfidentialityRules::default()))).await;
+        let (store, personality) = store_with_personality(Persistence::new(memory, Arc::<MadeMeanwhile>::clone(&manager), Arc::new(ConfidentialityRules::default()))).await;
         let system = SecurityContext::system();
         manager.personality.set(store.entity_stores().unwrap().personalities.get(&system, personality).await.unwrap()).unwrap();
 
@@ -364,7 +364,7 @@ mod tests {
     async fn an_agent_the_caller_may_not_read_keeps_its_name() {
         use caelumora_model::security::OwnershipPolicy;
         let (owner, other) = (UserId::new(), UserId::new());
-        let (store, personality) = store_with_personality(StoreBackend::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).await;
+        let (store, personality) = store_with_personality(Persistence::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).await;
         let system = SecurityContext::system();
         let plain = store.entity_stores().unwrap().personalities.get(&system, personality).await.unwrap();
         store.entity_stores().unwrap().agents.create(&system, &Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), plain.id, ActorId::User(other))).await.unwrap();
@@ -378,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn a_personality_of_a_session_makes_agents_only_within_it() {
         let owner = UserId::new();
-        let (store, personality) = store_with_personality(StoreBackend::in_memory()).await;
+        let (store, personality) = store_with_personality(Persistence::in_memory()).await;
         let system = SecurityContext::system();
         let plain = store.entity_stores().unwrap().personalities.get(&system, personality).await.unwrap();
         let session_id = SessionId::new();
@@ -399,7 +399,7 @@ mod tests {
     #[tokio::test]
     async fn the_owner_must_exist() {
         let owner = UserId::new();
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let template = template(vec![ParticipantTemplate::User { name: "user".to_string() }]);
 
         let missing = resolve(&store, &as_user(owner), &template, SessionId::new(), owner).await.expect_err("no such user");

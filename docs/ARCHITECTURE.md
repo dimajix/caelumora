@@ -103,8 +103,8 @@ Details: [PLUGINS.md](PLUGINS.md).
 ## Backends
 
 Some services of the core are served by one of a choice of **backends**, named in the configuration
-by their `type` (issue 324): the stores (`Persistence`, issue 446), the storages of workspaces
-(`TerminalProvider`), the secret providers (`SecretProvider`) and the user providers
+by their `type` (issue 324): the stores (`PersistenceBackend`, issue 446), the storages of
+workspaces (`TerminalProvider`), the secret providers (`SecretProvider`) and the user providers
 (`UserProvider`). A backend is made by the factory registered under its type for its service, in
 `Backends` (`caelumora_runtime::backend`), which reads its parameters and asks the services it is
 given for what it needs. The core registers its own (`Backends::built_in`); a plugin adds one by
@@ -115,15 +115,15 @@ runtime is built (`RuntimeBuilder::from_config`): the secret providers first, wh
 policies, then the stores, which may ask for the secrets - a database connects by one -, then the
 storages and the user providers with the secrets and the records of the users at hand. The stores'
 backends are opened last, once the plugins registered and opened the stores of their kinds
-(`Persistence::open`, issue 447), so that one that cannot be made ready fails the start. A plugin's
-service may be served by backends too - the storages of artifacts (`ArtifactStorage`) -: the plugin
-makes them from its section while it registers (`RuntimeBuilder::make_named`), and another crate may
-register one for it (issue 328). Unlike a component, a backend serves the whole process and lives in
-no container, which is why it is no component.
+(`PersistenceBackend::open`, issue 447), so that one that cannot be made ready fails the start. A
+plugin's service may be served by backends too - the storages of artifacts (`ArtifactStorage`) -:
+the plugin makes them from its section while it registers (`RuntimeBuilder::make_named`), and
+another crate may register one for it (issue 328). Unlike a component, a backend serves the whole
+process and lives in no container, which is why it is no component.
 
 The stores are such backends since what a backend keeps is not generic: documents of any kind and
-states (`Persistence`); the runtime makes a `StoreBackend` of each, with the policies (see
-[STORAGE.md](STORAGE.md#the-entity-store)).
+states (`PersistenceBackend`); the runtime makes the stores it uses of each, a `Persistence`, with
+the policies (see [STORAGE.md](STORAGE.md#the-entity-store)).
 
 Details: [CONFIGURATION.md](CONFIGURATION.md#backends).
 
@@ -310,8 +310,8 @@ Two stores, configured separately:
     [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
 
 A backend - in memory, JSON files - only keeps: documents of any kind and states, without asking
-anything (`Persistence`). Who may do what with an entity is checked once, in the model, for every
-backend alike; the `StoreBackend` is a backend with the policies (see
+anything (`PersistenceBackend`). Who may do what with an entity is checked once, in the model, for
+every backend alike; the `Persistence` is the stores over a backend, with the policies (see
 [STORAGE.md](STORAGE.md#the-entity-store)).
 
 Every document and every kind of state has exactly **one writer**, which changes it under a lock,

@@ -199,7 +199,7 @@ impl SessionController {
 mod tests {
     use super::*;
     use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::ValueError;
     use chrono::{Duration, Utc};
@@ -239,7 +239,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_session_is_stored_first() {
         let session = session();
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
         store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
         let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
@@ -256,7 +256,7 @@ mod tests {
     async fn every_change_moves_updated_at() {
         let long_ago = Utc::now() - Duration::days(1);
         let session = Session { updated_at: long_ago, ..session() };
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
         store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
         let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
@@ -273,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn a_description_is_checked_as_it_is_applied() {
         let session = session();
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
         store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
         let announced = Arc::new(Announced::default());

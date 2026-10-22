@@ -137,7 +137,7 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use chrono::Utc;
     use caelumora_model::work::Work;
 
@@ -174,7 +174,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_language_is_read_from_the_channel_and_its_session_at_every_turn() {
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let runtime = TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 

@@ -416,7 +416,7 @@ mod tests {
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::UserId;
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::work::TurnId;
     use crate::testing::StandIn;
@@ -571,7 +571,7 @@ mod tests {
         use crate::component::{ComponentContainer, ComponentContext};
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(store.component_store().unwrap()));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let config = ComponentConfig { component_nodes: config.iter().map(|(id, kind)| ComponentDescriptor::new(id, kind)).collect() };
@@ -756,7 +756,7 @@ mod tests {
         use crate::component::{ComponentContainer, ComponentContext};
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(store.component_store().unwrap()));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let configured = |max_agent_hops: Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -800,7 +800,7 @@ mod tests {
         use crate::component::{ComponentContainer, ComponentContext};
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(store.component_store().unwrap()));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let configured = |max_span_depth: Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {

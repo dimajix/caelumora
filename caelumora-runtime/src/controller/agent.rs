@@ -74,7 +74,7 @@ mod tests {
     use caelumora_model::value::name::{ScopedName, Name};
     use caelumora_model::agent::{Personality, PersonalityId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::Visibility;
 
@@ -94,7 +94,7 @@ mod tests {
             deleted: None,
         };
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
         store.entity_stores().unwrap().agents.create(&ctx, &agent).await.unwrap();
         let controller = AgentController::new(agent.clone(), None, Arc::new(()), &store.entity_stores().unwrap());
@@ -115,7 +115,7 @@ mod tests {
         use caelumora_model::user::{User, UserId, UserUpdateEvent};
         let (staff, hr) = (RoleId::new(), RoleId::new());
         let alice = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: vec![staff], deleted: None };
-        let store = StoreBackend::in_memory();
+        let store = Persistence::in_memory();
         let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), &store.entity_stores().unwrap(), store.state_store(), store.history_store()));
         let personality = Personality { roles: Some(vec![staff]), ..plain() };
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));

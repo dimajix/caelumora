@@ -854,7 +854,7 @@ mod tests {
     use tokio::net::TcpListener;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::store::StoreBackend;
+    use caelumora_model::store::Persistence;
     use caelumora_model::type_map::TypeKey;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_runtime::runtime::Services;
@@ -1094,7 +1094,7 @@ mod tests {
         let mut prompts = PromptCatalogue::new();
         let gemma = tempfile::tempdir().unwrap();
         prompts.add_variant("gemma4", gemma.path()).unwrap();
-        let mut registry = ComponentRegistry::new(StoreBackend::in_memory().component_store().unwrap());
+        let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
         // As the agents' plugin declares it.
         registry.single::<dyn ModelProfileProvider>(None);
         register(&mut registry);

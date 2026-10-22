@@ -77,3 +77,7 @@ No change of behaviour or of the configuration.
 
 - **2026-10-22** — Opened from the discussion of [03](03-postgres-entity-store.md) with the
   maintainer, as the preparation of a Postgres store of the entities alone.
+- **2026-10-22** — Step 1 done: `StoreBackend` is `Persistence`, its field `backend`; the trait of
+  the backends is `PersistenceBackend`, registered as `dyn PersistenceBackend`. The code and
+  `docs/STORAGE.md` and `docs/ARCHITECTURE.md` name them so; the issues keep the names of their
+  time.

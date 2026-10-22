@@ -23,7 +23,7 @@ use caelumora_model::agent::{AgentId, HearsDuringTurn, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentDescriptor};
 use caelumora_model::config::AppConfig;
 use caelumora_model::security::AllowAllPolicy;
-use caelumora_model::store::StoreBackend;
+use caelumora_model::store::Persistence;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::component::ComponentKind;
 use caelumora_model::actor::{EventContext, RetryTarget};
@@ -150,7 +150,7 @@ async fn with_an_agent_hearing(hears: HearsDuringTurn, model: Arc<dyn TestModel>
 /// `agent_channel`, of an agent whose personality hears between the
 /// steps of a turn as `hears` says (issue 431).
 async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn TestModel>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
-    let store = StoreBackend::in_memory();
+    let store = Persistence::in_memory();
     let (context, agent, alice) = alice_and_an_agent(&store, components).await;
     let system = SecurityContext::system();
     let personalities = &store.entity_stores().unwrap().personalities;
