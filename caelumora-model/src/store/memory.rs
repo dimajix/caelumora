@@ -12,7 +12,8 @@ use crate::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, 
 use crate::store::kept_chain::KeptChain;
 use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::transcript::{known, Transcript, TranscriptEntry};
-use crate::store::query::Filter;
+use crate::store::query::{ordered_after, FieldPath, Filter};
+use crate::value::name::ScopedName;
 use crate::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, StoreResult};
 use crate::tool::ToolSet;
 use async_trait::async_trait;
@@ -225,8 +226,20 @@ impl DocumentStorage for MemoryDocuments {
         Ok(read_lock(&self.documents, |all| all.get(id).map(|document| document.body.clone())))
     }
 
-    async fn ids(&self) -> StoreResult<Vec<String>> {
-        Ok(read_lock(&self.documents, |all| all.keys().cloned().collect()))
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
+        Ok(read_lock(&self.documents, |all| {
+            let meeting = all.values()
+                .filter(|document| document.deleted == deleted && filter.is_none_or(|filter| filter.matches(&document.body)))
+                .map(|document| (document.id.clone(), document))
+                .collect();
+            ordered_after(meeting, after).take(limit).map(|(id, document)| (id, document.body.clone())).collect()
+        }))
+    }
+
+    async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
+        Ok(read_lock(&self.documents, |all| {
+            all.values().find(|document| !document.deleted && document.name.as_ref() == Some(name)).map(|document| document.body.clone())
+        }))
     }
 
     async fn insert(&self, document: Document) -> StoreResult<()> {

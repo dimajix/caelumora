@@ -36,8 +36,6 @@
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
-use std::future::Future;
-use crate::store::query::{self, Cursor, Field, Page, Query};
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
 use crate::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy};
 use crate::store::{StoreError, StoreResult, Stored};
@@ -86,35 +84,6 @@ impl<'a> Access<'a> {
         self.require(ActionType::get(T::KIND, value.security_attributes()), |_| not_found.clone()()).await?;
         self.require_cleared(&value, not_found)?;
         Ok(value)
-    }
-
-    /// The page that `query` asks for (issue 293) among the entities
-    /// `keys` name, each key with what the entity is found by: in the order
-    /// of the keys, after its cursor, each entity loaded by `load` only when
-    /// it is its turn - `None` if it does not meet the query's filter, which
-    /// `load` judges, or is gone -, and of those the ones the caller may
-    /// read - among what was deleted, if `deleted` -, until its limit. What
-    /// follows the limit is not loaded.
-    pub(crate) async fn page<T, F, K, L, R>(&self, keys: Vec<(String, K)>, query: &Query<F>, deleted: bool, mut load: L) -> StoreResult<Page<T>>
-    where T: Stored, F: Field, L: FnMut(K) -> R, R: Future<Output = StoreResult<Option<T>>> {
-        let mut items = Vec::new();
-        let mut remaining = query::ordered_after(keys, query).peekable();
-        while let Some((key, found_by)) = remaining.next() {
-            let Some(candidate) = load(found_by).await? else { continue };
-            let readable = match deleted {
-                true => self.readable_deleted(&candidate).await,
-                false => self.readable(&candidate).await,
-            };
-            if !readable {
-                continue;
-            }
-            items.push(candidate);
-            if query.limit.is_some_and(|limit| items.len() >= limit) {
-                let next = remaining.peek().map(|_| Cursor::after(key));
-                return Ok(Page { items, next });
-            }
-        }
-        Ok(Page { items, next: None })
     }
 
     /// Whether the caller may read `value` among a list: it is present,
@@ -223,12 +192,11 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::Access;
     use crate::actor::ActorId;
     use crate::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb, Grant};
     use crate::session::{Session, SessionId};
     use crate::store::{StoreError, Stored};
-    use crate::store::query::{NoField, Query};
+    use crate::store::query::Query;
     use crate::store::memory::MemoryStore;
     use crate::store::StoreBackend;
     use crate::user::UserId;
@@ -276,28 +244,6 @@ mod tests {
             security_attributes: contributors.into_iter().fold(SecurityAttributes::owned_by(owner), |a, c| a.granting(Subject::Actor(c), Grant::Read)),
             deleted: None,
         }
-    }
-
-    /// A page loads an entity only when it is its turn, and nothing after
-    /// its limit (issue 293): what the caller may not read is loaded and
-    /// passed over, what follows the last one is only seen to exist.
-    #[tokio::test]
-    async fn a_page_loads_nothing_after_its_limit() {
-        let (alice, alice_ctx) = user();
-        let (carol, _) = user();
-        let sessions = [session(carol, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new())];
-        let keys: Vec<(String, usize)> = ["a", "b", "c", "d"].into_iter().map(String::from).zip(0..).collect();
-        let mut loaded = Vec::new();
-        let page = Access::new(&OwnersAndContributors, &ConfidentialityRules::default(), &alice_ctx)
-            .page(keys, &Query::<NoField>::all().limited(2), false, |n: usize| {
-                loaded.push(n);
-                std::future::ready(Ok(Some(sessions[n].clone())))
-            })
-            .await
-            .unwrap();
-        assert_eq!(page.items.iter().map(|s| s.id).collect::<Vec<_>>(), [sessions[1].id, sessions[2].id]);
-        assert_eq!(page.next.as_ref().map(|cursor| cursor.as_str()), Some("c"));
-        assert_eq!(loaded, [0, 1, 2], "carol's is loaded and passed over, the last is never loaded");
     }
 
     /// Who may read a workspace but is not cleared for it does not find it

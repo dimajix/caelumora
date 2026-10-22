@@ -1955,10 +1955,9 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: CreateSession(alice's) yes",
         "alice: CreateChannel(alice's) yes",
         "alice: List(agent) yes",
-        "alice: GetAgent(alice's) yes",
         "alice: CreateAgent(alice's) yes",
         "alice: GetPersonality(bob's) no",
-    ]), "a personality one may not read: no agent - the list is filtered by what she may read, her agent from before");
+    ]), "a personality one may not read: no agent - one of the name is looked for, and her agent of another name is not asked about (issue 447)");
     assert_eq!(sessions().await, before, "and the session made for it is taken back");
 }
 

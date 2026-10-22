@@ -37,9 +37,10 @@ With the maintainer, on 2026-10-22, while discussing 03:
   policy, reading the next batch until the page is full. So a database translates what it can of a
   filter and leaves the rest - `NamePrefix` and `Contains`, which compare as names are folded - to
   the store. The filter crosses the seam without the kind's field type, by the paths of its fields.
-  A storage that cannot read a document as stored, or fails, fails the scan; only a document that
-  cannot be read as its type is left out of a list and logged. `find_by_name` asks the storage for
-  the document of a name key (`named`), and then the policy.
+  A document a storage cannot read as it is kept - a file of the JSON store that holds no JSON - is
+  left out and logged, as one that cannot be read as its type is, so that one broken document does
+  not break a list; any other failure of the storage fails the scan. `find_by_name` asks the
+  storage for the document of a name (`named`), and then the policy.
 - **Names: a key made by the model.** `ScopedName::key()` is the one form a name is compared by as
   a single value - its scope and its folded name -, equal exactly where the names are. A `Document`
   keeps its `ScopedName`; a storage that needs one value takes the key, so that a database keeps
@@ -85,3 +86,19 @@ Each without a change of behaviour.
   the key as its name: a string would lose what the name is; the memory and the JSON storage keep
   comparing `ScopedName`s by `==`, and only a storage that needs one value - a column of a unique
   index - takes the key.
+- **2026-10-22** — Step 2 done: `DocumentStorage::scan` and `named` in place of `ids`; the filter
+  crosses the seam as `Filter<FieldPath>` (`Filter::by_path`, `FieldPath` the path of a field, no
+  type of its own); `CheckedStore::page` reads batches of `SCAN_BATCH` (100), judges each document
+  against the whole filter, reads it as its type and asks the policy, and `find_by_name` asks for
+  the document of the name, after `List` as before. `Access::page` is gone - the store orders the
+  steps, `Access` answers the questions -, and `query::ordered_after` takes a key and is public,
+  for the storages. The memory storage judges filter and mark; the JSON storage the filter alone,
+  since it would have to read a document as its type to tell the mark. Observable: a page that
+  stops at its limit hands out no cursor where the scan showed nothing follows (before: whenever
+  any document of the kind followed); a list fails where the storage fails - a file of the JSON
+  store that cannot be read, not one that holds no JSON, which is left out as before; and finding
+  by name asks the policy of the one document of the name alone, not of every one of the kind,
+  which the security suite now states. A file that holds no JSON is taken as a document the
+  storage cannot read as it is kept, left out and logged, not as a failure of the storage, so that
+  one broken file does not break a list.
+

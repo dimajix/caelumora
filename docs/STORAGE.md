@@ -156,10 +156,24 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
 *   **Who may read what is asked afterwards**, entity by entity; a limit counts what the caller may
     read.
 
-Both stores take the keys of a kind first and read an entity only when it is its turn; what follows
-a page's limit is not read. Without an index, a list without a limit still goes through every entity
-of the kind. Every list that narrows what it read says so in its query; what a query cannot say yet
-- a time comparison, a lookup by normalized name, a viewer's clearance - stays code at the caller.
+**A list reads in batches** (issue [447](../issues/447-store-seam-not-fit-for-a-database.md)). The
+store asks the storage for the documents after the cursor, in the order of their ids - as `str`
+orders them -, among what is deleted or not and meeting the filter, a batch at a time
+(`DocumentStorage::scan`), the filter by the paths of its fields (`Filter::by_path`). A storage may
+hand out more than it is asked for, never less: the store judges every document against the whole
+filter again, reads it as its type and asks the policy, and reads the next batch until the page is
+full. So a database translates what it can of a filter and leaves the rest to the store - a name
+prefix and words in a text, which compare as names are folded -, and the JSON files judge the filter
+on each file and leave the mark of a deletion to the store. What follows a page's limit is read only
+as far as its batch. A page that stops at its limit hands out the cursor unless the storage showed
+that nothing follows. A document a storage cannot read as it is kept - a file that is not JSON - or
+one that cannot be read as its type is left out of a list and logged; any other failure of the
+storage fails the list. Finding by name asks the storage for the one document of the name that is
+not deleted (`DocumentStorage::named`), and then the policy, as a list asks.
+
+Without an index, a list without a limit still goes through every entity of the kind. Every list
+that narrows what it read says so in its query; what a query cannot say yet - a time comparison, a
+lookup by normalized name, a viewer's clearance - stays code at the caller.
 
 ### Deleted entities
 
