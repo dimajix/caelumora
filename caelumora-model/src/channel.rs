@@ -473,7 +473,7 @@ impl InternalActor {
 mod tests {
     use super::*;
     use crate::agent::testing::{replayed, stored};
-    use crate::message::tests::{id, make_message};
+    use crate::message::testing::{id, make_message};
 
     /// Five messages, one a day, the last one `now`.
     fn daily(now: DateTime<Utc>) -> Vec<Message> {

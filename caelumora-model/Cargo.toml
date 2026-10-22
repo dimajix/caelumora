@@ -28,10 +28,9 @@ any_ascii.workspace = true
 # The patterns of approval rules (issue 13): no backtracking, so that a
 # pattern takes linear time whatever it is matched against.
 regex.workspace = true
-# The JSON store reads and writes files asynchronously, and keeps names
-# unique under a lock per kind (issue 250); the user file verifies a
-# password on a blocking thread (`rt`, issue 25).
-tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync"] }
+# The user file is read asynchronously, and a password verified on a
+# blocking thread (`rt`, issue 25).
+tokio = { workspace = true, features = ["fs", "rt"] }
 # The URL of a remote endpoint, parsed to show it without credentials.
 url.workspace = true
 # The password hashes of the user file (issue 25), verified only: hashes
@@ -43,7 +42,9 @@ chrono-tz.workspace = true
 
 [features]
 # What the tests of other crates read of a model value held in memory
-# (`history::testing`, issue 392).
+# (`history::testing`, issue 392), the messages they write
+# (`message::testing`) and the suite every backend of the stores runs
+# (`store::suite`, issue 446).
 test-support = []
 
 [dev-dependencies]

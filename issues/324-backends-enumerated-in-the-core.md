@@ -123,3 +123,7 @@ configuration, not stored data.
   `true` and `false` as booleans (`strict_booleans`): `yes`, `no`, `on`, `off` and `y` would
   otherwise turn into booleans where nothing types them - `image: no` refused as a boolean. Asked
   for by the maintainer; it holds for the configuration and the seed files alike.
+- **2026-10-22** — The decision that the persistence stays a closed enum was revisited by
+  [446](446-stores-check-access-each-and-are-enumerated.md): with the checks in the model and a
+  backend keeping documents without types (`Persistence`), the stores are a service of the
+  `Backends` like the others, and the JSON store a crate of its own.

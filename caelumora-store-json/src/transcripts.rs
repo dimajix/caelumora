@@ -14,17 +14,17 @@
 
 use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
 use super::{read_json_opt, size_of, to_backend_error, write_json_atomic, JsonFileStore};
-use crate::agent::{AgentChannelState, AgentId};
-use crate::chain::{Node, Position};
-use crate::channel::ChannelId;
-use crate::context::FrameRef;
-use crate::digest::Digest;
-use crate::kept::Kept;
-use crate::message::{Message, MessageId};
-use crate::store::transcript::{transcript_of, TranscriptStore};
-use crate::store::StoreResult;
-use crate::tool::ToolSet;
-use crate::transcript::{known, Transcript, TranscriptEntry};
+use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::chain::{Node, Position};
+use caelumora_model::channel::ChannelId;
+use caelumora_model::context::FrameRef;
+use caelumora_model::digest::Digest;
+use caelumora_model::kept::Kept;
+use caelumora_model::message::{Message, MessageId};
+use caelumora_model::store::transcript::{transcript_of, TranscriptStore};
+use caelumora_model::store::StoreResult;
+use caelumora_model::tool::ToolSet;
+use caelumora_model::transcript::{known, Transcript, TranscriptEntry};
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};

@@ -1,10 +1,14 @@
-use crate::agent::{AgentChannelState, AgentId, AgentState};
-use crate::channel::{ChannelId, ChannelState};
-use crate::user::{UserChannelState, UserId};
-use crate::store::documents::{Document, DocumentOf, DocumentStorage};
-use crate::store::transcript::load_named_by_turn;
-use crate::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, StoreResult};
-use crate::value::name::ScopedName;
+//! The JSON store (issue 446): a backend of the stores that keeps every
+//! document and every state in files below a directory (`JsonFileStore`),
+//! registered as the backend `json` by its plugin (`JsonStorePlugin`).
+
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_model::channel::{ChannelId, ChannelState};
+use caelumora_model::user::{UserChannelState, UserId};
+use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
+use caelumora_model::store::transcript::load_named_by_turn;
+use caelumora_model::store::{EntityKind, Journaled, Persistence, StateStore, StoreError, StoreResult};
+use caelumora_model::value::name::ScopedName;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -20,6 +24,7 @@ use tracing::{debug, info, warn};
 
 mod chains;
 mod histories;
+pub mod plugin;
 mod transcripts;
 
 /// A journal is folded into its snapshot once it is at least as large as
@@ -643,21 +648,21 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::chain::Position;
-    use crate::turn::TurnState;
-    use crate::session::{Session, SessionId};
+    use caelumora_model::chain::Position;
+    use caelumora_model::turn::TurnState;
+    use caelumora_model::session::{Session, SessionId};
     use super::*;
     use chrono::Utc;
-    use crate::security::SecurityAttributes;
-    use crate::store::suite;
-    use crate::store::{EntityStore, EntityStoreFactory, StoreBackend, Stored};
-    use crate::store::query::Query;
-    use crate::removal::Deletable;
-    use crate::security::{AccessPolicy, SecurityContext};
+    use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::store::suite;
+    use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreBackend, Stored};
+    use caelumora_model::store::query::Query;
+    use caelumora_model::removal::Deletable;
+    use caelumora_model::security::{AccessPolicy, SecurityContext};
     use tempfile::tempdir;
     use uuid::Uuid;
-    use crate::confidentiality::{ConfidentialityRules, Classification};
-    use crate::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
+    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
 
     fn store(dir: &Path) -> JsonFileStore {
         JsonFileStore::new(dir).unwrap()
@@ -765,7 +770,7 @@ mod tests {
     async fn concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files() {
         // Entities may be written at the same time - by two requests that
         // change one (issue 62); a state has one writer (issue 215).
-        use crate::agent::{Personality, PersonalityId};
+        use caelumora_model::agent::{Personality, PersonalityId};
         let dir = tempdir().unwrap();
         let personalities = of_kind::<Personality>(dir.path());
         let system = SecurityContext::system();
@@ -800,8 +805,8 @@ mod tests {
     async fn of_concurrent_writes_under_one_name_one_takes_it() {
         // Checked and written under the kind's lock (issue 250): nothing
         // writes between another's check and its write.
-        use crate::actor::ActorId;
-        use crate::agent::{Agent, Personality, PersonalityId};
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::agent::{Agent, Personality, PersonalityId};
         let dir = tempdir().unwrap();
         let agents = of_kind::<Agent>(dir.path());
         let system = SecurityContext::system();
@@ -831,7 +836,7 @@ mod tests {
 
     #[tokio::test]
     async fn deleting_a_session_marks_its_file_and_purging_removes_it_leaving_its_state_to_the_state_store() {
-        use crate::channel::{Channel, ChannelId};
+        use caelumora_model::channel::{Channel, ChannelId};
 
         let dir = tempdir().unwrap();
         let store = store(dir.path());
@@ -935,13 +940,13 @@ mod tests {
         assert_eq!(sessions[0].id, s1.id);
     }
 
-    use crate::history::Reader;
-    use crate::message::tests::{id, make_message};
-    use crate::note::{NoteChange, NoteId};
-    use crate::actor::ActorState;
-    use crate::channel::moderation_components;
-    use crate::value::name::Name;
-    use crate::value::text::Description;
+    use caelumora_model::history::Reader;
+    use caelumora_model::message::testing::{id, make_message};
+    use caelumora_model::note::{NoteChange, NoteId};
+    use caelumora_model::actor::ActorState;
+    use caelumora_model::channel::moderation_components;
+    use caelumora_model::value::name::Name;
+    use caelumora_model::value::text::Description;
     use tokio::task::JoinSet;
 
     /// The lines of the journal of the agent channel state of `agent` in
@@ -1079,7 +1084,7 @@ mod tests {
 
     #[tokio::test]
     async fn items_behind_their_chain_and_entries_past_its_head_are_what_a_crash_leaves() {
-        use crate::store::history::HistoryStore;
+        use caelumora_model::store::history::HistoryStore;
         let dir = tempdir().unwrap();
         let store = store(dir.path());
         let channel = ChannelId::new();

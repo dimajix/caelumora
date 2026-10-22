@@ -37,13 +37,14 @@ Each kind is kept by a store of its own, `EntityStore<T>` (issue
 
 **A backend keeps, the model checks** (issue
 [446](../issues/446-stores-check-access-each-and-are-enumerated.md)). A backend - `MemoryStore`, for
-tests, or `JsonFileStore` - is a `Persistence`: it keeps the documents of every kind, each kind in a
-`DocumentStorage` of its own, and the states with their histories and transcripts, and asks
-nothing. A storage keeps documents serialized, by id, and is not generic, so that a backend opens
-the storage of any kind, a plugin's too, without knowing its type: the memory store keeps them in a
-map, the JSON store one file per document in the kind's directory, `entities/<kind>/<id>.json`.
-What every kind's store does - read the document as its type, ask the policies, order the steps -
-is written once, in the model (`CheckedStore`, over `store::access`), for every backend alike.
+tests, or `JsonFileStore`, of the plugin `caelumora-store-json` - is a `Persistence`: it keeps the
+documents of every kind, each kind in a `DocumentStorage` of its own, and the states with their
+histories and transcripts, and asks nothing. A storage keeps documents serialized, by id, and is not
+generic, so that a backend opens the storage of any kind, a plugin's too, without knowing its type:
+the memory store keeps them in a map, the JSON store one file per document in the kind's directory,
+`entities/<kind>/<id>.json`. What every kind's store does - read the document as its type, ask the
+policies, order the steps - is written once, in the model (`CheckedStore`, over `store::access`),
+for every backend alike.
 
 What the runtime opens is a `StoreBackend`: the backend the configuration names under
 `persistence.entity_store` - a backend of the `Backends` like every other, the core's `memory` and

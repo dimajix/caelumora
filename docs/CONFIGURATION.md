@@ -75,7 +75,9 @@ its workspaces apart).
 **`shell: true` runs what an agent's model writes on Caelumora's host, as its user, with nothing
 between but the directory, approval and the rules of a place - for development only.**
 The two Open Terminal storages are the plugin `caelumora-open-terminal`, which `caelumora-app` and
-`caelumora-tui` list; `open_terminal_docker` needs its feature `docker` (on by default).
+`caelumora-tui` list; `open_terminal_docker` needs its feature `docker` (on by default). The stores
+in JSON files, `type: json` under `persistence`, are the plugin `caelumora-store-json`, which both
+programs list too; `memory` is the core's.
 
 **`open_terminal_docker` needs the Docker daemon of Caelumora's environment, whose socket is root on
 the host.**

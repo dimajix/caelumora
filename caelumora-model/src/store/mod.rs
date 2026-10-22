@@ -1,14 +1,13 @@
 pub(crate) mod access;
 pub mod documents;
 pub mod history;
-pub mod json;
-pub(crate) mod kept_chain;
+pub mod kept_chain;
 pub mod memberships;
 pub mod memory;
 pub mod query;
 pub mod transcript;
-#[cfg(test)]
-pub(crate) mod suite;
+#[cfg(any(test, feature = "test-support"))]
+pub mod suite;
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -575,7 +574,6 @@ mod tests {
     use crate::removal::Removal;
     use crate::security::AllowAllPolicy;
     use crate::store::memory::MemoryStore;
-    use crate::store::json::JsonFileStore;
     use std::sync::Arc;
     use uuid::Uuid;
     use crate::value::name::Name;
@@ -712,10 +710,5 @@ mod tests {
         assert!(matches!(&refused, StoreError::Conflict(why) if why.contains("'group'")), "{refused}");
         let other = StoreBackend::new(memory, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
         assert!(other.entity_store::<Note>().unwrap().get(&SecurityContext::system(), note.id).await.is_ok(), "one storage of a kind in a backend");
-
-        let dir = tempfile::tempdir().unwrap();
-        let json = StoreBackend::new(Arc::new(JsonFileStore::new(dir.path()).unwrap()), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
-        json.entity_store::<Note>().unwrap().create(&SecurityContext::system(), &note).await.unwrap();
-        assert!(dir.path().join("entities/note").join(format!("{}.json", note.id)).is_file(), "kept under its name");
     }
 }

@@ -21,6 +21,7 @@ caelumora-artifacts = { workspace = true, default-features = true }
 caelumora-mcp.workspace = true
 caelumora-a2a.workspace = true
 caelumora-open-terminal.workspace = true
+caelumora-store-json.workspace = true
 caelumora-workspace-tools.workspace = true
 caelumora-ollama.workspace = true
 caelumora-decision.workspace = true

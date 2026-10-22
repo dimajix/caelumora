@@ -20,7 +20,6 @@ use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::file::{FileSecretConfig, FileSecretProvider};
 use caelumora_model::secret::SecretProvider;
-use caelumora_model::store::json::JsonStoreConfig;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::{EntityStore, Persistence};
 use caelumora_model::type_map::TypeKey;
@@ -65,19 +64,15 @@ impl Backends {
         Self::default()
     }
 
-    /// The core's backends: the stores in memory and in JSON files, the
-    /// storages of `terminal`, the secrets of a file and of the environment,
-    /// and the users of a file and `accept_any`.
+    /// The core's backends: the stores in memory, the storages of
+    /// `terminal`, the secrets of a file and of the environment, and the
+    /// users of a file and `accept_any`. The stores in JSON files are a
+    /// plugin's (`caelumora-store-json`, issue 446).
     pub fn built_in() -> Self {
         let mut backends = Self::new();
         backends.register::<dyn Persistence, _>("memory", |_, params, _| {
             config_of_params::<NoParams>(params)?;
             Ok(Arc::new(MemoryStore::new()))
-        });
-        backends.register::<dyn Persistence, _>("json", |_, params, _| {
-            let config: JsonStoreConfig = config_of_params(params)?;
-            let store = config.store().map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-            Ok(Arc::new(store))
         });
         register_backends(&mut backends);
         backends.register::<dyn SecretProvider, _>("file", |_, params, _| {
@@ -245,25 +240,22 @@ mod tests {
         assert!(other_service.contains("no backend of this type is known"), "the types of another service are not its: {other_service}");
     }
 
-    /// The stores keep their data in memory or in JSON files (issue 446),
-    /// each made from its parameters and refused naming the store.
+    /// The stores keep their data in memory unless a plugin brings another
+    /// backend (issue 446); a store that cannot be made is refused naming
+    /// it.
     #[tokio::test]
-    async fn the_stores_keep_their_data_in_memory_or_in_json_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let json = BackendConfig::new("json", json!({ "path": dir.path(), "journal_floor": 1024 }));
-        let files = Backends::built_in().make_one::<dyn Persistence>("entity store", "entity_store", &json, &Services::empty()).unwrap();
-        let stores = StoreBackend::new(files, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
-        stores.entity_store::<User>().expect("its kinds are opened in its files");
-        assert!(dir.path().join("entities/user").is_dir(), "below its path");
+    async fn the_stores_keep_their_data_in_memory() {
         let memory = BackendConfig::new("memory", json!(null));
-        assert!(Backends::built_in().make_one::<dyn Persistence>("state store", "state_store", &memory, &Services::empty()).is_ok());
+        let kept = Backends::built_in().make_one::<dyn Persistence>("entity store", "entity_store", &memory, &Services::empty()).unwrap();
+        let stores = StoreBackend::new(kept, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        stores.entity_store::<User>().expect("any kind is kept");
 
-        let misspelt = BackendConfig::new("json", json!({ "pth": dir.path() }));
-        let refused = Backends::built_in().make_one::<dyn Persistence>("entity store", "entity_store", &misspelt, &Services::empty()).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the entity store (json)") && refused.contains("pth"), "{refused}");
-        let unknown = BackendConfig::new("file", json!({}));
+        let with_params = BackendConfig::new("memory", json!({ "path": "x" }));
+        let refused = Backends::built_in().make_one::<dyn Persistence>("entity store", "entity_store", &with_params, &Services::empty()).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("the entity store (memory)") && refused.contains("path"), "{refused}");
+        let unknown = BackendConfig::new("json", json!({ "path": "x" }));
         let refused = Backends::built_in().make_one::<dyn Persistence>("state store", "state_store", &unknown, &Services::empty()).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the state store (file)") && refused.contains("known are: json, memory"), "{refused}");
+        assert!(refused.contains("the state store (json)") && refused.contains("known are: memory"), "without its plugin: {refused}");
     }
 
     #[tokio::test]

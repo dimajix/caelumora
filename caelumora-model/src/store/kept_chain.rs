@@ -16,7 +16,7 @@ use crate::digest::Digest;
 ///
 /// # Errors
 /// If a node lies past the one after the last.
-pub(crate) fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, String> {
+pub fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, String> {
     let mut next = end;
     for node in entries.iter().filter(|node| node.seq >= end) {
         if node.seq != next {
@@ -30,7 +30,7 @@ pub(crate) fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, St
 /// Puts `node`, which fits (`fits`), into `nodes` - the nodes a store keeps
 /// from the position `from` on -: in its place, the branch last taken from
 /// it, if it is there; after the last otherwise.
-pub(crate) fn place<E>(nodes: &mut Vec<Node<E>>, from: Position, node: Node<E>) {
+pub fn place<E>(nodes: &mut Vec<Node<E>>, from: Position, node: Node<E>) {
     match node.seq.since(from).and_then(|at| usize::try_from(at).ok()).filter(|&at| at < nodes.len()) {
         Some(at) => nodes[at] = node,
         None => nodes.push(node),
@@ -41,7 +41,7 @@ pub(crate) fn place<E>(nodes: &mut Vec<Node<E>>, from: Position, node: Node<E>) 
 /// newest first, each older than those gone through before -: takes the
 /// node `want` names into `path`, and wants the one it follows next, the
 /// newest node with that digest before it. Done once `want` is `None`.
-pub(crate) fn follow_back<'a, E: Clone + 'a>(want: &mut Option<Digest>, path: &mut Vec<Node<E>>, older: impl IntoIterator<Item = &'a Node<E>>) {
+pub fn follow_back<'a, E: Clone + 'a>(want: &mut Option<Digest>, path: &mut Vec<Node<E>>, older: impl IntoIterator<Item = &'a Node<E>>) {
     for node in older {
         if want.is_none() {
             return;
@@ -59,7 +59,7 @@ pub(crate) fn follow_back<'a, E: Clone + 'a>(want: &mut Option<Digest>, path: &m
 /// # Errors
 /// If the path was not followed back to its root: an entry it holds follows
 /// one that is not there.
-pub(crate) fn followed<E>(want: Option<Digest>, mut path: Vec<Node<E>>) -> Result<Option<Vec<Node<E>>>, String> {
+pub fn followed<E>(want: Option<Digest>, mut path: Vec<Node<E>>) -> Result<Option<Vec<Node<E>>>, String> {
     if path.is_empty() {
         return Ok(None);
     }

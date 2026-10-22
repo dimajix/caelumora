@@ -1,6 +1,6 @@
 # 446 — Every store checks access itself and is opened by a closed enum, so no store can live in a crate of its own
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -158,3 +158,12 @@ theirs: `caelumora-app` brings the plugin.
   unchanged; what changed is when a wrong one is refused: an unknown type or parameter of a store is
   refused as the runtime is built, naming the store - `the entity store (json)` -, as for every
   backend, no longer as the file is read.
+- **2026-10-22** — Step 3 done, and with it the issue: the JSON store is the crate
+  `caelumora-store-json`, its backend `json` registered by `JsonStorePlugin`, which `caelumora-app`
+  and `caelumora-tui` list; `Backends::built_in` registers `memory` alone. The store suite is public
+  behind `test-support` (`caelumora_model::store::suite`), with the messages it writes
+  (`message::testing`), and the JSON crate runs it; the functions of the state side it needs -
+  `store::kept_chain`, `seen`, `seen_nodes`, `answer_of`, `page_of`, `load_named_by_turn`,
+  `transcript_of`, `transcript::known`, `HistoryEntry::is_item` and `changed` - are public. The
+  model no longer needs `io-util` and `sync` of `tokio`. The test of the runtime that needed a
+  document that cannot be read writes it to the memory store's storage, past the store.

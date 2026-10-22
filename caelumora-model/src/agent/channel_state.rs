@@ -1104,7 +1104,7 @@ mod tests {
 
     #[test]
     fn an_agent_keeps_the_active_branch_of_its_transcript() {
-        use crate::message::tests::{id, make_message};
+        use crate::message::testing::{id, make_message};
         let mut state = AgentChannelState::default();
         state.transcript.extend((1..=3).map(|n| make_message(id(n))).collect());
         state.transcript.mark_stored();
@@ -1154,7 +1154,7 @@ mod tests {
 
     #[test]
     fn what_changed_in_an_agents_channel_state_replays_onto_what_was_stored() {
-        use crate::message::tests::{id, make_message};
+        use crate::message::testing::{id, make_message};
         let mut state = AgentChannelState::default();
         state.transcript.push(make_message(id(1)));
         let mut copy = stored(&mut state);
@@ -1196,7 +1196,7 @@ mod tests {
 
     #[test]
     fn what_is_perceived_is_seen_by_a_turn_under_way() {
-        use crate::message::tests::{id, make_message};
+        use crate::message::testing::{id, make_message};
         let mut state = AgentChannelState::default();
         state.perceive(vec![make_message(id(1))]);
         assert_eq!(state.transcript.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "what was perceived");
@@ -1211,7 +1211,7 @@ mod tests {
 
     #[test]
     fn the_classifications_given_to_a_remote_agent_are_kept_across_its_calls() {
-        use crate::message::tests::{id, make_message};
+        use crate::message::testing::{id, make_message};
         let classified = |n, level| Message { classification: Classification::general(level), ..make_message(id(n)) };
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![classified(1, Confidentiality::Confidential), classified(2, Confidentiality::Internal)]);
@@ -1230,7 +1230,7 @@ mod tests {
     #[test]
     fn what_changed_in_an_external_agents_state_replays_onto_what_was_stored() {
         use crate::external_agent::{ConversationId, OpenTask, OpenTaskState, TaskId};
-        use crate::message::tests::{id, make_message};
+        use crate::message::testing::{id, make_message};
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![make_message(id(1))]);
         let mut copy = stored(&mut state);

@@ -396,22 +396,15 @@ pub fn executed_calls<'a>(messages: &[&'a Message]) -> Vec<(Option<&'a ToolCall>
 }
 
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Messages for the tests of this crate and of others (issue 446): the
+/// store suite, which every backend's crate runs, writes them.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
     use super::*;
-    use crate::tool::ToolVisibility;
     use uuid::Uuid;
-    use chrono::Duration;
-    use crate::confidentiality::Confidentiality;
-    use crate::store::query::meets_exactly_its_equals;
-
-    #[test]
-    fn a_role_meets_exactly_its_serialized_form() {
-        meets_exactly_its_equals(&[MessageRole::User, MessageRole::Assistant, MessageRole::System, MessageRole::Tool]);
-    }
 
     /// A message from a user with id `id`.
-    pub(crate) fn make_message(id: MessageId) -> Message {
+    pub fn make_message(id: MessageId) -> Message {
         Message {
             id,
             sender_id: ActorId::None,
@@ -424,8 +417,23 @@ pub(crate) mod tests {
     }
 
     /// The message id `n`.
-    pub(crate) fn id(n: u128) -> MessageId {
+    pub fn id(n: u128) -> MessageId {
         MessageId(Uuid::from_u128(n))
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use super::testing::{id, make_message};
+    use crate::tool::ToolVisibility;
+    use chrono::Duration;
+    use crate::confidentiality::Confidentiality;
+    use crate::store::query::meets_exactly_its_equals;
+
+    #[test]
+    fn a_role_meets_exactly_its_serialized_form() {
+        meets_exactly_its_equals(&[MessageRole::User, MessageRole::Assistant, MessageRole::System, MessageRole::Tool]);
     }
 
     fn call(id: &str, visibility: ToolVisibility) -> ToolCall {

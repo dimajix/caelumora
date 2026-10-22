@@ -58,6 +58,9 @@ The project is a Rust workspace, with a web UI next to it:
     `open_terminal_shared` and `open_terminal_docker`, a plugin that brings nothing but these
     backends, the Docker one with `bollard` behind the feature `docker` (issue 327). See
     [WORKSPACE.md](WORKSPACE.md#storages).
+*   **`caelumora-store-json`** - the stores in JSON files below a directory (`JsonFileStore`), a
+    plugin that brings nothing but the backend `json` of the stores (issue 446). See
+    [STORAGE.md](STORAGE.md#the-entity-store).
 *   **`caelumora-workspace-tools`** - what an agent is given to work on the session's workspace, a
     plugin that brings nothing but its component kinds `terminal_tool`, the workspace's files and
     its shell, and `workspace_prompt_provider`, the prompt part that names them (issue 428). See
@@ -86,8 +89,8 @@ the model; the core knows none. A plugin is one crate, cut into layers by Cargo 
 crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second
 `caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
 ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`, `caelumora-ollama`, `caelumora-decision` and
-`caelumora-workspace-tools` are ones that bring component kinds alone, `caelumora-open-terminal` one
-that brings backends alone.
+`caelumora-workspace-tools` are ones that bring component kinds alone, `caelumora-open-terminal` and
+`caelumora-store-json` ones that bring backends alone.
 The agents are a plugin too, an essential one (issue 370): `caelumora-agents` registers the kinds of
 agent, whose actors the channel builds (`AgentKinds`), and the kinds of their components; without
 it, the program is a chat between users. The plugins whose components serve an agent's facets -

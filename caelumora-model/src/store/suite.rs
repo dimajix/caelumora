@@ -1,7 +1,8 @@
 //! The behaviour every store implementation owes (issue 93): one suite that
-//! the `MemoryStore` and the `JsonFileStore` both run, so that the two can't
-//! drift apart again. What is specific to one store - files on disk,
-//! concurrent writers - stays in that store's own tests.
+//! every backend runs - the `MemoryStore` here, the `JsonFileStore` in
+//! `caelumora-store-json` (issue 446), with the feature `test-support` -, so
+//! that they can't drift apart. What is specific to one store - files on
+//! disk, concurrent writers - stays in that store's own tests.
 
 use crate::history::testing::items_of;
 use crate::store::query::{Field, Filter, Query};
@@ -215,7 +216,7 @@ define_id!(FolderId);
 /// one, to ask for what lies within an element of a collection in an
 /// element of a collection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Folder {
+pub struct Folder {
     id: FolderId,
     documents: Vec<Document>,
     security_attributes: SecurityAttributes,
@@ -235,7 +236,7 @@ struct Document {
 /// does: those of a document lie within an element of `Documents`, those of
 /// an entry within an element of `Acl` or `DocumentAcl`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FolderField {
+pub enum FolderField {
     Owner,
     Acl,
     Documents,
@@ -305,7 +306,7 @@ fn component() -> StoredComponents {
 /// of its limit, each going on after the cursor the one before handed out.
 /// Asked of `folders`, a kind with parts (`Folder`), as a plugin's kind may
 /// have them.
-pub(crate) async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
+pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
     use crate::security::{Grant, Subject};
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
@@ -371,7 +372,7 @@ pub(crate) async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
 
 /// A store answers a query by the fields of the core's kinds: by scope, by
 /// the session of a channel, by a participant, by a member.
-pub(crate) async fn queries_behave(stores: &EntityStores) {
+pub async fn queries_behave(stores: &EntityStores) {
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
     // By scope, by the session of a channel, by a participant.
@@ -419,7 +420,7 @@ pub(crate) async fn queries_behave(stores: &EntityStores) {
 }
 
 /// Preconfigured components go through the same life as the entities.
-pub(crate) async fn component_store_behaves(store: &dyn ComponentStore) {
+pub async fn component_store_behaves(store: &dyn ComponentStore) {
     lifecycle!(store, component(), component_id,
         components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "renamed")] }, "components",
         create_components, get_components, update_components, delete_components, list_components);
@@ -459,7 +460,7 @@ fn component_id(value: &StoredComponents) -> &str {
 
 /// Every kind of entity goes through the same life; users are also found
 /// by name, and so are definitions in their scope.
-pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
+pub async fn entity_store_behaves(stores: &EntityStores) {
     lifecycle!(stores.personalities.as_ref(), personality(), |v: &Personality| v.id, name.name, "personality",
         create, get, update, delete, list);
     lifecycle!(stores.session_templates.as_ref(), session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
@@ -550,7 +551,7 @@ macro_rules! unique_by_name {
 
 /// Names are unique per kind in their name space (issue 250), for every
 /// kind that is `Scoped`.
-pub(crate) async fn names_are_unique(stores: &EntityStores) {
+pub async fn names_are_unique(stores: &EntityStores) {
     let user_id = UserId::new();
     let in_scope = |name: &str, scope: &Scope| ScopedName::new(name, scope.clone()).unwrap();
     let (global, users) = (Scope::GlobalScope, Scope::UserScope { user_id });
@@ -598,7 +599,7 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
 
 /// A name is taken also by what the caller may not read (issue 250): the
 /// store must ask an `OwnershipPolicy`.
-pub(crate) async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
+pub async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
     let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
     let (alice, bob) = (UserId::new(), UserId::new());
     let owned_by = |name: &str, owner: UserId| Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality().id, ActorId::User(owner));
@@ -612,7 +613,7 @@ pub(crate) async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) 
 /// Agent states that were never stored read as their default, a channel
 /// state as `NotFound`; deleting a channel's state takes its agents' states
 /// in the channel along - of either kind - and nothing else.
-pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
+pub async fn state_store_behaves(store: &dyn StateStore) {
     let (agent, other_agent, remote_agent) = (AgentId::new(), AgentId::new(), AgentId::new());
     let (channel, other_channel) = (ChannelId::new(), ChannelId::new());
 
@@ -691,7 +692,7 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
 /// an agent's state stored in it has work under way, once however many
 /// agents have; it leaves the list with the put that ends the last one's
 /// work, and with the agent's or the channel's state deleted.
-pub(crate) async fn work_under_way_is_indexed(store: &dyn StateStore) {
+pub async fn work_under_way_is_indexed(store: &dyn StateStore) {
     let (agent, other_agent) = (AgentId::new(), AgentId::new());
     let (channel, other_channel, waiting_channel) = (ChannelId::new(), ChannelId::new(), ChannelId::new());
     let listed = async || store.channels_with_work_under_way().await.expect("listed").into_iter().collect::<HashSet<_>>();
@@ -751,8 +752,8 @@ async fn all_pages(histories: &dyn HistoryStore, key: ChannelId, from: Position,
 /// loaded from where a state holds its history; read for a reader (issue
 /// 417); deleted with the channel's state. More entries than a segment of
 /// the JSON store holds.
-pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &dyn HistoryStore) {
-    use crate::message::tests::{id, make_message};
+pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn HistoryStore) {
+    use crate::message::testing::{id, make_message};
     use crate::confidentiality::Confidentiality;
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let key = channel;
@@ -880,8 +881,8 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
 /// `TranscriptStore` - a path to a digest, a message as it stands on its
 /// branch, which messages it holds -, a digest there twice, and gone with
 /// the state.
-pub(crate) async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
-    use crate::message::tests::{id, make_message};
+pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
+    use crate::message::testing::{id, make_message};
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let seqs = |path: Option<Vec<Node<TranscriptEntry>>>| path.map(|path| path.iter().map(|node| node.seq.get()).collect::<Vec<_>>());
     assert!(transcripts.path(agent, channel, digest::prompt("nothing")).await.unwrap().is_none(), "no transcript yet");
@@ -940,7 +941,7 @@ pub(crate) async fn transcript_store_behaves(states: &dyn StateStore, transcript
 /// again as the same -, read by digest; a state loaded holds the texts and
 /// sets its turn under way names, none between turns, and no frame; gone
 /// with the state.
-pub(crate) async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
+pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
     let offer = digest::tool_sets(&sets);
@@ -1003,7 +1004,7 @@ fn marked<T: Deletable>(mut value: T) -> T {
 /// five operations, also not for the system, and its id stays taken;
 /// nothing created or changed may carry the mark. What was deleted is
 /// read, restored and purged by operations of its own.
-pub(crate) async fn deleting_marks(stores: &EntityStores) {
+pub async fn deleting_marks(stores: &EntityStores) {
     let system = SecurityContext::system();
     let kept = session();
     stores.sessions.create(&system, &kept).await.expect("create");
