@@ -51,7 +51,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let json = BackendConfig::new("json", json!({ "path": dir.path(), "journal_floor": 1024 }));
         let files = backends.make_one::<dyn PersistenceBackend>("entity store", "entity_store", &json, &Services::empty()).unwrap();
-        let stores = Persistence::new(files, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let stores = Persistence::over(files, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).expect("its states, too");
         stores.entity_store::<User>().expect("its kinds are opened in its files");
         assert!(dir.path().join("entities/user").is_dir(), "below its path");
 

@@ -248,7 +248,7 @@ mod tests {
     async fn the_stores_keep_their_data_in_memory() {
         let memory = BackendConfig::new("memory", json!(null));
         let kept = Backends::built_in().make_one::<dyn PersistenceBackend>("entity store", "entity_store", &memory, &Services::empty()).unwrap();
-        let stores = Persistence::new(kept, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let stores = Persistence::over(kept, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).expect("its states, too");
         stores.entity_store::<User>().expect("any kind is kept");
 
         let with_params = BackendConfig::new("memory", json!({ "path": "x" }));

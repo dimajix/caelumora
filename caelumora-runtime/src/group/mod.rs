@@ -319,7 +319,7 @@ mod tests {
     #[tokio::test]
     async fn only_the_entries_naming_a_group_known_to_be_gone_are_dropped() {
         let memory = Arc::new(MemoryStore::new());
-        let groups = Persistence::new(Arc::<MemoryStore>::clone(&memory), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().groups;
+        let groups = Persistence::over(Arc::<MemoryStore>::clone(&memory), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap().entity_stores().unwrap().groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
         let team = |name: &str| Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner);

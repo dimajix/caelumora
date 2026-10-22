@@ -99,10 +99,8 @@ impl RuntimeManager {
     /// # Errors
     /// As `RuntimeBuilder::new`, `RuntimeBuilder::plugin` and
     /// `RuntimeBuilder::build`.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        states: Persistence,
-        backend: Persistence,
+        persistence: Persistence,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -110,7 +108,7 @@ impl RuntimeManager {
         component_registry: ComponentRegistry,
         plugins: &[&dyn Plugin],
     ) -> Result<Self> {
-        let mut builder = RuntimeBuilder::new(states, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::with_plugins(plugins))?;
+        let mut builder = RuntimeBuilder::new(persistence, secret_manager, access_policy, confidentiality, config, component_registry, Backends::with_plugins(plugins))?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }

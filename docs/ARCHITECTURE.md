@@ -122,8 +122,9 @@ another crate may register one for it (issue 328). Unlike a component, a backend
 process and lives in no container, which is why it is no component.
 
 The stores are such backends since what a backend keeps is not generic: documents of any kind and
-states (`PersistenceBackend`); the runtime makes the stores it uses of each, a `Persistence`, with
-the policies (see [STORAGE.md](STORAGE.md#the-entity-store)).
+states, each offered by a method of its own (`PersistenceBackend`, issue 448); the runtime makes the
+stores it uses, one `Persistence`, of the backend of the entities, the backend of the states and the
+policies (see [STORAGE.md](STORAGE.md#the-entity-store)).
 
 Details: [CONFIGURATION.md](CONFIGURATION.md#backends).
 
@@ -311,8 +312,8 @@ Two stores, configured separately:
 
 A backend - in memory, JSON files - only keeps: documents of any kind and states, without asking
 anything (`PersistenceBackend`). Who may do what with an entity is checked once, in the model, for
-every backend alike; the `Persistence` is the stores over a backend, with the policies (see
-[STORAGE.md](STORAGE.md#the-entity-store)).
+every backend alike; the `Persistence` is the stores over the backends of the entities and of the
+states, with the policies (see [STORAGE.md](STORAGE.md#the-entity-store)).
 
 Every document and every kind of state has exactly **one writer**, which changes it under a lock,
 stores it and only then announces the change. For an entity, that is its manager or its controller,

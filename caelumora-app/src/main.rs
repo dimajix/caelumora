@@ -273,7 +273,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
-        let mut builder = RuntimeBuilder::new(store.clone(), store.clone(), secrets, access_policy, config.create_confidentiality_policy(), config, ComponentRegistry::built_in(store.component_store().unwrap()), Backends::with_plugins(&plugins)).unwrap();
+        let mut builder = RuntimeBuilder::new(store.clone(), secrets, access_policy, config.create_confidentiality_policy(), config, ComponentRegistry::built_in(store.component_store().unwrap()), Backends::with_plugins(&plugins)).unwrap();
         for plugin in plugins {
             builder.plugin(plugin).unwrap();
         }

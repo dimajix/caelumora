@@ -6,7 +6,6 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use crate::testing::TestRuntime;
 use caelumora_model::security::{OwnershipPolicy, AccessPolicy};
 use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::Persistence;
 use std::sync::Arc;
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
@@ -55,7 +54,7 @@ pub fn owned_runtime(rules: ConfidentialityRules) -> (Persistence, Arc<SessionMa
     let memberships = Arc::new(StoreMemberships::new());
     let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
     let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
-    let store = Persistence::new(Arc::new(MemoryStore::new()), Arc::clone(&access_policy), Arc::clone(&confidentiality));
+    let store = Persistence::in_memory_with(Arc::clone(&access_policy), Arc::clone(&confidentiality));
     memberships.bind(&store.entity_stores().unwrap().groups);
     let runtime = TestRuntime { store: store.clone(), access_policy, confidentiality, ..Default::default() }.build();
     (store, Arc::new(SessionManager::new(runtime)))

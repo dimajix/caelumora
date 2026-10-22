@@ -166,11 +166,24 @@ impl MemoryStore {
 }
 
 /// Opens the storage of a kind in memory, which cannot fail; a document is
-/// kept with what it was told, so `document_of` is not needed.
+/// kept with what it was told, so `document_of` is not needed. The store of
+/// the states is the memory store itself.
 impl PersistenceBackend for MemoryStore {
     fn documents(&self, kind: EntityKind, _document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
         let storage = write_lock(&self.documents, |all| Arc::clone(all.entry(kind).or_insert_with(|| Arc::new(MemoryDocuments::new(kind)))));
         Ok(storage)
+    }
+
+    fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {
+        Ok(self)
+    }
+
+    fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
+        Ok(self)
+    }
+
+    fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
+        Ok(self)
     }
 }
 
@@ -462,7 +475,7 @@ mod tests {
 
     /// The stores of a memory store, as the owners' policy checks them.
     fn owners() -> Persistence {
-        Persistence::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))
+        Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))
     }
 
     #[tokio::test]

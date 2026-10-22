@@ -228,7 +228,6 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::role::RoleId;
     use caelumora_model::user::UserUpdateEvent;
-    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::Persistence;
     use caelumora_model::security::OwnershipPolicy;
     use std::sync::Mutex;
@@ -264,7 +263,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_profile_is_stored_first_then_taken_over_and_announced() {
-        let store = Persistence::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
@@ -296,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_profile_changes_nothing() {
-        let store = Persistence::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
@@ -316,7 +315,7 @@ mod tests {
     #[tokio::test]
     async fn a_rule_is_added_and_taken_back_by_the_user_alone() {
         use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
-        let store = Persistence::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let user = alice();
         let controller = controller_in(&store, &user, Arc::new(()));
         let hers = as_user(user.id);

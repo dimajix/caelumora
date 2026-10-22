@@ -279,7 +279,7 @@ mod tests {
         assert_eq!(agent.security_attributes.owner_id, ActorId::User(owner));
 
         // A lookup that fails is an error, not a reason to make another.
-        let (store, personality) = store_with_personality(Persistence::new(Arc::new(MemoryStore::new()), Arc::new(NoAgentLookup), Arc::new(ConfidentialityRules::default()))).await;
+        let (store, personality) = store_with_personality(Persistence::in_memory_with(Arc::new(NoAgentLookup), Arc::new(ConfidentialityRules::default()))).await;
         let refused = resolve(&store, &as_user(owner), &self::template(vec![helper(personality)]), SessionId::new(), owner).await
             .expect_err("the lookup is refused");
         assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied(_))), "{refused}");
@@ -336,7 +336,7 @@ mod tests {
             if matches!(action, ActionType::Entity { kind: Agent::KIND, verb: Verb::Create, .. }) && !self.made.swap(true, Ordering::SeqCst) {
                 let (Some(store), Some(personality)) = (self.store.get(), self.personality.get()) else { return true };
                 let other = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
-                let store = Persistence::new(Arc::<MemoryStore>::clone(store), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+                let store = Persistence::over(Arc::<MemoryStore>::clone(store), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
                 store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &other).await.unwrap();
             }
             true
@@ -349,7 +349,7 @@ mod tests {
         let manager = Arc::new(MadeMeanwhile::default());
         let memory = Arc::new(MemoryStore::new());
         manager.store.set(Arc::clone(&memory)).unwrap();
-        let (store, personality) = store_with_personality(Persistence::new(memory, Arc::<MadeMeanwhile>::clone(&manager), Arc::new(ConfidentialityRules::default()))).await;
+        let (store, personality) = store_with_personality(Persistence::over(memory, Arc::<MadeMeanwhile>::clone(&manager), Arc::new(ConfidentialityRules::default())).unwrap()).await;
         let system = SecurityContext::system();
         manager.personality.set(store.entity_stores().unwrap().personalities.get(&system, personality).await.unwrap()).unwrap();
 
@@ -364,7 +364,7 @@ mod tests {
     async fn an_agent_the_caller_may_not_read_keeps_its_name() {
         use caelumora_model::security::OwnershipPolicy;
         let (owner, other) = (UserId::new(), UserId::new());
-        let (store, personality) = store_with_personality(Persistence::new(Arc::new(MemoryStore::new()), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).await;
+        let (store, personality) = store_with_personality(Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).await;
         let system = SecurityContext::system();
         let plain = store.entity_stores().unwrap().personalities.get(&system, personality).await.unwrap();
         store.entity_stores().unwrap().agents.create(&system, &Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), plain.id, ActorId::User(other))).await.unwrap();

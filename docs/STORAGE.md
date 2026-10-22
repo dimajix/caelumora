@@ -39,12 +39,18 @@ Each kind is kept by a store of its own, `EntityStore<T>` (issue
 [446](../issues/446-stores-check-access-each-and-are-enumerated.md)). A backend - `MemoryStore`, for
 tests, or `JsonFileStore`, of the plugin `caelumora-store-json` - is a `PersistenceBackend`: it
 keeps the documents of every kind, each kind in a `DocumentStorage` of its own, and the states with
-their histories and transcripts, and asks nothing. A storage keeps documents serialized, by id, and
-is not generic, so that a backend opens the storage of any kind, a plugin's too, without knowing its
-type: the memory store keeps them in a map, the JSON store one file per document in the kind's
-directory, `entities/<kind>/<id>.json`. What every kind's store does - read the document as its
-type, ask the policies, order the steps - is written once, in the model (`CheckedStore`, over
-`store::access`), for every backend alike.
+their histories and transcripts, and asks nothing. It offers each of them by a method of its own
+(`documents`, `state_store`, `history_store`, `transcript_store`, issue
+[448](../issues/448-persistence-inherits-the-state-stores.md)) and is none of them, so that a
+backend that keeps only the one part - a database of the entities alone - refuses the other; the
+memory and the JSON store are the three state stores themselves and hand out themselves. The
+history and the transcript store read what the state store of the same backend writes, so all three
+are taken from one backend. A storage keeps documents serialized, by id, and is not generic, so
+that a backend opens the storage of any kind, a plugin's too, without knowing its type: the memory
+store keeps them in a map, the JSON store one file per document in the kind's directory,
+`entities/<kind>/<id>.json`. What every kind's store does - read the document as its type, ask the
+policies, order the steps - is written once, in the model (`CheckedStore`, over `store::access`),
+for every backend alike.
 
 A backend is made ready once, at start (`PersistenceBackend::open`, issue
 [447](../issues/447-store-seam-not-fit-for-a-database.md)): after every plugin registered, so after
@@ -53,19 +59,25 @@ database connects there - by a secret, which the backend is given when it is mad
 migrations and makes what its kinds need; the memory and the JSON files need nothing. A kind opened
 later is the backend's to make ready when it is first used. `RuntimeBuilder::from_config` opens the
 backends it makes; whoever makes a runtime of stores of their own (`RuntimeBuilder::new`) opens
-them (`Persistence::open`).
+them (`Persistence::open`), the backend of the states first, then that of the entities, if it is
+another instance.
 
-What the runtime opens is a `Persistence`: the backend the configuration names under
-`persistence.entity_store` - a backend of the `Backends` like every other, the core's `memory` and
-`json` or a plugin's (`dyn PersistenceBackend`, see [CONFIGURATION.md](CONFIGURATION.md#backends)) -
-and the two policies; the states likewise under `persistence.state_store`. It opens the store of a
-kind for whoever asks (`EntityStoreFactory::entity_store::<T>()`), once - whoever asks for a kind
-again, the core or a plugin, is given the same store -, refuses a kind whose name another kind has,
-and gives the component store and the state store. The stores of the core's kinds are
-`EntityStores`, which the runtime is given; a plugin asks for the store of its kind while it
-registers. A manager is made with `&EntityStores` - or the store of its kind - and keeps the stores
-of the kinds it uses as fields, as every service is held. Tests make their stores the same way,
-`Persistence::in_memory()` for stores that permit everything.
+What the runtime holds is one `Persistence`, the stores: made of the backend the configuration names
+under `persistence.entity_store`, the one it names under `persistence.state_store` - each a backend
+of the `Backends` like every other, the core's `memory` and `json` or a plugin's (`dyn
+PersistenceBackend`, see [CONFIGURATION.md](CONFIGURATION.md#backends)), the same type or two - and
+the two policies (`Persistence::new`; `Persistence::over` for one backend in both roles). It takes
+the documents from the first, as their kinds are opened, and the three state stores from the second
+when it is made, together - so that a backend that keeps no states fails the start, as the state
+store. It opens the store of a kind for whoever asks (`EntityStoreFactory::entity_store::<T>()`),
+once - whoever asks for a kind again, the core or a plugin, is given the same store -, refuses a
+kind whose name another kind has, and gives the component store and the state stores. The stores of
+the core's kinds are `EntityStores`, which the runtime is given; a plugin asks for the store of its
+kind while it registers. A manager is made with `&EntityStores` - or the store of its kind - and
+keeps the stores of the kinds it uses as fields, as every service is held. Tests make their stores
+the same way, `Persistence::in_memory()` for stores in memory that permit everything,
+`Persistence::in_memory_with` for the policies of a test - both cannot fail, since the memory store
+is the three state stores itself.
 
 Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an `EntityKind`
 named by a string (`"skill"`) that is unique among the kinds; its id and the fields a query names;
