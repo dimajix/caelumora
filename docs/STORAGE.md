@@ -92,10 +92,10 @@ without a change to the stores or to `EntityKind`.
 
 ### In Postgres
 
-The plugin `caelumora-store-postgres` brings the backend `postgres` (issue
-[03](../issues/03-postgres-entity-store.md)), which keeps the entities - and the components - alone
-and refuses the state stores until issue [04](../issues/04-postgres-state-store.md), so that it is
-the entity store beside another one of the states.
+The plugin `caelumora-store-postgres` brings the backend `postgres`, which keeps the entities - and
+the components - (issue [03](../issues/03-postgres-entity-store.md)) and the states (issue
+[04](../issues/04-postgres-state-store.md)): the entity store, the store of the states, or both,
+over one pool.
 
 *   **A table per kind**, `entity_<kind>`, the prefix keeping a kind clear of the words of SQL: the
     id (`text`, ordered `COLLATE "C"`, as `str` orders it), the key of the name (`name_key`,
@@ -121,6 +121,16 @@ the entity store beside another one of the states.
     is.
 *   **Two processes that change one entity at once** are not kept apart yet: the last write wins
     (issue [450](../issues/450-store-overwrites-a-change-made-meanwhile.md)).
+*   **The states in tables of their own shape**, made by the migrations: `agent_state`,
+    `agent_channel_state` - with `has_work_under_way` and a partial index on it, the index of the
+    work under way -, `channel_state` and `user_channel_state`, each holding the state's document
+    whole, as serde writes it without what is kept apart. A put writes it whole, in one transaction
+    with what is kept apart - the chain, the items derived from it, what was given -, and marks the
+    state stored once the transaction is committed; so a crash leaves nothing to repair.
+*   **A chain a row per node** (`chains`), every branch, by its position: `history_entries` and
+    `transcript_entries`, a node changed in its place written over, the heads in `histories` and
+    `transcripts`. A chain is read backwards in batches where the model's rules follow it back - a
+    path to a digest, the answer of a turn.
 
 Its tests run against a database: `test/docker-compose.yml` starts one, and the variable
 `CAELUMORA_TEST_POSTGRES_URL` names it, read as a secret; each test keeps its tables in a schema of
@@ -395,11 +405,14 @@ participant (issue 417), and is kept apart from the channel state's document (is
     written after them. Entries a crash
     left past the head's end are not there; items behind the chain are derived anew when the
     history is next loaded or appended to. A message is found by scanning the items backwards, and
-    a fitting rewrites every items segment: slow where a database has indexes. In Postgres
-    ([04](../issues/04-postgres-state-store.md)) a history is the tables `history_entries(key, seq,
-    parent, digest, entry)`, `history_items(key, seq, message_id, sender, recipients, published,
-    item)` and `history_memberships(key, member, from, until)` beside the documents, written in one
-    transaction with them.
+    a fitting rewrites every items segment: slow where a database has indexes.
+*   **In Postgres** ([04](../issues/04-postgres-state-store.md)) a history is the chain in
+    `history_entries`, the items in `history_items(channel_id, seq, message_id, item)` - found by
+    the message each said through an index -, and the head and the memberships in `histories`,
+    the memberships whole, as `jsonb`. The put of the channel's state reads the items the entries
+    it adds change - every one for a fitting -, takes them further as `StandingItems` does and
+    writes them back. A page reads the items backwards in batches, with what SQL can judge of its
+    filter in the query; what a reader sees of them the model judges (`seen`).
 
 ### Transcripts
 
@@ -427,8 +440,9 @@ history is (issue 380), with what differs:
     and a head (`chains`), the transcript in `<agent>.transcript/` beside the agent's snapshot,
     without anything laid over it. A path is followed back segment by segment, a message looked for
     in every segment: slow where a database has indexes. In Postgres a transcript is the table
-    `transcript_entries(agent, channel, seq, parent, digest, entry)`, with an index on the digest
-    and on the message an entry holds, written in the transaction of the agent's state.
+    `transcript_entries(agent_id, channel_id, seq, message_id, node)`, with an index on the message
+    an entry holds or changes, and its head in `transcripts`, written in the transaction of the
+    agent's state.
 
 ### Prompt texts and tool sets
 

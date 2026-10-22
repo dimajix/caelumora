@@ -181,7 +181,8 @@ pub trait HistoryStore: Debug + Send + Sync {
 /// `ParticipantJoined`, or else from its join, up to the `until` of its
 /// `ParticipantLeft`.
 /// Derived from the chain beside the items, by `take`, and rebuilt with them;
-/// a database keeps it as a table of `(member, from, until)`.
+/// kept whole beside the chain - also by a database (issue 04), which would
+/// otherwise rebuild in SQL what a share before a join gives.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Memberships {
     ranges: Vec<(ActorId, Range<Position>)>,

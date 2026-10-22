@@ -1,7 +1,7 @@
 //! The documents of one kind in its table.
 
 use crate::connection::{quoted, sql, Connection};
-use crate::filter::{Bound, Condition};
+use crate::filter::Condition;
 use async_trait::async_trait;
 use caelumora_model::store::documents::{Document, DocumentStorage};
 use caelumora_model::store::query::{FieldPath, Filter};
@@ -132,17 +132,14 @@ impl DocumentStorage for PgDocuments {
     async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
         let pool = self.ready().await?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let condition = filter.map(|filter| Condition::of(filter, 4));
+        let condition = filter.map(|filter| Condition::of(filter, "body", 4));
         let meeting = condition.as_ref().map_or("true", |condition| condition.sql.as_str());
         let statement = format!("SELECT id, body FROM {} WHERE deleted = $1 AND ($2::text IS NULL OR id > $2) AND {meeting} ORDER BY id LIMIT $3", self.table);
-        let mut query = sqlx::query_as(sql(statement)).bind(deleted).bind(after).bind(limit);
-        for bound in condition.map(|condition| condition.binds).unwrap_or_default() {
-            query = match bound {
-                Bound::Json(value) => query.bind(value),
-                Bound::Text(text) => query.bind(text),
-                Bound::Path(path) => query.bind(path),
-            };
-        }
+        let query = sqlx::query_as(sql(statement)).bind(deleted).bind(after).bind(limit);
+        let query = match condition {
+            Some(condition) => condition.bound(query),
+            None => query,
+        };
         query.fetch_all(pool).await.map_err(|e| self.failed(e))
     }
 

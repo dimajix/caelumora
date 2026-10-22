@@ -6,7 +6,17 @@
 use super::*;
 use crate::connection::{quoted, sql};
 use crate::plugin::PostgresStorePlugin;
+use caelumora_model::actor::{ActorId, ActorState, EventContext};
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_model::chain::Position;
+use caelumora_model::channel::{ChannelId, ChannelState};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::config::{AppConfig, BackendConfig};
+use caelumora_model::digest;
+use caelumora_model::history::{HistoryEntry, Reader};
+use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
+use caelumora_model::work::Work;
 use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::group::Group;
 use caelumora_model::scope::Scope;
@@ -17,7 +27,7 @@ use caelumora_model::store::documents::Document;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
 use caelumora_model::store::suite;
-use caelumora_model::store::{EntityStoreFactory, Persistence};
+use caelumora_model::store::{EntityStoreFactory, Persistence, StoreError};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_runtime::backend::Backends;
@@ -160,19 +170,95 @@ async fn a_secret_that_names_nothing_fails_the_start() {
 }
 
 /// The backend is made from its parameters, refuses wrong ones naming the
-/// store, and keeps the entities alone.
+/// store, and keeps the entities and the states.
 #[test]
-fn the_entities_are_kept_in_postgres_and_the_states_not() {
+fn the_backend_is_made_from_its_parameters() {
     let backends = Backends::with_plugins(&[&PostgresStorePlugin]);
     let services = Services::empty().with(secrets());
     let postgres = BackendConfig::new("postgres", json!({ "url_secret": URL_SECRET, "schema": "caelumora", "max_connections": 2 }));
     let made = backends.make_one::<dyn PersistenceBackend>("entity store", "entity_store", &postgres, &services).unwrap();
-    let alone = Persistence::new(Arc::clone(&made), made, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).map(|_| ()).expect_err("keeps no states");
-    assert!(alone.to_string().contains("keeps no states"), "{alone}");
+    Persistence::over(made, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).expect("keeps the states too");
 
     let misspelt = BackendConfig::new("postgres", json!({ "url": "postgres://somewhere" }));
     let refused = backends.make_one::<dyn PersistenceBackend>("entity store", "entity_store", &misspelt, &services).map(|_| ()).unwrap_err().to_string();
     assert!(refused.contains("the entity store (postgres)") && refused.contains("url"), "{refused}");
+}
+
+#[tokio::test]
+async fn behaves_as_a_state_store() {
+    let Some(database) = Database::new() else { return };
+    suite::state_store_behaves(database.backend().as_ref()).await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn indexes_the_work_under_way() {
+    let Some(database) = Database::new() else { return };
+    suite::work_under_way_is_indexed(database.backend().as_ref()).await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn keeps_the_histories() {
+    let Some(database) = Database::new() else { return };
+    let store = database.backend();
+    suite::history_store_behaves(store.as_ref(), store.as_ref()).await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn keeps_the_transcripts() {
+    let Some(database) = Database::new() else { return };
+    let store = database.backend();
+    suite::transcript_store_behaves(store.as_ref(), store.as_ref()).await;
+    suite::given_store_behaves(store.as_ref(), store.as_ref()).await;
+    database.drop().await;
+}
+
+/// A restart (issue 04): what an agent suspended on an approval stored -
+/// its turn with the call it waits for, its transcript, what its model was
+/// given - and the channel's history are read back whole by the store of
+/// another process, over a pool of its own in the same schema.
+#[tokio::test]
+async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
+    let Some(database) = Database::new() else { return };
+    let (agent, channel) = (AgentId::new(), ChannelId::new());
+    let said = |content: &str| Message { content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+    let mut channel_state = ChannelState::new(channel);
+    channel_state.history.push(said("look it up"));
+
+    let mut state = AgentChannelState { processing_state: ActorState::WaitingForUser, ..AgentChannelState::default() };
+    let context = EventContext { sender_id: ActorId::Agent(agent), channel_id: channel, ..EventContext::default() };
+    state.begin_turn(Work::new(context, None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
+    let sets = vec![ToolSet::new("search", "searches", Vec::new())];
+    state.offer_tools(sets.clone());
+    let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+    state.transcript.push(said("look it up"));
+    let call = ToolCall { id: Some("1".to_string()), function_name: "search".to_string(), arguments: json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+    let turn = state.turn.as_mut().expect("a turn");
+    turn.work.context.frame.prompts.push(system.clone());
+    turn.tool_calls.push(ToolCallState::pending(call, "searches the web".to_string(), false, None, None));
+    let asked: Vec<_> = turn.pending_approvals().into_iter().map(|request| request.id).collect();
+    assert_eq!(asked.len(), 1, "waits for an approval");
+
+    let before = database.backend();
+    before.put_channel_state(channel, &mut channel_state).await.unwrap();
+    before.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+    drop(before);
+
+    let restarted = PostgresStore::new(Arc::new(Connection::new(URL_SECRET, database.connection.schema(), 2, secrets())));
+    restarted.open().await.expect("opened again");
+    let loaded = restarted.get_agent_channel_state(agent, channel).await.unwrap();
+    let pending: Vec<_> = loaded.turn.as_ref().expect("the turn under way").pending_approvals().into_iter().map(|request| request.id).collect();
+    assert_eq!(pending, asked, "the same request, asked again from the turn");
+    assert_eq!((loaded.processing_state, loaded.transcript.digest()), (ActorState::WaitingForUser, state.transcript.digest()), "with its transcript");
+    assert_eq!(loaded.prompts.get(&system.text).map(String::as_str), Some("system"), "what its turn names of what was given");
+    assert_eq!(loaded.offered_tools.get(&digest::tool_sets(&sets)), Some(&sets));
+    let history = restarted.get_channel_state(channel).await.unwrap().history;
+    assert_eq!(history.digest(), channel_state.history.digest(), "the channel's history");
+    let page = restarted.page(channel, &Reader::Channel, Position::START, None, 10, None).await.unwrap();
+    assert_eq!(page.entries().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>(), ["look it up"]);
+    database.drop().await;
 }
 
 /// Whether `filter` compares names folded somewhere - what SQL cannot judge
@@ -237,16 +323,16 @@ async fn a_scan_hands_out_what_a_filter_meets() {
     database.drop().await;
 }
 
-/// A runtime built from its configuration keeps its entities in Postgres:
-/// the backend is made with the secrets at hand and opened once the plugins
-/// registered, so that the tables of the core's kinds are there before
-/// anything runs (issue 447).
+/// A runtime built from its configuration keeps its entities and its states
+/// in Postgres: the backends are made with the secrets at hand - over one
+/// pool - and opened once the plugins registered, so that the tables of the
+/// core's kinds are there before anything runs (issue 447).
 #[tokio::test]
-async fn a_runtime_keeps_its_entities_in_postgres() {
+async fn a_runtime_keeps_its_entities_and_its_states_in_postgres() {
     let Some(database) = Database::new() else { return };
     let yaml = format!(
-        "secrets:\n  providers:\n    - type: env\npersistence:\n  entity_store:\n    type: postgres\n    url_secret: {URL_SECRET}\n    schema: {}\n  state_store:\n    type: memory\n",
-        database.connection.schema(),
+        "secrets:\n  providers:\n    - type: env\npersistence:\n  entity_store:\n    type: postgres\n    url_secret: {URL_SECRET}\n    schema: {}\n  state_store:\n    type: postgres\n    url_secret: {URL_SECRET}\n    schema: {}\n",
+        database.connection.schema(), database.connection.schema(),
     );
     let config = AppConfig::from_yaml(&yaml).unwrap();
     let runtime = RuntimeBuilder::from_config(&config, &[&PostgresStorePlugin]).await.expect("opened against the test database").build().unwrap();
@@ -258,5 +344,9 @@ async fn a_runtime_keeps_its_entities_in_postgres() {
     runtime.entity_stores().groups.create(&SecurityContext::system(), &team).await.unwrap();
     let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM entity_group").fetch_one(pool).await.unwrap();
     assert_eq!(kept, 1, "in its table");
+    let agent = AgentId::new();
+    runtime.state_store().put_agent_state(agent, &mut AgentState::default()).await.unwrap();
+    let states: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_state").fetch_one(pool).await.unwrap();
+    assert_eq!(states, 1, "the states in theirs");
     database.drop().await;
 }

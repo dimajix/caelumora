@@ -7,8 +7,9 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{StoreError, StoreResult};
 use sqlx::migrate::Migrator;
-use sqlx::AssertSqlSafe;
+use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx::{AssertSqlSafe, Postgres, Transaction};
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::str::FromStr;
@@ -52,6 +53,22 @@ impl Connection {
     /// URL, the database cannot be reached or its migrations not applied.
     pub(crate) async fn pool(&self) -> StoreResult<&PgPool> {
         self.pool.get_or_try_init(|| self.connect()).await
+    }
+
+    /// A connection of the pool, for what reads with several queries.
+    ///
+    /// # Errors
+    /// As `pool`, or if the pool has none to give.
+    pub(crate) async fn acquire(&self) -> StoreResult<PoolConnection<Postgres>> {
+        self.pool().await?.acquire().await.map_err(|e| StoreError::Backend(format!("no connection of the schema '{}': {e}", self.schema)))
+    }
+
+    /// A transaction, for what a put writes.
+    ///
+    /// # Errors
+    /// As `pool`, or if the transaction cannot be begun.
+    pub(crate) async fn begin(&self) -> StoreResult<Transaction<'static, Postgres>> {
+        self.pool().await?.begin().await.map_err(|e| StoreError::Backend(format!("no transaction in the schema '{}': {e}", self.schema)))
     }
 
     /// The schema its tables are kept in.
