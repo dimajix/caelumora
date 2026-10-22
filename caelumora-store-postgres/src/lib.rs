@@ -15,9 +15,7 @@
 mod connection;
 mod documents;
 mod filter;
-mod plugin;
-
-pub use plugin::PostgresStorePlugin;
+pub mod plugin;
 
 use crate::connection::Connection;
 use crate::documents::PgDocuments;

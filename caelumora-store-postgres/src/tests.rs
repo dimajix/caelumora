@@ -5,7 +5,8 @@
 
 use super::*;
 use crate::connection::{quoted, sql};
-use caelumora_model::config::BackendConfig;
+use crate::plugin::PostgresStorePlugin;
+use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::group::Group;
 use caelumora_model::scope::Scope;
@@ -20,7 +21,7 @@ use caelumora_model::store::{EntityStoreFactory, Persistence};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_runtime::backend::Backends;
-use caelumora_runtime::runtime::Services;
+use caelumora_runtime::runtime::{RuntimeBuilder, Services};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -233,5 +234,29 @@ async fn a_scan_hands_out_what_a_filter_meets() {
             assert_eq!(scanned, meeting, "exactly what meets {filter:?}");
         }
     }
+    database.drop().await;
+}
+
+/// A runtime built from its configuration keeps its entities in Postgres:
+/// the backend is made with the secrets at hand and opened once the plugins
+/// registered, so that the tables of the core's kinds are there before
+/// anything runs (issue 447).
+#[tokio::test]
+async fn a_runtime_keeps_its_entities_in_postgres() {
+    let Some(database) = Database::new() else { return };
+    let yaml = format!(
+        "secrets:\n  providers:\n    - type: env\npersistence:\n  entity_store:\n    type: postgres\n    url_secret: {URL_SECRET}\n    schema: {}\n  state_store:\n    type: memory\n",
+        database.connection.schema(),
+    );
+    let config = AppConfig::from_yaml(&yaml).unwrap();
+    let runtime = RuntimeBuilder::from_config(&config, &[&PostgresStorePlugin]).await.expect("opened against the test database").build().unwrap();
+    let pool = database.connection.pool().await.unwrap();
+    let kinds: Vec<String> = sqlx::query_scalar("SELECT name FROM kinds ORDER BY name").fetch_all(pool).await.unwrap();
+    assert!(kinds.iter().any(|kind| kind == "group") && kinds.iter().any(|kind| kind == "session"), "the core's kinds, made at start: {kinds:?}");
+    let owner = UserId::new();
+    let team = Group::team(ScopedName::new("Ours", Scope::UserScope { user_id: owner }).unwrap(), owner);
+    runtime.entity_stores().groups.create(&SecurityContext::system(), &team).await.unwrap();
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM entity_group").fetch_one(pool).await.unwrap();
+    assert_eq!(kept, 1, "in its table");
     database.drop().await;
 }

@@ -1,6 +1,6 @@
 # 03 — Postgres implementation of the `EntityStore`
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Persistence
@@ -122,3 +122,11 @@ process is impossible while identity lives in a local directory.
   can be asked as containment is asked so besides (`body @> …`), which the GIN index answers. A
   test holds, for documents and filters of every form, that a scan hands out what a filter meets,
   and exactly that unless it compares names folded.
+- **2026-10-22** — Step 3 done, and with it the issue: `caelumora-app` and `caelumora-tui` list
+  `PostgresStorePlugin` (`caelumora_store_postgres::plugin`, as the JSON store's). A test builds a
+  runtime from its configuration - the secrets from the environment, the entities in Postgres, the
+  states in memory - and finds the tables of the core's kinds made at start and an entity in its
+  table. `docs/STORAGE.md` (*In Postgres*), `docs/CONFIGURATION.md` and `docs/ARCHITECTURE.md` say
+  so. Of what was to be done: `PostgresStore` is a backend of the stores rather than an
+  `EntityStore`, since 446 the model's alone, and passes the store suite of the entities; the
+  migrations are checked in and applied when the backend is opened at start.
