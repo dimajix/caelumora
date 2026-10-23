@@ -45,7 +45,7 @@ pub fn user_message_with(error: &anyhow::Error, judge: impl Fn(&(dyn Error + 'st
 /// may be shown.
 fn judged(e: &(dyn Error + 'static)) -> Option<String> {
     if let Some(e) = e.downcast_ref::<ComponentError>() {
-        Some(e.to_string())
+        component_message(e)
     } else if let Some(e) = e.downcast_ref::<CommandError>() {
         Some(e.to_string())
     } else if let Some(e) = e.downcast_ref::<AgentContextError>() {
@@ -55,7 +55,11 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
     } else if let Some(e) = e.downcast_ref::<ChannelError>() {
         Some(e.to_string())
     } else if let Some(e) = e.downcast_ref::<SessionError>() {
-        Some(e.to_string())
+        // As a component error, whose message it repeats.
+        match e {
+            SessionError::InvalidComponents(cause) => component_message(cause).map(|_| e.to_string()),
+            _ => Some(e.to_string()),
+        }
     } else if let Some(e) = e.downcast_ref::<WorkspaceError>() {
         // Its store errors are judged as store errors are; the rest name
         // the workspace and what the caller wrote, never a place.
@@ -88,6 +92,17 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
 pub fn view_message(error: &ViewError) -> Option<String> {
     match error {
         ViewError::Failed(_) => None,
+        _ => Some(error.to_string()),
+    }
+}
+
+/// Component errors name the component, the bundle and what was written - except where a bundle
+/// was looked for in a store that failed (issue 457), whose failure is judged as store errors are:
+/// then none of it is shown, the components that wrap it included.
+fn component_message(error: &ComponentError) -> Option<String> {
+    match error {
+        ComponentError::Bundle { cause, .. } => store_message(cause).map(|_| error.to_string()),
+        ComponentError::Build { cause, .. } | ComponentError::Backend { cause, .. } => component_message(cause).map(|_| error.to_string()),
         _ => Some(error.to_string()),
     }
 }
@@ -158,6 +173,18 @@ mod tests {
 
         let message = user_message(&error).unwrap();
         assert!(message.contains("'github-mcp'") && message.contains("mcp_tool") && message.contains("missing field `url`"), "{message}");
+    }
+
+    /// A bundle looked for in a store that failed is not shown, nor what
+    /// wraps it; one that is gone is (issue 457).
+    #[test]
+    fn a_bundle_whose_store_failed_is_not_disclosed() {
+        let built = |cause| ComponentError::Build { component: "tools".to_string(), kind: "ref".to_string(), cause: Box::new(ComponentError::Bundle { name: "tools".to_string(), cause }) };
+        let failed = || built(StoreError::Backend("/srv/data/component_bundle: permission denied".to_string()));
+        assert_eq!(user_message(&anyhow::Error::new(failed())), None);
+        assert_eq!(user_message(&anyhow::Error::new(SessionError::InvalidComponents(failed()))), None, "nor by the session that repeats it");
+        let gone = built(StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() });
+        assert!(user_message(&anyhow::Error::new(gone)).is_some_and(|message| message.contains("'tools'")));
     }
 
     #[test]

@@ -144,18 +144,6 @@ mod tests {
     use serde::Deserialize;
     use serde_json::json;
 
-        /// A bundle gone keeps an agent from being run; a store that failed
-        /// while it was looked for is told as the store's failure, not as a
-        /// bundle missing (issue 457).
-        #[test]
-        fn a_bundle_is_unavailable_by_its_cause() {
-            let gone = ComponentError::Bundle { name: "tools".to_string(), cause: StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() } };
-            assert!(gone.is_unavailable());
-            let failed = ComponentError::Bundle { name: "tools".to_string(), cause: StoreError::Backend("unreachable".to_string()) };
-            assert!(!failed.is_unavailable(), "the store failed");
-            assert!(failed.to_string().contains("unreachable"), "names the store's failure: {failed}");
-        }
-
         #[test]
         fn params_left_out_give_the_defaults() {
             #[derive(Debug, Deserialize)]

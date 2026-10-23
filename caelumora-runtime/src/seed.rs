@@ -138,7 +138,8 @@ impl Seed {
 /// Creates `value` in `store` as the system unless its id is taken - also by one marked deleted,
 /// which was deleted on purpose and stays so (issue 457); a purge frees the id, and the next seed
 /// brings it back. Whether it was created. The store's `create` alone is asked, so that two that
-/// seed at once do not both create it.
+/// seed at once do not both create it - as far as the store's `create` is atomic, as the memory
+/// store's and Postgres' are.
 ///
 /// # Errors
 /// Whatever the store reports but a taken id - also a name another has (`StoreError::NameTaken`).

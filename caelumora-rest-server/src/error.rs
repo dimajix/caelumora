@@ -312,7 +312,16 @@ impl From<SessionError> for ApiError {
             SessionError::NotFound(_) => Self::not_found("session_not_found", detail),
             SessionError::TemplateNotFound(_) => Self::not_found("template_not_found", detail),
             SessionError::ChannelNotFound { .. } => Self::not_found("channel_not_found", detail),
-            SessionError::InvalidComponents(_) | SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
+            // The request's fault where the runtime may show why; a store that failed while a
+            // bundle was looked for is the server's, and withheld (issue 457).
+            SessionError::InvalidComponents(_) => {
+                let error = Error::new(error);
+                match user_message(&error) {
+                    Some(_) => Self::bad_request("invalid_channel", detail),
+                    None => Self::internal("internal_error", "building the channel's components", &error),
+                }
+            }
+            SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
             SessionError::WorkspaceOutOfScope(_) => Self::bad_request("workspace_out_of_scope", detail),
             SessionError::ScopeNotEmpty { .. } => Self::conflict("scope_not_empty", detail),
             SessionError::ShuttingDown => Self::unavailable("shutting_down", detail),
@@ -481,6 +490,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use caelumora_model::workspace::WorkspaceId;
+    use caelumora_runtime::component::ComponentError;
     use axum::Router;
     use axum::http::Request;
     use serde_json::Value;
@@ -639,6 +649,22 @@ mod tests {
         assert_eq!(answer(blank()), (400, "invalid_value".to_string()));
         assert_eq!(answer(Error::new(StoreError::from(blank()))), (400, "invalid_value".to_string()), "by a controller, too");
         assert_eq!(ApiError::from(Error::new(StoreError::from(blank()))).detail, "the summary must not consist of whitespace alone", "naming the field");
+    }
+
+    /// Components that cannot be built are the request's fault, told as the
+    /// runtime tells them - unless a store failed while a bundle was looked
+    /// for, which is the server's and not shown (issue 457).
+    #[test]
+    fn invalid_components_are_the_requests_fault_unless_a_store_failed() {
+        let bundle = |cause| SessionError::InvalidComponents(ComponentError::Build {
+            component: "tools".to_string(),
+            kind: "ref".to_string(),
+            cause: Box::new(ComponentError::Bundle { name: "tools".to_string(), cause }),
+        });
+        assert_eq!(answer(bundle(StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() })), (400, "invalid_channel".to_string()));
+        let failed = ApiError::from(bundle(StoreError::Backend("/srv/data/component_bundle: permission denied".to_string())));
+        assert_eq!((failed.status.as_u16(), failed.code.as_ref()), (500, "internal_error"));
+        assert!(!failed.detail.contains("/srv"), "{}", failed.detail);
     }
 
     #[test]

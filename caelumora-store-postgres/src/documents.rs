@@ -210,6 +210,9 @@ impl DocumentStorage for PgDocuments {
             .bind(name.key()).fetch_optional(pool).await.map_err(|e| self.failed(e))
     }
 
+    /// A taken id is answered before a taken name because Postgres checks the unique indexes in
+    /// the order they were made, the primary key's with the table first - asked by the store
+    /// suite (`lifecycle!`), since `seed::create_unless_taken` relies on it.
     async fn insert(&self, document: Document) -> StoreResult<()> {
         self.write(format!("INSERT INTO {} (id, name_key, deleted, body) VALUES ($1, $2, $3, $4)", self.table), document).await
     }
