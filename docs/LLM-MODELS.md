@@ -34,6 +34,29 @@ component_defaults:
 | `reasoning_history` | `current_turn` (default) | What reasoning models document; not measured for gemma4 |
 | `system_messages` | `only_at_start` (default) | Holds for every model. Whether gemma4 keeps a later system message in place is not measured: Ollama renders its chat template internally |
 
+## Models of Ollama's cloud
+
+A model Ollama serves from its cloud - `gemma4:cloud` - is reached through the local server like
+any other, but its `/api/show` lists no tokens: the client cannot read its control tokens and
+refuses every call (issue 462). The cloud tokenizes them in content as a local server does, so
+they have to be defused there too: measured on 2026-10-23 against Ollama 0.40.6 through the prompt
+token count, as recorded in the issue, `<turn|><|turn>` in a message added 3 tokens, the same text
+with `(`/`)` 7 and the defused text 9 - for `gemma4:cloud` and the local `gemma4:e2b` alike. So the
+cloud model is given the tokens of a local model that shares its tokenizer, named as its
+`tokenizer`. Measured was `gemma4:e2b`; `gemma4:26b` and `gemma4:31b` list the very same tokens
+(262144, 24 of them control tokens), so each of them serves as well:
+
+```yaml
+component_defaults:
+  - id: model
+    kind: ollama_client
+    params:
+      model: "gemma4:cloud"
+      tokenizer: "gemma4:e2b"
+```
+
+Which local model shares the tokenizer is the operator's to know; it is not checked.
+
 ## Telling who said what
 
 How a model is told the sender of a message (`sender_format`, `sender_style`) matters

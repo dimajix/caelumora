@@ -150,6 +150,8 @@ users:
 # Further parameters, with their defaults:
 #      endpoint:
 #        url: "http://127.0.0.1:11434"
+#      tokenizer: the model itself - for a model of Ollama's cloud, which
+#        lists no tokens, a local one that shares its tokenizer
 #      think: true
 #      reasoning_history: current_turn
 #      system_messages: only_at_start

@@ -149,6 +149,7 @@ component_defaults:
 |---|---|---|
 | `endpoint` | The Ollama server: its `url`, and its `timeout_secs` - how long a request may take to be answered, a streamed one until its stream begins. Ollama is reached without authentication: an `auth` is refused (see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)) | `url: http://127.0.0.1:11434`, no timeout |
 | `model` | The model | `gemma4:26b` |
+| `tokenizer` | The model whose tokens are read for the model's control tokens: one on the same server that shares its tokenizer and lists them - for a model that lists none, as one Ollama serves from its cloud (see [LLM-MODELS.md](LLM-MODELS.md#models-of-ollamas-cloud)). Whether the two share it is not checked | `model` itself |
 | `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
 | `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |
 | `system_messages` | Where the model keeps system messages: `only_at_start` - any later one is given as a user message - or `anywhere` (see [AGENT-TURN.md](AGENT-TURN.md#system-messages)) | `only_at_start` |
@@ -163,7 +164,7 @@ far as measured, is in [LLM-MODELS.md](LLM-MODELS.md).
 
 Before the first call to a model, the client reads the model's control tokens from the server and
 keeps them from being produced by any text it sends; if they cannot be read, the call fails
-(`llm::control_tokens`).
+(`llm::control_tokens`). They are read of the model's `tokenizer`, if one is configured.
 
 A channel may choose who answers by asking a decision model (`decision_policy`, see
 [CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). Only an operator configures it: in a
