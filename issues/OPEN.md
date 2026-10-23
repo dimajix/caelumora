@@ -9,6 +9,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [462](462-cloud-models-list-no-tokens.md) | open | medium | bug | A model that Ollama serves from its cloud (`gemma4:cloud`) answers `/api/show` without its tokenizer, so the `ollama_client` cannot read its control tokens and, failing closed as issue 149 decided, refuses every call to it. |
+| [463](463-unavailable-channel-components-keep-the-session-closed.md) | open | medium | bug | A channel whose own components name a bundle that is gone or no longer its owner's to read fails to be built, and with it the session it belongs to, all its other channels included - though a third party must not keep someone's channel from starting. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [458](458-deleted-while-it-runs.md) | open | low | bug | Deleting a session or a channel marks it, deletes what lies in its scope and the groups of its participants while it still runs, and stops it only afterwards, so what its agents write into its scope meanwhile is left behind, and what it announces as it stops reaches its owner alone. |
 
