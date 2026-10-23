@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 use tracing::info;
+use std::mem;
 
 /// A backend in memory (issue 446): the documents of every kind, a storage
 /// per kind (`MemoryDocuments`) opened when it is first asked for, and maps
@@ -141,7 +142,7 @@ impl MemoryStore {
     /// `state`'s document - what is stored of it but its history - as a
     /// copy without the history, which is kept apart.
     fn document(state: &mut ChannelState) -> ChannelState {
-        let held = std::mem::take(&mut state.history);
+        let held = mem::take(&mut state.history);
         let document = state.clone();
         state.history = held;
         document
@@ -151,10 +152,10 @@ impl MemoryStore {
     /// prompt texts, its tool sets and its frames - as a copy without them,
     /// which are kept apart.
     fn agent_document(state: &mut AgentChannelState) -> AgentChannelState {
-        let transcript = std::mem::take(&mut state.transcript);
-        let prompts = std::mem::take(&mut state.prompts);
-        let offered_tools = std::mem::take(&mut state.offered_tools);
-        let frames = std::mem::take(&mut state.frames);
+        let transcript = mem::take(&mut state.transcript);
+        let prompts = mem::take(&mut state.prompts);
+        let offered_tools = mem::take(&mut state.offered_tools);
+        let frames = mem::take(&mut state.frames);
         let document = state.clone();
         state.transcript = transcript;
         state.prompts = prompts;
@@ -471,7 +472,6 @@ mod tests {
     use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
     use crate::security::{OwnershipPolicy, SecurityContext};
-    use crate::value::name::ScopedName;
 
     /// The stores of a memory store, as the owners' policy checks them.
     fn owners() -> Persistence {

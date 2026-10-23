@@ -8,11 +8,12 @@
 ## The problem
 
 The model of an agent is a facet of which it has exactly one (`LLMClient`, with its
-`ModelProfileProvider`, see [COMPONENTS.md](../docs/COMPONENTS.md#facets-of-which-there-is-exactly-one)).
-Where a personality names none, it is given the one `AppConfig::component_defaults` configures - in
-the example configuration `ollama_client` with `model`, `sender_format`, `sender_style` and
-`context_size`. Where it names one, that one replaces the default whole: nothing of the default's
-parameters is taken over.
+`ModelProfileProvider`, see
+[COMPONENTS.md](../docs/COMPONENTS.md#facets-of-which-there-is-exactly-one)). Where a personality
+names none, it is given the one `AppConfig::component_defaults` configures - in the example
+configuration `ollama_client` with `model`, `sender_format`, `sender_style` and `context_size`.
+Where it names one, that one replaces the default whole: nothing of the default's parameters is
+taken over.
 
 So a personality that is to differ in one parameter writes out all of them. Sassy in the example
 seed is given the variant `gemma4` of the texts ([57](57-prompt-catalogue.md), `prompt_texts`) and

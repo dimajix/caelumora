@@ -315,6 +315,7 @@ fn ends_run(asked: u8) -> bool {
 mod tests {
     use super::*;
     use std::time::Duration;
+    use tokio::time;
 
     #[test]
     fn a_cancel_interrupts_only_a_turn_under_way() {
@@ -517,12 +518,12 @@ mod tests {
         let control = RunControl::new(ActorState::Sleeping, None);
         assert_eq!(control.unannounced(), None, "it starts at what it stood at");
         control.wakeup();
-        tokio::time::timeout(Duration::from_secs(1), control.woken()).await.expect("told, though nobody waited yet");
+        time::timeout(Duration::from_secs(1), control.woken()).await.expect("told, though nobody waited yet");
         assert_eq!(control.unannounced(), Some(ActorState::Idle));
         assert_eq!(control.unannounced(), None, "announced once");
 
         control.wakeup();
-        assert!(tokio::time::timeout(Duration::from_millis(50), control.woken()).await.is_err(), "awake already: nothing to tell");
+        assert!(time::timeout(Duration::from_millis(50), control.woken()).await.is_err(), "awake already: nothing to tell");
         control.go_to(ActorState::Planning);
         control.go_to(ActorState::Idle);
         assert_eq!(control.unannounced(), None, "back where it was announced");

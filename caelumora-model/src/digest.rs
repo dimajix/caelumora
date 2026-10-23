@@ -184,6 +184,7 @@ fn write_canonical(value: &Value, out: &mut String) {
 /// and have no maps with non-string keys, so conversion cannot fail; were it
 /// to, hashing `Null` instead would give different contents the same digest,
 /// which an integrity check must not do silently.
+#[expect(clippy::expect_used, reason = "the model types hashed always serialise; a digest of `Null` instead would be wrong silently")]
 fn to_json<T: Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("hashed model types serialise to JSON")
 }
@@ -328,6 +329,7 @@ pub fn history_chain(previous: Option<&Digest>, recorded: &Recorded) -> Digest {
 
 /// The digest of `entry` after `previous`, by what it says: the part of a
 /// history's digest (`history_chain`) that the entry itself contributes.
+#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
     match entry {
         HistoryEntry::Said { message } => message_chain(previous, message),

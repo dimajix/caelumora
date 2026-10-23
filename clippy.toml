@@ -1,0 +1,10 @@
+# Settings of the lints in `[workspace.lints]` of Cargo.toml (issue 452).
+
+# Tests may unwrap, expect and print: a test that fails on them fails as it should.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
+
+# A path of two segments - a function called by its module, `time::sleep` after `use tokio::time;` -
+# is what the import rule allows; a longer one is imported (CODING-GUIDELINES.md, "Imports").
+absolute-paths-max-segments = 2

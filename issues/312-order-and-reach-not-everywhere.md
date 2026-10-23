@@ -98,7 +98,8 @@ rights. Where the code differs, the rule in SECURITY.md promises what the code d
     `channel_reading`. What was deleted is reached as the store lists it (`ReadDeleted`), restoring
     a channel too: the maintainer decided that what a list returns is the store's, and that a view
     does not filter it again; that the clearance is asked outside the store is issue
-    [322](322-clearance-decided-outside-the-store.md). The system is cleared for everything (`ConfidentialityQuestions::cleared_for`).
+    [322](322-clearance-decided-outside-the-store.md). The system is cleared for everything
+    (`ConfidentialityQuestions::cleared_for`).
   - Finding 4: `EventPublisher::publish_classified`: the bus asks `cleared_for` of what is
     classified, and a reclassification reaches who was cleared before or is now.
   - Finding 5: an answer to an approval request is admitted by the channel (`ApproveToolCall`), a

@@ -70,11 +70,11 @@ Skills are entities, not files of the code: the system's own come only from a se
 
 1. *A skill in the example seed* (`write-agents-md`, global): how to explore an existing workspace
    with `list_files`, `grep_files`, `read_file` and - where there is a shell - `run_command` (build
-   files, CI configuration, READMEs, the layout, the tests), what an `AGENTS.md` holds (how to build,
-   test and run it; the layout; conventions; what not to do; where more is written), what it leaves
-   out (what a reader finds in the code at once, anything secret), and that it is written with
-   `write_file` and kept short. Fits the existing way at no cost; a deployment without that seed has
-   no such skill.
+   files, CI configuration, READMEs, the layout, the tests), what an `AGENTS.md` holds (how to
+   build, test and run it; the layout; conventions; what not to do; where more is written), what it
+   leaves out (what a reader finds in the code at once, anything secret), and that it is written
+   with `write_file` and kept short. Fits the existing way at no cost; a deployment without that
+   seed has no such skill.
 2. *Skills shipped with the code*, present in every deployment. A new mechanism - who owns them,
    whether they can be changed, how a new version reaches an existing system - for one skill; that
    question belongs with the import of `SKILL.md` files, which SKILLS.md lists as not decided.

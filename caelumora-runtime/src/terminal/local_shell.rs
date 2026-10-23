@@ -32,6 +32,10 @@ use tokio::sync::watch;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::info;
 use uuid::Uuid;
+use std::env;
+use std::str;
+use tokio::process;
+use tokio::time;
 
 /// How much of a command's output is kept; older output is dropped.
 const KEPT_OUTPUT: usize = 1024 * 1024;
@@ -135,7 +139,7 @@ async fn pump(from: Option<impl AsyncRead + Unpin>, running: &Running) {
 /// How much of `bytes` is complete text: all of it, but for a character
 /// cut off at its end, which the next read completes.
 fn complete(bytes: &[u8]) -> usize {
-    match std::str::from_utf8(bytes) {
+    match str::from_utf8(bytes) {
         Ok(_) => bytes.len(),
         Err(e) if e.error_len().is_none() => e.valid_up_to(),
         Err(_) => bytes.len(),
@@ -165,12 +169,12 @@ fn state(id: &str, running: &Running, offset: u64) -> CommandState {
 #[async_trait]
 impl Shell for LocalShell {
     async fn start(&self, command: &str) -> TerminalResult<String> {
-        let mut child = tokio::process::Command::new("bash")
+        let mut child = process::Command::new("bash")
             .arg("-c")
             .arg(command)
             .current_dir(&self.dir)
             .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into()))
+            .env("PATH", env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into()))
             .env("HOME", &self.dir)
             .env("LANG", "C.UTF-8")
             .env("TERM", "dumb")
@@ -194,7 +198,7 @@ impl Shell for LocalShell {
             let mut pumps = AbortOnDropHandle::new(tokio::spawn(async move {
                 tokio::join!(pump(stdout, &reading), pump(stderr, &reading));
             }));
-            let exit = match tokio::time::timeout(max_run, child.wait()).await {
+            let exit = match time::timeout(max_run, child.wait()).await {
                 Ok(exit) => exit,
                 Err(_) => {
                     info!(%workspace, "A command ran as long as it may and is killed");
@@ -202,7 +206,7 @@ impl Shell for LocalShell {
                     child.wait().await
                 }
             };
-            let _ = tokio::time::timeout(OUTPUT_AFTER_END, &mut pumps).await;
+            let _ = time::timeout(OUTPUT_AFTER_END, &mut pumps).await;
             let killed = shared.killed.load(Ordering::SeqCst);
             let (status, exit_code) = match exit {
                 Ok(_) if killed => (CommandStatus::Killed, None),
@@ -224,7 +228,7 @@ impl Shell for LocalShell {
     async fn output(&self, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState> {
         let command = self.commands.get(&self.key(id))?;
         let mut end = command.running.end.subscribe();
-        let _ = tokio::time::timeout(wait, end.wait_for(Option::is_some)).await;
+        let _ = time::timeout(wait, end.wait_for(Option::is_some)).await;
         Ok(state(id, &command.running, offset))
     }
 
@@ -232,7 +236,7 @@ impl Shell for LocalShell {
         let command = self.commands.get(&self.key(id))?;
         command.running.kill(command.group);
         let mut end = command.running.end.subscribe();
-        let _ = tokio::time::timeout(KILL_WAIT, end.wait_for(Option::is_some)).await;
+        let _ = time::timeout(KILL_WAIT, end.wait_for(Option::is_some)).await;
         Ok(state(id, &command.running, offset))
     }
 }
@@ -242,6 +246,7 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::process::Command;
+    use std::fs;
 
     /// The shell of a workspace in `dir`, as the scope "channel" sees it,
     /// whose commands may run for `max_run`.
@@ -273,7 +278,7 @@ mod tests {
         let id = shell.start("echo hello; pwd; echo oops >&2; exit 3").await.unwrap();
         let done = shell.output(&id, 0, LONG).await.unwrap();
         assert_eq!((done.status, done.exit_code), (CommandStatus::Completed, Some(3)));
-        let real = std::fs::canonicalize(dir.path()).unwrap();
+        let real = fs::canonicalize(dir.path()).unwrap();
         assert!(done.output.contains("hello") && done.output.contains(&real.display().to_string()) && done.output.contains("oops"), "{:?}", done.output);
         let again = shell.output(&id, done.next_offset, Duration::ZERO).await.unwrap();
         assert_eq!(again.output, "", "nothing new past the offset");

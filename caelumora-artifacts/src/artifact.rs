@@ -24,6 +24,7 @@ use caelumora_model::value::text::Description;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::iter;
 
 define_id!(ArtifactId);
 
@@ -201,7 +202,7 @@ impl Artifact {
     /// Its access list and those of its versions, to be changed alike - as
     /// entries naming a group that is gone are dropped (issue 347).
     pub fn access_lists_mut(&mut self) -> impl Iterator<Item = &mut Vec<AclEntry>> {
-        std::iter::once(&mut self.security_attributes.acl).chain(self.versions.iter_mut().map(|version| &mut version.acl))
+        iter::once(&mut self.security_attributes.acl).chain(self.versions.iter_mut().map(|version| &mut version.acl))
     }
 
     /// Lets `subject` read the artifact, unless its list grants it already

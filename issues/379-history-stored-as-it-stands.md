@@ -19,8 +19,9 @@ which needs more than a page, a range or one message.
 
 ## Why it matters
 
-- A history grows without bound, and holding it whole is what [376](376-histories-held-whole-in-memory.md)
-  is about; it cannot be held in part while reading a page needs all of it.
+- A history grows without bound, and holding it whole is what
+  [376](376-histories-held-whole-in-memory.md) is about; it cannot be held in part while reading a
+  page needs all of it.
 - Paging ([218](218-paged-histories.md)) saves transfer and rendering only, as long as the read
   behind it folds the whole chain.
 - An index of the change entries would make a page cost the changes recorded after it instead of

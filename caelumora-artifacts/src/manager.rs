@@ -46,6 +46,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+use std::slice;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
@@ -193,7 +194,6 @@ impl ArtifactManager {
     /// # Errors
     /// `ComponentError::InvalidConfig` where `config` does not fit
     /// together.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: BTreeMap<String, Arc<dyn ArtifactStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
         config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
         Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
@@ -235,7 +235,7 @@ impl ArtifactManager {
     /// none, `ClassifiedOtherwise`, `StorageNotCleared`, `TooLarge`,
     /// `Changed`, `Unavailable`, or whatever the store reports -
     /// `PermissionDenied` and `NameTaken` among it.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "an artifact is published with what describes it and where it goes")]
     pub async fn publish(&self, ctx: &SecurityContext, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
         let name = ScopedName::new(name, Scope::SessionScope { session_id: session })?;
@@ -314,7 +314,7 @@ impl ArtifactManager {
         // Heard by whoever reads the artifact and the version.
         let event = if number == 1 { GlobalEvent::created::<Artifact>(&id) } else { GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::VersionPublished(number)) };
         if let Some(version) = artifact.version(number) {
-            self.events.publish_classified_part(event, artifact.security_attributes.clone(), artifact.version_attributes(version), std::slice::from_ref(&artifact.classification));
+            self.events.publish_classified_part(event, artifact.security_attributes.clone(), artifact.version_attributes(version), slice::from_ref(&artifact.classification));
         }
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))

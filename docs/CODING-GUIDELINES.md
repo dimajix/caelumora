@@ -16,10 +16,11 @@ against this list, rule by rule, before it is reported (the self-review of
     Stored for Skill`, `Skill::KIND` - never `impl crate::store::Stored for Skill` or
     `caelumora_model::skill::Skill::KIND`, also not for a single use or in a test. A function may
     be called by its module (`time::sleep` after `use tokio::time;`), never by a longer path. A
-    path is written out only where an import cannot serve ([Imports](#imports)).
+    path is written out only where an import cannot serve ([Imports](#imports); clippy checks
+    it).
 *   Every module begins with `//!` whose first sentence names its responsibility
     ([Comments and documentation](#comments-and-documentation)).
-*   No `unwrap()` or `expect()` in production code ([Types](#types)).
+*   No `unwrap()` or `expect()` in production code ([Types](#types); clippy checks it).
 *   A method of a trait answers a specific error type, never `anyhow` - except the few named in
     [Types](#types).
 *   Errors in a turn end the turn, not the agent: don't let a turn-time error escape
@@ -27,7 +28,7 @@ against this list, rule by rule, before it is reported (the self-review of
 *   Error messages name what failed and never contain secret values or file paths
     ([Messages name what failed](#messages-name-what-failed)).
 *   Log through `tracing`, never through `log` or `println!`; message content only at `trace!`,
-    credentials never ([Logging](#logging)).
+    credentials never ([Logging](#logging); clippy checks `println!`).
 *   REST handlers return `Result<_, crate::error::ApiError>`; never map an error to a bare status
     code ([REST errors](#rest-errors)). Keep the REST API compatible with `caelumora-web-ui`
     ([Crates and interfaces](#crates-and-interfaces)).
@@ -63,8 +64,9 @@ against this list, rule by rule, before it is reported (the self-review of
     responsibility - one sentence, without an "and also" (the test of
     [one owner per concern](../AGENTS.md#design-principles)). What follows describes the module in
     detail. A change after which that sentence no longer holds is a
-    [finding](../AGENTS.md#findings); a module without such a sentence gets it when it is changed
-    anyway.
+    [finding](../AGENTS.md#findings); a module without such a sentence gets it when its content
+    is changed anyway. A mechanical change across many modules - a lint's fix, a rename - does not
+    count, so that it stays one change of its own.
 *   **Consistency:** mirror the comment frequency and style of the module you are editing.
 *   **Comments wrap at 100 characters**, as the Markdown documents do. Older comments are wrapped
     narrower; they are rewrapped when they are changed anyway, not on their own.
@@ -72,9 +74,11 @@ against this list, rule by rule, before it is reported (the self-review of
     characters. Headings, table rows, code blocks and links that would not fit stay on one line;
     field lines such as `**Status:**` keep a line of their own.
 *   **Line lengths are counted by `scripts/line-length.sh`**, in characters, not bytes, by the
-    exceptions above. Without arguments it checks the lines a change adds or changes, against
-    `HEAD`, and new files whole; given files, it checks them whole. Lengths are not counted by hand
-    or with another tool, which counts bytes or knows no exceptions.
+    exceptions above, in the files these rules cover; a link counts as one word, not broken even in
+    its text. Without arguments it checks the lines a change adds or changes, against `HEAD`, and
+    new files whole; given files, it checks them whole. The pre-commit hook gives it the Markdown
+    and Rust files a commit adds or changes. Lengths are not counted by hand or with another tool,
+    which counts bytes or knows no exceptions.
 *   **No line of prose starts with a dash.** In a doc comment, a line that begins with `- ` is a
     list item to rustdoc, and the sentence it continues breaks apart (clippy:
     `doc_lazy_continuation`). Wrap so that a dash ends the line before it instead.
@@ -83,6 +87,25 @@ against this list, rule by rule, before it is reported (the self-review of
     (`git config core.hooksPath .githooks`). Where a lint is wrong for a case, say why with
     `#[expect(clippy::…, reason = "…")]` on the item - `expect` rather than `allow`, so that it is
     noticed once the lint no longer fires.
+*   **Rules a lint checks.** `[workspace.lints]` in `Cargo.toml` turns on the lints that check
+    rules (issue 452): `absolute_paths` ([Imports](#imports), with `absolute-paths-max-segments =
+    2` in `clippy.toml`), `unwrap_used` and `expect_used` ([Types](#types)), `print_stdout` and
+    `print_stderr` ([Logging](#logging)), `allow_attributes` and
+    `allow_attributes_without_reason` (the rule above), `unreachable_pub` (visible only what is
+    used from outside, [AGENTS.md](../AGENTS.md#design-principles)); and `dbg_macro` and `todo`,
+    so that no debugging output and no unfinished code is committed. `clippy.toml` allows
+    unwrapping and printing in tests; test code outside `#[cfg(test)]` - a `testing` module, a
+    suite, the helpers of an integration test - says so at its top with
+    `#![expect(clippy::unwrap_used, …, reason = "test code: …")]`. `unreachable_pub` checks only
+    part of its rule: it finds a `pub` item its crate's root cannot reach, not one in a public
+    module that only its own crate uses, nor a `pub(crate)` item that only its own module uses.
+*   **Long functions.** `too_many_lines` warns of a function longer than 100 lines. A new function,
+    or one that grows past the limit, is split rather than given an `expect`. One that was
+    longer before the lint carries `#[expect(clippy::too_many_lines, reason = "…")]`, which fires
+    as unfulfilled once the function is shorter, and is then removed: these attributes are the
+    list of what is still to be simplified, and it only gets shorter. `cognitive_complexity` is
+    not on: it counts what the logging macros expand to, which differs with the features a build
+    enables (issue 452).
 
 ### What goes where
 
@@ -109,16 +132,25 @@ document states is moved, not dropped, when the document is shortened.
 
 A type, trait or function used by name is imported with `use` at the top of the module and written
 by its name, not by its path (`impl Scoped for Agent`, not `impl crate::scope::Scoped for
-Agent`) - also when adding the import means touching the import block for a single use. A path is
-written out only where an import cannot serve: inside a `macro_rules!`, which expands in other
-modules and writes `$crate::…`; where two items of one name meet (`crate::chain::Stored` and
-`crate::store::Stored`), unless one of them is renamed on import; and where the module around it
-calls a function by its module on purpose, so that the call says where the function lives - then
-the module is imported and named in the call (`use tokio::time;`, then `time::sleep(…)`), never a
-longer path (`tokio::time::sleep(…)`). The
-derive of `thiserror` is written by its path, `#[derive(Debug, thiserror::Error)]`: imported,
-`Error` would stand beside `std::error::Error` and `anyhow::Error`, which many of the same
-modules use.
+Agent`) - also when adding the import means touching the import block for a single use.
+
+A path of two segments is written where its first says where something comes from:
+
+*   **A function or macro by its crate or module**, so that the call says where it lives:
+    `tokio::spawn(…)`, `serde_json::json!(…)`, or `time::sleep(…)` after `use tokio::time;`.
+*   **A type by its module where the module names its kind** - `fmt::Formatter` and
+    `fmt::Display` in an implementation of `Display`, `mpsc::Sender` beside `broadcast::Sender`.
+*   **Two items of one name in one module** - `chain::Stored` and `store::Stored`, `sync::Mutex`
+    beside tokio's `Mutex` -: one is written by its module, or renamed on import. Where a module
+    needs both `std::fs` and `tokio::fs`, tokio's is `fs` and std's is renamed
+    (`use std::fs as std_fs;`); other modules of one name are renamed by where they come from
+    the same way.
+*   **The derive of `thiserror`**, `#[derive(Debug, thiserror::Error)]`: imported, `Error` would
+    stand beside `std::error::Error` and `anyhow::Error`, which many of the same modules use.
+
+A longer path is written only where no import can serve: inside a `macro_rules!`, which expands in
+other modules and writes `$crate::…`. `absolute_paths` checks it, with
+`absolute-paths-max-segments = 2` (issue 452).
 
 ## Crates and interfaces
 

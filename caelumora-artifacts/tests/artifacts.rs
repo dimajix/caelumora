@@ -4,6 +4,7 @@
 //! (`caelumora_runtime::testing`), with a storage of artifacts beside the
 //! workspaces' files. The tests of an action that acts in someone's name
 //! assert what it asks, as the suite does for the core's.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use axum::body::{to_bytes, Body};
 use axum::http::header::{COOKIE, SET_COOKIE};
@@ -51,6 +52,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 use bytes::Bytes;
+use futures::stream;
+use std::fs;
+use tokio::time;
 
 /// The section `artifacts` of the world: a storage "kept" in `artifacts`
 /// beside where the workspaces' files lie.
@@ -78,14 +82,14 @@ fn checks(lines: &[&str]) -> Vec<String> {
 }
 
 fn file(text: &'static str) -> ByteStream {
-    Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
+    Box::pin(stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
 }
 
 /// Waits until `events` has received each of `wanted`, in any order -
 /// compared as they are shown, since an event has no equality.
 async fn hears<const N: usize>(events: &mut EventSubscription, wanted: [GlobalEvent; N]) {
     let mut missing: Vec<String> = wanted.iter().map(|event| format!("{event:?}")).collect();
-    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+    let _ = time::timeout(Duration::from_secs(5), async {
         while !missing.is_empty() {
             let Some(event) = events.recv().await else { break };
             let shown = format!("{event:?}");
@@ -118,8 +122,8 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     let mut state = AgentChannelState::default();
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let dir = world.files.path().join(docs.id.to_string());
-    std::fs::create_dir_all(dir.join("out")).unwrap();
-    std::fs::write(dir.join("out/report.csv"), "a,b").unwrap();
+    fs::create_dir_all(dir.join("out")).unwrap();
+    fs::write(dir.join("out/report.csv"), "a,b").unwrap();
 
     let first = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv", "description": "The figures" }), None, &mut turn).await.unwrap();
     assert_eq!(first.classification.as_ref(), Some(&docs.classification), "classified as the workspace");
@@ -127,20 +131,20 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     assert_eq!((first["name"].as_str(), first["version"].as_u64(), first["size"].as_u64(), first["description"].as_str()), (Some("report.csv"), Some(1), Some(3), Some("The figures")));
     assert_eq!(first["digest"], digest::content(b"a,b").to_string());
 
-    std::fs::write(dir.join("out/report.csv"), "a,b\n1,2").unwrap();
+    fs::write(dir.join("out/report.csv"), "a,b\n1,2").unwrap();
     let second = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv", "name": "report.csv" }), None, &mut turn).await.unwrap().value;
     assert_eq!((second["artifact"].clone(), second["version"].as_u64()), (first["artifact"].clone(), Some(2)), "a version of the same artifact");
     let kept = world.files.path().join("artifacts").join(first["artifact"].as_str().unwrap());
-    assert_eq!(std::fs::read_to_string(kept.join("1")).unwrap(), "a,b", "the first as it was");
-    assert_eq!(std::fs::read_to_string(kept.join("2")).unwrap(), "a,b\n1,2");
-    std::fs::remove_file(dir.join("out/report.csv")).unwrap();
+    assert_eq!(fs::read_to_string(kept.join("1")).unwrap(), "a,b", "the first as it was");
+    assert_eq!(fs::read_to_string(kept.join("2")).unwrap(), "a,b\n1,2");
+    fs::remove_file(dir.join("out/report.csv")).unwrap();
     assert!(kept.join("2").is_file(), "kept beyond the file");
 
     let missing = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv" }), None, &mut turn).await;
     assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
     let directory = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out" }), None, &mut turn).await;
     assert!(matches!(directory, Err(ToolError::InvalidParameter(_))), "{directory:?}");
-    std::fs::write(dir.join("out/x.csv"), "x").unwrap();
+    fs::write(dir.join("out/x.csv"), "x").unwrap();
     let long = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/x.csv", "name": "x".repeat(101) }), None, &mut turn).await;
     assert!(matches!(long, Err(ToolError::InvalidParameter(_))), "a name of at most 100 characters: {long:?}");
     drop(turn);
@@ -668,7 +672,7 @@ async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purg
 async fn an_agents_artifact_is_published_for_its_owner() {
     let call = calling(PUBLISH_ARTIFACT, json!({ "path": "notes/a.md" }));
     let world = World::configured(&[&TestAgents, &ArtifactsPlugin], kept_beside, |registry| register_once(registry, ONCE_MODEL_KIND, call)).await;
-    let kept = |files: &Path, _: &Path| std::fs::read_dir(files.join("artifacts")).is_ok_and(|mut entries| entries.next().is_some());
+    let kept = |files: &Path, _: &Path| fs::read_dir(files.join("artifacts")).is_ok_and(|mut entries| entries.next().is_some());
     let asked = asked_for_a_call(&world, ARTIFACT_TOOL_KIND, &["notes/a.md"], kept, world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
     assert!(asked.contains(&"alice as helper, asked by bob: CreateArtifact(alice's) yes".to_string()), "its owner's: {asked:?}");

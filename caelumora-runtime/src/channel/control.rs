@@ -173,6 +173,7 @@ mod tests {
     use crate::channel::tests::*;
     use caelumora_model::agent::AgentId;
     use crate::error::is_forbidden;
+    use tokio::time;
 
     /// Refuses everything, to see that a refusal reaches the caller.
     #[derive(Debug)]
@@ -222,13 +223,13 @@ mod tests {
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
         actor.send_message("hello".to_string(), None).await.expect("a running channel takes it");
         // Taken out of the inbox: `run` holds it now.
-        tokio::time::timeout(Duration::from_secs(5), said.recv()).await.expect("the message went through").unwrap();
+        time::timeout(Duration::from_secs(5), said.recv()).await.expect("the message went through").unwrap();
 
         // Aborted, as a stopped session aborts its channels: the inbox closes
         // with it, so a sender learns so instead of waiting for ever.
         running.abort();
         let _ = running.await;
-        let refused = tokio::time::timeout(Duration::from_secs(5), actor.send_message("anyone?".to_string(), None)).await
+        let refused = time::timeout(Duration::from_secs(5), actor.send_message("anyone?".to_string(), None)).await
             .expect("an answer, not a wait");
         assert!(refused.is_err(), "a stopped channel takes nothing");
     }

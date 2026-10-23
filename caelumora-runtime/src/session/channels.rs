@@ -21,6 +21,7 @@ use caelumora_model::group::Group;
 use crate::group::keep_participants;
 use std::sync::Arc;
 use super::{ChannelEntry, SessionError, SessionLoop, purge_channel_document, require_classification};
+use futures::future;
 
 /// What a new channel should be (issue 09), as it was asked: its name and
 /// language are made from it by `create_channel` (issue 248).
@@ -71,7 +72,7 @@ impl SessionLoop {
     /// middle of, to be resumed when it runs again. All channels at once;
     /// returns once their actors have ended, or `STOP_GRACE` has passed.
     pub(crate) async fn stop_actors(&self) {
-        futures::future::join_all(self.channels().iter().map(|channel| channel.stop_actors())).await;
+        future::join_all(self.channels().iter().map(|channel| channel.stop_actors())).await;
     }
 
     /// Has the actors of every channel leave for good
@@ -79,7 +80,7 @@ impl SessionLoop {
     /// 377): as when each of its channels is deleted. All channels at once;
     /// returns once their actors have ended, or `STOP_GRACE` has passed.
     pub(crate) async fn leave_actors(&self) {
-        futures::future::join_all(self.channels().iter().map(|channel| channel.leave_actors())).await;
+        future::join_all(self.channels().iter().map(|channel| channel.leave_actors())).await;
     }
 
     pub fn channel(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
@@ -422,6 +423,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use crate::error::is_forbidden;
     use std::time::Duration;
+    use tokio::time;
 
     #[tokio::test]
     async fn a_channel_created_in_a_running_session_is_stored_announced_and_runs() {
@@ -451,7 +453,7 @@ mod tests {
         assert_eq!(document.name, "side");
 
         // `run` starts it asynchronously.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         let events = drain(&mut rx);
         let created = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Created)) if cid == channel.id()));
         let started = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STARTED, .. })) if cid == channel.id()));
@@ -584,7 +586,7 @@ mod tests {
         let id = channel.id();
         let agent = AgentId::new();
         runtime.state_store().put_agent_channel_state(agent, id, &mut AgentChannelState::default()).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         let mut rx = runtime.event_bus().subscribe_all();
 
         session.delete_channel(&ctx, id).await.expect("the owner deletes it");
@@ -637,7 +639,7 @@ mod tests {
         // Queued to be started, but deleted before `run` gets to it.
         session_loop.delete_channel(&ctx, channel_id).await.expect("deleted");
         let running = tokio::spawn({ let session_loop = Arc::clone(&session_loop); async move { session_loop.run().await } });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
 
         let events = drain(&mut rx);
         let about = |wanted: fn(&EntityChange) -> bool| events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, id), change)) if id == channel_id && wanted(change)));

@@ -15,7 +15,8 @@ the user typed is not normalised, so only the handle exactly as the system deriv
 
 The agent commands of issue [269](269-agent-commands.md) do the same: `UserActor::request_command`
 (`caelumora-runtime/src/actor/user.rs`) compares the `@handle` that names the agent as a string
-with `ChannelMember::handle`, so `/compact @Sassy` is refused as naming no agent that carries it out.
+with `ChannelMember::handle`, so `/compact @Sassy` is refused as naming no agent that carries it
+out.
 
 Everywhere else a name is looked up regardless of case and of how it is written: `Name`
 (`caelumora-model/src/value/name.rs`, issue 177) is compared by its folded form, and a mention in a

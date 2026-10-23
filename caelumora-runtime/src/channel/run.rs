@@ -26,6 +26,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::task::{AbortHandle, JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, trace, warn, Instrument};
+use std::iter;
 
 /// The task of a running actor and its inbox. Owned by `run`, which keeps
 /// them apart from `ChannelLoop::actors`: that table says who takes part and
@@ -470,7 +471,7 @@ impl ChannelLoop {
             _ => Ok(()),
         }?;
         for message in messages {
-            let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
+            let parts = iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
             for part in parts {
                 self.confidentiality.require_publish(context, part, &classification, || Rejection::ClassificationRefused)?;
             }
@@ -710,12 +711,6 @@ impl Behind for ChannelLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// An inbox the test reads what the channel delivers from, with nothing
-    /// behind it.
-    fn opened() -> (Inbox, InboxReceiver) {
-        Inbox::open(ActorId::None, |_| true, Heard::default(), Position::START, Weak::<ChannelLoop>::new())
-    }
     use caelumora_model::history::{HistoryEntry, Recipients};
     use crate::actor::Actor;
     use crate::component::ComponentImpl;
@@ -727,16 +722,11 @@ mod tests {
     use caelumora_model::message::{Message, MessageId, MessageRole};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
-    use caelumora_model::value::name::Name;
     use caelumora_model::work::TurnId;
-    use std::collections::HashMap;
     use crate::testing::StandIn;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
-    use tokio::sync::mpsc;
     use tokio::task::JoinSet;
-    use tokio_util::task::TaskTracker;
-
     use crate::channel::tests::*;
     use crate::channel::{ActorChange, ChannelError, ResolvedParticipant};
     use crate::testing::Script;
@@ -747,6 +737,14 @@ mod tests {
     use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
     use crate::moderator::broadcast_policy::BroadcastPolicy;
     use uuid::Uuid;
+    use std::mem;
+    use tokio::time;
+
+    /// An inbox the test reads what the channel delivers from, with nothing
+    /// behind it.
+    fn opened() -> (Inbox, InboxReceiver) {
+        Inbox::open(ActorId::None, |_| true, Heard::default(), Position::START, Weak::<ChannelLoop>::new())
+    }
 
     /// Routes `event` in `channel` to `running` as the channel does once it
     /// recorded it: decided by its moderator, then delivered.
@@ -765,7 +763,7 @@ mod tests {
 
         actor.send_message("@bob, look".to_string(), None).await.expect("sent");
 
-        let shown = tokio::time::timeout(Duration::from_secs(5), following.recv()).await
+        let shown = time::timeout(Duration::from_secs(5), following.recv()).await
             .expect("shown by its actor, as it forwards it to the channel").unwrap();
         running.abort();
         let ActorEvent::CompleteMessageGenerated(message) = shown.event else { panic!("its message, got {}", shown.event.kind()) };
@@ -831,7 +829,7 @@ mod tests {
         fn name(&self) -> Name { Name::new("talker").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
         async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
-            let envelopes = std::mem::take(&mut *self.envelopes.lock().unwrap());
+            let envelopes = mem::take(&mut *self.envelopes.lock().unwrap());
             for envelope in envelopes {
                 let _ = tx.send(envelope).await;
             }
@@ -859,7 +857,7 @@ mod tests {
         let mut following = channel.user_actor(alice.id).unwrap().watch();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
-        let told = tokio::time::timeout(Duration::from_secs(5), async {
+        let told = time::timeout(Duration::from_secs(5), async {
             loop {
                 if let ActorEvent::ChainCutOff { max_agent_hops, .. } = following.recv().await.expect("the channel runs").event {
                     break max_agent_hops;
@@ -891,7 +889,7 @@ mod tests {
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
-        let entered = tokio::time::timeout(Duration::from_secs(5), async {
+        let entered = time::timeout(Duration::from_secs(5), async {
             loop {
                 if let ActorEvent::CompleteMessageGenerated(message) = events.recv().await.expect("the channel runs").event {
                     break message.content.into_iter().collect::<Vec<_>>();
@@ -1226,7 +1224,7 @@ mod tests {
         // What a frontend needs to end the turn it shows: who is gone -
         // announced once the actor's task has ended, after the end of its
         // turn, which it tells itself (issue 262); nothing of it follows.
-        let (removed, farewell_first) = tokio::time::timeout(Duration::from_secs(5), async {
+        let (removed, farewell_first) = time::timeout(Duration::from_secs(5), async {
             let mut farewell = false;
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
@@ -1241,7 +1239,7 @@ mod tests {
         assert_eq!(removed, (context.caller_id, "alice".to_string(), ActorId::Agent(agent)));
         assert!(farewell_first, "the agent's farewell precedes the announcement");
         settled(&helper, ActorState::Idle).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         while let Ok(envelope) = events.try_recv() {
             assert_ne!(envelope.context.sender_id, ActorId::Agent(agent), "nothing of it follows the announcement: {}", envelope.describe());
         }
@@ -1384,7 +1382,7 @@ mod tests {
 
         let mut told = Vec::new();
         while told.len() < 4 {
-            told.push(tokio::time::timeout(Duration::from_secs(5), taken_in.recv()).await.expect("taken in").expect("the listener runs"));
+            told.push(time::timeout(Duration::from_secs(5), taken_in.recv()).await.expect("taken in").expect("the listener runs"));
         }
         join_set.abort_all();
         assert_eq!(told, [

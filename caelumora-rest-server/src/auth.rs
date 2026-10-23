@@ -40,6 +40,8 @@ use uuid::Uuid;
 use anyhow::Result;
 use std::time::Duration;
 use tracing::Span;
+use axum::middleware;
+use tracing::field;
 
 /// Name of the cookie holding the session token.
 pub const SESSION_COOKIE: &str = "caelumora_session";
@@ -346,7 +348,7 @@ async fn authenticate(auth: Arc<Auth>, mut request: Request, next: Next, renew: 
             return ApiError::unavailable("user_unavailable", "The user cannot be read").into_response();
         }
     };
-    Span::current().record("user_id", tracing::field::display(user));
+    Span::current().record("user_id", field::display(user));
     request.extensions_mut().insert(AuthenticatedUser { id: user, context, expires_at });
     let mut response = next.run(request).await;
     if let Some(cookies) = renewed {
@@ -425,7 +427,7 @@ pub fn router(auth: Arc<Auth>) -> Router {
     let protected = Router::new()
         .route("/auth/me", get(me))
         .route("/auth/refresh", post(refresh))
-        .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&auth), require_auth));
+        .route_layer(middleware::from_fn_with_state(Arc::clone(&auth), require_auth));
     Router::new()
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
@@ -444,6 +446,7 @@ mod tests {
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use tower::ServiceExt;
     use caelumora_model::confidentiality::ConfidentialityRules;
+    use axum::body;
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
 
@@ -600,7 +603,7 @@ mod tests {
 
         let response = app.oneshot(get_with_cookie("/auth/me", &token)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = body::to_bytes(response.into_body(), 1024).await.unwrap();
         assert!(String::from_utf8_lossy(&body).contains("\"username\":\"alice\""));
     }
 
@@ -665,11 +668,11 @@ mod tests {
         let alice = auth.users.authenticate("alice", &Credential::Password("x")).await.unwrap();
         let app = Router::new()
             .route("/expires", get(|user: AuthenticatedUser| async move { user.expires_at.to_string() }))
-            .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&auth), require_auth))
+            .route_layer(middleware::from_fn_with_state(Arc::clone(&auth), require_auth))
             .with_state(Arc::clone(&auth));
 
         let expiry_of = |response: Response| async move {
-            let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+            let body = body::to_bytes(response.into_body(), 1024).await.unwrap();
             String::from_utf8_lossy(&body).parse::<i64>().unwrap()
         };
 
@@ -692,7 +695,7 @@ mod tests {
         let alice = auth.users.authenticate("alice", &Credential::Password("x")).await.unwrap();
         let app = Router::new()
             .route("/stream", get(|user: AuthenticatedUser| async move { user.expires_at.to_string() }))
-            .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&auth), require_stream_auth))
+            .route_layer(middleware::from_fn_with_state(Arc::clone(&auth), require_stream_auth))
             .with_state(Arc::clone(&auth));
 
         let old = Utc::now().timestamp() - 400;
@@ -700,7 +703,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(cookie_value(&response).is_none(), "a token past half its lifetime is not renewed here");
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = body::to_bytes(response.into_body(), 1024).await.unwrap();
         assert_eq!(String::from_utf8_lossy(&body).parse::<i64>().unwrap(), old + 600,
             "the stream ends with the token it was opened with");
     }

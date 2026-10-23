@@ -4,24 +4,42 @@
 #
 #   line-length.sh [file...]
 #
-# Without files, it checks what is changed against HEAD in Markdown and Rust files: the lines added
-# or changed, and untracked files whole - older lines are rewrapped when they are changed anyway,
-# not on their own. With files, it checks them whole.
+# It checks the files the rule covers - the Markdown documents in docs/, issues/ and
+# .claude/agents/, AGENTS.md, and the comments of Rust files -, and names on stderr a file it is
+# given that the rule does not cover. Without files, it checks what is changed against HEAD: the
+# lines added or changed, and untracked files whole. With files, it checks them whole.
 #
-# In a Markdown file every line counts; in a Rust file only comments (`//`, `///`, `//!`), since
-# rustfmt keeps the code. Characters are counted, not bytes. A line is not too long where it may not
-# be wrapped: a heading, a table row, a line in a code block, a field line such as `**Summary:**`,
-# and a line that has no space to break at within its first 100 characters - a long link, say.
-# Every line too long is printed as `file:line: length`, and the script fails if there is one.
+# In a Markdown document every line counts; in a Rust file only comments (`//`, `///`, `//!`),
+# since rustfmt keeps the code. Characters are counted, not bytes. A line is not too long where it
+# may not be wrapped: a heading, a table row, a line in a code block, a field line such as
+# `**Summary:**`, and a line that has no space to break at within its first 100 characters outside
+# a link - a link is not broken, not even in its text. Every line too long is printed as
+# `file:line: length`, and the script fails if there is one.
 set -eu
 
 max=100
+top=$(cd "$(git rev-parse --show-toplevel)" && pwd -P)
 checked=$(mktemp)
 trap 'rm -f "$checked"' EXIT
 
+# Whether the rule covers `path`, relative to the top of the repository.
+is_covered() {
+    case "$1" in
+        *.rs | docs/*.md | issues/*.md | .claude/agents/*.md | AGENTS.md) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# The entries `file:…` read whose file the rule covers.
+covered_only() {
+    while IFS= read -r entry; do
+        if is_covered "${entry%:*}"; then echo "$entry"; fi
+    done
+}
+
 # What is checked: `file:line` for one line, `file:*` for a whole file.
 if [ $# -eq 0 ]; then
-    cd "$(git rev-parse --show-toplevel)"
+    cd "$top"
     git diff -U0 --no-color HEAD -- '*.md' '*.rs' | awk '
         /^\+\+\+ / { file = substr($0, 7); if ($2 == "/dev/null") file = ""; next }
         /^@@/ && file != "" {
@@ -29,10 +47,19 @@ if [ $# -eq 0 ]; then
             n = split(substr($0, RSTART + 1, RLENGTH - 1), range, ",")
             count = n > 1 ? range[2] : 1
             for (i = 0; i < count; i++) print file ":" range[1] + i
-        }' >"$checked"
-    git ls-files --others --exclude-standard -- '*.md' '*.rs' | sed 's/$/:*/' >>"$checked"
+        }' | covered_only >"$checked"
+    git ls-files --others --exclude-standard -- '*.md' '*.rs' | sed 's/$/:*/' | covered_only \
+        >>"$checked"
 else
-    for file in "$@"; do echo "$file:*"; done >"$checked"
+    for file in "$@"; do
+        dir=$(cd "$(dirname "$file")" && pwd -P)
+        relative=${dir#"$top"}/$(basename "$file")
+        if is_covered "${relative#/}"; then
+            echo "$file:*"
+        else
+            echo "line-length.sh: $file is not covered by the wrapping rule" >&2
+        fi
+    done >"$checked"
 fi
 [ -s "$checked" ] || exit 0
 set -- $(sed 's/:[^:]*$//' "$checked" | sort -u)
@@ -66,6 +93,17 @@ FNR == 1 { fence = 0; rust = FILENAME ~ /\.rs$/ }
     if (!((FILENAME ":*") in checked) && !((FILENAME ":" FNR) in checked)) next
     if (fence || text ~ /^#/ || text ~ /^\|/ || text ~ /^\*\*[A-Za-z]+:\*\*/) next
     if (length(line) <= max) next
+
+    # A link is not broken: the spaces in it are no place to break.
+    rest = line
+    line = ""
+    while (match(rest, /\[[^]]*\]\([^)]*\)/)) {
+        link = substr(rest, RSTART, RLENGTH)
+        gsub(/ /, "_", link)
+        line = line substr(rest, 1, RSTART - 1) link
+        rest = substr(rest, RSTART + RLENGTH)
+    }
+    line = line rest
 
     # A line is too long only if it could be broken: at a space after its lead that leaves at most
     # max characters before it.

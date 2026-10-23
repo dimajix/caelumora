@@ -331,6 +331,7 @@ mod tests {
     use caelumora_model::confidentiality::ConfidentialityRules;
     use chrono::Utc;
     use caelumora_model::work::Work;
+    use std::iter;
 
     fn note(id: u32, text: &str) -> Note {
         Note { id: NoteId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT, after: MessageId::new(), origin: Default::default(), written_at: Utc::now() }
@@ -338,7 +339,7 @@ mod tests {
 
     #[test]
     fn nothing_noted_gives_no_prompt_part() {
-        assert_eq!(render(&testing::prompts(), &[], std::iter::empty()).unwrap(), "");
+        assert_eq!(render(&testing::prompts(), &[], iter::empty()).unwrap(), "");
     }
 
     #[test]

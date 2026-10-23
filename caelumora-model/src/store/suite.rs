@@ -3,6 +3,7 @@
 //! `caelumora-store-json` (issue 446), with the feature `test-support` -, so
 //! that they can't drift apart. What is specific to one store - files on
 //! disk, concurrent writers - stays in that store's own tests.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::history::testing::items_of;
 use crate::store::query::{Field, Filter, Query};
@@ -752,6 +753,7 @@ async fn all_pages(histories: &dyn HistoryStore, key: ChannelId, from: Position,
 /// loaded from where a state holds its history; read for a reader (issue
 /// 417); deleted with the channel's state. More entries than a segment of
 /// the JSON store holds.
+#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn HistoryStore) {
     use crate::message::testing::{id, make_message};
     use crate::confidentiality::Confidentiality;

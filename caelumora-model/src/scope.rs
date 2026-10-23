@@ -192,8 +192,8 @@ impl From<Scope> for FieldValue {
 /// What lies in a scope and is found there by its name, which is unique of
 /// its kind in that scope (issue 250): a personality, a session template,
 /// an agent - and a channel, whose scope is its session, a user, who lies
-/// in the global one, and a workspace, which lies in its owner's. A kind is either `Scoped` or has no unique name
-/// at all.
+/// in the global one, and a workspace, which lies in its owner's. A kind is either `Scoped` or has
+/// no unique name at all.
 pub trait Scoped {
     /// Its name and the scope it lies in; made when asked by a kind that
     /// does not store it so.

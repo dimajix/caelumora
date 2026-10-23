@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::routes::views;
 use crate::sse::stream;
 
-pub async fn global_events(
+pub(super) async fn global_events(
     State(state): State<Arc<AppState>>,
     Query(options): Query<StreamOptions>,
     user: AuthenticatedUser,

@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 /// The user's profile; one without an introduction if they never wrote one.
-pub async fn get_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<ProfileResponse>, ApiError> {
+pub(super) async fn get_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<ProfileResponse>, ApiError> {
     let profiles = &state.runtime_manager.entity_stores().user_profiles;
     let profile = profiles.get(&user.security_context(), user.id).await.optional()
         .map_err(|e| ApiError::internal("profile_failed", "reading the profile", &e.into()))?;
@@ -26,7 +26,7 @@ pub async fn get_profile(State(state): State<Arc<AppState>>, user: Authenticated
 /// it - and the language they prefer (issue 56), `null` or empty for none.
 /// Answers `400 invalid_value` for either that does not fit. Changed
 /// through the user's controller, the profile's one writer (issue 13).
-pub async fn update_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ProfileRequest>) -> Result<Json<ProfileResponse>, ApiError> {
+pub(super) async fn update_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ProfileRequest>) -> Result<Json<ProfileResponse>, ApiError> {
     let controller = controller_of(&state, &user).await?;
     let profile = controller.update_profile(&user.security_context(), payload.introduction.as_deref(), payload.preferred_language.as_deref()).await
         .map_err(|e| match e {
@@ -41,7 +41,7 @@ pub async fn update_profile(State(state): State<Arc<AppState>>, user: Authentica
 /// 13): `201` with the rule and its id. Answers `400 invalid_rule` for one
 /// that asks - a person allows or denies - whose pattern cannot be matched,
 /// or one too many.
-pub async fn add_approval_rule(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ApprovalRuleRequest>) -> Result<(StatusCode, Json<ApprovalRule>), ApiError> {
+pub(super) async fn add_approval_rule(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ApprovalRuleRequest>) -> Result<(StatusCode, Json<ApprovalRule>), ApiError> {
     let invalid = |reason: String| ApiError::new(StatusCode::BAD_REQUEST, "invalid_rule", reason);
     let rule = ApprovalRule::new(payload.matcher, payload.decision, payload.reach, payload.expires_at).map_err(|e| invalid(e.to_string()))?;
     let controller = controller_of(&state, &user).await?;
@@ -55,7 +55,7 @@ pub async fn add_approval_rule(State(state): State<Arc<AppState>>, user: Authent
 
 /// Takes one of the user's rules back (issue 13): `204`, or `404
 /// rule_not_found` if they have no such rule.
-pub async fn remove_approval_rule(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn remove_approval_rule(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let controller = controller_of(&state, &user).await?;
     controller.remove_approval_rule(&user.security_context(), ApprovalRuleId(id)).await
         .map_err(|e| match e {

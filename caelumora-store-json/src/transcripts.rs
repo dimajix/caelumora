@@ -30,6 +30,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::debug;
+use tokio::fs;
 
 /// The file of the value of kind `kind` with the digest `digest` in `dir`.
 fn given_path(dir: &Path, kind: &str, digest: Digest) -> PathBuf {
@@ -43,7 +44,7 @@ async fn write_kept<V: Serialize + Clone>(dir: &Path, kind: &str, kept: &Kept<V>
     if changes.is_empty() {
         return Ok(());
     }
-    tokio::fs::create_dir_all(dir).await.map_err(to_backend_error)?;
+    fs::create_dir_all(dir).await.map_err(to_backend_error)?;
     for (digest, value) in changes {
         let path = given_path(dir, kind, digest);
         if size_of(&path).await?.is_none() {

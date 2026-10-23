@@ -18,7 +18,7 @@ use crate::routes::views;
 
 /// The agents the user may read - or, with `?deleted=true`, those they
 /// deleted and may read as such, the trash.
-pub async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+pub(super) async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state, &user);
     if options.deleted {
         let deleted = views.deleted_agents().await?;
@@ -34,7 +34,7 @@ pub async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Que
 
 /// Makes an agent of the personality the body names, the user's, in their
 /// scope, the global one, or a session's or channel's they may read.
-pub async fn create_agent(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(request): Json<CreateAgentRequest>) -> Result<(StatusCode, Json<AgentResponse>), ApiError> {
+pub(super) async fn create_agent(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(request): Json<CreateAgentRequest>) -> Result<(StatusCode, Json<AgentResponse>), ApiError> {
     let scope = request.scope.place(user.id, request.session_id, request.channel_id)
         .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "An agent of a session's scope names its session, and only it names a session or a channel"))?;
     let made = state.runtime_manager.agent_manager()
@@ -43,7 +43,7 @@ pub async fn create_agent(State(state): State<Arc<AppState>>, user: Authenticate
 }
 
 /// Agent `id`, with the channels it takes part in that the user may read.
-pub async fn get_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<AgentResponse>, ApiError> {
+pub(super) async fn get_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<AgentResponse>, ApiError> {
     let agent = views(&state, &user).agent(AgentId(id)).await?;
     let channels = agent.channels().await?.into_iter().map(|channel| AgentChannelResponse {
         session_id: channel.session().id(),
@@ -56,7 +56,7 @@ pub async fn get_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>,
 
 /// Renames agent `id`, through the controller this instance shares: an
 /// agent that runs takes the new name at once.
-pub async fn rename_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<RenameAgentRequest>) -> Result<Json<AgentResponse>, ApiError> {
+pub(super) async fn rename_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<RenameAgentRequest>) -> Result<Json<AgentResponse>, ApiError> {
     let id = AgentId(id);
     let agent = state.runtime_manager.controller_manager().agent_controller(id).await?;
     agent.update_name(&user.security_context(), &request.name).await?;
@@ -65,7 +65,7 @@ pub async fn rename_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 
 /// Deletes agent `id`: it rests in the channels it takes part in, as a
 /// former participant, and is kept marked until it is purged.
-pub async fn delete_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn delete_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
     let deleted = state.runtime_manager.agent_manager().delete(&user.security_context(), agent_id).await?;
     match deleted {
@@ -76,7 +76,7 @@ pub async fn delete_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 
 /// Restores the deleted agent `id`; it takes part again in the channels it
 /// rested in. `409` if another agent took its name meanwhile.
-pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<AgentResponse>, ApiError> {
+pub(super) async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<AgentResponse>, ApiError> {
     let agent_id = AgentId(id);
     state.runtime_manager.agent_manager().restore(&user.security_context(), agent_id).await?;
     Ok(Json(readable(&state, &user, agent_id).await?))
@@ -84,7 +84,7 @@ pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uu
 
 /// Removes the deleted agent `id` for good, with its state - as the policy
 /// allows, by default the system's alone.
-pub async fn purge_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn purge_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
     let purged = state.runtime_manager.agent_manager().purge(&user.security_context(), agent_id).await?;
     match purged {
@@ -95,7 +95,7 @@ pub async fn purge_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid
 
 /// The personalities the user may read - what they may make an agent of -,
 /// by name.
-pub async fn list_personalities(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<PersonalityResponse>>, ApiError> {
+pub(super) async fn list_personalities(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<PersonalityResponse>>, ApiError> {
     let personalities = views(&state, &user).personalities().await?;
     Ok(Json(personalities.into_iter().map(PersonalityResponse::from).collect()))
 }

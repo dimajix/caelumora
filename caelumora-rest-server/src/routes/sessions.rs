@@ -15,7 +15,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use crate::routes::{change_error, ensure_session, session_view, views};
 
-pub async fn create_session(
+pub(super) async fn create_session(
     State(state): State<Arc<AppState>>,
     user: AuthenticatedUser,
     Json(payload): Json<CreateSessionRequest>,
@@ -29,7 +29,7 @@ pub async fn create_session(
 
 /// The sessions the user may read - or, with `?deleted=true`, those they
 /// deleted and may read as such, the trash (issue 164).
-pub async fn list_sessions(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+pub(super) async fn list_sessions(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state, &user);
     if options.deleted {
         let deleted = views.deleted_sessions().await
@@ -48,7 +48,7 @@ pub async fn list_sessions(State(state): State<Arc<AppState>>, Query(options): Q
 /// One session with its channels, in the form the global snapshot uses - so
 /// that a client can follow an event that names a session by id alone
 /// (issue 35). Does not start a stopped session.
-pub async fn get_session(
+pub(super) async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -60,7 +60,7 @@ pub async fn get_session(
 /// The private notes agent `aid` wrote in the channels of session `id` the
 /// user may read (issue 233), sorted by the channel's name, for whoever may
 /// read what it saw (`ReadAgentContext`).
-pub async fn agent_private_notes(
+pub(super) async fn agent_private_notes(
     State(state): State<Arc<AppState>>,
     Path((id, aid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -78,7 +78,7 @@ pub async fn agent_private_notes(
 
 /// Restores the deleted session `id` (issue 164) and answers it as `GET`
 /// does. It is not started; opening it starts it.
-pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
+pub(super) async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
     state.session_manager.restore(&user.security_context(), session_id).await?;
     Ok(Json(session_view(&state, &user, session_id).await?))
@@ -86,13 +86,13 @@ pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<
 
 /// Removes the deleted session `id` for good, with its channels and their
 /// state (issue 164) - as the policy allows, by default the system's alone.
-pub async fn purge_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn purge_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
     state.session_manager.purge(&user.security_context(), session_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
     // `SessionManager::delete` stops the running loop, marks the session deleted -
     // kept with its channels until it is purged (issue 164) - and emits the
@@ -101,7 +101,7 @@ pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<U
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn rename_session(
+pub(super) async fn rename_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -120,7 +120,7 @@ pub async fn rename_session(
 /// in particular (`null`, issue 425): whoever may change the session. Their
 /// agents are told from their next turn on. Answers with the session as the
 /// user sees it now.
-pub async fn set_session_language(
+pub(super) async fn set_session_language(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -139,7 +139,7 @@ pub async fn set_session_language(
 /// change the session. Its agents' models are given the times of messages
 /// in it from their next turn on. Answers with the session as the user sees
 /// it now.
-pub async fn set_session_time_zone(
+pub(super) async fn set_session_time_zone(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -155,7 +155,7 @@ pub async fn set_session_time_zone(
 
 /// Changes whom session `id` lets read what was said in it (issue 134);
 /// only its owner may. Answers the session as the snapshot shows it.
-pub async fn update_session_privacy(
+pub(super) async fn update_session_privacy(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -174,7 +174,7 @@ pub async fn update_session_privacy(
 /// whoever may change the session. Answers `400 invalid_rule` for a rule
 /// that would allow, is narrower than the session or cannot be matched, and
 /// otherwise the session as the user sees it now.
-pub async fn update_session_approval_rules(
+pub(super) async fn update_session_approval_rules(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -193,7 +193,7 @@ pub async fn update_session_approval_rules(
 /// `null` or empty to remove one - whoever may change the session. They are
 /// public to everybody in it. Answers `400 invalid_value` for one that does
 /// not fit, and otherwise the session as the user sees it now.
-pub async fn update_session_description(
+pub(super) async fn update_session_description(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -211,7 +211,7 @@ pub async fn update_session_description(
 /// agents whose names begin with `prefix`, each with whether they take part
 /// already - in the session, in `channel` if named - and why they cannot be
 /// taken in. Only for whoever may change the session.
-pub async fn candidates(
+pub(super) async fn candidates(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Query(query): Query<CandidatesQuery>,
@@ -227,7 +227,7 @@ pub async fn candidates(
 /// Takes a user or an agent into session `id` (issue 221), and with
 /// `channel` into that channel at once: whoever may change the session, and
 /// the channel. Answers the session as the snapshot shows it.
-pub async fn add_participant(
+pub(super) async fn add_participant(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -244,7 +244,7 @@ pub async fn add_participant(
 /// their own agent -, where its access list lets them, and with `channel`
 /// that channel at once. `404` for a session they may neither join nor
 /// read.
-pub async fn join_session(
+pub(super) async fn join_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,

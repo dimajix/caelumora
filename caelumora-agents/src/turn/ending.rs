@@ -131,6 +131,7 @@ mod tests {
     use chrono::Utc;
     use crate::message::testing::given_up_turns;
     use serde_json::Value;
+    use tokio::sync::mpsc;
 
     /// A turn begun on `state`, whose model called `tool` with `arguments`;
     /// the call ran if `ran`, and a note was staged.
@@ -225,7 +226,7 @@ mod tests {
         use caelumora_model::tool::ToolResultStatus;
         let mut state = a_state_with("mail bob, then delete");
         let turn = a_turn_with_an_open_step(&mut state);
-        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let (tx, mut rx) = mpsc::channel(8);
         let committed = turn.commit(true, &InMemoryEventSender::new(tx)).await;
 
         let messages = state.transcript.messages();

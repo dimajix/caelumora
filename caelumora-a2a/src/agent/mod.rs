@@ -267,7 +267,6 @@ mod tests {
     use axum::{Json, Router};
     use caelumora_model::secret::{SecretProvider, SecretResult};
     use caelumora_model::security::AllowAllPolicy;
-    use futures::StreamExt;
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -275,6 +274,7 @@ mod tests {
     use axum::response::Response;
     use std::time::Instant;
     use tokio::net::TcpListener;
+    use std::future;
 
     /// The one secret of the tests.
     #[derive(Debug)]
@@ -318,7 +318,7 @@ mod tests {
         };
         match answer {
             // A server that takes the request and never answers.
-            Some((true, Value::Null)) => std::future::pending().await,
+            Some((true, Value::Null)) => future::pending().await,
             Some((true, Value::Array(results))) => {
                 let body: String = results.iter().map(|r| format!("data: {}\n\n", json!({ "jsonrpc": "2.0", "id": "1", "result": r }))).collect();
                 ([(CONTENT_TYPE, "text/event-stream")], body).into_response()

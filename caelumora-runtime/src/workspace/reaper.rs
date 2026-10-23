@@ -33,6 +33,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 use tokio::runtime::Handle;
 use uuid::Uuid;
+use tokio::time;
 
 /// How often the commands of the storages are checked besides the events
 /// that can change who may run them (issue 254).
@@ -182,7 +183,7 @@ async fn end_commands(provider: &dyn TerminalProvider, keys: Vec<CommandKey>, wh
 /// may run any longer (issue 254), until `reaper` or the bus is gone.
 /// Events it fell behind on are a reason to check, as any is.
 async fn check_commands(reaper: Weak<CommandReaper>, mut events: broadcast::Receiver<GlobalEvent>) {
-    let mut every = tokio::time::interval(COMMANDS_CHECKED_EVERY);
+    let mut every = time::interval(COMMANDS_CHECKED_EVERY);
     loop {
         tokio::select! {
             received = events.recv() => match received {

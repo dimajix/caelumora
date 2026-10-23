@@ -270,11 +270,11 @@ core and differ only in it.
   the entity's own key; the JSON store holds a `tokio::sync::Mutex` per named kind
   (`caelumora-model` takes tokio's `sync`). Unlike the plan said at first, a named write holds the
   lock also when the name stays: whether it changes is decided under the lock, else two renames of
-  one entity to one name could find each other. The store suite says the rule for every named kind in both stores,
-  and that what the caller may not read counts too; a test of the JSON store has sixteen writers
-  create one name at once. Two runtime tests that made two personalities or channels of one name
-  got names of their own. `AcceptAnyUserProvider`: of two first logins under one name, the store
-  now refuses the second.
+  one entity to one name could find each other. The store suite says the rule for every named kind
+  in both stores, and that what the caller may not read counts too; a test of the JSON store has
+  sixteen writers create one name at once. Two runtime tests that made two personalities or channels
+  of one name got names of their own. `AcceptAnyUserProvider`: of two first logins under one name,
+  the store now refuses the second.
 - **2026-10-07** — Step 3: the checks by hand in `SessionLoop::create_channel`, `restore_channel`
   and `SessionManager::restore_agent` are gone, and with them `SessionError::DuplicateChannelName`;
   the store answers `NameTaken`, which the REST API answers `409 name_taken` - found anywhere in

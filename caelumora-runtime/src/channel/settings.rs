@@ -136,6 +136,7 @@ mod tests {
     use caelumora_model::message::{Message, MessageId};
     use crate::error::is_forbidden;
     use std::time::Duration;
+    use tokio::time;
 
     #[tokio::test]
     async fn a_channel_is_not_renamed_to_a_name_its_session_has() {
@@ -237,7 +238,7 @@ mod tests {
             if channel.message(id).await.is_some_and(|m| m.classification == *classification) {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
         panic!("message {id} was never classified {classification}");
     }

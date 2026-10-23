@@ -14,6 +14,7 @@ use super::{ComponentContext, ComponentError, ComponentResult};
 use crate::{command, moderator};
 use std::fmt;
 use std::fmt::Debug;
+use std::future;
 
 /// The facets a component provides, by type.
 pub type ComponentFacets = TypeMap;
@@ -179,7 +180,7 @@ impl ComponentRegistry {
     {
         let factory: ComponentFactory = Box::new(move |descriptor, context| {
             let built = factory(&descriptor, &context);
-            Box::pin(std::future::ready(built))
+            Box::pin(future::ready(built))
         });
         let (name, registration) = Registration::of(kind, factory);
         self.kinds.insert(name, registration);

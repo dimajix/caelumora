@@ -1,6 +1,7 @@
 //! What tests of the runtime need to build it as a binary does, and the fixtures the tests of
 //! sessions, channels and the views share: one of each, for building a runtime, a user, a session
 //! and its main channel, and the views an actor of a running session navigates (issue 315).
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityRules};
 use crate::testing::TestRuntime;
@@ -29,6 +30,8 @@ use chrono::Utc;
 use crate::event::EventSubscription;
 use crate::actor::user::ChannelWatch;
 use std::time::Duration;
+pub use crate::testing::actor_runtime_in;
+use tokio::time;
 
 /// A user named `name`, not stored.
 pub fn user(name: &str) -> User {
@@ -232,8 +235,6 @@ pub async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<Session
     (session_loop, ctx, other_id)
 }
 
-pub use crate::testing::actor_runtime_in;
-
 pub fn spec(name: &str, participants: Vec<ActorId>) -> ChannelSpec {
     ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }
 }
@@ -241,7 +242,7 @@ pub fn spec(name: &str, participants: Vec<ActorId>) -> ChannelSpec {
 /// The message and the reason of the next `MessageRejected` `events`
 /// show: why the channel did not let in what their user sent (issue 304).
 pub async fn rejection(events: &mut ChannelWatch) -> (Option<MessageId>, Rejection) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             if let ActorEvent::MessageRejected { message, reason, .. } = events.recv().await.expect("the channel is running").event {
                 return (message, reason);
@@ -256,7 +257,7 @@ pub async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<Message> {
         if history.len() >= count {
             return history;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
     panic!("the channel's history never reached {count} messages");
 }

@@ -32,9 +32,6 @@ pub mod testing;
 
 /// What happened in a `History`; its node carries the digest of the
 /// history up to and including it.
-// Nearly every entry is a message said: boxing it would cost an allocation
-// per message and save nothing.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryEntry {
@@ -612,8 +609,8 @@ impl Chain<Recorded> {
     /// of its plan began (issue 263), before the messages of the step, a
     /// command carried out (issue 269) or an activity ended (issue 284),
     /// before the turn's end, a compaction (issue 16), before what replaced
-    /// the older messages, someone added or removed (issue 408). A change is recorded by its own method -
-    /// `modify`, `revoke`, `reclassify`, `fit_into` -, which says whether it
+    /// the older messages, someone added or removed (issue 408). A change is recorded by its own
+    /// method - `modify`, `revoke`, `reclassify`, `fit_into` -, which says whether it
     /// applies.
     pub fn record(&mut self, item: HistoryEntry) {
         debug_assert!(item.is_item(), "a change is recorded by its own method");

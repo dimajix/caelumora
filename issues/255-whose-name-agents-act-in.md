@@ -341,11 +341,12 @@ in behaviour; the rule, in the policy; one context per piece of work. Each is re
   with is decided once - by the policy, by the context's principal - and written down in
   SECURITY.md (*In whose name an agent acts*); the security suite pins reading another channel
   (`an_agent_reads_another_channel_with_its_owners_rights_whoever_asked`), the workspace and a
-  tool call (`an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel`,
+  tool call
+  (`an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel`,
   `an_agents_file_tool_asks_what_a_command_asks`), a credential (the external agents' tests) and a
   delegation through a second agent (`an_agent_asked_by_an_agent_acts_for_its_own_owner`), and the
-  questions for the owner besides. Left open, as decided: who may ask an agent at all (an
-  `AskAgent` of its owner's), and a chain once there are subagents.
+  questions for the owner besides. Left open, as decided: who may ask an agent at all (an `AskAgent`
+  of its owner's), and a chain once there are subagents.
 - **2026-10-08** — What step 3 found about reading another channel of the same session is issue
   [264](264-agent-reads-channels-its-owner-may-not.md).
 - **2026-10-09** — Widened by issue [264](264-agent-reads-channels-its-owner-may-not.md): an agent

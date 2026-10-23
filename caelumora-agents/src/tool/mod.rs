@@ -1,8 +1,8 @@
 //! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that
 //! runs an agent's tool calls with the tools of its providers and with the
 //! checks the runtime keeps to itself (issues 127, 280), and the built-in
-//! tool components, one file per component kind. A component that offers tools along with another facet - a prompt
-//! part, say - stays in `components`.
+//! tool components, one file per component kind. A component that offers tools along with another
+//! facet - a prompt part, say - stays in `components`.
 
 pub mod ask_user_tool;
 pub mod calculator_tool;
@@ -800,7 +800,6 @@ mod tests {
     use super::*;
     use crate::testing::{self, TestAgents};
     use caelumora_model::event::GlobalEvent;
-    use crate::turn::Turn;
     use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_model::config::{AppConfig, ApprovalsConfig};
@@ -819,6 +818,8 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
+    use std::future;
+    use tokio::time;
 
     #[test]
     fn arguments_are_read_as_a_struct_and_what_does_not_fit_is_the_models_to_correct() {
@@ -882,7 +883,7 @@ mod tests {
             match name {
                 "hr_tool" => Ok(ToolOutput::classified(json!({"salary": 1}), hr())),
                 "configured_tool" => Ok(json!({"salary": 2}).into()),
-                "hanging_tool" => std::future::pending().await,
+                "hanging_tool" => future::pending().await,
                 _ => Ok(json!({"result": "ok"}).into()),
             }
         }
@@ -1020,7 +1021,7 @@ mod tests {
         // As if set in another instance, and announced.
         let denying = SessionUpdateEvent::ApprovalRulesChanged(vec![rule("test_tool", RuleDecision::Deny)]);
         session.process_global_event(&GlobalEvent::updated::<Session>(&session.id(), &denying));
-        let result = executor.execute(&call("test_tool"), None, &mut turn, std::future::pending()).await;
+        let result = executor.execute(&call("test_tool"), None, &mut turn, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "as it stands when run");
         assert!(result.started_at.is_none(), "it never ran");
     }
@@ -1038,7 +1039,7 @@ mod tests {
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
         assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())), "refused before anyone is asked: {admitted:?}");
-        let result = executor.execute(&call("test_tool"), None, &mut context, std::future::pending()).await;
+        let result = executor.execute(&call("test_tool"), None, &mut context, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Ok, "running asks the policy nothing more: only an admitted call is run");
     }
 
@@ -1134,7 +1135,7 @@ mod tests {
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let admitted = executor.admit(&call("send_out"), &turn).await;
         assert!(matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool), "not called by its name: {admitted:?}");
-        let result = executor.execute(&call("send_out"), None, &mut turn, std::future::pending()).await;
+        let result = executor.execute(&call("send_out"), None, &mut turn, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::UnknownTool, "nor run, approved or not");
         assert!(result.started_at.is_none());
     }
@@ -1157,7 +1158,7 @@ mod tests {
         let mut agent_channel_state = offered(&executor, Work { security_context: SecurityContext { caller_id: ActorId::User(UserId::new()), ..SecurityContext::default() }, ..Default::default() }).await;
         let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
-        let result = executor.execute(&call("test_tool"), None, &mut context, std::future::pending()).await;
+        let result = executor.execute(&call("test_tool"), None, &mut context, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
     }
 
@@ -1205,7 +1206,7 @@ mod tests {
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
-        let result = executor.execute(&call("test_tool"), None, &mut turn, std::future::pending()).await;
+        let result = executor.execute(&call("test_tool"), None, &mut turn, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.content, "{\"result\":\"ok\"}");
         assert_eq!(result.classification, Classification::CHANNEL_DEFAULT, "the channel's");
@@ -1213,7 +1214,7 @@ mod tests {
         assert!(finished_at >= started_at);
         assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
 
-        let unknown = executor.execute(&call("does_not_exist"), None, &mut turn, std::future::pending()).await;
+        let unknown = executor.execute(&call("does_not_exist"), None, &mut turn, future::pending()).await;
         assert_eq!(unknown.status, ToolResultStatus::UnknownTool);
         assert!(unknown.content.contains("Available tools: test_tool"), "{}", unknown.content);
         assert_eq!((unknown.id.as_deref(), unknown.tool_name.as_str()), (Some("call_1"), "does_not_exist"), "the result is the call's");
@@ -1226,7 +1227,7 @@ mod tests {
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let ending = async {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            time::sleep(Duration::from_millis(20)).await;
             Interruption::TurnEnded
         };
 
@@ -1236,7 +1237,7 @@ mod tests {
         let (started_at, finished_at) = (result.started_at.expect("it ran"), result.finished_at.expect("until it was interrupted"));
         assert!(finished_at >= started_at);
 
-        let done = executor.execute(&call("test_tool"), None, &mut turn, std::future::ready(Interruption::TurnEnded)).await;
+        let done = executor.execute(&call("test_tool"), None, &mut turn, future::ready(Interruption::TurnEnded)).await;
         assert_eq!(done.status, ToolResultStatus::Ok, "a tool that is done has its result");
     }
 
@@ -1246,7 +1247,7 @@ mod tests {
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let interrupting = async {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            time::sleep(Duration::from_millis(20)).await;
             Interruption::ByUser("alice".to_string())
         };
 
@@ -1266,7 +1267,7 @@ mod tests {
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
         for name in ["hr_tool", "configured_tool"] {
-            let result = executor.execute(&call(name), None, &mut turn, std::future::pending()).await;
+            let result = executor.execute(&call(name), None, &mut turn, future::pending()).await;
             assert_eq!(result.status, ToolResultStatus::Withheld, "{name}: HR's, and the channel is general");
             assert!(!result.content.contains("salary"), "{name}: {}", result.content);
             assert!(result.content.contains("internal {hr}"), "the model is told why: {}", result.content);
@@ -1283,7 +1284,7 @@ mod tests {
             turn.work.classification = hr();
         }
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        let result = executor.execute(&call("hr_tool"), None, &mut turn, std::future::pending()).await;
+        let result = executor.execute(&call("hr_tool"), None, &mut turn, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.classification, hr(), "as the tool classified it");
     }

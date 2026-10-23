@@ -21,10 +21,10 @@ be removable for good, for security and for data protection.
 
 ## Considerations
 
-- Every chain is append-only and every digest is stored, never recomputed ([48](48-shared-digest-chain.md),
-  [197](197-one-chain-one-model-of-change.md)). Erasing content breaks that by design: a context
-  that included the message can no longer be resolved as it was (`ContextError::Unavailable`), and
-  that has to be acceptable for erased content.
+- Every chain is append-only and every digest is stored, never recomputed
+  ([48](48-shared-digest-chain.md), [197](197-one-chain-one-model-of-change.md)). Erasing content
+  breaks that by design: a context that included the message can no longer be resolved as it was
+  (`ContextError::Unavailable`), and that has to be acceptable for erased content.
 - Who may erase: the author, the channel's owner, an administrator ([125](125-invisible-admin.md))?
   It reaches into other actors' state, so it is not a request to an agent like retry.
 - What is erased: the content in the history and transcripts, but also what was derived from it -

@@ -749,6 +749,7 @@ mod tests {
     use crate::tool::Tool;
     use crate::user::UserId;
     use crate::work::Work;
+    use std::fs;
 
     fn text(content: &str) -> Message {
         Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
@@ -1072,7 +1073,7 @@ mod tests {
     #[test]
     fn a_context_is_worded_in_the_variant_it_was_recorded_with() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("core.yaml"), "given_up_cause:\n  left: you walked out\n").unwrap();
+        fs::write(dir.path().join("core.yaml"), "given_up_cause:\n  left: you walked out\n").unwrap();
         let mut catalogue = PromptCatalogue::new();
         catalogue.add(CORE, CORE_PROMPTS).unwrap();
         catalogue.add_variant("gemma4", dir.path()).unwrap();

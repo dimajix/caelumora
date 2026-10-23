@@ -346,6 +346,7 @@ mod tests {
     use futures::stream::BoxStream;
     use serde_json::Value;
     use caelumora_model::work::Work;
+    use futures::stream;
 
     /// What the agent of a test is given, as a plugin gives it - a skill,
     /// say: a workspace, here, and its text.
@@ -398,7 +399,7 @@ mod tests {
                 completion_tokens: Some(8),
                 ..unlabelled_message()
             };
-            futures::stream::iter(vec![Ok(MessageEvent::Complete(answer))]).boxed()
+            stream::iter(vec![Ok(MessageEvent::Complete(answer))]).boxed()
         }
     }
 

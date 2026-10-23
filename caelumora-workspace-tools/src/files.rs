@@ -35,40 +35,41 @@ use std::collections::BTreeMap;
 use bytes::Bytes;
 use caelumora_model::digest::{self, ContentDigest, Digest};
 use regex::{Regex, RegexBuilder};
+use futures::stream;
 
 /// A file read (issue 251): its `path`, and the `content` of its result
 /// as text, with the lines it covers - `start_line`, `end_line`,
 /// `total_lines` - and where to read on (`next`).
-pub const FILE_READ_PRESENTATION: ToolPresentation = ToolPresentation::new("file_read");
+const FILE_READ_PRESENTATION: ToolPresentation = ToolPresentation::new("file_read");
 
 /// A file written: its `path` and its `content` as text, and how many
 /// `bytes` its result says were written.
-pub const FILE_WRITE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_write");
+const FILE_WRITE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_write");
 
 /// A replacement in a file: its `path`, its `old_text` and `new_text`
 /// as text, whether it replaces every occurrence (`replace_all`), and
 /// how many `replacements` its result counts.
-pub const FILE_EDIT_PRESENTATION: ToolPresentation = ToolPresentation::new("file_edit");
+const FILE_EDIT_PRESENTATION: ToolPresentation = ToolPresentation::new("file_edit");
 
 /// A directory listed (issue 265): its `path`, and the `entries` of its
 /// result - each `name`, `is_dir`, `size` and `modified` - and whether
 /// they are `complete`.
-pub const FILE_LIST_PRESENTATION: ToolPresentation = ToolPresentation::new("file_list");
+const FILE_LIST_PRESENTATION: ToolPresentation = ToolPresentation::new("file_list");
 
 /// Files searched (issue 265): its `pattern` and `path`, and the
 /// `matches` of its result - each `path`, `line` and `text` - with how
 /// many files were searched and skipped, and whether it is `complete`.
-pub const FILE_SEARCH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_search");
+const FILE_SEARCH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_search");
 
 /// A file or directory moved or renamed (issue 267): its `from` and
 /// `to`, and whether its result says it was `renamed` - moved within
 /// its directory.
-pub const FILE_MOVE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_move");
+const FILE_MOVE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_move");
 
 /// A file of the workspace offered for download (issue 273): its
 /// `name`, `size`, `description` and `path`, and whether the file is
 /// still as it was (`size`, `modified`) or gone.
-pub const FILE_PUBLISH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_publish");
+const FILE_PUBLISH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_publish");
 
 pub const LIST_FILES: &str = "list_files";
 pub const READ_FILE: &str = "read_file";
@@ -298,7 +299,7 @@ async fn text(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<(String
 }
 
 async fn write(terminal: &dyn Terminal, limit: u64, at: &WorkspacePath, content: String) -> ToolResult<u64> {
-    let stream: ByteStream = Box::pin(futures::stream::iter([Ok(Bytes::from(content))]));
+    let stream: ByteStream = Box::pin(stream::iter([Ok(Bytes::from(content))]));
     terminal.write(at, stream, limit).await.map_err(ToolError::from)
 }
 
@@ -382,6 +383,7 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
 /// files of `workspace` - as `tool` is configured, with the largest file the
 /// workspaces take and the texts its results give -, recording in `turn`
 /// what was read.
+#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, turn: &mut Turn<'_>) -> ToolResult<Value> {
     let (config, prompts, max_file_bytes) = (&tool.config, &tool.prompts, tool.workspaces.max_file_bytes());
     let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {
@@ -513,6 +515,7 @@ mod tests {
     use caelumora_runtime::workspace::testing::{session_with_workspace, MAX_FILE_BYTES};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::digest;
+    use std::fs;
 
     fn knowledge(state: &AgentChannelState) -> Vec<KnowledgeRef> {
         state.turn.as_ref().map(|turn| turn.work.context.frame.knowledge.clone()).unwrap_or_default()
@@ -534,7 +537,7 @@ mod tests {
             let written = tool.execute(name, &params, None, &mut turn).await.unwrap();
             assert_eq!(written.classification.as_ref(), Some(&world.workspace.classification));
         }
-        assert_eq!(std::fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(), "# Plan\nfirst step\nsecond step\n");
+        assert_eq!(fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(), "# Plan\nfirst step\nsecond step\n");
 
         let listed = tool.execute(LIST_FILES, &json!({ "path": "docs" }), None, &mut turn).await.unwrap().value;
         let names: Vec<&str> = listed["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
@@ -553,7 +556,7 @@ mod tests {
         let replaced = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "first step", "new_text": "first move" }), None, &mut turn).await.unwrap().value;
         assert_eq!(replaced["replacements"], 1);
         tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "stride", "replace_all": true }), None, &mut turn).await.unwrap();
-        assert_eq!(std::fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(), "# Plan\nfirst move\nsecond stride\n");
+        assert_eq!(fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(), "# Plan\nfirst move\nsecond stride\n");
         let absent = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "nowhere", "new_text": "x" }), None, &mut turn).await;
         assert!(matches!(absent, Err(ToolError::InvalidParameter(_))));
 
@@ -584,8 +587,8 @@ mod tests {
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({ "max_output_bytes": 10 }));
-        std::fs::write(world.dir().join("long.txt"), "line one\nline two\nline three\n").unwrap();
-        std::fs::write(world.dir().join("image.bin"), [0xff, 0xfe, 0x00, 0x81]).unwrap();
+        fs::write(world.dir().join("long.txt"), "line one\nline two\nline three\n").unwrap();
+        fs::write(world.dir().join("image.bin"), [0xff, 0xfe, 0x00, 0x81]).unwrap();
 
         let first = tool.execute(READ_FILE, &json!({ "path": "long.txt" }), None, &mut turn).await.unwrap().value;
         assert_eq!((first["content"].as_str(), first["end_line"].as_u64()), (Some("line one\n"), Some(1)));
@@ -610,27 +613,27 @@ mod tests {
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({}));
-        std::fs::create_dir_all(world.dir().join("docs")).unwrap();
-        std::fs::write(world.dir().join("docs/plan.md"), "plan").unwrap();
-        std::fs::write(world.dir().join("docs/notes.md"), "notes").unwrap();
+        fs::create_dir_all(world.dir().join("docs")).unwrap();
+        fs::write(world.dir().join("docs/plan.md"), "plan").unwrap();
+        fs::write(world.dir().join("docs/notes.md"), "notes").unwrap();
 
         let renamed = tool.execute(MOVE_FILE, &json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md" }), None, &mut turn).await.unwrap();
         assert_eq!(renamed.value, json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md", "renamed": true }));
         assert_eq!(renamed.classification.as_ref(), Some(&world.workspace.classification));
         let moved = tool.execute(MOVE_FILE, &json!({ "from": "docs/plan-v2.md", "to": "archive/2026/plan.md" }), None, &mut turn).await.unwrap().value;
         assert_eq!(moved["renamed"], false);
-        assert_eq!(std::fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan", "its directories made");
+        assert_eq!(fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan", "its directories made");
 
         let over = tool.execute(MOVE_FILE, &json!({ "from": "docs/notes.md", "to": "archive/2026/plan.md" }), None, &mut turn).await;
         assert!(matches!(over, Err(ToolError::InvalidParameter(_))), "nothing is moved over: {over:?}");
-        assert_eq!(std::fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan");
+        assert_eq!(fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan");
         let missing = tool.execute(MOVE_FILE, &json!({ "from": "docs/gone.md", "to": "docs/here.md" }), None, &mut turn).await;
         assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
         let top = tool.execute(MOVE_FILE, &json!({ "from": "", "to": "elsewhere" }), None, &mut turn).await;
         assert!(matches!(&top, Err(ToolError::InvalidParameter(why)) if why.contains("workspace itself")), "{top:?}");
 
         tool.execute(MOVE_FILE, &json!({ "from": "docs", "to": "old/docs" }), None, &mut turn).await.expect("a directory with what it holds");
-        assert_eq!(std::fs::read_to_string(world.dir().join("old/docs/notes.md")).unwrap(), "notes");
+        assert_eq!(fs::read_to_string(world.dir().join("old/docs/notes.md")).unwrap(), "notes");
         drop(turn);
         assert!(knowledge(&state).is_empty(), "a move reads nothing");
     }
@@ -641,8 +644,8 @@ mod tests {
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({}));
-        std::fs::create_dir_all(world.dir().join("out")).unwrap();
-        std::fs::write(world.dir().join("out/report.csv"), "a,b\n1,2\n").unwrap();
+        fs::create_dir_all(world.dir().join("out")).unwrap();
+        fs::write(world.dir().join("out/report.csv"), "a,b\n1,2\n").unwrap();
 
         let offered = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv", "name": " Report Q3.csv ", "description": "The figures" }), None, &mut turn).await.unwrap();
         let value = offered.value;

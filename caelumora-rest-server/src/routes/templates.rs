@@ -8,7 +8,7 @@ use crate::state::AppState;
 
 /// The session templates the user may start a session from - what a client
 /// offers, not the templates themselves (issue 106).
-pub async fn list_templates(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<TemplateResponse>>, ApiError> {
+pub(super) async fn list_templates(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<TemplateResponse>>, ApiError> {
     let ctx = user.security_context();
     let templates = state.runtime_manager.entity_stores().session_templates.list(&ctx, &Query::all()).await.map(|page| page.items)
         .map_err(|e| ApiError::internal("templates_unavailable", "listing the session templates", &e.into()))?;

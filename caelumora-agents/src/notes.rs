@@ -59,24 +59,24 @@ impl NoteKind {
 
 /// An agent's note chains in a channel, as a turn sees them: every function
 /// takes the turn and which chain.
-pub struct AgentNotes;
+pub(crate) struct AgentNotes;
 
 impl AgentNotes {
     /// The notes as they stand - without the changes of the current turn,
     /// which count only once it completes.
-    pub fn current(situation: &Situation, kind: NoteKind) -> Vec<Note> {
+    pub(crate) fn current(situation: &Situation, kind: NoteKind) -> Vec<Note> {
         kind.chain(situation.agent_channel_state()).current()
     }
 
     /// The digest of the chain, `None` while it is empty: the state of
     /// knowledge a reader of the notes records.
-    pub fn digest(situation: &Situation, kind: NoteKind) -> Option<Digest> {
+    pub(crate) fn digest(situation: &Situation, kind: NoteKind) -> Option<Digest> {
         kind.chain(situation.agent_channel_state()).digest()
     }
 
     /// The notes as they stand with the changes of the current turn in
     /// them (issue 156): what the turn's operations on notes look at.
-    pub fn effective(turn: &Turn, kind: NoteKind) -> Staged<Notes> {
+    pub(crate) fn effective(turn: &Turn, kind: NoteKind) -> Staged<Notes> {
         let staged = turn.staged_notes(kind).iter().map(|c| (c, NoteOrigin::default()));
         kind.chain(turn.situation().agent_channel_state()).with_staged(staged)
     }
@@ -84,7 +84,7 @@ impl AgentNotes {
     /// Notes `text` in this turn, classified as the turn has seen so far
     /// (`Situation::label`, issue 168), and returns the note's number: one more
     /// than any in the chain or noted earlier in the turn.
-    pub fn note(turn: &mut Turn, kind: NoteKind, text: String) -> NoteId {
+    pub(crate) fn note(turn: &mut Turn, kind: NoteKind, text: String) -> NoteId {
         let id = Self::effective(turn, kind).next_id();
         let classification = turn.situation().label();
         turn.stage_note(kind, NoteChange::Add { id, text, classification });
@@ -95,7 +95,7 @@ impl AgentNotes {
     /// this turn - to say `text` when the turn completes (issue 302),
     /// classified as the turn has seen so far, as a new note is. `false` if
     /// there is no such note (or it is revoked).
-    pub fn update(turn: &mut Turn, kind: NoteKind, id: NoteId, text: String) -> bool {
+    pub(crate) fn update(turn: &mut Turn, kind: NoteKind, id: NoteId, text: String) -> bool {
         if Self::effective(turn, kind).get(id).is_none() {
             return false;
         }
@@ -107,7 +107,7 @@ impl AgentNotes {
     /// Revokes note `id` - one of the current notes, or one noted earlier in
     /// this turn - when the turn completes. `false` if there is no such note
     /// (or it is revoked already).
-    pub fn revoke(turn: &mut Turn, kind: NoteKind, id: NoteId) -> bool {
+    pub(crate) fn revoke(turn: &mut Turn, kind: NoteKind, id: NoteId) -> bool {
         if Self::effective(turn, kind).get(id).is_none() {
             return false;
         }
@@ -124,7 +124,7 @@ impl AgentNotes {
     /// # Errors
     /// `InvalidParameter` if there is no such note, `PermissionDenied` if
     /// the policy refuses.
-    pub async fn reclassify(turn: &mut Turn<'_>, kind: NoteKind, id: NoteId, classification: Classification, access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
+    pub(crate) async fn reclassify(turn: &mut Turn<'_>, kind: NoteKind, id: NoteId, classification: Classification, access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
         if Self::effective(turn, kind).get(id).is_none() {
             return Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be reclassified")));
         }

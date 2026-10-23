@@ -1,7 +1,7 @@
 //! What a participant of a channel is, as its kind makes it: a user, an agent run
-//! here, an external agent (issue 179) - or one that no longer exists. A `ParticipantView` asks the `ParticipantState` that fits; whether the
-//! viewer may see something, and which of it is released to them, stays the
-//! participant view's, in one place for every kind.
+//! here, an external agent (issue 179) - or one that no longer exists. A `ParticipantView` asks the
+//! `ParticipantState` that fits; whether the viewer may see something, and which of it is released
+//! to them, stays the participant view's, in one place for every kind.
 //!
 //! Only agents have a state in the channel worth reading - notes, approvals
 //! waited for, what they saw. That is the `AgentParticipant` a participant state

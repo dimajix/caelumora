@@ -23,6 +23,7 @@ use caelumora_model::work::TurnId;
 use caelumora_model::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use std::mem;
 
 /// The state of a channel when a stream connects: its participants and the last
 /// page of its history, as items - messages and how turns ended (issue 258).
@@ -58,7 +59,7 @@ impl ChannelSnapshot {
         for participant in &mut channel.participants {
             if matches!(participant.id, ActorId::Agent(_)) {
                 let name = participant.name.clone().unwrap_or_default();
-                notes.push(PublishedNotesResponse { agent_id: participant.id, name, notes: std::mem::take(&mut participant.notes) });
+                notes.push(PublishedNotesResponse { agent_id: participant.id, name, notes: mem::take(&mut participant.notes) });
             }
             pending_approvals.append(&mut participant.pending_approvals);
             pending_questions.append(&mut participant.pending_questions);

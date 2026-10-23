@@ -20,9 +20,6 @@ use crate::digest;
 
 /// What happened in a `Transcript`; its node carries the digest of the
 /// transcript up to and including it (issue 06).
-// Nearly every entry is a message: boxing it would cost an allocation per
-// message and save nothing.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptEntry {
@@ -392,6 +389,7 @@ mod tests {
     use chrono::Duration;
     use crate::confidentiality::Confidentiality;
     use serde_json::Value;
+    use std::slice;
 
     #[test]
     fn a_transcript_started_anew_holds_what_comes_after_and_keeps_what_it_held_as_a_branch() {
@@ -611,7 +609,7 @@ mod tests {
         assert!(!transcript.reclassify(id(9), public.clone()), "never given");
 
         let internal = make_message(id(1)).classification;
-        assert_eq!(classifications(transcript.messages()), std::slice::from_ref(&public), "as it stands");
+        assert_eq!(classifications(transcript.messages()), slice::from_ref(&public), "as it stands");
         let then: Vec<Message> = as_they_stand(transcript.prefix(&before).unwrap()).filter_map(|(_, m)| m).collect();
         assert_eq!(classifications(then), [internal.clone(), internal], "a digest taken before names what was given then");
 

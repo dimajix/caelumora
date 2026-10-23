@@ -423,7 +423,7 @@ mod tests {
     fn variant_dir(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (name, text) in files {
-            std::fs::write(dir.path().join(name), text).unwrap();
+            fs::write(dir.path().join(name), text).unwrap();
         }
         dir
     }

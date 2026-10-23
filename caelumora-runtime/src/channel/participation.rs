@@ -15,6 +15,7 @@ use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use std::sync::Arc;
 use super::ChannelError;
+use std::iter;
 
 /// A participant as a document names it (`Participant`), resolved: with
 /// what it is in this instance (`ResolvedKind`) - what its actor is built
@@ -66,9 +67,9 @@ impl Participation {
 
     /// `participant` of channel `channel_id` of session `session_id` - of
     /// the session alone without one - resolved: with its controller, an
-    /// agent also with its personality's, for its actor to be built from; `None` if its user or agent no longer exists - an agent as
-    /// `agent_exists` says. An agent runs only with a personality it may
-    /// read there (`require_runnable`).
+    /// agent also with its personality's, for its actor to be built from; `None` if its user or
+    /// agent no longer exists - an agent as `agent_exists` says. An agent runs only with a
+    /// personality it may read there (`require_runnable`).
     ///
     /// # Errors
     /// Whatever else the store reports when loading it - also that an
@@ -240,7 +241,7 @@ impl ResolvedParticipant {
     /// never widen them. None for an approver.
     fn clearances(&self) -> Vec<Vec<RoleId>> {
         let Some(context) = self.context() else { return Vec::new() };
-        std::iter::once(context.roles).chain(context.limiting_roles).collect()
+        iter::once(context.roles).chain(context.limiting_roles).collect()
     }
 
     /// Nothing if the participant may take part in its channel by where it lies:

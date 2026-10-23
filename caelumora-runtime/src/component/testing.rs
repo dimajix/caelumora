@@ -1,5 +1,6 @@
 //! What the tests of the module share: facets, kinds of components that
 //! provide them, configurations and the context they are built with.
+#![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::security::{AllowAllPolicy, SecurityContext, AccessPolicy};

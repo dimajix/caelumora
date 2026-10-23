@@ -17,8 +17,9 @@ Two construction sequences exist in more than one copy:
   `ChannelRuntime`, a `ChannelLoop`, inserts a `ChannelEntry` and queues the start, then attaches
   every channel in a second loop; `add_channel_loop` (`session/channels.rs:183`) does the same for
   one channel, with the attach inline.
-  `ChannelRuntime::new(Arc::clone(&runtime_manager), Arc::clone(&commands), Arc::clone(&session_controller))`
-  is written three times (`session/mod.rs:214`, `:232`, `session/channels.rs:184`).
+  `ChannelRuntime::new(Arc::clone(&runtime_manager), Arc::clone(&commands),
+  Arc::clone(&session_controller))` is written three times (`session/mod.rs:214`, `:232`,
+  `session/channels.rs:184`).
 
 `SessionLoop::new` cannot call `add_channel_loop` because that needs `self: &Arc<Self>` for
 `attach`, which [123](123-session-handle-in-channel-runtime.md) chose on purpose.
@@ -39,8 +40,8 @@ next step in it (a check, a log line) goes into one of them first.
   `add_channel_loop` for every channel the session lists; `add_channel_loop` is the one place that
   builds a loop, and `ChannelRuntime` is built by one `fn channel_runtime(&self) -> ChannelRuntime`
   that `views_of` uses too. The order of events (`STARTED` after `created`) does not change, since
-  `run` starts the channels either way. This keeps `attach` as [123](123-session-handle-in-channel-runtime.md)
-  decided and does not reopen it.
+  `run` starts the channels either way. This keeps `attach` as
+  [123](123-session-handle-in-channel-runtime.md) decided and does not reopen it.
 
 ## Done when
 

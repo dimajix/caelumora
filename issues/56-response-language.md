@@ -80,10 +80,10 @@ participant reads as it is (and which history, notes, digests and `read_history`
   itself, with its tag (`German - Deutsch, BCP 47 tag "de-CH"`), from a small table
   (`Language::names`) - a model follows a name more surely than a tag; with `changes_only` for
   external agents. REST: `language` on channels, `PUT …/channels/{cid}/language`, and
-  `preferred_language` in `/profile`, whose `PUT` now replaces both fields. Web UI: the preference in
-  the profile dialog, the language preset in the new-channel dialog, shown and changed in the chat.
-  Not done: writing the part in the language itself rather than in English, which would belong in
-  the prompt catalogue ([57](57-prompt-catalogue.md)) and is worth it only if a comparison on the
+  `preferred_language` in `/profile`, whose `PUT` now replaces both fields. Web UI: the preference
+  in the profile dialog, the language preset in the new-channel dialog, shown and changed in the
+  chat. Not done: writing the part in the language itself rather than in English, which would belong
+  in the prompt catalogue ([57](57-prompt-catalogue.md)) and is worth it only if a comparison on the
   models in use shows it; and creating a channel explicitly held in no language by someone who
   prefers one - it is taken back after creating.
 - **2026-10-07** — A channel template may name its channel's language (`ChannelTemplate::language`),

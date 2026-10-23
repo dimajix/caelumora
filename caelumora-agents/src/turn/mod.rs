@@ -385,6 +385,7 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::message::MessageRole;
     use caelumora_runtime::transport::memory::InMemoryEventSender;
+    use tokio::sync::mpsc;
 
     pub(super) fn message(content: &str) -> Message {
         Message {
@@ -437,7 +438,7 @@ mod tests {
     async fn events_leave_the_agent_as_they_are_and_its_context_keeps_the_full_call() {
         use caelumora_model::confidentiality::Visibility;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
-        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let (tx, mut rx) = mpsc::channel(4);
         let output = InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));

@@ -1,6 +1,6 @@
-pub mod agent;
+pub(crate) mod agent;
 mod body;
 mod commands;
-pub mod external_agent;
+pub(crate) mod external_agent;
 mod intake;
 mod run_control;

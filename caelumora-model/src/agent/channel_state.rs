@@ -1,3 +1,6 @@
+//! An agent in one channel as it is kept: its `AgentChannelState` - its transcript, its notes, the
+//! turn under way - and the changes by which a store records it (`AgentChannelStateChange`).
+
 use crate::actor::{ActorEvent, ActorId, ActorState};
 use crate::approval::ApprovalRequest;
 use crate::chain::{Position, Stored};
@@ -619,8 +622,7 @@ pub enum RetryRefused {
 /// The growing parts record what was added, the small ones are recorded
 /// whole. The history and the transcript are chains a store keeps apart
 /// (issues 379, 380).
-// A record is made once per store; its size in memory does not matter.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant, reason = "a record is made once per store; its size in memory does not matter")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentChannelStateChange {

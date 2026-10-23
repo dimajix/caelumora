@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use tracing::debug;
+use tokio::fs;
 
 /// How many entries of a chain one file holds.
 pub(super) const SEGMENT: u64 = 256;
@@ -79,7 +80,7 @@ pub(super) async fn append<E>(dir: &Path, key: impl Display, changes: Stored<E>)
 where
     E: Serialize + DeserializeOwned + Clone,
 {
-    tokio::fs::create_dir_all(dir).await.map_err(to_backend_error)?;
+    fs::create_dir_all(dir).await.map_err(to_backend_error)?;
     let head = read_head(dir).await?;
     let end = fits(head.end, &changes.entries).map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
     let mut added = Vec::new();

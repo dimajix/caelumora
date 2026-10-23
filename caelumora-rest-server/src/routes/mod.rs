@@ -20,6 +20,8 @@ use anyhow::Error;
 use axum::body::Body;
 use axum::response::Response;
 use caelumora_runtime::terminal::ByteStream;
+use axum::middleware;
+use axum::routing;
 
 mod agents;
 mod channels;
@@ -129,7 +131,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/compartments", get(compartments::list_compartments))
         .route("/profile", get(profile::get_profile).put(profile::update_profile))
         .route("/profile/approval-rules", post(profile::add_approval_rule))
-        .route("/profile/approval-rules/{id}", axum::routing::delete(profile::remove_approval_rule))
+        .route("/profile/approval-rules/{id}", routing::delete(profile::remove_approval_rule))
         .route("/agents", get(agents::list_agents).post(agents::create_agent))
         .route("/agents/{id}", get(agents::get_agent).patch(agents::rename_agent).delete(agents::delete_agent))
         .route("/agents/{id}/restore", post(agents::restore_agent))
@@ -137,17 +139,17 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/personalities", get(agents::list_personalities))
         .route("/groups", get(groups::list_groups).post(groups::create_group))
         .route("/groups/{id}", get(groups::get_group).patch(groups::rename_group).delete(groups::delete_group))
-        .route("/groups/{id}/members", axum::routing::put(groups::set_members))
+        .route("/groups/{id}/members", routing::put(groups::set_members))
         .route("/groups/{id}/restore", post(groups::restore_group))
         .route("/groups/{id}/purge", post(groups::purge_group))
         .route("/workspaces", get(workspaces::list_workspaces).post(workspaces::create_workspace))
         .route("/workspaces/storages", get(workspaces::list_storages))
         .route("/workspaces/{id}", get(workspaces::get_workspace).patch(workspaces::rename_workspace).delete(workspaces::delete_workspace))
-        .route("/workspaces/{id}/description", axum::routing::put(workspaces::describe_workspace))
-        .route("/workspaces/{id}/classification", axum::routing::put(workspaces::reclassify_workspace))
+        .route("/workspaces/{id}/description", routing::put(workspaces::describe_workspace))
+        .route("/workspaces/{id}/classification", routing::put(workspaces::reclassify_workspace))
         .route("/workspaces/{id}/restore", post(workspaces::restore_workspace))
         .route("/workspaces/{id}/purge", post(workspaces::purge_workspace))
-        .route("/workspaces/{id}/access", axum::routing::put(workspaces::set_access))
+        .route("/workspaces/{id}/access", routing::put(workspaces::set_access))
         .route("/workspaces/{id}/files", get(workspaces::files))
         .route(
             "/workspaces/{id}/files/{*path}",
@@ -158,35 +160,35 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
             "/sessions/{id}",
             get(sessions::get_session).delete(sessions::delete_session).patch(sessions::rename_session),
         )
-        .route("/sessions/{id}/privacy", axum::routing::put(sessions::update_session_privacy))
-        .route("/sessions/{id}/language", axum::routing::put(sessions::set_session_language))
-        .route("/sessions/{id}/time-zone", axum::routing::put(sessions::set_session_time_zone))
+        .route("/sessions/{id}/privacy", routing::put(sessions::update_session_privacy))
+        .route("/sessions/{id}/language", routing::put(sessions::set_session_language))
+        .route("/sessions/{id}/time-zone", routing::put(sessions::set_session_time_zone))
         .route("/sessions/{id}/participants", post(sessions::add_participant))
         .route("/sessions/{id}/join", post(sessions::join_session))
         .route("/sessions/{id}/candidates", get(sessions::candidates))
-        .route("/sessions/{id}/approval-rules", axum::routing::put(sessions::update_session_approval_rules))
-        .route("/sessions/{id}/description", axum::routing::put(sessions::update_session_description))
+        .route("/sessions/{id}/approval-rules", routing::put(sessions::update_session_approval_rules))
+        .route("/sessions/{id}/description", routing::put(sessions::update_session_description))
         .route("/sessions/{id}/restore", post(sessions::restore_session))
         .route("/sessions/{id}/purge", post(sessions::purge_session))
-        .route("/sessions/{id}/workspace", axum::routing::put(workspaces::attach_workspace).delete(workspaces::detach_workspace))
+        .route("/sessions/{id}/workspace", routing::put(workspaces::attach_workspace).delete(workspaces::detach_workspace))
         .route("/sessions/{id}/actors/{aid}/private_notes", get(sessions::agent_private_notes))
         .route("/sessions/{id}/channels", get(channels::list_channels).post(channels::create_channel))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel).delete(channels::delete_channel))
         .route("/sessions/{id}/channels/{cid}/history", get(channels::get_channel_history))
-        .route("/sessions/{id}/channels/{cid}/read", axum::routing::put(channels::mark_read))
-        .route("/sessions/{id}/channels/{cid}/messages", axum::routing::post(channels::send_message))
-        .route("/sessions/{id}/channels/{cid}/classification", axum::routing::put(channels::reclassify_channel))
-        .route("/sessions/{id}/channels/{cid}/language", axum::routing::put(channels::set_channel_language))
-        .route("/sessions/{id}/channels/{cid}/approval-rules", axum::routing::put(channels::update_channel_approval_rules))
-        .route("/sessions/{id}/channels/{cid}/description", axum::routing::put(channels::update_channel_description))
+        .route("/sessions/{id}/channels/{cid}/read", routing::put(channels::mark_read))
+        .route("/sessions/{id}/channels/{cid}/messages", routing::post(channels::send_message))
+        .route("/sessions/{id}/channels/{cid}/classification", routing::put(channels::reclassify_channel))
+        .route("/sessions/{id}/channels/{cid}/language", routing::put(channels::set_channel_language))
+        .route("/sessions/{id}/channels/{cid}/approval-rules", routing::put(channels::update_channel_approval_rules))
+        .route("/sessions/{id}/channels/{cid}/description", routing::put(channels::update_channel_description))
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
-        .route("/sessions/{id}/channels/{cid}/uses-workspace", axum::routing::put(workspaces::set_uses_workspace))
+        .route("/sessions/{id}/channels/{cid}/uses-workspace", routing::put(workspaces::set_uses_workspace))
         .route("/sessions/{id}/channels/{cid}/commands/{command_id}/kill", post(workspaces::kill_command))
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",
             get(channels::get_message).put(channels::modify_message).delete(channels::revoke_message),
         )
-        .route("/sessions/{id}/channels/{cid}/messages/{mid}/classification", axum::routing::put(channels::reclassify_message))
+        .route("/sessions/{id}/channels/{cid}/messages/{mid}/classification", routing::put(channels::reclassify_message))
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/retry", post(channels::retry_message))
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/questions/{qid}", post(channels::answer_questions))
@@ -208,7 +210,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
             "/sessions/{id}/channels/{cid}/commands",
             get(channels::list_commands).post(channels::execute_command),
         )
-        .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth))
+        .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth))
         .with_state(Arc::clone(&state));
 
     // The event streams authenticate like everything else, but do not renew
@@ -216,13 +218,13 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
     let streams = Router::new()
         .route("/sessions/{id}/channels/{cid}/events", get(channels::join_channel))
         .route("/events", get(events::global_events))
-        .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_stream_auth))
+        .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_stream_auth))
         .with_state(Arc::clone(&state));
 
     let mut api = router(Arc::clone(&state.auth)).merge(protected).merge(streams);
     for plugin in plugins {
         let routes = plugin.routes(Arc::clone(&state))
-            .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth));
+            .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth));
         api = api.merge(routes);
     }
     api
@@ -232,7 +234,6 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
 pub(crate) mod tests {
     use super::*;
     use crate::auth::{Auth, TokenService, SESSION_COOKIE};
-    use axum::body::Body;
     use axum::http::header::{COOKIE, SET_COOKIE};
     use axum::http::Request;
     use caelumora_model::config::AuthConfig;

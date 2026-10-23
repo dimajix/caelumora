@@ -28,6 +28,8 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
+use std::future;
+use tokio::time;
 
 /// How long a client waits before reconnecting after the stream broke. Sent
 /// as the SSE `retry` field, because the browser default (3-5 seconds,
@@ -67,15 +69,15 @@ where
     let deadline = {
         let expired = Arc::clone(&expired);
         async move {
-            tokio::time::sleep(lifetime).await;
+            time::sleep(lifetime).await;
             expired.store(true, Ordering::Relaxed);
         }
     };
 
     let ending = stream::once(async move { expired.load(Ordering::Relaxed).then(expired_event) })
-        .filter_map(|event| std::future::ready(event.map(Ok)));
+        .filter_map(|event| future::ready(event.map(Ok)));
 
-    stream::once(std::future::ready(Ok(Event::default().retry(RECONNECT_DELAY))))
+    stream::once(future::ready(Ok(Event::default().retry(RECONNECT_DELAY))))
         .chain(events.take_until(deadline))
         .chain(ending)
 }
@@ -180,6 +182,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use chrono::Utc;
     use tokio::time::Instant;
+    use axum::body;
 
     fn user(expires_in: i64) -> AuthenticatedUser {
         let id = UserId::new();
@@ -194,7 +197,7 @@ mod tests {
         S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
     {
         let response = Sse::new(bounded_by_token(user, events)).into_response();
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("the stream ends");
+        let body = body::to_bytes(response.into_body(), usize::MAX).await.expect("the stream ends");
         String::from_utf8(body.to_vec()).expect("events are text")
     }
 
@@ -220,7 +223,7 @@ mod tests {
     async fn a_stream_ends_as_the_server_shuts_down() {
         let shutdown = CancellationToken::new();
         let started = Instant::now();
-        let ending = { let shutdown = shutdown.clone(); async move { tokio::time::sleep(Duration::from_secs(1)).await; shutdown.cancel() } };
+        let ending = { let shutdown = shutdown.clone(); async move { time::sleep(Duration::from_secs(1)).await; shutdown.cancel() } };
         let user = user(600);
         let (_still_sending, receiver) = broadcast::channel::<u32>(1);
         let events = stream(&user, &shutdown, false, receiver, "test".to_string(), || async { None::<u32> }).await;
@@ -247,7 +250,7 @@ mod tests {
         drop(tx);
         let snapshot = with_snapshot.then_some(|| async { Some(Event::default().event("snapshot").data("state")) });
         let events = resync_on_lag(rx, "test".to_string(), snapshot);
-        let body = axum::body::to_bytes(Sse::new(events).into_response().into_body(), usize::MAX).await.unwrap();
+        let body = body::to_bytes(Sse::new(events).into_response().into_body(), usize::MAX).await.unwrap();
         String::from_utf8(body.to_vec()).unwrap()
     }
 

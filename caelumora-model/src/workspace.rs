@@ -1,7 +1,7 @@
 //! A workspace (issue 253): a tree of files that belongs to a user and is
 //! attached to sessions, where the people and agents of the channels that
-//! may use it share it (issue 251, decision 10). One classification holds for the whole tree (issue 169): its
-//! files carry no label of their own. Where the files lie is the storage the
+//! may use it share it (issue 251, decision 10). One classification holds for the whole tree (issue
+//! 169): its files carry no label of their own. Where the files lie is the storage the
 //! workspace names - configured, not stored - and its files are no part of
 //! the document: the place is the record.
 

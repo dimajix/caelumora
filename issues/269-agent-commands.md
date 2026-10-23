@@ -30,9 +30,9 @@ document" ([ARCHITECTURE.md](../docs/ARCHITECTURE.md#principles)).
   cannot hand an agent a skill without asking the model to fetch it.
 - The channel already has the shape for it: a user's actor sends an event addressed to one agent,
   the moderator routes it there alone, and the agent answers with an event of its own -
-  `RetryRequested` / `RetryAccepted` / `RetryRejected` ([234](234-modify-revoke-and-retry-messages.md),
-  [235](235-retry-of-an-answer-under-way.md)) do exactly that. Commands for agents are the same
-  flow, generalised.
+  `RetryRequested` / `RetryAccepted` / `RetryRejected`
+  ([234](234-modify-revoke-and-retry-messages.md), [235](235-retry-of-an-answer-under-way.md)) do
+  exactly that. Commands for agents are the same flow, generalised.
 - Doing it any other way - a command that writes into `AgentChannelState` through the state store,
   a user actor that calls into the agent actor - creates a second writer for the agent's state, and
   everything that rests on one writer (staging and committing, the digest chain of the transcript,

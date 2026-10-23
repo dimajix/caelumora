@@ -31,14 +31,17 @@ use std::sync::Mutex;
 use tokio::sync::Semaphore;
 use tokio::sync::broadcast::Receiver;
 use uuid::Uuid;
+use futures::stream;
+use std::time::Instant;
+use tokio::time;
 
 #[tokio::test]
 async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from_then_on() {
     let model = Arc::new(Gated::saying(&["first", "second"], 0));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while model.seen.lock().unwrap().is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the agent asks its model about hello");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
@@ -46,12 +49,12 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     let until = |what: &'static str, done: Box<dyn Fn(&AgentChannelState) -> bool + Send>| {
         let channel = Arc::clone(&channel);
         async move {
-            tokio::time::timeout(Duration::from_secs(5), async {
+            time::timeout(Duration::from_secs(5), async {
                 loop {
                     if let Ok(state) = channel.stored_agent_channel_state(agent).await {
                         if done(&state) { break }
                     }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    time::sleep(Duration::from_millis(10)).await;
                 }
             }).await.unwrap_or_else(|_| panic!("{what}"));
         }
@@ -59,9 +62,9 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
 
     // Modified while the turn about it runs: the turn ends as it began.
     alice.modify_message(hello, "good evening".to_string(), None).await.expect("hers");
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while channel.message_of(hello).await.and_then(|m| m.content).as_deref() != Some("good evening") {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the channel takes it in");
     model.gate.add_permits(1);
@@ -146,9 +149,9 @@ async fn asking_a_gated_model(answers: &[&str]) -> (Stuck, Arc<Gated>) {
 
 /// Until `model` was asked `calls` times.
 async fn asked(model: &Gated, calls: usize) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while model.seen.lock().unwrap().len() < calls {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.unwrap_or_else(|_| panic!("the model is asked {calls} times"));
 }
@@ -157,13 +160,13 @@ async fn asked(model: &Gated, calls: usize) {
 /// store, since the channel holds a window of its history alone -: what
 /// she sees said then.
 async fn until_said(channel: &ChannelLoop, alice: UserId, text: &str) -> Vec<Message> {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    time::timeout(Duration::from_secs(10), async {
         loop {
             let said = channel.visible_messages(ActorId::User(alice)).await;
             if said.iter().any(|m| m.content.as_deref() == Some(text)) {
                 break said;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.unwrap_or_else(|_| panic!("{text:?} is said in the channel"))
 }
@@ -171,13 +174,13 @@ async fn until_said(channel: &ChannelLoop, alice: UserId, text: &str) -> Vec<Mes
 /// The state of `agent` as stored once no turn is under way and its
 /// transcript holds `answers` answers with text.
 async fn stored_once_answered(channel: &ChannelLoop, agent: AgentId, answers: usize) -> AgentChannelState {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    time::timeout(Duration::from_secs(10), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.is_none() && contents_of(&state, MessageRole::Assistant).len() == answers {
                 break state;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.unwrap_or_else(|_| panic!("the agent answers {answers} times"))
 }
@@ -219,7 +222,7 @@ async fn what_was_said_during_a_turn_asked_for_again_is_answered_in_the_one_that
     let alice_id = alice_of(&context);
     let alice = channel.user_actor(alice_id).unwrap();
     alice.send_message("and this too".to_string(), None).await.expect("taken during a turn");
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::User(alice_id) && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
@@ -233,7 +236,7 @@ async fn what_was_said_during_a_turn_asked_for_again_is_answered_in_the_one_that
     model.gate.add_permits(3);
     let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
     assert_eq!(said(answered(&mut events, agent).await), ["second"]);
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     let seen = model.seen.lock().unwrap().clone();
     assert_eq!(seen.len(), 2, "one turn answers both, not one each: {seen:?}");
     assert!(seen[1].iter().any(|c| c.contains("hello")) && seen[1].iter().any(|c| c.contains("and this too")), "{:?}", seen[1]);
@@ -253,7 +256,7 @@ async fn an_older_answer_asked_for_again_leaves_the_answer_under_way_alone() {
     // so does what is said meanwhile.
     alice.request_retry(first.id).await.expect("asked");
     alice.send_message("one more".to_string(), None).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     assert_eq!(helper.state(), ActorState::Planning, "the answer under way goes on");
     model.gate.add_permits(2);
     let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
@@ -295,9 +298,9 @@ impl LLMClient for Gated {
         -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         self.seen.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
-        let Some(answer) = self.answers.lock().unwrap().pop_front() else { return Box::pin(futures::stream::pending()) };
+        let Some(answer) = self.answers.lock().unwrap().pop_front() else { return Box::pin(stream::pending()) };
         let gate = Arc::clone(&self.gate);
-        Box::pin(futures::stream::once(async move {
+        Box::pin(stream::once(async move {
             gate.acquire().await.unwrap().forget();
             Ok(MessageEvent::Complete(answer))
         }))
@@ -314,16 +317,16 @@ impl ModelProfileProvider for Gated {
 async fn what_a_user_says_during_a_turn_is_answered_after_it() {
     let model = Arc::new(Gated::saying(&["first", "second"], 0));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while model.seen.lock().unwrap().is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the agent asks its model about hello");
 
     // Taken while the turn waits for its model: nothing holds the user back.
     let alice = alice_of(&context);
     channel.user_actor(alice).unwrap().send_message("and this too".to_string(), None).await.expect("taken during a turn");
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
@@ -394,9 +397,9 @@ async fn what_an_agent_was_delivered_and_did_not_store_before_a_restart_is_deliv
     let hello = channel.whole_history().await.into_iter().find(|m| m.content.as_deref() == Some("hello")).expect("said");
     alice.send_message("and this too".to_string(), None).await.expect("taken during a turn");
     alice.modify_message(hello.id, "hello, corrected".to_string(), None).await.expect("hers to modify");
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while channel.message_of(hello.id).await.and_then(|m| m.content).as_deref() != Some("hello, corrected") {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the change is recorded");
 
@@ -426,7 +429,7 @@ async fn told_while_calculating(hears: HearsDuringTurn) -> (Stuck, Arc<Gated>) {
     asked(&model, 1).await;
     let alice = alice_of(&stuck.context);
     stuck.channel.user_actor(alice).unwrap().send_message("and this too".to_string(), None).await.expect("taken during a turn");
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = stuck.events.recv().await.expect("the channel is running");
             if let ActorEvent::CompleteMessageGenerated(message) = envelope.event {
@@ -454,7 +457,7 @@ async fn what_a_user_says_between_the_steps_of_a_turn_is_given_to_its_next_step_
     let heard = given_at(&seen[1], "and this too").expect("the next step is given it");
     let told = given_at(&seen[1], "while you were working").expect("and told that it was said meanwhile");
     assert!(heard < told, "after what was heard: {:?}", seen[1]);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 2, "the turn answered its request: no other follows");
     running.abort();
 }
@@ -550,7 +553,7 @@ async fn an_agent_hearing_during_a_turn_hears_what_its_inbox_reads_from_the_hist
     given_once_in_order(&seen[1], &said);
     let told = given_at(&seen[1], "while you were working").expect("told that it was said meanwhile");
     assert!(given_at(&seen[1], &said[SAID - 1]).is_some_and(|last| last < told), "after all that was heard");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 2, "the turn answered the requests: no other follows");
     running.abort();
 }
@@ -622,7 +625,7 @@ async fn what_a_turn_heard_before_a_restart_is_neither_delivered_nor_answered_ag
     assert_eq!(answer.last().and_then(|m| m.content.as_deref()), Some("done"), "the turn resumed");
     let seen = model.seen.lock().unwrap().clone();
     given_once_in_order(&seen[2], &["and this too".to_string()]);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 3, "no other turn answers the request");
     let state = restarted.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(contents_of(&state, MessageRole::User), ["hello", "and this too"], "heard once");
@@ -640,16 +643,16 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
     // In its transcript, where the next turn's model is told of it, and in
     // the channel's history as the agent saw it (issues 408, 417); it asks
     // nobody to respond.
-    let state = tokio::time::timeout(Duration::from_secs(5), async {
+    let state = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.transcript.entries().any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { .. })) { break state }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the agent takes note of it");
     assert!(state.transcript.entries().any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { participant, by, .. } if participant == context.initiator_id && by == context.initiator_id)));
     assert!(matches!(channel.visible_entries(ActorId::Agent(agent)).await.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id));
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 1, "no turn begins for it");
     running.abort();
 }
@@ -658,9 +661,9 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
 async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
     let model = Arc::new(Gated::saying(&["first", "second", "third"], 0));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while model.seen.lock().unwrap().is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the agent asks its model about hello");
 
@@ -670,7 +673,7 @@ async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
     for text in queued {
         channel.user_actor(alice).unwrap().send_message(text.to_string(), None).await.expect("taken during a turn");
     }
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         let mut said = 0;
         while said < queued.len() {
             let envelope = events.recv().await.expect("the channel is running");
@@ -831,7 +834,7 @@ async fn a_plan_whose_steps_need_more_calls_than_a_turn_runs_to_its_end() {
     let Stuck { agent, helper, mut events, running, .. } =
         with_an_agent(Arc::new(Scripted(Mutex::new(script))), components).await;
 
-    let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
+    let final_messages = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -877,7 +880,7 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
 
     // The plan needs no approval: it runs at once.
     let mut seen = Vec::new();
-    let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
+    let final_messages = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             assert!(!matches!(envelope.event, ActorEvent::ApprovalRequested(_)), "nobody is asked");
@@ -955,7 +958,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     let mut started = None;
     let mut shown = Vec::new();
     let mut said = Vec::new();
-    let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
+    let final_messages = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -1010,12 +1013,12 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     // What a crash now would leave: `Planning`, with the tool's result
     // in the turn - so that a resume asks the model about the result
     // instead of asking again for the call or running the tool twice.
-    let stored = tokio::time::timeout(Duration::from_secs(5), async {
+    let stored = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             let has_result = state.turn.as_ref().is_some_and(|t| state.transcript.messages().iter().any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty()));
             if has_result && state.processing_state == ActorState::Planning { break state }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("stored in Planning, with the tool's result");
     assert!(stored.turn.is_some_and(|t| t.tool_calls.is_empty()), "the calls of the step are done");
@@ -1033,11 +1036,11 @@ impl LLMClient for FailsWhere {
         -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         match self.0.lock().unwrap().pop_front() {
-            Some(Some(answer)) => Box::pin(futures::stream::iter([Ok(MessageEvent::Complete(answer))])),
-            Some(None) => Box::pin(futures::stream::iter([Err(LLMError::Backend {
+            Some(Some(answer)) => Box::pin(stream::iter([Ok(MessageEvent::Complete(answer))])),
+            Some(None) => Box::pin(stream::iter([Err(LLMError::Backend {
                 endpoint: "test".to_string(), model: "test".to_string(), message: "gone".to_string(),
             })])),
-            None => Box::pin(futures::stream::pending()),
+            None => Box::pin(stream::pending()),
         }
     }
 }
@@ -1050,7 +1053,7 @@ impl ModelProfileProvider for FailsWhere {
 
 /// The turn the agent `agent` gives up next, by its `TurnGivenUp`.
 async fn given_up_turn(events: &mut Receiver<Envelope>, agent: AgentId) -> TurnId {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -1088,8 +1091,8 @@ async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     alice.send_message("are you there?".to_string(), None).await.unwrap();
     // The message is in the channel's history once it was routed.
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while channel.whole_history().await.len() < 2 { tokio::time::sleep(Duration::from_millis(10)).await }
+    time::timeout(Duration::from_secs(5), async {
+        while channel.whole_history().await.len() < 2 { time::sleep(Duration::from_millis(10)).await }
     }).await.expect("the message is said");
 
     let refused = alice.request_retry_of_turn(ActorId::Agent(agent), failed).await;
@@ -1108,7 +1111,7 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
         with_an_agent(Arc::new(Scripted(Mutex::new(answers))), components).await;
 
     // The users are told why the turn ended (issue 411).
-    let (turn, reason) = tokio::time::timeout(Duration::from_secs(5), async {
+    let (turn, reason) = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -1148,8 +1151,8 @@ impl LLMClient for FailsAfter {
         -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         match self.0.lock().unwrap().pop_front() {
-            Some(answer) => Box::pin(futures::stream::iter([Ok(MessageEvent::Complete(answer))])),
-            None => Box::pin(futures::stream::iter([Err(LLMError::Backend {
+            Some(answer) => Box::pin(stream::iter([Ok(MessageEvent::Complete(answer))])),
+            None => Box::pin(stream::iter([Err(LLMError::Backend {
                 endpoint: "test".to_string(), model: "test".to_string(), message: "gone".to_string(),
             })])),
         }
@@ -1184,7 +1187,7 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
     let Stuck { channel, context: _, agent, helper, mut events, running } =
         with_an_agent(Arc::new(FailsAfter(Mutex::new([calculate.clone()].into()))), components).await;
 
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnGivenUp { .. }) { break }
@@ -1232,21 +1235,21 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
     }] };
     let Stuck { channel, context, agent, running, .. } =
         with_an_agent(Arc::new(Scripted(Mutex::new([calculate].into()))), components).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.as_ref().is_some_and(|t| state.transcript.messages().iter().any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())) { break }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the tool ran");
 
     channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
 
-    let turns = tokio::time::timeout(Duration::from_secs(5), async {
+    let turns = time::timeout(Duration::from_secs(5), async {
         loop {
             let turns = given_up_turns(&channel.stored_agent_channel_state(agent).await.unwrap());
             if !turns.is_empty() { break turns }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the turn is given up");
     assert_eq!(turns[0].1, GivenUpReason::Left);
@@ -1294,11 +1297,11 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     let (calculate, components) = calculator();
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent_under(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(Mutex::new([calculate.clone()].into()))), components).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.as_ref().is_some_and(|t| state.transcript.messages().iter().any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())) { break }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the tool ran");
 
@@ -1357,7 +1360,7 @@ async fn raising_the_channel_lets_a_running_turn_go_on() {
 
     stuck.channel.reclassify(&stuck.context, Classification::general(Confidentiality::Confidential)).await.expect("permitted");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     assert_eq!(stuck.helper.state(), ActorState::Planning, "the model call goes on");
     stuck.running.abort();
 }
@@ -1377,7 +1380,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
 
     // The request is withdrawn, and the approver tells the users
     // (issue 148).
-    let (requested, withdrawn) = tokio::time::timeout(Duration::from_secs(5), async {
+    let (requested, withdrawn) = time::timeout(Duration::from_secs(5), async {
         let mut requested = None;
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -1437,7 +1440,7 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
 
 /// The approval the approver asks the users for, from `events`.
 async fn approval_requested(events: &mut broadcast::Receiver<Envelope>) -> ApprovalRequest {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if let ActorEvent::ApprovalRequested(request) = envelope.event {
@@ -1569,7 +1572,7 @@ async fn a_cancel_while_a_tool_runs_interrupts_the_tool_and_ends_the_turn() {
 
     // The turn ends at once, not when the tool would have (issue 161),
     // and the model is not asked again.
-    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+    let ended = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::Agent(agent) {
@@ -1621,11 +1624,11 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
 
     // Within the grace of a stop (issue 161): the turn is given up rather
     // than the actor aborted with the turn left as it was before the tool.
-    let stored = tokio::time::timeout(STOP_GRACE, async {
+    let stored = time::timeout(STOP_GRACE, async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.is_none() && !given_up_turns(&state).is_empty() { break state }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the turn is given up before the grace runs out");
     assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Left);
@@ -1636,11 +1639,11 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     // The agent tells the channel of its turn's end as it leaves, and
     // the channel records it after the call it said (issues 258, 262), and
     // that it left after that (issue 408).
-    let entries = tokio::time::timeout(Duration::from_secs(5), async {
+    let entries = time::timeout(Duration::from_secs(5), async {
         loop {
             let entries = channel.history_entries().await;
             if matches!(entries.last(), Some(HistoryEntry::ParticipantLeft { .. })) { break entries }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the channel records that it left");
     let ended = match &entries[entries.len() - 2] {
@@ -1712,13 +1715,13 @@ async fn an_idle_agent_stopped_ends_at_once_where_it_stands() {
 async fn an_agent_whose_channel_is_deleted_while_a_tool_runs_gives_its_turn_up() {
     let (Stuck { channel, agent, running, .. }, _) = with_an_agent_in_a_long_tool().await;
 
-    let leaving = std::time::Instant::now();
+    let leaving = Instant::now();
     channel.leave_all_actors().await;
     assert!(leaving.elapsed() < STOP_GRACE, "the actors ended by themselves");
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.turn.is_none(), "the turn is not kept");
     assert_eq!(given_up_turns(&stored).iter().map(|(_, reason, _)| reason.clone()).collect::<Vec<_>>(), [GivenUpReason::Left]);
-    tokio::time::timeout(Duration::from_secs(1), running).await.expect("and the channel ended with them").ok();
+    time::timeout(Duration::from_secs(1), running).await.expect("and the channel ended with them").ok();
 }
 
 #[tokio::test]
@@ -1733,17 +1736,17 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
 
     // It stops waiting and gives the turn up, instead of being aborted
     // with the turn left in its state.
-    let stored = tokio::time::timeout(Duration::from_secs(5), async {
+    let stored = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.is_none() && !given_up_turns(&state).is_empty() { break state }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the turn is given up");
     assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Left);
     // The request it waited for is withdrawn, as for any turn given up
     // (issue 262).
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::ApprovalRequestWithdrawn { .. }) { break }
@@ -1779,7 +1782,7 @@ async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
 
     // The turn ends without anyone approving anything: the call was
     // answered as invalid, and the model tried again.
-    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+    let ended = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::Agent(agent) {
@@ -1804,7 +1807,7 @@ async fn a_cancel_interrupts_a_model_call_that_is_in_flight() {
 
     // The turn ends at once - with an empty answer, so that observers
     // stop waiting - instead of when the model would have answered.
-    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+    let ended = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == agent_id && matches!(envelope.event, ActorEvent::TurnFinished { .. }) {
@@ -1826,7 +1829,7 @@ async fn a_user_learns_that_a_turn_cancelled_before_it_said_anything_ended() {
 
     // Nothing to hear of it - but the end, for whoever shows the answer
     // as under way (issue 224).
-    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+    let ended = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = followed.recv().await.expect("the user's actor runs");
             if envelope.context.sender_id == ActorId::Agent(agent) {
@@ -1849,16 +1852,16 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
     // (issue 262); the state in the store is the one a later actor of
     // the agent starts from: idle, with no turn to resume.
     settled(&helper, ActorState::Idle).await;
-    let stored = tokio::time::timeout(Duration::from_secs(5), async {
+    let stored = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.processing_state == ActorState::Idle { break state }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the idle state is stored");
     assert!(stored.turn.is_none(), "the turn was abandoned, not stored");
     assert!(stored.transcript.messages().iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of it was recorded");
-    let farewell = tokio::time::timeout(Duration::from_secs(5), async {
+    let farewell = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -1978,7 +1981,7 @@ fn model_says(text: &str) -> Message {
 /// and how it ended: its answer, or why it was given up.
 async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelope>, agent: AgentId) -> (Vec<String>, Result<Vec<Message>, String>) {
     let mut told = Vec::new();
-    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+    let ended = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }

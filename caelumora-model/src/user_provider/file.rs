@@ -15,6 +15,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::fs as std_fs;
+use tokio::fs;
+use tokio::task;
 
 /// The users of a file written by hand, each with their id, name, email, roles and the Argon2
 /// hash of their password, as a PHC string:
@@ -96,7 +99,7 @@ impl FileUserProvider {
     /// `AuthError::Backend` if the file cannot be read or is no valid user file.
     pub fn open(path: impl Into<PathBuf>, roles: Roles) -> AuthResult<Self> {
         let provider = Self { path: path.into(), roles };
-        let content = std::fs::read_to_string(&provider.path).map_err(unreadable)?;
+        let content = std_fs::read_to_string(&provider.path).map_err(unreadable)?;
         provider.parse(&content)?;
         warn_if_exposed(&provider.path);
         Ok(provider)
@@ -104,7 +107,7 @@ impl FileUserProvider {
 
     /// The users of the file as it is now.
     async fn users(&self) -> AuthResult<Vec<Known>> {
-        let content = tokio::fs::read_to_string(&self.path).await.map_err(unreadable)?;
+        let content = fs::read_to_string(&self.path).await.map_err(unreadable)?;
         self.parse(&content)
     }
 
@@ -179,7 +182,7 @@ fn argon2_hash(text: &str) -> Result<PasswordHash, String> {
 async fn verify(password: &str, hash: PasswordHash) -> AuthResult<bool> {
     let failed = |e: &dyn ToString| AuthError::Backend(format!("the password could not be verified: {}", e.to_string()));
     let password = password.to_owned();
-    let verified = tokio::task::spawn_blocking(move || Argon2::default().verify_password(password.as_bytes(), &hash))
+    let verified = task::spawn_blocking(move || Argon2::default().verify_password(password.as_bytes(), &hash))
         .await
         .map_err(|e| failed(&e))?;
     match verified {
@@ -203,7 +206,7 @@ fn invalid(why: &dyn ToString) -> AuthError {
 /// others than its owner: who may change it may log in as anyone.
 #[cfg(unix)]
 fn warn_if_exposed(path: &Path) {
-    if let Ok(metadata) = std::fs::metadata(path) {
+    if let Ok(metadata) = std_fs::metadata(path) {
         if exposed(metadata.permissions().mode()) {
             tracing::warn!("The user file {} may be read by others or changed by others than its owner - \
                 restrict it, e.g. with chmod 600", path.display());
@@ -227,7 +230,6 @@ mod tests {
     use crate::config::AppConfig;
     use crate::role::{RoleError, RoleId};
     use argon2::{PasswordHasher, Version};
-    use std::fs;
     use tempfile::TempDir;
 
     /// The hash of `password`, made cheaply - a real one takes long on purpose.
@@ -248,7 +250,7 @@ mod tests {
     fn user_file(content: &str) -> (TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("a directory");
         let path = dir.path().join("users.yaml");
-        fs::write(&path, content).expect("written");
+        std_fs::write(&path, content).expect("written");
         (dir, path)
     }
 
@@ -301,13 +303,13 @@ mod tests {
         let users = FileUserProvider::open(&path, Roles::default()).expect("a valid file");
         assert_eq!(users.get_user(alice).await.unwrap().map(|user| user.username.to_string()), Some("alice".to_string()));
 
-        fs::write(&path, format!("users:\n{}", entry(bob, "bob", "[]", "b"))).unwrap();
+        std_fs::write(&path, format!("users:\n{}", entry(bob, "bob", "[]", "b"))).unwrap();
         assert!(users.get_user(alice).await.unwrap().is_none(), "removed, her token is not renewed");
         assert_eq!(users.find_user("bob").await.unwrap().map(|user| user.id), Some(bob), "added, he is known");
 
-        fs::write(&path, "users: [").unwrap();
+        std_fs::write(&path, "users: [").unwrap();
         assert!(matches!(users.find_user("bob").await, Err(AuthError::Backend(_))), "broken, it denies rather than knowing nobody");
-        fs::remove_file(&path).unwrap();
+        std_fs::remove_file(&path).unwrap();
         assert!(matches!(users.authenticate("bob", &Credential::Password("b")).await, Err(AuthError::Backend(_))), "and so when gone");
     }
 

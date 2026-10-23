@@ -268,6 +268,7 @@ mod tests {
     use caelumora_model::work::TurnId;
     use chrono::Utc;
     use caelumora_model::work::Work;
+    use tokio::sync::mpsc;
 
     fn said(text: &str) -> Message {
         Message { role: MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
@@ -303,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn everything_queued_is_heard_in_order_and_only_the_last_request_is_answered() {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let body = AgentBody::detached(Vec::new());
@@ -330,7 +331,7 @@ mod tests {
     /// across a command that ended a batch.
     #[tokio::test]
     async fn the_request_answered_keeps_the_strongest_reason() {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let body = AgentBody::detached(Vec::new());
@@ -366,7 +367,7 @@ mod tests {
 
     #[tokio::test]
     async fn during_a_turn_what_may_be_heard_is_taken_up_to_the_first_event_that_has_to_wait() {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let alice = ActorId::User(UserId::new());
         let mut state = AgentChannelState::default();
@@ -420,7 +421,7 @@ mod tests {
     /// what he says after it waits too.
     #[tokio::test]
     async fn during_a_turn_its_initiator_asking_again_lets_it_hear_what_another_said_before() {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let mut state = AgentChannelState::default();
@@ -442,7 +443,7 @@ mod tests {
     async fn during_a_turn_anothers_request_or_waiting_lets_it_hear_nothing_of_him() {
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         for (others, said) in [(OthersWords::Wait, bob_then_alice_then_bob(alice, bob)), (OthersWords::WhenAsked, bob_then_alice_then_bob(alice, bob).into_iter().filter(|e| e.context.initiator_id == bob).collect())] {
-            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let (tx, rx) = mpsc::channel(8);
             let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
             let mut state = AgentChannelState::default();
             under_way_for(&mut state, alice);
@@ -460,7 +461,7 @@ mod tests {
     /// a barrier: her request lifts nothing past it.
     #[tokio::test]
     async fn during_a_turn_a_command_before_its_initiators_request_lifts_nothing() {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let mut state = AgentChannelState::default();
@@ -478,7 +479,7 @@ mod tests {
 
     #[tokio::test]
     async fn between_turns_nothing_is_taken_in_as_during_one() {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         tx.try_send(envelope(ActorEvent::CompleteMessageGenerated(said("one")))).expect("room");
@@ -489,7 +490,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_command_ends_the_batch_and_what_follows_it_stays_queued() {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let body = AgentBody::detached(Vec::new());
@@ -514,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_change_is_recorded_where_the_transcript_holds_the_message_and_handed_over_where_it_does_not() {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let (given, kept) = (Message { id: MessageId::new(), ..said("given") }, Message { id: MessageId::new(), ..said("kept") });

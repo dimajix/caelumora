@@ -24,6 +24,7 @@ use crate::store::query::FieldValue;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::iter;
 
 /// How sensitive information is, from `Public` to `StrictlyConfidential`.
 /// Ordered: a higher level is more confidential.
@@ -191,8 +192,8 @@ impl Classification {
     /// the destination's, and the destination's compartments added to its
     /// audience - none if it is general already, or the destination is
     /// general, or it becomes public. What flows already stays as it is, up
-    /// to the audiences added, which may read it anyway. What a channel's messages become when the channel is
-    /// released to `destination` (issue 133).
+    /// to the audiences added, which may read it anyway. What a channel's messages become when the
+    /// channel is released to `destination` (issue 133).
     pub fn fitted_into(&self, destination: &Classification) -> Classification {
         let level = self.level.min(destination.level);
         let general = self.compartments.is_empty() || destination.compartments.is_empty() || level == Confidentiality::Public;
@@ -392,7 +393,7 @@ impl Compartments {
     /// The compartments whose audience `reader`'s may read (`may_read`):
     /// itself, and those it reads.
     pub fn readable_by<'a>(&'a self, reader: &'a Compartment) -> impl Iterator<Item = &'a Compartment> {
-        std::iter::once(reader).chain(self.reads.get(reader).into_iter().flatten().filter(move |source| *source != reader))
+        iter::once(reader).chain(self.reads.get(reader).into_iter().flatten().filter(move |source| *source != reader))
     }
 
     /// Nothing if every compartment of `classification` is configured.
@@ -730,6 +731,11 @@ impl Visibility {
 mod tests {
     use super::*;
     use crate::store::query::meets_exactly_its_equals;
+    use crate::agent::AgentId;
+    use crate::user::UserId;
+    use crate::tool::{ToolCall, ToolCallResult};
+    use Confidentiality::*;
+    use crate::session::SessionId;
 
     #[test]
     fn a_level_and_a_compartment_meet_exactly_their_serialized_forms() {
@@ -741,11 +747,6 @@ mod tests {
             }
         }
     }
-    use crate::agent::AgentId;
-    use crate::user::UserId;
-    use crate::tool::{ToolCall, ToolCallResult};
-    use Confidentiality::*;
-    use crate::session::SessionId;
 
     fn compartment(name: &str) -> Compartment {
         Compartment::new(name)

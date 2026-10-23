@@ -1,6 +1,6 @@
 # 452 — Rules of the guidelines that a lint could check are only written down
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -57,6 +57,8 @@ Counted on `main` at 2529d3b9, with `allow-unwrap-in-tests`, `allow-expect-in-te
 3. **Complexity.** `cognitive_complexity` and `too_many_lines`, the functions found today marked
    with `expect`.
 4. **`absolute_paths`.** With `absolute-paths-max-segments = 2`; every longer path imported.
+5. **Line lengths.** `scripts/line-length.sh` in the pre-commit hook, on the lines a commit
+   changes; the lines too long today - 75 in Markdown, 18 in Rust comments - wrapped once.
 
 Done when the lints are on, clippy is silent, and CODING-GUIDELINES.md says which rules a lint
 checks.
@@ -65,3 +67,51 @@ checks.
 
 - **2026-10-23** — Issue created while reworking `AGENTS.md`, after counting what these lints find
   in the code today.
+- **2026-10-23** — Step 5 added: the line lengths are counted by `scripts/line-length.sh` since
+  the reviewer agent came, and the hook can run it on what a commit changes.
+- **2026-10-23** — Step 1: the cheap lints are on. Test code outside `#[cfg(test)]` - the store
+  suite, the `testing` modules, `AgentContextView::of_state`, the helpers of four integration
+  tests - says so with a module-wide `expect`; the TUI's three printing functions and the build
+  script's `fail` with one of their own. In production code, `digest::to_json` keeps its
+  `expect`, marked: the model types hashed always serialise, and the digest must not go on with
+  `Null` - an exception the maintainer accepted. Turned into `expect`, three `allow`s turned out
+  to suppress nothing any more and were removed (`ArtifactManager::new`, `HistoryEntry`,
+  `TranscriptEntry`).
+- **2026-10-23** — Step 2: `unreachable_pub` is on, as a lint of `[workspace.lints.rust]`; its 128
+  places - most of them the handlers of the REST routes - are `pub(crate)` or `pub(super)` now,
+  as the lint proposed, ten constants used only in their own file private. The lint finds only
+  the `pub` items a crate's root cannot reach; a `pub` item in a public module that only its own
+  crate uses passes it (`routes::ensure_session`, say), and is left for its owner to find.
+  Seven of the modules it touched have no sentence of their module docs; decided with the
+  maintainer that a mechanical change does not count as changing a module, and the rule in
+  CODING-GUIDELINES.md says so now.
+- **2026-10-23** — Step 3, changed with the maintainer: only `too_many_lines` is on, and the five
+  functions longer than 100 lines carry its `expect`. `cognitive_complexity` found 28 functions in
+  the build of the workspace and none in the build of a single crate: the workspace enables the
+  feature `log` of `tracing`, whose macros then expand to branches the lint counts. It measured
+  the logging more than the logic, and its `expect`s would have flipped between builds.
+- **2026-10-23** — After the review of step 3: CODING-GUIDELINES.md and `Cargo.toml` say that a
+  new function, or one that grows past 100 lines, is split rather than given an `expect`.
+- **2026-10-23** — Step 4: `absolute_paths` is on, with `absolute-paths-max-segments = 2`; its
+  517 places in 95 files are imported at the head of their module. A function is called by its
+  module (`time::timeout`), a type is imported by name (`Instant`) - or by its module where its
+  name is taken (`sync::Mutex` beside tokio's, `error::Error` beside `anyhow::Error`); where a
+  module needs both `std::fs` and `tokio::fs`, std's is renamed (`std_fs`). A test module that
+  takes its parent's names with `use super::*` is given no import that would hide one of them.
+  Where a module of those files had imports after its first items - mostly test modules with a
+  helper before a second block -, they are moved to its head; imports a test module repeated
+  though `use super::*` brings them in are dropped.
+
+  Decided with the maintainer after the review: where both meet, tokio's module is `fs` and std's
+  `std_fs`, everywhere alike; and a path of two segments is fine where its first says where
+  something comes from - a function or macro by its crate or module (`tokio::spawn`,
+  `serde_json::json!`), a type by a module that names its kind (`fmt::Formatter`) -, as the
+  Imports section of CODING-GUIDELINES.md now says.
+- **2026-10-23** — Step 5: the pre-commit hook gives `scripts/line-length.sh` the Markdown and
+  Rust files a commit adds or changes. The script checks only what the wrapping rule covers - the
+  documents in `docs/`, `issues/` and `.claude/agents/`, `AGENTS.md`, and comments -, not the
+  READMEs of the root and of the crates, nor `work/`, which are not wrapped; and it takes a link
+  for one word, which the rule does not break. The 73 lines too long there today - 55 in
+  Markdown, 18 in Rust comments - are rewrapped, with the paragraphs they run into; no line of
+  them changed what it says. Issue done: the lints are on, clippy and the script are silent, and
+  CODING-GUIDELINES.md says which rules a lint checks.

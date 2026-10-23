@@ -18,8 +18,8 @@ Almost everything that works on them uses only their recent end: a turn's contex
 transcript's active path, and compaction already shortens what the model is given, not what is
 held; the web UI shows the last messages first ([218](218-paged-histories.md)); catching up takes
 what an actor missed since it last listened (issues 190, 196,
-[223](223-full-inbox-drops-events.md)). The older part is kept for the record and read rarely - "show earlier", an audit, a branch switched
-back to.
+[223](223-full-inbox-drops-events.md)). The older part is kept for the record and read rarely -
+"show earlier", an audit, a branch switched back to.
 
 ## Why it matters
 

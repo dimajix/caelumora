@@ -1,3 +1,6 @@
+//! The terminal frontend: a user talks, line by line, in a channel of a session started from a
+//! template.
+
 use caelumora_model::store::query::Query;
 use caelumora_model::store::StoreResultExt;
 use caelumora_model::actor::{ActorEvent, ActorId};
@@ -49,6 +52,7 @@ use anyhow::Result;
 use caelumora_runtime::error::user_message;
 use rustyline::history::DefaultHistory;
 use std::io::Error;
+use std::future;
 
 fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
     let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
@@ -70,6 +74,7 @@ fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, S
 
 /// Prints the questions of `request` (issue 165), and - if they are put to
 /// `me` - how to answer them.
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 fn print_questions(request: &QuestionRequest, me: ActorId) {
     println!("\r--- Questions of {} (id: {}) ---", request.tool_call.function_name, request.id.0);
     for (index, question) in request.questions.questions.iter().enumerate() {
@@ -133,6 +138,8 @@ fn questions_named(open: &[QuestionRequest], arg: &str, me: ActorId) -> Option<Q
     }
 }
 
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
+#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
     let user_actor = channel.user_actor(user)
         .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the channel"))?;
@@ -248,7 +255,8 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                         println!("\r{} is carrying out /{}...", sender, command);
                     }
                     Some(ActorEvent::CommandExecuted { command, output, turn_id, .. }) => {
-                        // Carried out by an agent in a turn of its own (issue 269), or run by a user.
+                        // Carried out by an agent in a turn of its own (issue 269), or run by a
+                        // user.
                         let verb = if turn_id.is_some() { "carried out" } else { "ran" };
                         println!("\r{} {} /{}: {}", sender, verb, command, output);
                     }
@@ -508,6 +516,7 @@ fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentErro
     components.set_default_kind::<dyn ModelProfileProvider>(OLLAMA_CLIENT_KIND)
 }
 
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -583,7 +592,7 @@ async fn signalled() {
             }
             Err(e) => {
                 tracing::warn!("A signal cannot be caught, and ends the program without a shutdown: {e}");
-                std::future::pending::<()>().await;
+                future::pending::<()>().await;
             }
         }
     };

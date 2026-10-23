@@ -105,9 +105,10 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use bytes::Bytes;
+    use futures::stream;
 
     fn stream(content: &'static [u8]) -> ByteStream {
-        Box::pin(futures::stream::iter([Ok(Bytes::from_static(content))]))
+        Box::pin(stream::iter([Ok(Bytes::from_static(content))]))
     }
 
     async fn read(storage: &LocalArtifactStorage, artifact: ArtifactId, version: u32) -> Vec<u8> {

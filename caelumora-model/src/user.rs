@@ -324,6 +324,8 @@ impl Journaled for UserChannelState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::confidentiality::ConfidentialityRules;
+    use std::slice;
 
     /// Issue 404: two frontends of one user cannot move the mark back.
     #[test]
@@ -342,7 +344,6 @@ mod tests {
         }
         assert_eq!(replayed.read, Some(later), "replayed as stored");
     }
-    use crate::confidentiality::ConfidentialityRules;
 
     #[test]
     fn a_profile_belongs_to_its_user_whatever_is_stored() {
@@ -387,10 +388,10 @@ mod tests {
         let now = Utc::now();
         profile.add_approval_rule(shell(RuleDecision::Deny, Some(now))).unwrap();
         profile.prune_approval_rules(now);
-        assert_eq!(profile.approval_rules(), std::slice::from_ref(&allow), "what expired is dropped");
+        assert_eq!(profile.approval_rules(), slice::from_ref(&allow), "what expired is dropped");
 
         let stored: UserProfile = serde_json::from_value(serde_json::to_value(&profile).unwrap()).unwrap();
-        assert_eq!(stored.approval_rules(), std::slice::from_ref(&allow), "kept with the profile");
+        assert_eq!(stored.approval_rules(), slice::from_ref(&allow), "kept with the profile");
         assert!(profile.remove_approval_rule(allow.id));
         assert!(!profile.remove_approval_rule(allow.id), "once");
         for _ in 0..MAX_PERSONAL_RULES {

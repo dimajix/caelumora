@@ -23,10 +23,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
 use tokio::runtime::Handle;
+use std::mem;
+use tokio::time;
 
 /// A shell command (issue 251): its `command` as a line of code, its
 /// `output` as a terminal shows it, and its exit code.
-pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
+const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
 
 pub const RUN_COMMAND: &str = "run_command";
 pub const COMMAND_OUTPUT: &str = "command_output";
@@ -59,9 +61,9 @@ impl Drop for KillOnDrop {
             return;
         }
         let Ok(runtime) = Handle::try_current() else { return };
-        let (shell, id) = (Arc::clone(&self.shell), std::mem::take(&mut self.id));
+        let (shell, id) = (Arc::clone(&self.shell), mem::take(&mut self.id));
         runtime.spawn(async move {
-            match tokio::time::timeout(KILL_WITHIN, shell.kill(&id, 0)).await {
+            match time::timeout(KILL_WITHIN, shell.kill(&id, 0)).await {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => warn!(command = %id, "The command of an interrupted call could not be killed: {e}"),
                 Err(_) => warn!(command = %id, "The command of an interrupted call was not killed in time"),
@@ -243,9 +245,9 @@ mod tests {
         let tool = the_tool(&world);
         let marker = world.dir().join("still-running");
         let command = format!("sleep 1.5 && touch {}", marker.display());
-        let interrupted = tokio::time::timeout(Duration::from_millis(300), tool.execute(RUN_COMMAND, &json!({ "command": command }), None, &mut turn)).await;
+        let interrupted = time::timeout(Duration::from_millis(300), tool.execute(RUN_COMMAND, &json!({ "command": command }), None, &mut turn)).await;
         assert!(interrupted.is_err(), "dropped while it waited");
-        tokio::time::sleep(Duration::from_millis(2500)).await;
+        time::sleep(Duration::from_millis(2500)).await;
         assert!(!marker.exists(), "the command was killed with the call");
     }
 

@@ -27,12 +27,13 @@ pub(crate) fn intern(name: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::intern;
+    use std::ptr;
 
     #[test]
     fn a_name_is_kept_once() {
         let first = intern("a_kind_of_this_test");
         let again = intern(&String::from("a_kind_of_this_test"));
-        assert!(std::ptr::eq(first, again));
+        assert!(ptr::eq(first, again));
         assert_eq!(first, "a_kind_of_this_test");
     }
 }

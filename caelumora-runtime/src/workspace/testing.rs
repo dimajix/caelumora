@@ -1,6 +1,7 @@
 //! What the tests of the components that work on a workspace share: a
 //! running session whose channel "main" an agent takes part in, with a
 //! workspace attached that its storage gives a shell.
+#![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::testing::TestRuntime;
 use crate::runtime::RuntimeManager;

@@ -30,7 +30,7 @@ use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQue
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, AccessPolicy};
 
 /// An agent's memory as a turn sees it: every function takes the turn.
-pub struct AgentMemory;
+pub(crate) struct AgentMemory;
 
 impl AgentMemory {
     /// What may be recalled in `turn`'s channel: entries written in a
@@ -46,7 +46,7 @@ impl AgentMemory {
     /// now permit it - looked up through the turn's views. Of a session
     /// that is gone, the one it had decides; one that cannot be looked up
     /// recalls nothing. A turn in no session recalls nothing.
-    pub async fn recalled(situation: &Situation<'_>, confidentiality: &dyn ConfidentialityPolicy) -> Vec<Memory> {
+    pub(crate) async fn recalled(situation: &Situation<'_>, confidentiality: &dyn ConfidentialityPolicy) -> Vec<Memory> {
         let context = situation.security_context();
         let Some(own) = Self::own_session(situation).await else { return Vec::new() };
         let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
@@ -115,7 +115,7 @@ impl AgentMemory {
 
     /// The digest of the memory as it is now: the state of knowledge a turn
     /// that recalls from it records.
-    pub fn digest(situation: &Situation) -> Option<Digest> {
+    pub(crate) fn digest(situation: &Situation) -> Option<Digest> {
         situation.agent_state().current().memory.digest()
     }
 
@@ -130,7 +130,7 @@ impl AgentMemory {
     /// of one agent - in other channels and sessions - remember at the same
     /// time, and would otherwise hand out the same number. Deliberately the
     /// one exception to "commit, don't write" (issue 19).
-    pub async fn remember(turn: &mut Turn<'_>, text: String) -> MemoryId {
+    pub(crate) async fn remember(turn: &mut Turn<'_>, text: String) -> MemoryId {
         let classification = turn.situation().label();
         let id = turn.situation().agent_state().reserve_memory_id();
         let origin = Self::origin(turn).await;
@@ -140,7 +140,7 @@ impl AgentMemory {
 
     /// The memory as it stands with the changes of the current turn in it
     /// (issue 156) - every entry, recallable here or not.
-    pub fn effective(turn: &Turn) -> Staged<Memories> {
+    pub(crate) fn effective(turn: &Turn) -> Staged<Memories> {
         let staged = turn.staged_memory().iter().map(|(change, origin)| (change, origin.clone()));
         turn.situation().agent_state().current().memory.with_staged(staged)
     }
@@ -149,7 +149,7 @@ impl AgentMemory {
     /// the agent's to change here: remembered earlier in this turn, or one
     /// that may be recalled here - asked of the policy for this entry alone,
     /// as in [`recalled`](Self::recalled).
-    pub async fn find(turn: &Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> Option<Memory> {
+    pub(crate) async fn find(turn: &Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> Option<Memory> {
         let entry = Self::effective(turn).get(id)?.clone();
         let Some(stored) = turn.situation().agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
             return Some(entry);
@@ -164,7 +164,7 @@ impl AgentMemory {
     /// 302): classified as the turn has seen so far and written in its
     /// channel, as an entry it remembers is, and recalled from then on where
     /// one remembered here would be. Returns whether there was one.
-    pub async fn update(turn: &mut Turn<'_>, id: MemoryId, text: String, confidentiality: &dyn ConfidentialityPolicy) -> bool {
+    pub(crate) async fn update(turn: &mut Turn<'_>, id: MemoryId, text: String, confidentiality: &dyn ConfidentialityPolicy) -> bool {
         if Self::find(turn, id, confidentiality).await.is_none() {
             return false;
         }
@@ -177,7 +177,7 @@ impl AgentMemory {
     /// Forgets entry `id` - one the turn may change (see
     /// [`find`](Self::find)) - when the turn completes. Returns whether
     /// there was one.
-    pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> bool {
+    pub(crate) async fn forget(turn: &mut Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> bool {
         if Self::find(turn, id, confidentiality).await.is_none() {
             return false;
         }
@@ -196,7 +196,7 @@ impl AgentMemory {
     /// # Errors
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
-    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
+    pub(crate) async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
         let here = turn.situation().classification();
         if Self::find(turn, id, confidentiality).await.is_none() {
             return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));

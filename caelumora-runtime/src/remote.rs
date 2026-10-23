@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
+use std::error;
 
 /// The full chain of the causes of `error`, a failed request, without the
 /// URL that `reqwest` writes into its messages.
@@ -23,9 +24,9 @@ pub fn describe_request_error(error: Error) -> String {
 /// The full chain of an error's causes as one line, e.g. "error sending
 /// request: connection refused", for errors whose own `Display` stops at
 /// the outermost layer.
-pub fn describe_chain(error: &(dyn std::error::Error + 'static)) -> String {
+pub fn describe_chain(error: &(dyn error::Error + 'static)) -> String {
     let mut parts: Vec<String> = Vec::new();
-    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    let mut current: Option<&(dyn error::Error + 'static)> = Some(error);
     while let Some(e) = current {
         let text = e.to_string();
         if !parts.iter().any(|p| p.contains(&text)) {
@@ -125,6 +126,7 @@ impl<T> Debug for ExpiringCache<T> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::time;
 
     const TTL: Duration = Duration::from_secs(60);
 
@@ -141,9 +143,9 @@ mod tests {
         let reads = AtomicUsize::new(0);
         assert_eq!(cache.current(), None, "nothing read yet");
         assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 1);
-        tokio::time::advance(TTL - Duration::from_secs(1)).await;
+        time::advance(TTL - Duration::from_secs(1)).await;
         assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 1, "kept within its time-to-live");
-        tokio::time::advance(Duration::from_secs(1)).await;
+        time::advance(Duration::from_secs(1)).await;
         assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 2, "read again after it");
         assert_eq!(cache.current().as_deref(), Some(&2));
     }
@@ -168,7 +170,7 @@ mod tests {
         assert_eq!(cache.get(|| read(&reads, true)).await.unwrap_err(), "read 1 failed");
         assert_eq!(cache.current(), None);
         assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 2, "read again at the next ask");
-        tokio::time::advance(TTL).await;
+        time::advance(TTL).await;
         assert_eq!(cache.get(|| read(&reads, true)).await.unwrap_err(), "read 3 failed");
         assert_eq!(cache.current().as_deref(), Some(&2), "what was read before stays");
         assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 4, "and is still outdated");
@@ -180,7 +182,7 @@ mod tests {
         let reads = Arc::new(AtomicUsize::new(0));
         let slow = |cache: Arc<ExpiringCache<usize>>, reads: Arc<AtomicUsize>| async move {
             cache.get(|| async {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                time::sleep(Duration::from_secs(1)).await;
                 read(&reads, false).await
             }).await
         };
@@ -194,7 +196,7 @@ mod tests {
         let cache = ExpiringCache::new(Duration::MAX);
         let reads = AtomicUsize::new(0);
         cache.get(|| read(&reads, false)).await.unwrap();
-        tokio::time::advance(Duration::from_secs(3600 * 24 * 365)).await;
+        time::advance(Duration::from_secs(3600 * 24 * 365)).await;
         assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 1);
     }
 }

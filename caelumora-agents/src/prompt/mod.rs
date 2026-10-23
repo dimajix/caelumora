@@ -254,7 +254,6 @@ mod tests {
     use crate::testing::{test_registry, TestAgents};
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
-    use async_trait::async_trait;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::config::AppConfig;
@@ -273,6 +272,8 @@ mod tests {
     use futures::stream::BoxStream;
     use futures::StreamExt;
     use std::sync::Arc;
+    use futures::stream;
+    use std::fs;
 
     /// A model whose profile names the variant `gemma4`, never asked.
     #[derive(Debug)]
@@ -281,7 +282,7 @@ mod tests {
     #[async_trait]
     impl LLMClient for Gemma {
         async fn chat_completion(&self, _: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
-            futures::stream::empty().boxed()
+            stream::empty().boxed()
         }
     }
 
@@ -298,7 +299,7 @@ mod tests {
     #[tokio::test]
     async fn the_texts_are_given_in_the_variant_of_the_model() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator_tool:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
+        fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator_tool:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
         let store = Persistence::in_memory();
         let mut registry = test_registry(store.component_store().unwrap());
         registry.register(ComponentKind::new("gemma").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), |_, _| {

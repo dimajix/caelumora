@@ -38,6 +38,8 @@ use uuid::Uuid;
 use anyhow::Error;
 use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use tracing::Span;
+use axum::extract;
+use tracing::field;
 
 tokio::task_local! {
     static REQUEST_ID: Uuid;
@@ -51,7 +53,7 @@ pub const REQUEST_ID_HEADER: &str = "x-request-id";
 /// `x-request-id` header.
 pub async fn request_id(request: Request, next: Next) -> Response {
     let id = Uuid::new_v4();
-    Span::current().record("request_id", tracing::field::display(id));
+    Span::current().record("request_id", field::display(id));
     let mut response = REQUEST_ID.scope(id, next.run(request)).await;
     if let Ok(value) = HeaderValue::from_str(&id.to_string()) {
         response.headers_mut().insert(REQUEST_ID_HEADER, value);
@@ -436,13 +438,13 @@ impl<T: Serialize> IntoResponse for Json<T> {
 /// `axum::extract::Path`, but rejecting malformed path parameters (e.g. an
 /// invalid UUID) with a problem details document.
 #[derive(FromRequestParts)]
-#[from_request(via(axum::extract::Path), rejection(ApiError))]
+#[from_request(via(extract::Path), rejection(ApiError))]
 pub struct Path<T>(pub T);
 
 /// `axum::extract::Query`, but rejecting a malformed query string (e.g.
 /// `?limit=abc`) with a problem details document (issue 384).
 #[derive(FromRequestParts)]
-#[from_request(via(axum::extract::Query), rejection(ApiError))]
+#[from_request(via(extract::Query), rejection(ApiError))]
 pub struct Query<T>(pub T);
 
 impl From<JsonRejection> for ApiError {
@@ -483,12 +485,14 @@ mod tests {
     use axum::http::Request;
     use serde_json::Value;
     use std::fmt;
+    use axum::body;
+    use std::error;
 
     async fn body_of(error: ApiError) -> (StatusCode, String, Value) {
         let response = REQUEST_ID.scope(Uuid::nil(), async { error.into_response() }).await;
         let content_type = response.headers()[CONTENT_TYPE].to_str().unwrap().to_string();
         let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let bytes = body::to_bytes(response.into_body(), 4096).await.unwrap();
         (status, content_type, serde_json::from_slice(&bytes).unwrap())
     }
 
@@ -513,7 +517,7 @@ mod tests {
         use tower::ServiceExt;
 
         #[derive(Deserialize)]
-        struct Payload { #[allow(dead_code)] name: String }
+        struct Payload { #[expect(dead_code, reason = "only its deserializing is tested")] name: String }
         async fn handler(Path(_id): Path<Uuid>, Json(_p): Json<Payload>) -> StatusCode { StatusCode::OK }
         let app = Router::new().route("/items/{id}", post(handler));
 
@@ -528,7 +532,7 @@ mod tests {
 
         let response = app.oneshot(request(&format!("/items/{}", Uuid::nil()), r#"{"nome":"x"}"#)).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let bytes = body::to_bytes(response.into_body(), 4096).await.unwrap();
         let json: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["code"], "invalid_request_body");
         assert!(json["detail"].as_str().unwrap().contains("name"), "the detail says what is wrong: {}", json["detail"]);
@@ -577,8 +581,8 @@ mod tests {
                 f.write_str("not yours")
             }
         }
-        impl std::error::Error for PluginError {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        impl error::Error for PluginError {
+            fn source(&self) -> Option<&(dyn error::Error + 'static)> {
                 Some(&self.0)
             }
         }

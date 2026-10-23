@@ -20,7 +20,7 @@ use crate::routes::views;
 
 /// The teams the user owns or belongs to - or, with `?deleted=true`, those
 /// they deleted, the trash.
-pub async fn list_groups(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+pub(super) async fn list_groups(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state, &user);
     if options.deleted {
         let deleted = views.deleted_groups().await?;
@@ -35,7 +35,7 @@ pub async fn list_groups(State(state): State<Arc<AppState>>, Query(options): Que
 }
 
 /// Makes a team of the user's, in their scope or the global one.
-pub async fn create_group(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(request): Json<CreateGroupRequest>) -> Result<(StatusCode, Json<GroupResponse>), ApiError> {
+pub(super) async fn create_group(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(request): Json<CreateGroupRequest>) -> Result<(StatusCode, Json<GroupResponse>), ApiError> {
     let scope = request.scope.of_user(user.id)
         .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A group of a session's scope is its participants, made with it"))?;
     let made = state.runtime_manager.group_manager()
@@ -44,11 +44,11 @@ pub async fn create_group(State(state): State<Arc<AppState>>, user: Authenticate
 }
 
 /// Group `id`, with its members.
-pub async fn get_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<GroupResponse>, ApiError> {
+pub(super) async fn get_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<GroupResponse>, ApiError> {
     Ok(Json(readable(&state, &user, GroupId(id)).await?))
 }
 
-pub async fn rename_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<RenameGroupRequest>) -> Result<Json<GroupResponse>, ApiError> {
+pub(super) async fn rename_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<RenameGroupRequest>) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
     state.runtime_manager.group_manager().rename(&user.security_context(), id, &request.name).await?;
     Ok(Json(readable(&state, &user, id).await?))
@@ -56,7 +56,7 @@ pub async fn rename_group(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 
 /// Makes the users the body names the members of the team, replacing who
 /// was in it.
-pub async fn set_members(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(members): Json<Vec<Uuid>>) -> Result<Json<GroupResponse>, ApiError> {
+pub(super) async fn set_members(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(members): Json<Vec<Uuid>>) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
     let members = members.into_iter().map(UserId).collect();
     state.runtime_manager.group_manager().set_members(&user.security_context(), id, members).await?;
@@ -65,7 +65,7 @@ pub async fn set_members(State(state): State<Arc<AppState>>, Path(id): Path<Uuid
 
 /// Deletes the team: kept until it is purged; who it was shared with
 /// through it reads it no longer.
-pub async fn delete_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn delete_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let id = GroupId(id);
     let deleted = state.runtime_manager.group_manager().delete(&user.security_context(), id).await?;
     match deleted {
@@ -75,7 +75,7 @@ pub async fn delete_group(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 }
 
 /// Restores the deleted team; `409` if another took its name meanwhile.
-pub async fn restore_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<GroupResponse>, ApiError> {
+pub(super) async fn restore_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
     state.runtime_manager.group_manager().restore(&user.security_context(), id).await?;
     Ok(Json(readable(&state, &user, id).await?))
@@ -83,7 +83,7 @@ pub async fn restore_group(State(state): State<Arc<AppState>>, Path(id): Path<Uu
 
 /// Removes the deleted team for good - as the policy allows, by default the
 /// system's alone.
-pub async fn purge_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn purge_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let id = GroupId(id);
     let purged = state.runtime_manager.group_manager().purge(&user.security_context(), id).await?;
     match purged {

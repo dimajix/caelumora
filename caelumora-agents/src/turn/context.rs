@@ -123,8 +123,8 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::context::{KnowledgeRef, ModelProfile, KnowledgeSource};
     use caelumora_model::message::MessageId;
-    use caelumora_model::tool::{Tool, ToolSet};
     use caelumora_model::work::Work;
+    use futures::executor;
 
     #[tokio::test]
     async fn the_model_is_given_reasoning_as_its_rule_says_and_that_is_recorded() {
@@ -265,7 +265,7 @@ mod tests {
             let (_, offered) = turn.full_context().unwrap();
             assert_eq!(offered, tools, "the model is offered what the turn began with");
             let sent: Vec<Message> = messages.iter().map(|message| turn.push_message((*message).clone())).collect();
-            futures::executor::block_on(turn.commit(false, &Discard));
+            executor::block_on(turn.commit(false, &Discard));
             sent
         };
         let firsts = take_turn(&mut state, vec![tool("echo", false), tool("notes", true)], &[&first, &second]);

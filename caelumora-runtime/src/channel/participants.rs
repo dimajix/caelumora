@@ -18,6 +18,7 @@ use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, Channe
 use caelumora_model::channel::Channel;
 use caelumora_model::store::Stored;
 use caelumora_model::command::Command;
+use tokio::time;
 
 /// How someone comes into a channel (`ChannelLoop::take_in`): the one way
 /// in, asked for in three ways.
@@ -274,7 +275,7 @@ impl ChannelLoop {
         // Closed by `run` once it stops the actor; not if the channel does
         // not run, and then nothing is tracked to wait for.
         task.close();
-        if tokio::time::timeout(LEAVE_GRACE, task.wait()).await.is_err() {
+        if time::timeout(LEAVE_GRACE, task.wait()).await.is_err() {
             warn!("{} is added to channel {} again, but its old actor has not ended", participant, self.id);
             return Err(ChannelError::StillLeaving { participant, channel: self.id });
         }
@@ -415,6 +416,7 @@ mod tests {
     use anyhow::Error;
     use caelumora_model::user::UserId;
     use crate::error::is_forbidden;
+    use tokio::time;
     #[tokio::test]
     async fn an_agent_is_found_by_its_name_or_its_handle_however_it_is_written() {
         let (channel, _, _) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who", "Zoë"]).await;
@@ -454,7 +456,7 @@ mod tests {
         let ended = Arc::new(AtomicBool::new(false));
         let ending = Arc::clone(&ended);
         old.spawn(async move {
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            time::sleep(Duration::from_millis(200)).await;
             ending.store(true, Ordering::SeqCst);
         });
         channel.leaving.lock().unwrap().insert(participant, old);
@@ -533,11 +535,11 @@ mod tests {
         // alone and in the system's name, right before it joined - once its
         // actor runs (issue 417); the founder shared nothing (issue 420).
         let shared = |e: &HistoryEntry| matches!(e, HistoryEntry::HistoryShared { .. } | HistoryEntry::ParticipantJoined { .. });
-        let recorded: Vec<_> = tokio::time::timeout(Duration::from_secs(5), async {
+        let recorded: Vec<_> = time::timeout(Duration::from_secs(5), async {
             loop {
                 let recorded: Vec<_> = channel.history_entries().await.into_iter().filter(shared).collect();
                 if recorded.len() == 3 { break recorded }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("recorded");
         let from = channel.memberships(other).await.first().map(|range| range.start).expect("a member");
@@ -584,16 +586,16 @@ mod tests {
         writer.send_message("before".to_string(), None).await.unwrap();
         history_of(&channel, 1).await;
         async fn recorded(channel: &ChannelLoop, wanted: fn(&HistoryEntry) -> bool) -> Vec<HistoryEntry> {
-            tokio::time::timeout(Duration::from_secs(5), async {
+            time::timeout(Duration::from_secs(5), async {
                 loop {
                     let entries = channel.history_entries().await;
                     if entries.last().is_some_and(wanted) { break entries }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    time::sleep(Duration::from_millis(10)).await;
                 }
             }).await.expect("recorded")
         }
         async fn shown(watch: &mut ChannelWatch, wanted: fn(&ActorEvent) -> bool) -> Envelope {
-            tokio::time::timeout(Duration::from_secs(5), async {
+            time::timeout(Duration::from_secs(5), async {
                 loop {
                     if let Ok(Shown::Envelope(envelope)) = watch.next().await {
                         if wanted(&envelope.event) { break envelope }
@@ -633,7 +635,7 @@ mod tests {
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let owner = ctx.initiator_id.as_user_id().unwrap();
         async fn ended(watch: &mut ChannelWatch, within: Duration) -> bool {
-            tokio::time::timeout(within, async { while !matches!(watch.next().await, Ok(Shown::Ended)) {} }).await.is_ok()
+            time::timeout(within, async { while !matches!(watch.next().await, Ok(Shown::Ended)) {} }).await.is_ok()
         }
 
         // Leaving ends it.

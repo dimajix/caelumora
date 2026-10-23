@@ -66,9 +66,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn, Instrument};
 use uuid::Uuid;
 use caelumora_model::digest;
+use futures::stream;
 
 #[derive(Debug)]
-pub struct ExternalAgentActor {
+pub(crate) struct ExternalAgentActor {
     /// What it is in the channel, as every agent is (issue 355): who it is,
     /// in whose name it acts, its state there, how it hears, its commands -
     /// what they stage is in its transcript, given to the remote agent with
@@ -118,7 +119,7 @@ enum Ending {
 impl ExternalAgentActor {
     /// The facets it asks its components for (issue 337) - its commands
     /// through its body.
-    pub const COMPONENT_FACETS: &[TypeKey] = &[
+    pub(crate) const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ExternalAgent>(),
         TypeKey::of::<dyn ModelProfileProvider>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
@@ -136,7 +137,7 @@ impl ExternalAgentActor {
     /// If its personality provides no `ExternalAgent` - or more than one -
     /// or its answers, as the component classifies them, may not be
     /// published in the channel; whatever its state store reports.
-    pub async fn new(agent_controller: Arc<AgentController>, personality: Arc<PersonalityController>, actor_runtime: ActorRuntime) -> Result<Self> {
+    pub(crate) async fn new(agent_controller: Arc<AgentController>, personality: Arc<PersonalityController>, actor_runtime: ActorRuntime) -> Result<Self> {
         let channel = Arc::clone(&actor_runtime.channel_controller().load());
         // Its context provider is, unless it configures one, not a turn's.
         let defaults = ComponentConfig {
@@ -275,6 +276,7 @@ impl ExternalAgentActor {
 
     /// Gives the remote agent what it has not heard yet and collects what
     /// comes back, until the task ends, asks back, or `token` is cancelled.
+    #[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
     async fn exchange(
         &self,
         state: &mut AgentChannelState,
@@ -455,7 +457,7 @@ impl ExternalAgentActor {
                     debug!("External agent {} follows its open task again", self.id());
                     let tag = task.clone();
                     let tagged = stream.map(move |event| (tag.clone(), Some(event)))
-                        .chain(futures::stream::once(async move { (task, None) }));
+                        .chain(stream::once(async move { (task, None) }));
                     followed.push(Box::pin(tagged));
                 }
                 Err(e) => warn!("External agent {} cannot follow its open task: {:#}", self.id(), e),
@@ -931,7 +933,6 @@ mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
     use caelumora_model::channel::ChannelId;
-    use caelumora_model::confidentiality::Classification;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::transcript::TranscriptStore;
     use caelumora_model::store::StateStore;

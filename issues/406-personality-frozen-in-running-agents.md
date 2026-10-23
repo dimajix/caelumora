@@ -51,9 +51,10 @@ personalities will run into them.
 
 ## Why it matters
 
-*   The limiting roles are a security boundary ([CONFIDENTIALITY.md](../docs/CONFIDENTIALITY.md#personalities-limit-their-agents)):
-    narrowing them has to take effect, and two parts of the runtime must not disagree on what an
-    agent is cleared for.
+*   The limiting roles are a security boundary
+    ([CONFIDENTIALITY.md](../docs/CONFIDENTIALITY.md#personalities-limit-their-agents)): narrowing
+    them has to take effect, and two parts of the runtime must not disagree on what an agent is
+    cleared for.
 *   Reading the personality from the store for every use is what issue
     [182](182-entity-reads-not-cached.md) wants to get rid of; copying it once is what makes it
     stale. Neither is the right place for it.

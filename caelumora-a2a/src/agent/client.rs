@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, trace};
+use std::error;
 
 /// The responses of a streamed request, as they come; it ends after an
 /// error.
@@ -218,7 +219,7 @@ fn responses_of<S, D, E>(bytes: S, endpoint: String) -> impl Stream<Item = Exter
 where
     S: Stream<Item = Result<D, E>> + Send + 'static,
     D: Buf + Send + 'static,
-    E: std::error::Error + Send + Sync + 'static,
+    E: error::Error + Send + Sync + 'static,
 {
     async_stream::stream! {
         let mut sse = pin!(SseStream::from_bytes_stream(bytes));

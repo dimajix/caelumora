@@ -103,6 +103,27 @@ opt-level = 3
 lto = true
 codegen-units = 1
 
+[workspace.lints.rust]
+# Nothing `pub` that its crate's root cannot reach: `pub(crate)` by default (CODING-GUIDELINES.md,
+# issue 452).
+unreachable_pub = "warn"
+
 [workspace.lints.clippy]
 # Cloning an Arc or Rc says so: Arc::clone(&value) (CODING-GUIDELINES.md, issue 229).
 clone_on_ref_ptr = "warn"
+# Rules of CODING-GUIDELINES.md a lint checks, and no debugging output or unfinished code
+# (issue 452); clippy.toml allows unwrapping and printing in tests.
+unwrap_used = "warn"
+expect_used = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "warn"
+todo = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+# No function longer than 100 lines; those that were longer before the lint carry an `expect`,
+# which fires once they are shorter (CODING-GUIDELINES.md, issue 452).
+too_many_lines = "warn"
+# Imported by name, or a function called by its module; never a longer path (CODING-GUIDELINES.md,
+# issue 452). clippy.toml allows two segments.
+absolute_paths = "warn"
