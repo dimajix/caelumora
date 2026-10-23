@@ -713,7 +713,6 @@ mod tests {
     use caelumora_model::store::suite;
     use caelumora_model::store::{EntityStore, EntityStoreFactory, Persistence, Stored};
     use caelumora_model::store::query::Query;
-    use caelumora_model::removal::Deletable;
     use caelumora_model::security::{AccessPolicy, SecurityContext};
     use tempfile::tempdir;
     use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
@@ -750,7 +749,7 @@ mod tests {
 
     /// The store of the kind `T` in the files under `dir`, which permits
     /// everything.
-    fn of_kind<T: Deletable>(dir: &Path) -> Arc<dyn EntityStore<T>> {
+    fn of_kind<T: Stored>(dir: &Path) -> Arc<dyn EntityStore<T>> {
         checked(dir, Arc::new(AllowAllPolicy::new())).entity_store().unwrap()
     }
 

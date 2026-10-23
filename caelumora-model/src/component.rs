@@ -2,7 +2,7 @@
 //! template, a channel or the configuration, and the bundles of them that
 //! several include by `kind: "ref"` (issue 270).
 
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::scope::{ScopeField, Scoped};
 use crate::security::{Secured, SecurityAttributes};
 use crate::store::{EntityKind, NoEntity, Stored};
@@ -96,14 +96,12 @@ impl Stored for ComponentBundle {
         self.deleted.as_ref()
     }
 
-    fn unique_name(&self) -> Option<ScopedName> {
-        Some(self.scoped_name())
-    }
-}
-
-impl Deletable for ComponentBundle {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
     }
 }
 

@@ -19,7 +19,7 @@
 
 use crate::actor::ActorId;
 use crate::channel::{Channel, Participant};
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, Session, SessionId};
@@ -205,6 +205,10 @@ impl Stored for Group {
         self.deleted.as_ref()
     }
 
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+
     /// The participants of a session or channel lie in its scope, with its
     /// id, and hold users and agents; a team belongs to a user, lies in the
     /// global scope or its owner's, and holds users alone (issue 255: an
@@ -226,12 +230,6 @@ impl Stored for Group {
             Scope::UserScope { .. } => Err("a team lies in no other user's scope than its owner's".to_string()),
             Scope::GroupScope { .. } => Err("a team lies in the global scope or its owner's".to_string()),
         }
-    }
-}
-
-impl Deletable for Group {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
     }
 }
 

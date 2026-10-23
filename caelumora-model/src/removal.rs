@@ -5,7 +5,6 @@
 //! participant that leaves a channel is marked the same way.
 
 use crate::actor::ActorId;
-use crate::store::Stored;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -24,12 +23,4 @@ impl Removal {
     pub fn now(by: ActorId) -> Self {
         Self { by, at: Utc::now() }
     }
-}
-
-/// A stored kind that deleting marks rather than removes (issue 164) - every
-/// kind there is: what holds content, an identity, or a definition that is
-/// managed.
-pub trait Deletable: Stored {
-    /// Marks it deleted, or with `None` takes the mark away.
-    fn set_deleted(&mut self, deleted: Option<Removal>);
 }

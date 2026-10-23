@@ -1,6 +1,6 @@
 # 456 — `Stored` and `Deletable` are two traits, though every stored kind is deletable
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Persistence
@@ -52,3 +52,9 @@ What is left is a distinction without a case:
 - **2026-10-23** — Opened from a finding of step 1 of
   [455](455-components-configuration-kept-as-entities.md), with which the last stored kind that
   was removed for good becomes one that is marked.
+- **2026-10-23** — Done as the first consideration says: `deleted` and `set_deleted` are required
+  methods of `Stored`, without a default, `Deletable` is gone, and with it the second `impl` of
+  every kind; the stores, the factory, `Unowned`, `LiveDocument` and `Writing` are bounded by
+  `Stored`. The two test kinds that took the name of the groups (`Impostor`, `Groupie`) read and
+  set the mark of the note they wrap, where they had ignored it. `docs/STORAGE.md` says that every
+  kind that is `Stored` implements both.

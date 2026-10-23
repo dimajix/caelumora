@@ -2,7 +2,6 @@ use arc_swap::{ArcSwap, Guard};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::security::{Grant, SecurityContext, Subject};
-use caelumora_model::removal::Deletable;
 use caelumora_model::store::{Address, EntityStore, StoreResult, Stored, Updatable};
 use chrono::Utc;
 use std::fmt::{self, Debug};
@@ -16,7 +15,7 @@ use tracing::{info, warn};
 /// announced, under a lock, so that no change overwrites another. What a
 /// controller does besides - a group that follows the participants, an
 /// event of its own - it does between the steps of a `Writing`.
-pub(super) struct LiveDocument<T: Updatable + Deletable> {
+pub(super) struct LiveDocument<T: Updatable> {
     address: Address<T>,
     current: ArcSwap<T>,
     store: Arc<dyn EntityStore<T>>,
@@ -24,13 +23,13 @@ pub(super) struct LiveDocument<T: Updatable + Deletable> {
     write_lock: Mutex<()>,
 }
 
-impl<T: Updatable + Deletable + Debug> Debug for LiveDocument<T> {
+impl<T: Updatable + Debug> Debug for LiveDocument<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LiveDocument").field("current", &self.current).finish_non_exhaustive()
     }
 }
 
-impl<T: Updatable + Deletable> LiveDocument<T>
+impl<T: Updatable> LiveDocument<T>
 where
     Address<T>: PartialEq,
 {
@@ -139,7 +138,7 @@ pub(super) fn log_changed<T: Stored>(ctx: &SecurityContext, document: &T) {
 /// A change of a `LiveDocument` under way, holding its lock: the document
 /// to change (`current`, or `reached` as stored), stored and taken over
 /// (`store`, `apply`), then announced (`announce`, `announce_update`).
-pub(super) struct Writing<'a, T: Updatable + Deletable> {
+pub(super) struct Writing<'a, T: Updatable> {
     document: &'a LiveDocument<T>,
     /// How the document was classified as the change began: announced to
     /// who reached it so, too, so that who no longer does learns so (issue
@@ -148,7 +147,7 @@ pub(super) struct Writing<'a, T: Updatable + Deletable> {
     _lock: MutexGuard<'a, ()>,
 }
 
-impl<T: Updatable + Deletable> Writing<'_, T>
+impl<T: Updatable> Writing<'_, T>
 where
     Address<T>: PartialEq,
 {

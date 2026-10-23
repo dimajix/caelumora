@@ -14,9 +14,8 @@ use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
 use crate::backend::Backends;
-use caelumora_model::removal::Deletable;
 use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, PersistenceBackend, Persistence, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, PersistenceBackend, Persistence, StoreResult, Stored};
 use crate::plugin::Plugin;
 use crate::seed::SeedSection;
 use serde::de::DeserializeOwned;
@@ -242,7 +241,7 @@ impl RuntimeBuilder {
     /// # Errors
     /// `StoreError::Conflict` if another kind has its name; if it cannot be
     /// opened.
-    pub fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
+    pub fn entity_store<T: Stored>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
         self.persistence.entity_store()
     }
 

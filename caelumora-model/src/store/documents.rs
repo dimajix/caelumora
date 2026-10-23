@@ -8,7 +8,7 @@
 //! storage is not generic, so that a backend is a trait object and opens the
 //! storage of a kind it was never told the type of - a plugin's too.
 
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::security::{ActionType, Admission, SecurityAttributes, SecurityContext};
 use crate::store::access::Access;
 use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
@@ -228,7 +228,7 @@ impl<T: Stored> CheckedStore<T> {
 }
 
 #[async_trait]
-impl<T: Deletable> EntityStore<T> for CheckedStore<T> {
+impl<T: Stored> EntityStore<T> for CheckedStore<T> {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
         CheckedStore::create(self, ctx, value).await
     }

@@ -34,7 +34,7 @@ use crate::digest;
 use crate::transcript::TranscriptEntry;
 use crate::history::{Audience, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
 use crate::message::MessageId;
 use crate::workspace::{Workspace, WorkspaceId};
@@ -291,9 +291,7 @@ impl Stored for Folder {
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }
-}
 
-impl Deletable for Folder {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
     }
@@ -990,7 +988,7 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
 }
 
 /// `value` marked deleted, as only deleting may.
-fn marked<T: Deletable>(mut value: T) -> T {
+fn marked<T: Stored>(mut value: T) -> T {
     value.set_deleted(Some(Removal::now(ActorId::System)));
     value
 }

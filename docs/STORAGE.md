@@ -281,9 +281,10 @@ at the caller.
 ### Deleted entities
 
 What a user deletes is kept, marked, and removed for good only by a purge - an administrator's act
-or a retention policy's. The kinds that deleting marks implement `Deletable` and carry who deleted
-them and when - every kind: sessions, channels, agents, users, user profiles, personalities,
-session templates, component bundles, workspaces, groups and the kinds of the plugins.
+or a retention policy's. Every kind is marked so - sessions, channels, agents, users, user
+profiles, personalities, session templates, component bundles, workspaces, groups and the kinds of
+the plugins -, and carries who deleted it and when: `Stored::deleted` reads the mark,
+`Stored::set_deleted` sets it, and a kind that is `Stored` implements both.
 
 A marked document is not there for the ordinary operations, before anything is asked: not read,
 listed, found by name, changed or deleted again - also not by the system, so that no caller has to

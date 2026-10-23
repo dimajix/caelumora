@@ -8,7 +8,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::define_id;
 use caelumora_model::digest::{Digest, Encoder};
-use caelumora_model::removal::{Deletable, Removal};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField, Scoped};
 use caelumora_model::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
 use caelumora_model::store::{EntityKind, NoEntity, Stored};
@@ -114,6 +114,10 @@ impl Stored for Skill {
         self.deleted.as_ref()
     }
 
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+
     /// A skill belongs to a user or to the system. A user's lies in the
     /// global scope, a session's or their own; the system's - the seed's -
     /// in the global scope alone, where everybody finds it.
@@ -131,12 +135,6 @@ impl Stored for Skill {
 
     fn classification(&self) -> Option<&Classification> {
         Some(&self.classification)
-    }
-}
-
-impl Deletable for Skill {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
     }
 }
 

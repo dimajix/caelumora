@@ -3,7 +3,7 @@ use crate::chain::Position;
 use crate::component::ComponentConfig;
 use crate::confidentiality::Visibility;
 use crate::message::Message;
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::role::RoleId;
 use crate::scope::{ScopeField, Scoped};
 use crate::security::{Secured, SecurityAttributes};
@@ -263,14 +263,12 @@ impl Stored for Personality {
         self.deleted.as_ref()
     }
 
-    fn unique_name(&self) -> Option<ScopedName> {
-        Some(self.scoped_name())
-    }
-}
-
-impl Deletable for Personality {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
     }
 }
 
