@@ -65,7 +65,7 @@ macro_rules! lifecycle {
 
         store.$create(&ctx, &value).await.expect(concat!($entity, ": create"));
         let conflict = store.$create(&ctx, &value).await;
-        assert!(matches!(conflict, Err(StoreError::Conflict(_))), concat!($entity, ": creating twice is a conflict, got {:?}"), conflict);
+        assert!(matches!(conflict, Err(StoreError::Conflict(_))), concat!($entity, ": creating twice is a conflict - its id before its name -, got {:?}"), conflict);
 
         value.$($field).+ = $new;
         store.$update(&ctx, &value).await.expect(concat!($entity, ": update"));
@@ -84,6 +84,8 @@ macro_rules! lifecycle {
         let gone = store.$update(&ctx, &value).await;
         assert!(matches!(gone, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": update after delete is NotFound, got {:?}"), gone);
         assert!(store.$list(&ctx, &Query::all()).await.map(|page| page.items).expect(concat!($entity, ": list")).is_empty(), concat!($entity, ": list is empty after delete"));
+        let taken = store.$create(&ctx, &value).await;
+        assert!(matches!(taken, Err(StoreError::Conflict(_))), concat!($entity, ": its id stays taken once it is deleted, got {:?}"), taken);
     }};
 }
 

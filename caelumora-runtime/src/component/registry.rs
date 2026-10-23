@@ -552,10 +552,13 @@ mod tests {
     use super::*;
     use crate::component::testing::*;
     use crate::component::ComponentContainer;
-    use caelumora_model::component::{ComponentBundle, ComponentFailPolicy};
+    use caelumora_model::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
     use caelumora_model::session::SessionId;
     use caelumora_model::user::UserId;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::scope::ScopeField;
+    use caelumora_model::store::query::{Page, Query};
+    use caelumora_model::store::{Persistence, StoreError, StoreResult};
+    use async_trait::async_trait;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -668,6 +671,62 @@ mod tests {
             assert!(matches!(causes(&error)[..], [ComponentError::Build { .. }, ComponentError::Bundle { .. }]), "{error}");
             assert!(error.is_unavailable(), "through the component it was building");
             assert!(error.to_string().contains("'does-not-exist'"), "names what it could not read: {error}");
+        }
+
+        /// A store of bundles that fails whatever it is asked.
+        #[derive(Debug)]
+        struct Failing;
+
+        impl Failing {
+            fn failed<T>() -> StoreResult<T> {
+                Err(StoreError::Backend("unreachable".to_string()))
+            }
+        }
+
+        #[async_trait]
+        impl EntityStore<ComponentBundle> for Failing {
+            async fn create(&self, _: &SecurityContext, _: &ComponentBundle) -> StoreResult<()> {
+                Self::failed()
+            }
+            async fn get(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<ComponentBundle> {
+                Self::failed()
+            }
+            async fn update(&self, _: &SecurityContext, _: &ComponentBundle) -> StoreResult<()> {
+                Self::failed()
+            }
+            async fn delete(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<bool> {
+                Self::failed()
+            }
+            async fn list(&self, _: &SecurityContext, _: &Query<ScopeField>) -> StoreResult<Page<ComponentBundle>> {
+                Self::failed()
+            }
+            async fn restore(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<ComponentBundle> {
+                Self::failed()
+            }
+            async fn purge(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<bool> {
+                Self::failed()
+            }
+            async fn get_deleted(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<ComponentBundle> {
+                Self::failed()
+            }
+            async fn list_deleted(&self, _: &SecurityContext, _: &Query<ScopeField>) -> StoreResult<Page<ComponentBundle>> {
+                Self::failed()
+            }
+            async fn find_by_name(&self, _: &SecurityContext, _: &ScopedName) -> StoreResult<ComponentBundle> {
+                Self::failed()
+            }
+        }
+
+        /// A store that fails while a `ref`'s bundle is looked for is told as
+        /// the store's failure, not as a bundle missing - no reason to leave
+        /// anyone out, as a bundle gone is (issue 457).
+        #[tokio::test]
+        async fn a_ref_whose_store_fails_is_told_as_the_stores_failure() {
+            let registry = named_registry(Arc::new(Failing));
+            let config = ComponentConfig { component_nodes: vec![reference("ref-a", "tools")] };
+            let error = ComponentContainer::from_config(&config, ASKED, &registry, &test_context()).await.unwrap_err();
+            assert!(matches!(causes(&error)[..], [ComponentError::Build { .. }, ComponentError::Bundle { cause: StoreError::Backend(_), .. }]), "{error}");
+            assert!(!error.is_unavailable(), "the store failed");
         }
 
         /// A `ref` names a bundle by its name in exactly its scope, the global

@@ -69,3 +69,15 @@ store reported as an error of the configuration, with a message that says there 
   next start seed it again; `ComponentError::Unavailable` is `Bundle` and carries every failure of
   the store while a `ref` is resolved, `is_unavailable` asking its cause. `docs/STORAGE.md` (demo
   data) and `docs/COMPONENTS.md` say so.
+- **2026-10-23** — Afterwards, from the review of step 2: a `Bundle` whose store failed carries
+  what the storage reported, paths included, and was shown to users whole, as every
+  `ComponentError` was - also before, inside `InvalidConfig`. The runtime judges a component error
+  now as it judges a store error (`component_message`), through the components that wrap it and a
+  session's `InvalidComponents`; the REST server answers such a session error as the server's
+  failure, withheld, and no longer as a bad request that shows it. A test asks `resolve` with a
+  store that fails; the seed's test purges a document and seeds it again; that
+  `DocumentStorage::insert` answers a taken id before a taken name is said - for Postgres, why - and
+  asked by the suite, also for an id that a deleted document holds. The doc comment of
+  `create_unless_taken` says that two seeding at once are kept apart only by a store whose `create`
+  is atomic; the JSON store's is not across processes, and stays so: the maintainer keeps it for
+  tests.

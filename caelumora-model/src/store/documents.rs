@@ -92,8 +92,10 @@ pub trait DocumentStorage: Debug + Send + Sync {
     async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>>;
 
     /// Writes `document`, which is new: `StoreError::Conflict` if one of
-    /// its id is there, deleted or not; `StoreError::NameTaken` if another
-    /// that is not deleted has its name.
+    /// its id is there, deleted or not - asked before its name, so that it
+    /// is a conflict where both are taken (`seed::create_unless_taken`,
+    /// issue 457) -; `StoreError::NameTaken` if another that is not deleted
+    /// has its name.
     async fn insert(&self, document: Document) -> StoreResult<()>;
 
     /// Writes `document` in place of the one of its id:
