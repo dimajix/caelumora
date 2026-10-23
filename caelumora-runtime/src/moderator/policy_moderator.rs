@@ -33,6 +33,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, warn};
+use std::slice;
 
 pub const POLICY_MODERATOR_KIND: &str = "policy_moderator";
 
@@ -254,7 +255,7 @@ impl Moderator for PolicyModerator {
             // itself; one of a turn with the turn's end. The kind of its
             // sender does not matter.
             ActorEvent::CompleteMessageGenerated(message) if message.turn_id.is_none() => {
-                let messages = std::slice::from_ref(message);
+                let messages = slice::from_ref(message);
                 let routing = self.ask(event, messages).await;
                 self.hear(messages);
                 routing
@@ -421,7 +422,6 @@ mod tests {
     use caelumora_model::work::TurnId;
     use crate::testing::StandIn;
     use chrono::Utc;
-    use serde_json::Value;
 
     fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
         let context = EventContext::new(Default::default(), Default::default(), sender_id, "test".to_string());

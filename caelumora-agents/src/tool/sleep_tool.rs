@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time;
 
 pub const SLEEP_TOOL_KIND: &str = "sleep_tool";
 
@@ -88,7 +89,7 @@ impl ToolProvider for SleepToolProvider {
         let seconds = seconds.unwrap_or(self.seconds);
         let wait = duration(seconds)
             .ok_or_else(|| ToolError::InvalidParameter(format!("'seconds' must be between 0 and {MAX_SECONDS}")))?;
-        tokio::time::sleep(wait).await;
+        time::sleep(wait).await;
         // Derived from the arguments alone: classified as the turn (issue 168).
         Ok(ToolOutput::classified(serde_json::json!({ "status": "slept", "seconds": seconds }), turn.situation().label()))
     }

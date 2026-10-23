@@ -17,12 +17,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt::{self, Debug, Display};
-use std::fs;
+use std::fs as std_fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, warn};
+use serde_json::Value;
+use std::io::ErrorKind;
+use tokio::fs::OpenOptions;
+use uuid::Uuid;
+use tokio::fs;
 
 mod chains;
 mod histories;
@@ -100,7 +105,7 @@ impl JsonFileStore {
 
     fn ensure_layout(&self) -> StoreResult<()> {
         for dir in [self.agent_states_dir(), self.agent_channel_states_dir(), self.channel_states_dir(), self.user_channel_states_dir(), self.under_way_dir()] {
-            fs::create_dir_all(dir).map_err(to_backend_error)?;
+            std_fs::create_dir_all(dir).map_err(to_backend_error)?;
         }
         Ok(())
     }
@@ -177,19 +182,19 @@ async fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> StoreResult<
         .to_os_string();
     tmp_name.push(format!(".{}.tmp", Uuid::new_v4()));
     let tmp_path = path.with_file_name(tmp_name);
-    if let Err(err) = tokio::fs::write(&tmp_path, payload).await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
+    if let Err(err) = fs::write(&tmp_path, payload).await {
+        let _ = fs::remove_file(&tmp_path).await;
         return Err(to_backend_error(err));
     }
-    if let Err(err) = tokio::fs::rename(&tmp_path, path).await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
+    if let Err(err) = fs::rename(&tmp_path, path).await {
+        let _ = fs::remove_file(&tmp_path).await;
         return Err(to_backend_error(err));
     }
     Ok(())
 }
 
 async fn read_json_opt<T: DeserializeOwned>(path: &Path) -> StoreResult<Option<T>> {
-    match tokio::fs::read_to_string(path).await {
+    match fs::read_to_string(path).await {
         Ok(content) => {
             let parsed = serde_json::from_str(&content).map_err(to_backend_error)?;
             Ok(Some(parsed))
@@ -205,7 +210,7 @@ async fn read_json_opt<T: DeserializeOwned>(path: &Path) -> StoreResult<Option<T
 /// # Errors
 /// If the file cannot be read.
 async fn read_body(path: &Path) -> StoreResult<Option<Value>> {
-    let text = match tokio::fs::read_to_string(path).await {
+    let text = match fs::read_to_string(path).await {
         Ok(text) => text,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(to_backend_error(err)),
@@ -225,7 +230,7 @@ async fn read_body(path: &Path) -> StoreResult<Option<Value>> {
 /// directory is read: a document is read when it is its turn.
 async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(String, PathBuf)>> {
     let mut documents = Vec::new();
-    let mut entries = tokio::fs::read_dir(dir).await.map_err(to_backend_error)?;
+    let mut entries = fs::read_dir(dir).await.map_err(to_backend_error)?;
     loop {
         let path = match entries.next_entry().await {
             Ok(Some(e)) => e.path(),
@@ -247,7 +252,7 @@ async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(String, PathBuf)>> {
 }
 
 async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
-    match tokio::fs::remove_file(path).await {
+    match fs::remove_file(path).await {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
         Err(err) => Err(to_backend_error(err)),
@@ -256,7 +261,7 @@ async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
 
 /// Creates the empty file `path` unless it exists.
 async fn create_if_missing(path: &Path) -> StoreResult<()> {
-    match tokio::fs::OpenOptions::new().write(true).create_new(true).open(path).await {
+    match OpenOptions::new().write(true).create_new(true).open(path).await {
         Ok(_) => Ok(()),
         Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(()),
         Err(err) => Err(to_backend_error(err)),
@@ -264,7 +269,7 @@ async fn create_if_missing(path: &Path) -> StoreResult<()> {
 }
 
 async fn delete_dir_if_exists(path: &Path) -> StoreResult<bool> {
-    match tokio::fs::remove_dir_all(path).await {
+    match fs::remove_dir_all(path).await {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
         Err(err) => Err(to_backend_error(err)),
@@ -278,7 +283,7 @@ fn journal_path(path: &Path) -> PathBuf {
 
 /// The size of the file at `path`, `None` if there is none.
 async fn size_of(path: &Path) -> StoreResult<Option<u64>> {
-    match tokio::fs::metadata(path).await {
+    match fs::metadata(path).await {
         Ok(metadata) => Ok(Some(metadata.len())),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(to_backend_error(err)),
@@ -293,7 +298,7 @@ async fn size_of(path: &Path) -> StoreResult<Option<u64>> {
 async fn load_state<T: Journaled>(path: &Path) -> StoreResult<Option<T>> {
     let Some(mut state) = read_json_opt::<T>(path).await? else { return Ok(None) };
     let journal = journal_path(path);
-    let text = match tokio::fs::read_to_string(&journal).await {
+    let text = match fs::read_to_string(&journal).await {
         Ok(text) => text,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Some(state)),
         Err(err) => return Err(to_backend_error(err)),
@@ -346,11 +351,6 @@ fn sanitize_file_component(value: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
         .collect()
 }
-
-use serde_json::Value;
-use std::io::ErrorKind;
-use tokio::fs::OpenOptions;
-use uuid::Uuid;
 
 /// Opens a kind in the directory of its name, `entities/<kind>`. The store of
 /// the states is the JSON file store itself.
@@ -405,7 +405,7 @@ impl JsonDocuments {
     /// If its directory cannot be made.
     fn new(root: &Path, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Self> {
         let dir = root.join("entities").join(kind.name());
-        fs::create_dir_all(&dir).map_err(to_backend_error)?;
+        std_fs::create_dir_all(&dir).map_err(to_backend_error)?;
         Ok(Self { kind, dir, document_of, names: Mutex::new(()) })
     }
 
@@ -499,7 +499,7 @@ impl DocumentStorage for JsonDocuments {
     async fn insert(&self, document: Document) -> StoreResult<()> {
         let path = self.path(&document.id);
         let _names = self.names_lock(&document).await;
-        if tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
+        if fs::try_exists(&path).await.map_err(to_backend_error)? {
             return Err(StoreError::Conflict(format!("{} {} already exists", self.kind, document.id)));
         }
         self.name_free(&document).await?;
@@ -547,7 +547,7 @@ impl JsonFileStore {
     /// Takes out of the index of the work under way every entry whose
     /// channel and agent, as written in its name, `matches`.
     async fn leave_under_way(&self, matches: impl Fn(&str, &str) -> bool) -> StoreResult<()> {
-        let mut entries = match tokio::fs::read_dir(self.under_way_dir()).await {
+        let mut entries = match fs::read_dir(self.under_way_dir()).await {
             Ok(entries) => entries,
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
             Err(err) => return Err(to_backend_error(err)),
@@ -568,7 +568,7 @@ impl JsonFileStore {
     /// time; nothing is kept between puts.
     async fn store_state<T: Journaled>(&self, path: &Path, state: &mut T) -> StoreResult<()> {
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(to_backend_error)?;
+            fs::create_dir_all(parent).await.map_err(to_backend_error)?;
         }
         let journal = journal_path(path);
         let journal_len = size_of(&journal).await?.unwrap_or(0);
@@ -618,7 +618,7 @@ impl StateStore for JsonFileStore {
     }
 
     async fn channels_with_work_under_way(&self) -> StoreResult<Vec<ChannelId>> {
-        let mut entries = match tokio::fs::read_dir(self.under_way_dir()).await {
+        let mut entries = match fs::read_dir(self.under_way_dir()).await {
             Ok(entries) => entries,
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
             Err(err) => return Err(to_backend_error(err)),
@@ -688,7 +688,7 @@ impl StateStore for JsonFileStore {
         let path = self.agent_state_path(agent_id);
         delete_if_exists(&path).await?;
         delete_if_exists(&journal_path(&path)).await?;
-        let mut channels = match tokio::fs::read_dir(self.agent_channel_states_dir()).await {
+        let mut channels = match fs::read_dir(self.agent_channel_states_dir()).await {
             Ok(channels) => channels,
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
             Err(err) => return Err(to_backend_error(err)),
@@ -720,9 +720,16 @@ mod tests {
     use caelumora_model::removal::Deletable;
     use caelumora_model::security::{AccessPolicy, SecurityContext};
     use tempfile::tempdir;
-    use uuid::Uuid;
     use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
     use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::history::Reader;
+    use caelumora_model::message::testing::{id, make_message};
+    use caelumora_model::note::{NoteChange, NoteId};
+    use caelumora_model::actor::ActorState;
+    use caelumora_model::channel::moderation_components;
+    use caelumora_model::value::name::Name;
+    use caelumora_model::value::text::Description;
+    use tokio::task::JoinSet;
 
     fn store(dir: &Path) -> JsonFileStore {
         JsonFileStore::new(dir).unwrap()
@@ -821,7 +828,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(), deleted: None,
         };
         sessions.create(&system, &session).await.unwrap();
-        let text = tokio::fs::read_to_string(path_of::<Session>(dir.path(), &session.id)).await.unwrap();
+        let text = fs::read_to_string(path_of::<Session>(dir.path(), &session.id)).await.unwrap();
         assert!(!text.contains("deleted"), "{text}");
         assert!(sessions.get(&system, session.id).await.unwrap().deleted.is_none());
     }
@@ -853,7 +860,7 @@ mod tests {
         }
 
         let path = path_of::<Personality>(dir.path(), &personality.id);
-        let names: Vec<String> = std::fs::read_dir(path.parent().unwrap()).unwrap()
+        let names: Vec<String> = std_fs::read_dir(path.parent().unwrap()).unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, [path.file_name().unwrap().to_string_lossy().into_owned()], "only the file itself");
@@ -992,7 +999,7 @@ mod tests {
 
         // Create a corrupted JSON file
         let corrupted_path = dir.path().join("entities/session/corrupted.json");
-        fs::write(corrupted_path, "invalid json").unwrap();
+        std_fs::write(corrupted_path, "invalid json").unwrap();
 
         // This should NOT fail, it should return s1 and log a warning
         let sessions = sessions.list(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
@@ -1000,19 +1007,10 @@ mod tests {
         assert_eq!(sessions[0].id, s1.id);
     }
 
-    use caelumora_model::history::Reader;
-    use caelumora_model::message::testing::{id, make_message};
-    use caelumora_model::note::{NoteChange, NoteId};
-    use caelumora_model::actor::ActorState;
-    use caelumora_model::channel::moderation_components;
-    use caelumora_model::value::name::Name;
-    use caelumora_model::value::text::Description;
-    use tokio::task::JoinSet;
-
     /// The lines of the journal of the agent channel state of `agent` in
     /// `channel`, `None` if there is no journal.
     fn journal_lines(store: &JsonFileStore, agent: AgentId, channel: ChannelId) -> Option<usize> {
-        std::fs::read_to_string(journal_path(&store.agent_channel_state_path(agent, channel))).ok().map(|text| text.lines().count())
+        std_fs::read_to_string(journal_path(&store.agent_channel_state_path(agent, channel))).ok().map(|text| text.lines().count())
     }
 
     fn journal_file(store: &JsonFileStore, agent: AgentId, channel: ChannelId) -> PathBuf {
@@ -1046,14 +1044,14 @@ mod tests {
         said(&mut state, 1, 3);
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&opened, agent, channel), None, "the first put is the snapshot");
-        let snapshot = std::fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len();
+        let snapshot = std_fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len();
 
         said(&mut state, 3, 5);
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         state.processing_state = ActorState::WaitingForUser;
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&opened, agent, channel), Some(2), "one line per put");
-        assert_eq!(std::fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len(), snapshot, "the snapshot is untouched");
+        assert_eq!(std_fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len(), snapshot, "the snapshot is untouched");
 
         // Read from the files, by a store opened anew, as after a restart.
         let loaded = store(dir.path()).get_agent_channel_state(agent, channel).await.unwrap();
@@ -1071,7 +1069,7 @@ mod tests {
         said(&mut state, 1, 2);
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         let path = store.agent_channel_state_path(agent, channel);
-        let snapshot = std::fs::metadata(&path).unwrap().len();
+        let snapshot = std_fs::metadata(&path).unwrap().len();
 
         // Small puts go to the journal until it is as large as the snapshot.
         let mut puts = 0;
@@ -1082,14 +1080,14 @@ mod tests {
             assert!(puts < 1000, "the journal is never folded");
         }
         assert!(puts > 1, "the journal was used first");
-        assert_eq!(std::fs::metadata(&path).unwrap().len(), snapshot, "the snapshot is the same state again");
+        assert_eq!(std_fs::metadata(&path).unwrap().len(), snapshot, "the snapshot is the same state again");
 
         said(&mut state, 2, 40);
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert!(journal_lines(&store, agent, channel).is_some(), "a large put still goes to the journal");
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&store, agent, channel), None, "and the next one folds it, the journal being larger than the snapshot");
-        assert!(std::fs::metadata(&path).unwrap().len() > snapshot);
+        assert!(std_fs::metadata(&path).unwrap().len() > snapshot);
         assert!(same(&store.get_agent_channel_state(agent, channel).await.unwrap(), &state));
     }
 
@@ -1106,12 +1104,12 @@ mod tests {
         let before = store.get_agent_channel_state(agent, channel).await.unwrap();
 
         let journal = journal_file(&store, agent, channel);
-        let good = std::fs::read_to_string(&journal).unwrap();
-        std::fs::write(&journal, format!("{good}[{{\"transcript\": {{\"entr")).unwrap();
+        let good = std_fs::read_to_string(&journal).unwrap();
+        std_fs::write(&journal, format!("{good}[{{\"transcript\": {{\"entr")).unwrap();
         let loaded = store.get_agent_channel_state(agent, channel).await.unwrap();
         assert!(same(&loaded, &before), "as of the last put that completed");
 
-        std::fs::write(&journal, format!("not json\n{good}")).unwrap();
+        std_fs::write(&journal, format!("not json\n{good}")).unwrap();
         let corrupt = store.get_agent_channel_state(agent, channel).await.unwrap_err();
         assert!(matches!(corrupt, StoreError::Backend(ref m) if m.contains("line 1") && !m.contains("not json")), "{corrupt}");
     }
@@ -1127,13 +1125,13 @@ mod tests {
         said(&mut state, 2, 4);
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         let journal = journal_file(&store, agent, channel);
-        let lines = std::fs::read_to_string(&journal).unwrap();
+        let lines = std_fs::read_to_string(&journal).unwrap();
 
         // As if the crash came after the snapshot and before the journal was emptied.
         let folding = JsonFileStore::new(dir.path()).unwrap().with_journal_floor(0);
         folding.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert!(!journal.exists());
-        std::fs::write(&journal, &lines).unwrap();
+        std_fs::write(&journal, &lines).unwrap();
 
         let loaded = store.get_agent_channel_state(agent, channel).await.unwrap();
         assert!(same(&loaded, &state), "{loaded:?}");
@@ -1153,8 +1151,8 @@ mod tests {
         state.history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
         store.put_channel_state(channel, &mut state).await.unwrap();
         let history = store.history_dir(key);
-        let read = |file: &str| serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(history.join(file)).unwrap()).unwrap();
-        let write = |file: &str, value: &serde_json::Value| std::fs::write(history.join(file), value.to_string()).unwrap();
+        let read = |file: &str| serde_json::from_str::<serde_json::Value>(&std_fs::read_to_string(history.join(file)).unwrap()).unwrap();
+        let write = |file: &str, value: &serde_json::Value| std_fs::write(history.join(file), value.to_string()).unwrap();
 
         // As if the crash came after the chain and its head, before the items.
         let mut items = read("items-0.json");

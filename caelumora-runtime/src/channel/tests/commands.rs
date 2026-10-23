@@ -9,6 +9,7 @@ use caelumora_model::command::{CommandOutput, CommandVisibility};
 use crate::error::is_forbidden;
 use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
+use tokio::time;
 
 #[tokio::test]
 async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
@@ -33,7 +34,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     let error = actor.execute_command("help", "wakeup").await.expect_err("hidden");
     assert!(matches!(command_error(&error), CommandError::Unknown(_)), "/help does not describe it either: {error}");
 
-    let quiet = tokio::time::timeout(Duration::from_millis(200), events.recv()).await;
+    let quiet = time::timeout(Duration::from_millis(200), events.recv()).await;
     assert!(quiet.is_err(), "a private answer is not sent into the channel: {quiet:?}");
     assert!(channel.history().await.is_empty(), "commands never enter the history");
     running.abort();
@@ -49,12 +50,12 @@ async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
     let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
-    let shown = tokio::time::timeout(Duration::from_secs(2), following.recv()).await.expect("shown").map(|e| e.event);
+    let shown = time::timeout(Duration::from_secs(2), following.recv()).await.expect("shown").map(|e| e.event);
     assert!(matches!(shown, Ok(ActorEvent::CommandExecuted { .. })), "the issuer sees it from its own actor (issue 220)");
     assert_eq!(reply.visibility, CommandVisibility::Channel, "the answer goes to the channel");
     assert_eq!(reply.output.as_deref(), Some("No agent was asleep."), "and back to the issuer, whom the channel does not route it to");
 
-    let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+    let envelope = time::timeout(Duration::from_secs(2), events.recv())
         .await
         .expect("the announcement arrives")
         .unwrap();
@@ -124,7 +125,7 @@ async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> CommandResul
 
 /// The next end of a turn of `agent` on `events`, with its envelope.
 async fn turn_finished(events: &mut Receiver<Envelope>, agent: AgentId) -> Envelope {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnFinished { .. }) {
@@ -213,7 +214,7 @@ async fn a_nudged_user_is_shown_who_asks_them_to_respond() {
     let output = nudge(&channel, alice.id, "Bob").await.expect("/nudge runs");
     assert_eq!(output.text, "Asked bob to respond.");
 
-    let asked = tokio::time::timeout(Duration::from_secs(5), his.recv()).await.expect("he is asked").unwrap();
+    let asked = time::timeout(Duration::from_secs(5), his.recv()).await.expect("he is asked").unwrap();
     assert!(matches!(asked.event, ActorEvent::ResponseRequested { .. }), "{}", asked.event.kind());
     assert_eq!(asked.context.sender_id, ActorId::User(alice.id), "by her");
     assert!(channel.history().await.is_empty(), "the history keeps nothing of it");

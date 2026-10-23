@@ -68,6 +68,9 @@ use caelumora_model::workspace::WorkspaceId;
 use futures::StreamExt;
 use caelumora_model::config::AppConfig;
 use bytes::Bytes;
+use futures::stream;
+use std::iter;
+use std::mem;
 
 /// The ownership policy, recording every question it is asked - who acted
 /// with whose rights and for whom, what, of whose entity, and what it
@@ -326,7 +329,7 @@ impl World {
     pub async fn recorded<T>(&self, action: impl Future<Output = T>) -> (T, Vec<String>) {
         self.access_policy.asked.lock().unwrap().clear();
         let result = action.await;
-        let asked = std::mem::take(&mut *self.access_policy.asked.lock().unwrap());
+        let asked = mem::take(&mut *self.access_policy.asked.lock().unwrap());
         // Agents made by the action are recorded by their names, too.
         for agent in self.runtime.entity_stores().agents.list(&Self::system(), &Query::all()).await.map(|page| page.items).unwrap() {
             self.access_policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), agent.name.name.to_string());
@@ -415,7 +418,7 @@ impl World {
     /// channel. Stored as a setup would, then opened by alice.
     pub async fn session_of(&self, others: &[UserId], agents: &[AgentId], waiting: &[AgentId]) -> Arc<SessionLoop> {
         let alice = ActorId::User(self.alice);
-        let users: Vec<Participant> = std::iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
+        let users: Vec<Participant> = iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
         let in_channel: Vec<Participant> = users.iter().cloned().chain(agents.iter().map(|a| Participant::Agent(*a))).collect();
         let in_session: Vec<Participant> = in_channel.iter().cloned().chain(waiting.iter().map(|a| Participant::Agent(*a))).collect();
         let mut channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None);
@@ -527,7 +530,7 @@ pub fn checks(lines: &[&str]) -> Vec<String> {
 
 /// The content of a file to write, as a terminal is given it.
 pub fn file(text: &'static str) -> ByteStream {
-    Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
+    Box::pin(stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
 }
 
 /// The content of the file `path` of `terminal`, as text.

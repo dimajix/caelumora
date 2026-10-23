@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::EnvFilter;
+use std::fs;
+use std::io;
 
 /// Where a binary logs when the configuration names no file.
 #[derive(Debug, Clone)]
@@ -34,10 +36,10 @@ pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &
     let target = config.file.clone().map(LogTarget::File).unwrap_or(default_target);
 
     let (writer, ansi) = match target {
-        LogTarget::Stderr => (BoxMakeWriter::new(std::io::stderr), std::io::stderr().is_terminal()),
+        LogTarget::Stderr => (BoxMakeWriter::new(io::stderr), io::stderr().is_terminal()),
         LogTarget::File(path) => {
             if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                std::fs::create_dir_all(parent)
+                fs::create_dir_all(parent)
                     .with_context(|| format!("cannot create log directory {}", parent.display()))?;
             }
             let file = OpenOptions::new().create(true).append(true).open(&path)
@@ -62,11 +64,12 @@ mod tests {
     use serde_json::Value;
     use tracing::info;
     use uuid::Uuid;
+    use std::env;
 
     // The only test in this crate that installs the global subscriber.
     #[test]
     fn json_log_to_file_carries_the_envelope_ids() {
-        let dir = std::env::temp_dir().join(format!("caelumora-log-test-{}", Uuid::new_v4()));
+        let dir = env::temp_dir().join(format!("caelumora-log-test-{}", Uuid::new_v4()));
         let path = dir.join("nested").join("test.log");
         let config = LoggingConfig { format: LogFormat::Json, file: Some(path.clone()) };
         init(&config, LogTarget::Stderr, "info").expect("subscriber installs");
@@ -74,12 +77,12 @@ mod tests {
         let context = EventContext::new(Default::default(), Default::default(), ActorId::None, "tester".to_string());
         envelope_span(&context, "ResponseRequested").in_scope(|| info!("inside the span"));
 
-        let content = std::fs::read_to_string(&path).expect("the log file and its directory are created");
+        let content = fs::read_to_string(&path).expect("the log file and its directory are created");
         let line = content.lines().find(|l| l.contains("inside the span")).expect("the event is written");
         let json: Value = serde_json::from_str(line).expect("each line is one JSON object");
         assert_eq!(json["span"]["span_id"], context.span_id.to_string());
         assert_eq!(json["span"]["event"], "ResponseRequested");
         assert_eq!(json["span"]["event_id"], context.event_id.to_string());
-        let _ = std::fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(dir);
     }
 }

@@ -401,6 +401,7 @@ mod tests {
     use super::*;
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::user_provider::Credential;
+    use std::fs;
 
     #[tokio::test]
     async fn the_backends_the_configuration_names_are_made_when_the_runtime_is_built() {
@@ -429,10 +430,10 @@ mod tests {
     #[tokio::test]
     async fn the_variants_of_the_texts_are_read_when_the_runtime_is_built() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("default")).unwrap();
-        std::fs::write(dir.path().join("default").join("core.yaml"), "given_up_cause:\n  failed: it broke\n").unwrap();
-        std::fs::create_dir(dir.path().join("gemma4")).unwrap();
-        std::fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  left: you went\n").unwrap();
+        fs::create_dir(dir.path().join("default")).unwrap();
+        fs::write(dir.path().join("default").join("core.yaml"), "given_up_cause:\n  failed: it broke\n").unwrap();
+        fs::create_dir(dir.path().join("gemma4")).unwrap();
+        fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  left: you went\n").unwrap();
         let yaml = |variants: &str| format!("prompts:\n{variants}");
         let config = yaml(&format!("  gemma4: \"{0}/gemma4\"\n  default: \"{0}/default\"\n", dir.path().display()));
         let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).await.unwrap().build().unwrap();
@@ -441,7 +442,7 @@ mod tests {
         assert_eq!(prompts.render_in(Some(PromptVariant::new("gemma4").unwrap()), "core.given_up_cause.left", ()).unwrap(), "you went");
         assert_eq!(prompts.render_in(Some(PromptVariant::new("gemma4").unwrap()), "core.given_up_cause.failed", ()).unwrap(), "it broke", "a variant falls back to the overridden default");
 
-        std::fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  gone: away\n").unwrap();
+        fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  gone: away\n").unwrap();
         let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).await.unwrap().build().map(|_| ()).expect_err("no such text");
         assert!(format!("{refused:#}").contains("'core.given_up_cause.gone'"), "{refused:#}");
     }

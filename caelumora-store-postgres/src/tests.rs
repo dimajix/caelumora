@@ -38,6 +38,7 @@ use caelumora_runtime::runtime::{RuntimeBuilder, Services};
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
+use std::env;
 
 /// The variable, read as a secret, that holds the URL of the test database.
 const URL_SECRET: &str = "CAELUMORA_TEST_POSTGRES_URL";
@@ -56,7 +57,7 @@ impl Database {
     /// A new schema - `None`, and the test skipped, if no test database is
     /// named.
     fn new() -> Option<Self> {
-        if std::env::var(URL_SECRET).is_err() {
+        if env::var(URL_SECRET).is_err() {
             eprintln!("skipped: {URL_SECRET} names no test database (test/docker-compose.yml)");
             return None;
         }

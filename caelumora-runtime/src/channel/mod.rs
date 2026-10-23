@@ -56,6 +56,9 @@ pub mod testing;
 mod tests;
 
 pub(crate) use participation::{ResolvedParticipant, ResolvedKind, Participation};
+use futures::future;
+use std::sync;
+use tokio::time;
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]
@@ -185,7 +188,7 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
     for task in tasks {
         task.close();
     }
-    tokio::time::timeout(STOP_GRACE, futures::future::join_all(tasks.iter().map(TaskTracker::wait))).await.is_ok()
+    time::timeout(STOP_GRACE, future::join_all(tasks.iter().map(TaskTracker::wait))).await.is_ok()
 }
 
 /// A change to the actors a running channel runs (issue 46), carried out by
@@ -234,7 +237,7 @@ pub struct ChannelLoop {
     /// entry of a participant never added again stays as long as the
     /// channel runs - a closed `TaskTracker`, a few bytes each, which only
     /// grows with removals.
-    leaving: std::sync::Mutex<HashMap<ActorId, TaskTracker>>,
+    leaving: sync::Mutex<HashMap<ActorId, TaskTracker>>,
     moderator: ComponentImpl<dyn Moderator>,
     mentions: ArcSwap<MentionDirectory>,
     /// Actors for `run` to start or stop; `run` takes the receiver.
@@ -310,7 +313,7 @@ impl ChannelLoop {
             agent_kinds: Arc::clone(runtime.agent_kinds()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
-            leaving: std::sync::Mutex::new(HashMap::new()),
+            leaving: sync::Mutex::new(HashMap::new()),
             moderator,
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,

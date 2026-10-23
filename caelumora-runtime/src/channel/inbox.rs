@@ -21,6 +21,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use tokio::sync::Notify;
 use tracing::{debug, warn};
+use std::mem;
 
 /// How many envelopes an inbox's queue holds at most, and how many entries
 /// of the history are read at once.
@@ -256,7 +257,7 @@ impl InboxReceiver {
                     }
                 }
                 // Without what was handed out already, taken ahead.
-                let read = std::mem::take(&mut self.read);
+                let read = mem::take(&mut self.read);
                 self.read = read.into_iter().filter(|envelope| self.fresh(envelope)).collect();
                 match Self::first(self.read.iter(), pick) {
                     Found::Taken(at) => {
@@ -381,6 +382,8 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::work::TurnId;
     use std::time::Duration;
+    use std::ops::Range;
+    use tokio::time;
 
     /// A history of envelopes, each at its index, as the actor is delivered
     /// them.
@@ -436,7 +439,7 @@ mod tests {
         all
     }
 
-    fn numbers(range: std::ops::Range<usize>) -> Vec<String> {
+    fn numbers(range: Range<usize>) -> Vec<String> {
         range.map(|n| n.to_string()).collect()
     }
 
@@ -507,10 +510,10 @@ mod tests {
         assert_eq!(rx.heard(), Heard::at(history.end()));
 
         let waiting = tokio::spawn(async move { rx.recv_matching(|e| matches!(e.event, ActorEvent::ApprovalDenied(_))).await.map(|e| e.event.kind()) });
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        time::sleep(Duration::from_millis(20)).await;
         inbox.deliver(history.record(said(1)));
         inbox.deliver(history.record(ActorEvent::ApprovalDenied(response)));
-        assert_eq!(tokio::time::timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap(), Some("ApprovalDenied"), "what arrives meanwhile");
+        assert_eq!(time::timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap(), Some("ApprovalDenied"), "what arrives meanwhile");
     }
 
     /// Issue 431: the next envelope is taken only if it may be, and stays

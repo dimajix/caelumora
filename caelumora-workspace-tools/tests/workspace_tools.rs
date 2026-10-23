@@ -21,6 +21,7 @@ use caelumora_workspace_tools::terminal_tool::TERMINAL_TOOL_KIND;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time;
 
 /// What is asked when the agent of `owner`, asked by bob, makes `call` in the
 /// session's workspace, where the files `present` lie already - one that
@@ -95,7 +96,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
 
     let (answered, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_message("@helper write it".to_string(), None).await.expect("sent");
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             loop {
                 if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
                     if let Some(result) = message.tool_results.first() {

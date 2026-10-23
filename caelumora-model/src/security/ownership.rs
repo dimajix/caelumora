@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
 use super::{AccessPolicy, ActionType, Grant, Memberships, NoMemberships, Reclassified, Requirement, SecurityAttributes, SecurityContext, Subject, Verb};
+use std::slice;
 
 /// The ownership policy (issues 11, 23): what is yours you may do
 /// everything with, what an access list grants you you may read and use,
@@ -91,7 +92,7 @@ impl OwnershipPolicy {
         let actors: &[ActorId] = if as_caller && context.caller_id != context.principal_id {
             &[context.principal_id, context.caller_id]
         } else {
-            std::slice::from_ref(&context.principal_id)
+            slice::from_ref(&context.principal_id)
         };
         if Self::system_owned(attributes) || actors.contains(&attributes.owner_id) {
             return true;

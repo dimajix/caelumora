@@ -6,6 +6,7 @@ use caelumora_model::question::{QuestionError, QuestionRequest};
 use caelumora_model::tool::{ToolCallResult, ToolResultStatus};
 use crate::tool::ask_user_tool::ASK_USER_TOOL_KIND;
 use std::sync::Mutex;
+use tokio::time;
 
 /// A call of the `asking` tool, the component that gives it -
 /// `sensitive` or not - and what the model says once it has its result.
@@ -32,7 +33,7 @@ fn a_call_asking(sensitive: bool) -> (Message, Message, ComponentConfig) {
 
 /// The questions the users are asked, from `events`.
 async fn questions_requested(events: &mut broadcast::Receiver<Envelope>) -> QuestionRequest {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if let ActorEvent::QuestionRequested(request) = envelope.event {
@@ -92,9 +93,9 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call is answered");
     assert_eq!(result.status, ToolResultStatus::Declined);
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while !channel.stored_agent_channel_state(agent).await.unwrap().transcript.messages().iter().any(|m| m.content.as_deref() == Some("rather not")) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the message is heard after the turn");
     running.abort();

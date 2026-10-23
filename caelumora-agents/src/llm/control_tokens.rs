@@ -10,6 +10,7 @@ use aho_corasick::{AhoCorasick, MatchKind, BuildError};
 use std::borrow::Cow;
 use tracing::warn;
 use serde_json::Value;
+use std::mem;
 
 /// What breaks a control token: invisible, and part of no token's text.
 const BREAK: char = '\u{200B}';
@@ -105,7 +106,7 @@ impl ControlTokens {
             Value::String(text) => self.defuse_in_place(text),
             Value::Array(items) => items.iter_mut().for_each(|item| self.defuse_json(item)),
             Value::Object(map) => {
-                let entries = std::mem::take(map);
+                let entries = mem::take(map);
                 for (key, mut item) in entries {
                     self.defuse_json(&mut item);
                     map.insert(self.defuse(&key).into_owned(), item);

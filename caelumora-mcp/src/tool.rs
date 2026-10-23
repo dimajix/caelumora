@@ -20,6 +20,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
+use tokio::time;
 
 pub const MCP_TOOL_KIND: &str = "mcp_tool";
 
@@ -160,7 +161,7 @@ impl McpToolProvider {
             let auth_header = self.config.endpoint.bearer_token(&self.secret_manager, security).await?;
             discover_tools(&self.descriptor_id, &self.config, auth_header).await
         };
-        tokio::time::timeout(self.config.timeout(), discover).await
+        time::timeout(self.config.timeout(), discover).await
             .unwrap_or_else(|_| Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", self.config.endpoint.shown()))))
     }
 }
@@ -353,7 +354,7 @@ impl ToolProvider for McpToolProvider {
             // as much as `notifications/cancelled` would.
             let call = service.call_tool(request);
 
-            let result = tokio::time::timeout(self.config.timeout(), call).await;
+            let result = time::timeout(self.config.timeout(), call).await;
             let _ = service.cancel().await;
 
             let result = result.map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?

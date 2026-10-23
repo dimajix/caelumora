@@ -149,6 +149,7 @@ pub(crate) mod testing {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
     use tokio::sync::Semaphore;
+    use futures::stream;
 
     /// A remote agent that answers each request with the next of its
     /// scripted event lists, and records what it was given. A script that
@@ -216,7 +217,7 @@ pub(crate) mod testing {
 
         fn next(script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>) -> ExternalStream {
             let next = script.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
-            Box::pin(futures::stream::iter(next.unwrap_or_default()).chain(futures::stream::pending()))
+            Box::pin(stream::iter(next.unwrap_or_default()).chain(stream::pending()))
         }
     }
 
@@ -233,7 +234,7 @@ pub(crate) mod testing {
             self.sent.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((conversation.cloned(), message));
             let answer = Self::next(&self.answers);
             let Some(gate) = self.gate.clone() else { return Ok(answer) };
-            let opened = futures::stream::once(async move {
+            let opened = stream::once(async move {
                 if let Ok(permit) = gate.acquire_owned().await {
                     permit.forget();
                 }
@@ -270,6 +271,7 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use std::time::Duration;
+    use tokio::time;
 
     fn hello() -> OutboundMessage {
         OutboundMessage { prompts: Vec::new(), said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }], answers: None }
@@ -316,7 +318,7 @@ mod tests {
         assert_eq!(agent.cancelled.lock().unwrap().as_slice(), &[task]);
 
         let mut nothing_left = agent.send(&security, None, hello()).await.unwrap();
-        let waited = tokio::time::timeout(Duration::from_millis(20), nothing_left.next()).await;
+        let waited = time::timeout(Duration::from_millis(20), nothing_left.next()).await;
         assert!(waited.is_err(), "with no script left, the answer never comes");
     }
 }

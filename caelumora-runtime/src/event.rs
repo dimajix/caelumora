@@ -344,6 +344,8 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::value::text::Introduction;
+    use std::slice;
+    use tokio::time;
 
     fn bus() -> EventBus {
         EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
@@ -428,7 +430,7 @@ mod tests {
     /// Everything that arrives within a short while.
     async fn drain(subscription: &mut EventSubscription) -> Vec<GlobalEvent> {
         let mut events = Vec::new();
-        while let Ok(Some(event)) = tokio::time::timeout(Duration::from_millis(100), subscription.recv()).await {
+        while let Ok(Some(event)) = time::timeout(Duration::from_millis(100), subscription.recv()).await {
             events.push(event);
         }
         events
@@ -497,8 +499,8 @@ mod tests {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let shared = SecurityAttributes::owned_by(ActorId::User(alice)).granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let (public, internal) = (Classification::general(Confidentiality::Public), Classification::general(Confidentiality::Internal));
-        bus.publish_classified(GlobalEvent::created::<Channel>(&(session, channel)), shared.clone(), std::slice::from_ref(&internal));
-        bus.publish_classified(GlobalEvent::custom::<Channel>(&(session, channel), channel::STARTED, &()), shared.clone(), std::slice::from_ref(&public));
+        bus.publish_classified(GlobalEvent::created::<Channel>(&(session, channel)), shared.clone(), slice::from_ref(&internal));
+        bus.publish_classified(GlobalEvent::custom::<Channel>(&(session, channel), channel::STARTED, &()), shared.clone(), slice::from_ref(&public));
         let lowered = ChannelUpdateEvent::ClassificationChanged(public.clone());
         bus.publish_classified(GlobalEvent::updated::<Channel>(&(session, channel), &lowered), shared, &[internal, public]);
 

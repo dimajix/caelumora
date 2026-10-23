@@ -46,6 +46,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+use std::slice;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
@@ -313,7 +314,7 @@ impl ArtifactManager {
         // Heard by whoever reads the artifact and the version.
         let event = if number == 1 { GlobalEvent::created::<Artifact>(&id) } else { GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::VersionPublished(number)) };
         if let Some(version) = artifact.version(number) {
-            self.events.publish_classified_part(event, artifact.security_attributes.clone(), artifact.version_attributes(version), std::slice::from_ref(&artifact.classification));
+            self.events.publish_classified_part(event, artifact.security_attributes.clone(), artifact.version_attributes(version), slice::from_ref(&artifact.classification));
         }
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))

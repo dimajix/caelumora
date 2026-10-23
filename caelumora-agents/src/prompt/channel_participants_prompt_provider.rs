@@ -164,9 +164,9 @@ mod tests {
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::Persistence;
     use caelumora_model::user::{User, UserId, UserProfile};
-    use caelumora_model::value::text::Introduction;
     use chrono::Utc;
     use caelumora_model::work::Work;
+    use std::slice;
 
     fn participant(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {
         let id = if person { ActorId::User(UserId::new()) } else { ActorId::Agent(AgentId::new()) };
@@ -204,7 +204,7 @@ mod tests {
         let prompts = testing::prompts();
         let roster = |others: &[ActorDescription]| render(&prompts, None, others, None).unwrap();
         let (kaya, bob) = (participant("Kaya", true, None), participant("Bob", true, None));
-        let first = roster(std::slice::from_ref(&kaya));
+        let first = roster(slice::from_ref(&kaya));
         assert_eq!(changes.text(first.clone()), first, "told the first time");
         assert_eq!(changes.text(first.clone()), "", "not again unchanged");
         let both = roster(&[kaya, bob]);

@@ -7,6 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use tracing::warn;
 use std::fmt::Debug;
+use std::slice;
 
 /// What happened, announced on the event bus - and, once there are several
 /// instances, between them (issue 122): it is read back as it is written.
@@ -198,7 +199,7 @@ pub trait Announcing {
 
 impl<P: EventPublisher + ?Sized> Announcing for P {
     fn announce<T: Stored>(&self, event: GlobalEvent, entity: &T) {
-        let classifications = entity.classification().map(std::slice::from_ref).unwrap_or_default();
+        let classifications = entity.classification().map(slice::from_ref).unwrap_or_default();
         self.publish_classified(event, entity.security_attributes().clone(), classifications);
     }
 }

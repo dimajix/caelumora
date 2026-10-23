@@ -4,6 +4,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::io::ErrorKind;
+use std::fs;
 
 /// Resolves secrets from a flat JSON object file (`{"KEY": "value", ...}`).
 ///
@@ -33,7 +34,7 @@ impl FileSecretProvider {
 #[async_trait]
 impl SecretProvider for FileSecretProvider {
     async fn get_secret(&self, key: &str) -> SecretResult<Option<String>> {
-        let content = match std::fs::read_to_string(&self.path) {
+        let content = match fs::read_to_string(&self.path) {
             Ok(content) => content,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(SecretError::Backend(e.to_string())),
@@ -68,7 +69,7 @@ mod tests {
     async fn missing_key_returns_none() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("secrets.json");
-        std::fs::write(&path, "{}").unwrap();
+        fs::write(&path, "{}").unwrap();
 
         let provider = FileSecretProvider::new(&path);
         let value = provider.get_secret("MISSING").await.unwrap();
@@ -89,7 +90,7 @@ mod tests {
     async fn malformed_file_is_a_backend_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("secrets.json");
-        std::fs::write(&path, "not json").unwrap();
+        fs::write(&path, "not json").unwrap();
 
         let provider = FileSecretProvider::new(&path);
         let err = provider.get_secret("KEY").await.unwrap_err();

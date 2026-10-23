@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
 use serde_json::Value;
+use std::fs;
 
 /// The documents of one seed file. A key it does not know is a section of
 /// a plugin's; one that no plugin claims is an error when it is seeded.
@@ -88,7 +89,7 @@ impl Seed {
     /// If the file cannot be read or is no seed; the error names the file
     /// and, for a malformed one, the line.
     pub fn read(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
+        let content = fs::read_to_string(path)
             .with_context(|| format!("Cannot read the seed file {}", path.display()))?;
         parse_yaml(&content).with_context(|| format!("Cannot parse the seed file {}", path.display()))
     }
@@ -164,7 +165,6 @@ mod tests {
     use caelumora_model::store::Persistence;
     
     
-    use std::sync::Arc;
     use caelumora_model::config::AppConfig;
     
 

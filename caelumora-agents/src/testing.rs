@@ -43,6 +43,8 @@ use tokio::time::{sleep, timeout};
 use caelumora_model::work::Work;
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
 use crate::prompt::{NAMESPACE, PROMPTS};
+use futures::stream;
+use std::fs;
 
 /// The agents in the world of a test, as a plugin (issue 373): the agents'
 /// plugin (`AgentsPlugin`) and a model that is not to be asked
@@ -118,8 +120,8 @@ pub async fn asked_for_a_call(world: &World, kind: &str, present: &[&str], done:
 
     let place = world.files.path().join("shell").join(docs.id.to_string());
     for file in present {
-        std::fs::create_dir_all(place.join(file).parent().unwrap()).unwrap();
-        std::fs::write(place.join(file), "present").unwrap();
+        fs::create_dir_all(place.join(file).parent().unwrap()).unwrap();
+        fs::write(place.join(file), "present").unwrap();
     }
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_message("@helper do it".to_string(), None).await.expect("sent");
@@ -146,7 +148,7 @@ struct Unasked;
 impl LLMClient for Unasked {
     async fn chat_completion(&self, _: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
         let refused = LLMError::Connection { endpoint: UNASKED_MODEL_KIND.to_string(), reason: "the model of a test is not to be asked".to_string() };
-        futures::stream::iter([Err(refused)]).boxed()
+        stream::iter([Err(refused)]).boxed()
     }
 }
 
@@ -223,8 +225,8 @@ pub struct Once(pub Mutex<Option<Message>>);
 impl LLMClient for Once {
     async fn chat_completion(&self, _: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
         match self.0.lock().unwrap().take() {
-            Some(answer) => futures::stream::iter([Ok(MessageEvent::Complete(answer))]).boxed(),
-            None => futures::stream::pending().boxed(),
+            Some(answer) => stream::iter([Ok(MessageEvent::Complete(answer))]).boxed(),
+            None => stream::pending().boxed(),
         }
     }
 }

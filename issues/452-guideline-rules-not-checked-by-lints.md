@@ -90,3 +90,20 @@ checks.
   the build of the workspace and none in the build of a single crate: the workspace enables the
   feature `log` of `tracing`, whose macros then expand to branches the lint counts. It measured
   the logging more than the logic, and its `expect`s would have flipped between builds.
+- **2026-10-23** — After the review of step 3: CODING-GUIDELINES.md and `Cargo.toml` say that a
+  new function, or one that grows past 100 lines, is split rather than given an `expect`.
+- **2026-10-23** — Step 4: `absolute_paths` is on, with `absolute-paths-max-segments = 2`; its
+  517 places in 95 files are imported at the head of their module. A function is called by its
+  module (`time::timeout`), a type is imported by name (`Instant`) - or by its module where its
+  name is taken (`sync::Mutex` beside tokio's, `error::Error` beside `anyhow::Error`); where a
+  module needs both `std::fs` and `tokio::fs`, std's is renamed (`std_fs`). A test module that
+  takes its parent's names with `use super::*` is given no import that would hide one of them.
+  Where a module of those files had imports after its first items - mostly test modules with a
+  helper before a second block -, they are moved to its head; imports a test module repeated
+  though `use super::*` brings them in are dropped.
+
+  Decided with the maintainer after the review: where both meet, tokio's module is `fs` and std's
+  `std_fs`, everywhere alike; and a path of two segments is fine where its first says where
+  something comes from - a function or macro by its crate or module (`tokio::spawn`,
+  `serde_json::json!`), a type by a module that names its kind (`fmt::Formatter`) -, as the
+  Imports section of CODING-GUIDELINES.md now says.

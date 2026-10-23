@@ -17,6 +17,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use std::future;
+use tokio::time;
 
 /// An approval waiting for its decision, kept under the id the agent gave
 /// it: the same id from the agent's request through the users' answers to
@@ -342,10 +344,10 @@ impl Actor for ApproverActor {
                 if let Some(t) = next_timeout {
                     // A timeout already past does not convert: nothing to wait for.
                     if let Ok(wait) = (t - Utc::now()).to_std() {
-                        tokio::time::sleep(wait).await;
+                        time::sleep(wait).await;
                     }
                 } else {
-                    std::future::pending::<()>().await;
+                    future::pending::<()>().await;
                 }
             };
 
@@ -548,11 +550,11 @@ mod tests {
         }
 
         async fn next(&mut self) -> Envelope {
-            tokio::time::timeout(Duration::from_secs(2), self.output.recv()).await.expect("sent in time").expect("still running")
+            time::timeout(Duration::from_secs(2), self.output.recv()).await.expect("sent in time").expect("still running")
         }
 
         async fn nothing(&mut self) {
-            assert!(tokio::time::timeout(Duration::from_millis(100), self.output.recv()).await.is_err(), "nothing is decided");
+            assert!(time::timeout(Duration::from_millis(100), self.output.recv()).await.is_err(), "nothing is decided");
         }
     }
 

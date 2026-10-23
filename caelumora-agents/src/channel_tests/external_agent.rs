@@ -38,6 +38,8 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::sync::broadcast::Receiver;
 use caelumora_runtime::actor::user::ChannelWatch;
+use std::iter;
+use tokio::time;
 
 /// A running channel with alice and an external agent (issue 179) that
 /// `remote` stands in for, after alice said "hello". The remote agent is
@@ -389,7 +391,7 @@ async fn an_external_agent_tells_that_it_works_while_it_answers() {
         Ok(ExternalEvent::Completed),
     ]]));
     let Stuck { mut events, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
-    let told = tokio::time::timeout(Duration::from_secs(5), async {
+    let told = time::timeout(Duration::from_secs(5), async {
         let mut told = Vec::new();
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -443,7 +445,7 @@ async fn an_external_agent_s_answer_carries_the_turn_its_start_announced() {
     ]]));
     let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
 
-    let (started, partial, answer) = tokio::time::timeout(Duration::from_secs(5), async {
+    let (started, partial, answer) = time::timeout(Duration::from_secs(5), async {
         let (mut started, mut partial) = (None, None);
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -473,9 +475,9 @@ async fn an_external_agent_asked_several_times_while_it_answers_is_called_once_a
         answer("t-1", "First."), answer("t-2", "Second."), answer("t-3", "Third."),
     ]).gated(Arc::clone(&gate)));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while remote.sent.lock().unwrap().is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the remote agent is asked about hello");
 
@@ -485,7 +487,7 @@ async fn an_external_agent_asked_several_times_while_it_answers_is_called_once_a
     for text in queued {
         channel.user_actor(alice).unwrap().send_message(text.to_string(), None).await.expect("taken while it answers");
     }
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         let mut said = 0;
         while said < queued.len() {
             let envelope = events.recv().await.expect("the channel is running");
@@ -671,7 +673,7 @@ async fn a_cancel_ends_the_answer_of_an_external_agent_and_its_remote_task() {
     ]));
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
     settled(&helper, ActorState::Planning).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     channel.cancel(&context).await.expect("permitted");
     let ended = answered(&mut events, agent).await;
@@ -693,14 +695,14 @@ async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_i
     ]));
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
     settled(&helper, ActorState::Planning).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while remote.cancelled.lock().unwrap().is_empty() { tokio::time::sleep(Duration::from_millis(10)).await }
+    time::timeout(Duration::from_secs(5), async {
+        while remote.cancelled.lock().unwrap().is_empty() { time::sleep(Duration::from_millis(10)).await }
     }).await.expect("the remote task is cancelled");
     // It says so, as an agent does (issue 262), and answers nothing.
-    let farewell = tokio::time::timeout(Duration::from_secs(5), async {
+    let farewell = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -733,7 +735,7 @@ async fn a_deleted_channel_waits_for_its_external_agent_to_cancel_its_open_task(
     assert_eq!(*remote.cancelled.lock().unwrap(), vec![task("t-1")], "the open task is cancelled before the channel is aborted");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and that is stored");
-    tokio::time::timeout(Duration::from_secs(1), running).await
+    time::timeout(Duration::from_secs(1), running).await
         .expect("every actor ended by itself, and with them the channel")
         .expect("the channel's task was not aborted")
         .expect("the channel ended without an error");
@@ -771,7 +773,7 @@ async fn an_external_agent_stopped_while_it_answers_says_the_answer_when_its_cha
     ]).resuming(vec![vec![Ok(ExternalEvent::Message("Found it.".to_string())), Ok(ExternalEvent::Completed)]]));
     let Stuck { channel, agent, helper, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
     settled(&helper, ActorState::Planning).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     stop_and_wait(&channel, running).await;
     assert!(remote.cancelled.lock().unwrap().is_empty(), "the remote task is not cancelled");
@@ -832,7 +834,7 @@ async fn a_task_taken_up_again_is_done_as_the_call_that_took_it_up_though_the_re
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     alice.send_message("Bonn".to_string(), None).await.unwrap();
-    let (request, said) = tokio::time::timeout(Duration::from_secs(5), async {
+    let (request, said) = time::timeout(Duration::from_secs(5), async {
         let mut answers = Vec::new();
         while answers.len() < 2 {
             let envelope = events.recv().await.expect("the channel is running");
@@ -871,7 +873,7 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
 
     assert!(answered(&mut events, agent).await.is_empty(), "the request is answered with nothing: the task has not failed, it goes on (issue 195)");
     let mut woke = false;
-    let said = tokio::time::timeout(Duration::from_secs(5), async {
+    let said = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -902,7 +904,7 @@ async fn what_an_open_task_says_unasked_continues_the_answer_to_its_request() {
 
     // The answer to the request, with nothing, and later what the task
     // says unasked.
-    let contexts = tokio::time::timeout(Duration::from_secs(5), async {
+    let contexts = time::timeout(Duration::from_secs(5), async {
         let mut contexts = Vec::new();
         while contexts.len() < 2 {
             let envelope = events.recv().await.expect("the channel is running");
@@ -958,7 +960,7 @@ async fn an_external_agent_answers_as_what_it_was_given_whatever_it_declares() {
     let Stuck { mut events, agent, running, .. } = with_an_external_agent(remote).await;
 
     let mut partials = Vec::new();
-    let answer = tokio::time::timeout(Duration::from_secs(5), async {
+    let answer = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) {
@@ -984,11 +986,11 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![Ok(ExternalEvent::Started(task("t-1")))]]));
     let Stuck { channel, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
 
-    let state = tokio::time::timeout(Duration::from_secs(5), async {
+    let state = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if !state.remote.open_tasks.is_empty() { break state }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            time::sleep(Duration::from_millis(20)).await;
         }
     }).await.expect("stored before the task ends, as a crash would find it");
     assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
@@ -1024,7 +1026,7 @@ async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_
     let mut events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
-    let said = tokio::time::timeout(Duration::from_secs(5), async {
+    let said = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -1069,7 +1071,7 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
     let mut events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
-    let told = tokio::time::timeout(Duration::from_secs(5), async {
+    let told = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel runs");
             if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
@@ -1111,7 +1113,7 @@ async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
     ]));
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
     settled(&helper, ActorState::Planning).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
     let told = turn_given_up(&mut events, agent).await;
@@ -1173,7 +1175,7 @@ fn working_on(open: &str) -> AgentChannelState {
 /// Whether `agent` said anything - a message or an answer - among the
 /// events published so far.
 fn said_anything(events: &mut Receiver<Envelope>, agent: AgentId) -> bool {
-    std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
+    iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
         envelope.context.sender_id == ActorId::Agent(agent)
             && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_) | ActorEvent::TurnFinished { .. })
     })
@@ -1209,7 +1211,7 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
     let (channel, _, agent, _) = external_channel(remote, external_components(), |_| Some(working_on("t-1"))).await.unwrap();
     let mut events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
 
     assert!(!said_anything(&mut events, agent), "no half answer is published");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
@@ -1266,7 +1268,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let answered = |events: &mut ChannelWatch| {
         let mut events = events.resubscribe();
         async move {
-            tokio::time::timeout(Duration::from_secs(5), async {
+            time::timeout(Duration::from_secs(5), async {
                 loop {
                     let envelope = events.recv().await.expect("the channel is running");
                     if envelope.context.sender_id == ActorId::Agent(hermes.id) && matches!(envelope.event, ActorEvent::TurnFinished { .. }) { break }

@@ -37,6 +37,7 @@ use crate::sse::{bounded_by_token, data_event, named_event};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::Span;
+use tracing::field;
 
 /// The channels of the session the user may read - or, with
 /// `?deleted=true`, those deleted from it they may read as such (issue 164).
@@ -350,7 +351,7 @@ pub(super) async fn send_message(
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.send_message(payload.content, payload.classification).await?;
-    Span::current().record("span_id", tracing::field::display(span_id));
+    Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
 
@@ -366,7 +367,7 @@ pub(super) async fn modify_message(
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.modify_message(MessageId(mid), payload.content, payload.classification).await?;
-    Span::current().record("span_id", tracing::field::display(span_id));
+    Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
 
@@ -383,7 +384,7 @@ pub(super) async fn retry_message(
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.request_retry(MessageId(mid)).await?;
-    Span::current().record("span_id", tracing::field::display(span_id));
+    Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
 
@@ -404,7 +405,7 @@ pub(super) async fn retry_turn(
     let participant = actor_in(&channel, aid)
         .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
     let span_id = user_actor.request_retry_of_turn(participant, payload.turn_id).await?;
-    Span::current().record("span_id", tracing::field::display(span_id));
+    Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
 
@@ -419,7 +420,7 @@ pub(super) async fn revoke_message(
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.revoke_message(MessageId(mid)).await?;
-    Span::current().record("span_id", tracing::field::display(span_id));
+    Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -575,7 +576,7 @@ pub(super) async fn reclassify_message(
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.reclassify_message(MessageId(mid), classification).await?;
-    Span::current().record("span_id", tracing::field::display(span_id));
+    Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
 
@@ -747,7 +748,7 @@ pub(super) async fn send_approval(
     let response = ApprovalResponse::new(ApprovalId(payload.approval_id), AgentId(payload.agent_id));
     let span_id = user_actor.send_approval(response, payload.approved).await
         .map_err(|e| ApiError::internal("approval_not_sent", "sending the approval", &e))?;
-    Span::current().record("span_id", tracing::field::display(span_id));
+    Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
 
@@ -767,7 +768,7 @@ pub(super) async fn answer_questions(
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.answer_questions(QuestionId(qid), responses).await?;
-    Span::current().record("span_id", tracing::field::display(span_id));
+    Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
 
@@ -793,6 +794,7 @@ mod tests {
     use serde_json::{json, Value};
     use std::time::Duration;
     use tower::ServiceExt;
+    use tokio::time;
 
     #[test]
     fn a_command_that_does_not_run_is_answered_with_what_the_user_did() {
@@ -835,7 +837,7 @@ mod tests {
     /// What `stream` sent, read on until `seen` holds of all of it.
     async fn read_until(stream: &mut BodyDataStream, read: &mut String, seen: impl Fn(&str) -> bool) {
         while !seen(read) {
-            let chunk = tokio::time::timeout(Duration::from_secs(5), stream.next()).await
+            let chunk = time::timeout(Duration::from_secs(5), stream.next()).await
                 .unwrap_or_else(|_| panic!("nothing more came of the stream: {read}"))
                 .unwrap_or_else(|| panic!("the stream ended: {read}"))
                 .unwrap();
@@ -877,7 +879,7 @@ mod tests {
         for _ in 0..100 {
             let page = api.clone().oneshot(Request::get(&history).header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
             if String::from_utf8_lossy(&to_bytes(page.into_body(), usize::MAX).await.unwrap()).contains("hello there") { break }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
         // Seen at the stop, which only a stream following the actor sees.
         state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
@@ -888,7 +890,7 @@ mod tests {
         state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| snapshots(read) == 4).await;
         state.session_manager.delete(&SecurityContext::system(), session).await.unwrap();
-        let ended = tokio::time::timeout(Duration::from_secs(5), async { while stream.next().await.is_some() {} }).await;
+        let ended = time::timeout(Duration::from_secs(5), async { while stream.next().await.is_some() {} }).await;
         assert!(ended.is_ok(), "the stream of a deleted channel ends: {read}");
     }
 
@@ -905,7 +907,7 @@ mod tests {
 
         state.session_manager.shutdown().await;
         state.shutdown.cancel();
-        let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        let ended = time::timeout(Duration::from_secs(5), async {
             while let Some(chunk) = stream.next().await {
                 read.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
             }

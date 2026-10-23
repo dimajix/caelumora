@@ -52,6 +52,7 @@ use anyhow::Result;
 use caelumora_runtime::error::user_message;
 use rustyline::history::DefaultHistory;
 use std::io::Error;
+use std::future;
 
 fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
     let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
@@ -590,7 +591,7 @@ async fn signalled() {
             }
             Err(e) => {
                 tracing::warn!("A signal cannot be caught, and ends the program without a shutdown: {e}");
-                std::future::pending::<()>().await;
+                future::pending::<()>().await;
             }
         }
     };

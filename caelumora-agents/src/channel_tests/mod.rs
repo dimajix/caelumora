@@ -51,6 +51,9 @@ use serde_json::Value;
 use std::collections::VecDeque;
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
+use futures::stream;
+use std::time::Instant;
+use tokio::time;
 
 mod agent;
 mod agent_commands;
@@ -59,7 +62,7 @@ mod questions;
 
 /// What the channel shows next of `wanted`'s kind from `agent`.
 async fn shown_by(events: &mut Receiver<Envelope>, agent: AgentId, wanted: &str) -> ActorEvent {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::Agent(agent) && envelope.event.kind() == wanted {
@@ -73,10 +76,10 @@ async fn shown_by(events: &mut Receiver<Envelope>, agent: AgentId, wanted: &str)
 /// tasks by themselves, within the grace, and the channel with them - not
 /// aborted.
 async fn stop_and_wait(channel: &ChannelLoop, running: JoinHandle<Result<()>>) {
-    let stopping = std::time::Instant::now();
+    let stopping = Instant::now();
     channel.stop_all_actors().await;
     assert!(stopping.elapsed() < STOP_GRACE, "the actors ended by themselves");
-    tokio::time::timeout(Duration::from_secs(1), running).await
+    time::timeout(Duration::from_secs(1), running).await
         .expect("and with them the channel")
         .expect("the channel's task was not aborted")
         .expect("the channel ended without an error");
@@ -100,7 +103,7 @@ impl LLMClient for NeverAnswers {
     async fn chat_completion(&self, _: &[Message], _: &[Tool])
         -> BoxStream<'static, LLMResult<MessageEvent>>
     {
-        Box::pin(futures::stream::pending())
+        Box::pin(stream::pending())
     }
 }
 
@@ -198,8 +201,8 @@ impl LLMClient for Scripted {
         -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         match self.0.lock().unwrap().pop_front() {
-            Some(answer) => Box::pin(futures::stream::iter([Ok(MessageEvent::Complete(answer))])),
-            None => Box::pin(futures::stream::pending()),
+            Some(answer) => Box::pin(stream::iter([Ok(MessageEvent::Complete(answer))])),
+            None => Box::pin(stream::pending()),
         }
     }
 }
@@ -212,7 +215,7 @@ impl ModelProfileProvider for Scripted {
 
 /// The states `agent` told the users of through `shown`, up to `until`.
 async fn told_states(shown: &mut ChannelWatch, agent: AgentId, until: ActorState) -> Vec<ActorState> {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         let mut states = Vec::new();
         loop {
             let envelope = shown.recv().await.expect("the channel is running");
@@ -229,7 +232,7 @@ async fn told_states(shown: &mut ChannelWatch, agent: AgentId, until: ActorState
 /// the channel, if it was lowered.
 async fn turn_given_up(events: &mut Receiver<Envelope>, agent: AgentId) -> String {
     use caelumora_model::turn::GivenUpReason;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
@@ -351,7 +354,7 @@ fn register_marking_command(registry: &mut ComponentRegistry) {
 /// that it began, if it was told so, the states the agent told of
 /// meanwhile, and the answer.
 async fn command_events(watch: &mut ChannelWatch) -> (Option<Envelope>, Vec<ActorState>, Envelope) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         let (mut started, mut states) = (None, Vec::new());
         loop {
             let envelope = watch.recv().await.expect("the channel is running");

@@ -39,6 +39,7 @@
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
 use crate::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy};
 use crate::store::{StoreError, StoreResult, Stored};
+use std::slice;
 
 
 // Every method takes the kind of entity it asks about (issue 323): every
@@ -95,7 +96,7 @@ impl<'a> Access<'a> {
     /// Whether the caller reaches `value`, asked as `read`: `may_reach`,
     /// with how it is classified.
     async fn reachable<T: Stored>(&self, value: &T, read: ActionType<'_>) -> bool {
-        let classifications = value.classification().map_or(&[][..], std::slice::from_ref);
+        let classifications = value.classification().map_or(&[][..], slice::from_ref);
         may_reach(self.access_policy, self.confidentiality, self.ctx, read, classifications).await
     }
 

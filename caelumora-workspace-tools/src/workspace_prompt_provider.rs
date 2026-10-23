@@ -31,6 +31,7 @@ use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::warn;
+use futures::future;
 
 pub const WORKSPACE_PROMPT_PROVIDER_KIND: &str = "workspace_prompt_provider";
 
@@ -86,7 +87,7 @@ impl WorkspacePromptProvider {
                 return Vec::new();
             }
         };
-        let found = futures::future::join_all(self.instruction_files.iter().map(|file| {
+        let found = future::join_all(self.instruction_files.iter().map(|file| {
             let terminal = Arc::clone(&terminal);
             async move { (file, terminal.stat(file).await) }
         })).await;
@@ -160,6 +161,7 @@ mod tests {
     use caelumora_runtime::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::security::SecurityContext;
+    use std::fs;
 
     fn provider() -> WorkspacePromptProvider {
         provider_of(&default_instruction_files())
@@ -194,15 +196,15 @@ mod tests {
         assert!(!prompt.text.contains("At its top"), "none is there, none is named: {}", prompt.text);
         assert!(prompt.text.contains("may hold a file of its own named `AGENTS.md` or `CLAUDE.md`") && prompt.text.contains("takes precedence"), "{}", prompt.text);
 
-        std::fs::write(world.dir().join("AGENTS.md"), "Run the tests.").unwrap();
-        std::fs::create_dir(world.dir().join("CLAUDE.md")).unwrap();
+        fs::write(world.dir().join("AGENTS.md"), "Run the tests.").unwrap();
+        fs::create_dir(world.dir().join("CLAUDE.md")).unwrap();
         let mut state = AgentChannelState::default();
         let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.contains("At its top lies `AGENTS.md`,") && prompt.text.contains("Read it with `read_file`"), "{}", prompt.text);
         assert!(!prompt.text.contains("Run the tests"), "not its content: {}", prompt.text);
 
-        std::fs::remove_dir(world.dir().join("CLAUDE.md")).unwrap();
-        std::fs::write(world.dir().join("CLAUDE.md"), "See AGENTS.md").unwrap();
+        fs::remove_dir(world.dir().join("CLAUDE.md")).unwrap();
+        fs::write(world.dir().join("CLAUDE.md"), "See AGENTS.md").unwrap();
         let mut state = AgentChannelState::default();
         let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.contains("At its top lie `AGENTS.md` and `CLAUDE.md`,") && prompt.text.contains("Read them"), "every one found: {}", prompt.text);
@@ -211,8 +213,8 @@ mod tests {
     #[tokio::test]
     async fn the_instruction_files_are_as_configured() {
         let world = session_with_workspace().await;
-        std::fs::write(world.dir().join("AGENTS.md"), "").unwrap();
-        std::fs::write(world.dir().join("GUIDE.md"), "").unwrap();
+        fs::write(world.dir().join("AGENTS.md"), "").unwrap();
+        fs::write(world.dir().join("GUIDE.md"), "").unwrap();
         let provider = provider_of(&["GUIDE.md".to_string()]);
         let mut state = AgentChannelState::default();
         let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
@@ -231,8 +233,8 @@ mod tests {
     #[tokio::test]
     async fn a_storage_that_cannot_be_reached_leaves_the_files_out_not_the_turn() {
         let world = session_with_workspace().await;
-        std::fs::write(world.dir().join("AGENTS.md"), "").unwrap();
-        std::fs::remove_dir_all(world.dir()).unwrap();
+        fs::write(world.dir().join("AGENTS.md"), "").unwrap();
+        fs::remove_dir_all(world.dir()).unwrap();
         let mut state = AgentChannelState::default();
         let prompt = provider().get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.contains("\"docs\"") && !prompt.text.contains("At its top"), "{}", prompt.text);

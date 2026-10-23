@@ -42,6 +42,7 @@ use caelumora_skills::skill::{self, Skill, SkillBody};
 use caelumora_skills::view::SkillViews;
 use serde_json::Value;
 use std::sync::Arc;
+use std::fs;
 
 /// The world with skills.
 async fn world() -> World {
@@ -259,7 +260,7 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
     let world = world().await;
     let dir = tempfile::tempdir().unwrap();
     let seed = dir.path().join("seed.yaml");
-    std::fs::write(&seed, "skills:\n- id: 4f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: quiz\n  description: How to run a quiz\n  body: Ask.\n  classification: { level: internal }\n").unwrap();
+    fs::write(&seed, "skills:\n- id: 4f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: quiz\n  description: How to run a quiz\n  body: Ask.\n  classification: { level: internal }\n").unwrap();
     let seeds = [seed];
     world.runtime.seed(&seeds).await.unwrap();
     world.runtime.seed(&seeds).await.expect("seeding again is no conflict");

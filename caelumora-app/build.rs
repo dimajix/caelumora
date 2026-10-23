@@ -8,13 +8,14 @@
 
 use std::path::Path;
 use std::process::{exit, Command};
+use std::env;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CAELUMORA_BUILD_UI");
-    if std::env::var_os("CARGO_FEATURE_WEB_UI").is_none() {
+    if env::var_os("CARGO_FEATURE_WEB_UI").is_none() {
         return;
     }
-    let Some(manifest_dir) = std::env::var_os("CARGO_MANIFEST_DIR") else {
+    let Some(manifest_dir) = env::var_os("CARGO_MANIFEST_DIR") else {
         fail("CARGO_MANIFEST_DIR is not set");
     };
     let ui = Path::new(&manifest_dir).join("../caelumora-web-ui");
@@ -22,7 +23,7 @@ fn main() {
     // A new build of the UI is embedded anew.
     println!("cargo:rerun-if-changed={}", dist.display());
 
-    if std::env::var("CAELUMORA_BUILD_UI").is_ok_and(|v| v == "1") {
+    if env::var("CAELUMORA_BUILD_UI").is_ok_and(|v| v == "1") {
         for args in [&["ci"][..], &["run", "build"]] {
             match Command::new("npm").args(args).current_dir(&ui).status() {
                 Ok(status) if status.success() => {}

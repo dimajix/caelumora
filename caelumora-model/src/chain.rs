@@ -32,6 +32,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use serde::de::Error;
+use serde::ser;
 
 /// Where an entry is in its chain (issues 376, 417): its place in the order
 /// entries were added, across every branch - the first `0`, every one after
@@ -504,7 +505,7 @@ impl<E> Chain<E> {
 impl<E: Serialize> Serialize for Chain<E> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         if self.base != Position::START {
-            return Err(serde::ser::Error::custom(format!("only the part of a chain from position {} on is held", self.base)));
+            return Err(ser::Error::custom(format!("only the part of a chain from position {} on is held", self.base)));
         }
         StoredRef { entries: &self.nodes, head: &self.head }.serialize(serializer)
     }
@@ -519,11 +520,12 @@ impl<'de, E: Deserialize<'de>> Deserialize<'de> for Chain<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::digest;
 
     /// A chain of labels, each digested over the one before.
     fn push(chain: &mut Chain<String>, label: &str) -> Option<Digest> {
         chain.push_with(label.to_string(), |previous, label| {
-            crate::digest::prompt(&format!("{}/{}", previous.map(|d| d.to_string()).unwrap_or_default(), label))
+            digest::prompt(&format!("{}/{}", previous.map(|d| d.to_string()).unwrap_or_default(), label))
         })
     }
 
@@ -553,7 +555,7 @@ mod tests {
 
         assert_eq!(labels(chain.prefix(&after_a).unwrap()), ["a"]);
         assert_eq!(labels(chain.prefix(&chain.digest().unwrap()).unwrap()), ["a", "b"]);
-        assert!(chain.prefix(&crate::digest::prompt("elsewhere")).is_none());
+        assert!(chain.prefix(&digest::prompt("elsewhere")).is_none());
     }
 
     #[test]
@@ -574,7 +576,7 @@ mod tests {
         assert_eq!(labels(chain.prefix(&after_b).unwrap()), ["a", "b"], "and names its own path");
         assert_eq!(labels(chain.children(Some(&after_a))), ["b", "c"], "siblings, as they were added");
 
-        assert!(!chain.move_head(Some(&crate::digest::prompt("elsewhere"))), "no such entry");
+        assert!(!chain.move_head(Some(&digest::prompt("elsewhere"))), "no such entry");
         assert_eq!(labels(chain.entries()), ["a", "c"], "and nothing changed");
     }
 
@@ -608,7 +610,7 @@ mod tests {
         assert_eq!(chain.leaf_from(&after_b), Some(after_b1), "b1 was last on the active path, though b2 is newer");
         assert_eq!(chain.leaf_from(&after_b2), Some(after_b2), "a leaf is its own end");
         assert_eq!(chain.leaf_from(&after_a), chain.digest(), "the active branch ends at the head");
-        assert_eq!(chain.leaf_from(&crate::digest::prompt("elsewhere")), None);
+        assert_eq!(chain.leaf_from(&digest::prompt("elsewhere")), None);
     }
 
     #[test]
@@ -694,10 +696,10 @@ mod tests {
         let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
-        let elsewhere = crate::digest::prompt("elsewhere");
+        let elsewhere = digest::prompt("elsewhere");
         let fits = |entries: Vec<Node<String>>, head: Option<Digest>| Stored { entries, head };
 
-        let orphan = Node::new(Position::new(1), crate::digest::prompt("x"), Some(elsewhere), "x".to_string());
+        let orphan = Node::new(Position::new(1), digest::prompt("x"), Some(elsewhere), "x".to_string());
         assert!(chain.apply(fits(vec![orphan.clone()], None)).is_err(), "follows what is not there");
         let late = Node::new(Position::new(2), elsewhere, Some(after_a), "e".to_string());
         assert!(chain.apply(fits(vec![orphan, late], None)).is_err(), "follows what comes after it");
@@ -706,9 +708,9 @@ mod tests {
         assert!(chain.apply(fits(vec![moved], Some(after_a))).is_err(), "an entry that followed another");
         let remembers = Node { active_child: Some(elsewhere), ..Node::new(Position::new(0), after_a, None, "a".to_string()) };
         assert!(chain.apply(fits(vec![remembers], Some(after_a))).is_err(), "remembers what does not follow it");
-        let twice = Node::new(Position::new(1), crate::digest::prompt("y"), Some(after_a), "y".to_string());
+        let twice = Node::new(Position::new(1), digest::prompt("y"), Some(after_a), "y".to_string());
         assert!(chain.apply(fits(vec![twice.clone(), twice], Some(after_a))).is_err(), "an entry twice");
-        let gap = Node::new(Position::new(2), crate::digest::prompt("z"), Some(after_a), "z".to_string());
+        let gap = Node::new(Position::new(2), digest::prompt("z"), Some(after_a), "z".to_string());
         assert!(chain.apply(fits(vec![gap], Some(after_a))).is_err(), "a position left out");
         let shifted = Node::new(Position::new(1), after_a, None, "a".to_string());
         assert!(chain.apply(fits(vec![shifted], Some(after_a))).is_err(), "an entry at another position than it is");
@@ -736,7 +738,7 @@ mod tests {
         assert_eq!(chain.at(Position::new(1)).map(|n| n.entry.as_str()), Some("b"));
         assert!(chain.at(Position::new(4)).is_none() && chain.at(Position::MAX).is_none(), "nothing past the last");
         assert_eq!(chain.seq_of(&after_c).map(Position::get), Some(2));
-        assert_eq!(chain.seq_of(&crate::digest::prompt("elsewhere")), None);
+        assert_eq!(chain.seq_of(&digest::prompt("elsewhere")), None);
         assert_eq!(labels(chain.from(Position::new(1))), ["b", "c", "d"]);
         assert_eq!(labels(chain.from(Position::new(4))), Vec::<String>::new(), "nothing from the end on");
         assert_eq!(labels(chain.from(Position::MAX)), Vec::<String>::new());
@@ -830,9 +832,9 @@ mod tests {
         assert_eq!(part.leaf_from(&after_b), chain.digest());
         assert!(part.changes().is_none(), "nothing merged is a change to store again");
 
-        let gap = Stored { entries: vec![Node::new(Position::new(9), crate::digest::prompt("x"), Some(after_b), "x".to_string())], head: None };
+        let gap = Stored { entries: vec![Node::new(Position::new(9), digest::prompt("x"), Some(after_b), "x".to_string())], head: None };
         assert!(part.apply(gap).is_err(), "positions are checked in a suffix as well");
-        let orphan = Node::new(Position::new(4), crate::digest::prompt("y"), Some(crate::digest::prompt("older")), "y".to_string());
+        let orphan = Node::new(Position::new(4), digest::prompt("y"), Some(digest::prompt("older")), "y".to_string());
         assert!(part.apply(Stored { entries: vec![orphan.clone()], head: part.digest() }).is_ok(), "an entry after an older one, which the store holds");
         assert!(chain.apply(Stored { entries: vec![orphan], head: chain.digest() }).is_err(), "but not in the whole chain");
     }
@@ -845,7 +847,7 @@ mod tests {
         let json = serde_json::to_value(&chain).unwrap();
 
         let mut unknown_head = json.clone();
-        unknown_head["head"] = serde_json::json!(crate::digest::prompt("elsewhere").to_string());
+        unknown_head["head"] = serde_json::json!(digest::prompt("elsewhere").to_string());
         assert!(serde_json::from_value::<Chain<String>>(unknown_head).is_err(), "a head that is not an entry");
 
         let mut reversed = json.clone();

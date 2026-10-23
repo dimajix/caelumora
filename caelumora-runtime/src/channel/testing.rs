@@ -37,6 +37,7 @@ use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
+use tokio::time;
 
 /// Decides by a rule over the action alone, to refuse one thing and
 /// allow the rest.
@@ -125,8 +126,8 @@ pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, a
 
 /// Waits for `actor` to reach `wanted`.
 pub async fn settled(actor: &Arc<dyn Actor>, wanted: ActorState) {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while actor.state() != wanted { tokio::time::sleep(Duration::from_millis(10)).await }
+    time::timeout(Duration::from_secs(5), async {
+        while actor.state() != wanted { time::sleep(Duration::from_millis(10)).await }
     }).await.unwrap_or_else(|_| panic!("the agent does not reach {wanted:?}, it is {:?}", actor.state()));
 }
 
@@ -141,7 +142,7 @@ pub async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, Security
 
 /// What `agent` answered next.
 pub async fn answered(events: &mut Receiver<Envelope>, agent: AgentId) -> Vec<Message> {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::Agent(agent) {
@@ -197,14 +198,14 @@ impl ChannelLoop {
     /// If it does not within five seconds.
     pub async fn run_until(self: &Arc<Self>, agent: AgentId, done: impl Fn(&AgentChannelState) -> bool) -> AgentChannelState {
         let running = tokio::spawn({ let channel = Arc::clone(self); async move { channel.run().await } });
-        let state = tokio::time::timeout(Duration::from_secs(5), async {
+        let state = time::timeout(Duration::from_secs(5), async {
             loop {
                 if let Ok(state) = self.stored_agent_channel_state(agent).await {
                     if done(&state) {
                         break state;
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the agent's state comes to stand so");
         running.abort();

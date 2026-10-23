@@ -155,6 +155,7 @@ mod tests {
     use crate::session::testing::*;
     use crate::view::Viewer;
     use anyhow::Error;
+    use tokio::time;
 
     fn as_user(user: &User) -> SecurityContext {
         SecurityContext::new(ActorId::User(user.id), Default::default(), Default::default())
@@ -243,7 +244,7 @@ mod tests {
         let main = Arc::clone(&session.channels()[0]);
         let mut events = runtime.event_bus().subscribe_all();
         // Running, with the participants it had as it started.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
 
         session.add_participant(&ctx, actor, Some((main.id(), HistoryAccess::All))).await.expect("taken in");
         assert!(main.participant_ids().contains(&actor), "it runs in the channel");
@@ -251,11 +252,11 @@ mod tests {
         let announced = |events: &[GlobalEvent]| events.iter().any(|e| matches!(e.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
             Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == actor));
         assert!(announced(&drain(&mut events)), "announced");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
 
         assert!(runtime.agent_manager().delete(&ctx, helper.id).await.expect("deleted"));
-        let stopped = async { while main.participant_ids().contains(&actor) { tokio::time::sleep(Duration::from_millis(10)).await } };
-        tokio::time::timeout(Duration::from_secs(2), stopped).await.expect("its actor stops: the session heard of it");
+        let stopped = async { while main.participant_ids().contains(&actor) { time::sleep(Duration::from_millis(10)).await } };
+        time::timeout(Duration::from_secs(2), stopped).await.expect("its actor stops: the session heard of it");
         manager.stop(&system, session.id()).await.unwrap();
     }
 }

@@ -46,6 +46,7 @@ use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_runtime::event::EventSubscription;
 use caelumora_runtime::actor::Shown;
+use tokio::time;
 
 // --- Personalities and agents ---------------------------------------------
 
@@ -129,7 +130,7 @@ async fn a_channel_is_read_by_its_participants_wherever_they_act_and_no_more_onc
 
     let mut events = world.runtime.event_bus().subscribe_as(World::as_user(world.carol));
     main.remove_participant(&World::as_user(world.alice), ActorId::User(world.carol)).await.expect("alice's to remove her");
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while let Some(event) = events.recv().await {
             if matches!(event.about::<Channel>(), Some(((_, channel), change)) if channel == main.id() && change.data::<ActorId>(LEFT) == Some(ActorId::User(world.carol))) {
                 return;
@@ -220,9 +221,9 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
         hers.send_message(text.to_string(), None).await.expect("sent");
         let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
         // Shown as it is let in, recorded right after.
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             while !side.visible_messages(ActorId::User(world.alice)).await.iter().any(|m| m.id == said.id) {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("in the history");
         said.id
@@ -282,9 +283,9 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
     let mut say = async |text: &str| {
         hers.send_message(text.to_string(), None).await.expect("sent");
         let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             while !side.visible_messages(ActorId::User(world.alice)).await.iter().any(|m| m.id == said.id) {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("in the history");
         said.id
@@ -340,7 +341,7 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     assert!(matches!(reach(world.carol).await, Err(ViewError::SessionNotFound(_))), "carol finds nothing of it");
 
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
-    let ended = tokio::time::timeout(Duration::from_secs(5), async { while !matches!(his.next().await, Ok(Shown::Ended)) {} }).await;
+    let ended = time::timeout(Duration::from_secs(5), async { while !matches!(his.next().await, Ok(Shown::Ended)) {} }).await;
     assert!(ended.is_ok(), "he is told his actor ended");
     let stopped = reach(world.bob).await.expect("he still takes part");
     assert!(stopped.user_follow().is_some(), "and follows the channel while it does not run");
@@ -1375,7 +1376,7 @@ async fn a_command_runs_on_only_while_some_participant_could_start_it_in_its_cha
     let (_, asked) = world.recorded(async {
         workspace(&world, docs.id).await.update_description(&alice, Some("Drafts")).await.unwrap();
         while !world.access_policy.asked.lock().unwrap().iter().any(|line| line.contains("WriteWorkspace")) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            time::sleep(Duration::from_millis(20)).await;
         }
     }).await;
     let reaching = |who: &str| [
@@ -1599,7 +1600,7 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
 /// compared as they are shown, since an event has no equality.
 async fn hears<const N: usize>(events: &mut EventSubscription, wanted: [GlobalEvent; N]) {
     let mut missing: Vec<String> = wanted.iter().map(|event| format!("{event:?}")).collect();
-    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+    let _ = time::timeout(Duration::from_secs(5), async {
         while !missing.is_empty() {
             let Some(event) = events.recv().await else { break };
             let shown = format!("{event:?}");

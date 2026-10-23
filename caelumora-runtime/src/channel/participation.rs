@@ -15,6 +15,7 @@ use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use std::sync::Arc;
 use super::ChannelError;
+use std::iter;
 
 /// A participant as a document names it (`Participant`), resolved: with
 /// what it is in this instance (`ResolvedKind`) - what its actor is built
@@ -240,7 +241,7 @@ impl ResolvedParticipant {
     /// never widen them. None for an approver.
     fn clearances(&self) -> Vec<Vec<RoleId>> {
         let Some(context) = self.context() else { return Vec::new() };
-        std::iter::once(context.roles).chain(context.limiting_roles).collect()
+        iter::once(context.roles).chain(context.limiting_roles).collect()
     }
 
     /// Nothing if the participant may take part in its channel by where it lies:

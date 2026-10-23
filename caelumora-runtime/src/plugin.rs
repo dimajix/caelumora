@@ -61,6 +61,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;
     use serde_json::Value;
+    use std::fs;
 
     define_id!(NoteId);
 
@@ -242,7 +243,7 @@ mod tests {
         // gives whoever asks.
         let dir = tempfile::tempdir().unwrap();
         let seed = dir.path().join("seed.yaml");
-        std::fs::write(&seed, "notes:\n- id: 3f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  text: remember\n").unwrap();
+        fs::write(&seed, "notes:\n- id: 3f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  text: remember\n").unwrap();
         runtime.seed(&[seed]).await.unwrap();
         let notes = store.entity_store::<Note>().unwrap();
         let note = notes.get(&SecurityContext::system(), "3f9a5e56-e5ea-43f9-9114-2098a6f417a9".parse().unwrap()).await.expect("seeded");

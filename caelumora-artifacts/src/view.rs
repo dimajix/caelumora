@@ -22,6 +22,7 @@ use caelumora_runtime::view::{ChannelView, Views};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::warn;
+use std::mem;
 
 /// The artifacts the views reach (issue 328): what the runtime's `Views`
 /// offer of artifacts, from the plugin.
@@ -158,7 +159,7 @@ impl ArtifactChannelViews for ChannelView {
 async fn readable_by(views: &Views, mut artifact: Artifact) -> ArtifactView {
     let context = views.context();
     let mut readable = Vec::with_capacity(artifact.versions.len());
-    for version in std::mem::take(&mut artifact.versions) {
+    for version in mem::take(&mut artifact.versions) {
         if views.access_policy().may_read_artifact(context, &artifact.version_attributes(&version)).await {
             readable.push(version);
         }

@@ -347,9 +347,13 @@ mod tests {
     use caelumora_model::workspace::CommandStatus;
     use bytes::Bytes;
     use tempfile::TempDir;
+    use futures::stream;
+    use std::fs as std_fs;
+    use std::os::unix::fs::symlink;
+    use std::slice;
 
     fn content(text: &'static str) -> ByteStream {
-        Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
+        Box::pin(stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
     }
 
     async fn text(terminal: &dyn Terminal, path: &str) -> String {
@@ -409,13 +413,13 @@ mod tests {
     async fn a_link_out_of_the_workspace_is_not_followed() {
         let (root, _, terminal, id) = workspace().await;
         let secret = root.path().join("secret.txt");
-        std::fs::write(&secret, "secret").unwrap();
+        std_fs::write(&secret, "secret").unwrap();
         let dir = root.path().join(id.to_string());
-        std::os::unix::fs::symlink(&secret, dir.join("leak")).unwrap();
-        std::os::unix::fs::symlink(root.path(), dir.join("up")).unwrap();
-        std::os::unix::fs::symlink(root.path().join("missing"), dir.join("dangling")).unwrap();
-        std::fs::write(dir.join("inner.txt"), "inner").unwrap();
-        std::os::unix::fs::symlink(dir.join("inner.txt"), dir.join("alias")).unwrap();
+        symlink(&secret, dir.join("leak")).unwrap();
+        symlink(root.path(), dir.join("up")).unwrap();
+        symlink(root.path().join("missing"), dir.join("dangling")).unwrap();
+        std_fs::write(dir.join("inner.txt"), "inner").unwrap();
+        symlink(dir.join("inner.txt"), dir.join("alias")).unwrap();
 
         for refused in ["leak", "up/secret.txt", "dangling"] {
             let read = terminal.read(&path(refused)).await;
@@ -450,7 +454,7 @@ mod tests {
         shell.output(&short, 0, Duration::from_secs(10)).await.unwrap();
 
         let key = (id, "channel".to_string(), long.clone());
-        assert_eq!(provider.commands(), std::slice::from_ref(&key), "what may still run");
+        assert_eq!(provider.commands(), slice::from_ref(&key), "what may still run");
         provider.end_command(&key).await.unwrap();
         assert_eq!(shell.output(&long, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
         assert!(provider.commands().is_empty());

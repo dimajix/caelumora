@@ -225,7 +225,6 @@ mod tests {
     use super::*;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
-    use caelumora_model::actor::ActorId;
     use caelumora_model::role::RoleId;
     use caelumora_model::user::UserUpdateEvent;
     use caelumora_model::store::Persistence;
@@ -233,6 +232,7 @@ mod tests {
     use std::sync::Mutex;
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::security::SecurityAttributes;
+    use std::slice;
 
     /// What was announced, in order.
     #[derive(Debug, Default)]
@@ -324,11 +324,11 @@ mod tests {
 
         assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied(_))), "not by someone else");
         controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
-        assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "live");
-        assert_eq!(store.entity_stores().unwrap().user_profiles.get(&hers, user.id).await.unwrap().approval_rules(), std::slice::from_ref(&rule), "stored");
+        assert_eq!(controller.profile().approval_rules(), slice::from_ref(&rule), "live");
+        assert_eq!(store.entity_stores().unwrap().user_profiles.get(&hers, user.id).await.unwrap().approval_rules(), slice::from_ref(&rule), "stored");
         assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."), "the rest stays");
         controller.update_profile(&hers, None, None).await.unwrap();
-        assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "and stays through a change of the rest");
+        assert_eq!(controller.profile().approval_rules(), slice::from_ref(&rule), "and stays through a change of the rest");
 
         let asking = ApprovalRule { decision: RuleDecision::Ask, ..rule.clone() };
         assert!(matches!(controller.add_approval_rule(&hers, asking).await, Err(StoreError::Validation(_))), "a person allows or denies");

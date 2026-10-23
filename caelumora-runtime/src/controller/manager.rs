@@ -277,7 +277,6 @@ mod tests {
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
-    use caelumora_model::actor::ActorId;
     use caelumora_model::role::RoleId;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::AllowAllPolicy;
@@ -289,6 +288,7 @@ mod tests {
     use std::time::Duration;
     use caelumora_model::confidentiality::{ConfidentialityRules, Visibility};
     use caelumora_model::approval::ApproverId;
+    use tokio::time;
 
     fn manager() -> (Persistence, Arc<EventBus>, ControllerManager) {
         let store = Persistence::in_memory();
@@ -340,9 +340,9 @@ mod tests {
 
     /// Waits until `done` holds, as the follower works in a task of its own.
     async fn eventually(done: impl Fn() -> bool) {
-        tokio::time::timeout(Duration::from_secs(2), async {
+        time::timeout(Duration::from_secs(2), async {
             while !done() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
+                time::sleep(Duration::from_millis(5)).await;
             }
         }).await.expect("in time");
     }
@@ -418,7 +418,7 @@ mod tests {
         controller.update_name(&SecurityContext::system(), "second").await.unwrap();
         // Both announcements come back through the follower; each carries
         // the name it set, so the last one leaves the last name.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert_eq!(controller.name(), "second");
     }
 

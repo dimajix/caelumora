@@ -404,6 +404,7 @@ mod tests {
     use crate::session::testing::*;
     use caelumora_model::user::User;
     use std::time::Duration;
+    use tokio::time;
 
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
@@ -427,10 +428,10 @@ mod tests {
                 if names.iter().all(|n| n == "renamed") {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                time::sleep(Duration::from_millis(10)).await;
             }
         };
-        tokio::time::timeout(Duration::from_secs(2), renamed).await.expect("both channels show the new name");
+        time::timeout(Duration::from_secs(2), renamed).await.expect("both channels show the new name");
         assert_eq!(first.user_actor(other.as_user_id().unwrap()).unwrap().name(), "other", "nobody else is renamed");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }

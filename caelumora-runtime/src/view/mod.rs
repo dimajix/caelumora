@@ -69,6 +69,8 @@ use std::sync::Arc;
 use anyhow::Error;
 use std::{fmt, result};
 use std::fmt::Debug;
+use std::error;
+use std::iter;
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
 /// and - for an agent - from where.
@@ -150,7 +152,7 @@ impl ViewError {
     /// Reaching something failed: `error`, with what was being done, for
     /// the log - the viewer learns only that it failed.
     pub(crate) fn failed<E>(error: E, doing: impl fmt::Display + Send + Sync + 'static) -> Self
-    where E: std::error::Error + Send + Sync + 'static {
+    where E: error::Error + Send + Sync + 'static {
         ViewError::Failed(Error::new(error).context(doing))
     }
 }
@@ -510,7 +512,7 @@ impl Views {
         let teams = self.teams().await?.into_iter().filter(|team| team.has_member(principal)).map(|team| Subject::Group(team.id));
         // Every user is named by an entry for everyone (issue 221).
         let everyone = matches!(principal, ActorId::User(_)).then_some(Subject::Everyone);
-        Ok(std::iter::once(Subject::Actor(principal)).chain(everyone).chain(roles.map(Subject::Role)).chain(teams).collect())
+        Ok(iter::once(Subject::Actor(principal)).chain(everyone).chain(roles.map(Subject::Role)).chain(teams).collect())
     }
 
     /// The entries `acl` with whom each names called by name (issue 23),
@@ -786,16 +788,6 @@ mod tests {
     use crate::testing::{Script, ScriptedAgents, TestRuntime};
 
     use caelumora_model::message::Message;
-
-    /// All of the history `view` shows, as one page.
-    async fn whole(view: &ChannelView) -> ViewResult<HistoryPage> {
-        view.history_page(None, 10_000).await
-    }
-
-    /// The messages of `page`.
-    fn messages(page: &HistoryPage) -> Vec<Message> {
-        page.entries().filter_map(HistoryEntry::said).cloned().collect()
-    }
     use crate::channel::ChannelLoop;
     use crate::group::keep_participants;
     use crate::session::testing::*;
@@ -805,9 +797,7 @@ mod tests {
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind, AgentChannelState};
     use caelumora_model::channel::{Channel, ChannelState, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
-    use caelumora_model::scope::Scope;
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
-    use caelumora_model::session::Session;
     use caelumora_model::snapshot::Detail;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::UserId;
@@ -821,6 +811,18 @@ mod tests {
     use caelumora_model::work::TurnId;
     use chrono::Utc;
     use std::time::Duration;
+    use caelumora_model::session::Participant as SessionParticipant;
+    use tokio::time;
+
+    /// All of the history `view` shows, as one page.
+    async fn whole(view: &ChannelView) -> ViewResult<HistoryPage> {
+        view.history_page(None, 10_000).await
+    }
+
+    /// The messages of `page`.
+    fn messages(page: &HistoryPage) -> Vec<Message> {
+        page.entries().filter_map(HistoryEntry::said).cloned().collect()
+    }
 
     fn as_user(id: UserId) -> Viewer {
         Viewer::new(SecurityContext::new(ActorId::User(id), Default::default(), Default::default()))
@@ -1818,14 +1820,14 @@ mod tests {
         let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let mut session = make_session("thinking", ActorId::None);
         session.participants = participants;
-        session.participants.push(caelumora_model::session::Participant::Agent(thinker.id));
+        session.participants.push(SessionParticipant::Agent(thinker.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent])).await.unwrap();
         let mut events = channel.user_actor(alice.id).unwrap().watch();
         let shown = |events: &mut ChannelWatch, wanted: &'static str| {
             let mut events = events.resubscribe();
             async move {
-                tokio::time::timeout(Duration::from_secs(5), async {
+                time::timeout(Duration::from_secs(5), async {
                     loop {
                         let envelope = events.recv().await.expect("the channel is running");
                         if envelope.context.sender_id == agent && envelope.event.kind() == wanted { break envelope.event }

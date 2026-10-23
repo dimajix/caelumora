@@ -129,6 +129,7 @@ mod tests {
     use std::sync::Mutex;
     use crate::confidentiality::Classification;
     use crate::event::EntityChange;
+    use std::mem;
 
     /// What was announced.
     #[derive(Debug, Default)]
@@ -146,7 +147,7 @@ mod tests {
 
     impl Announced {
         fn taken(&self) -> Vec<GlobalEvent> {
-            std::mem::take(&mut *self.0.lock().unwrap())
+            mem::take(&mut *self.0.lock().unwrap())
         }
     }
 

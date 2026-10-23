@@ -66,6 +66,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn, Instrument};
 use uuid::Uuid;
 use caelumora_model::digest;
+use futures::stream;
 
 #[derive(Debug)]
 pub(crate) struct ExternalAgentActor {
@@ -456,7 +457,7 @@ impl ExternalAgentActor {
                     debug!("External agent {} follows its open task again", self.id());
                     let tag = task.clone();
                     let tagged = stream.map(move |event| (tag.clone(), Some(event)))
-                        .chain(futures::stream::once(async move { (task, None) }));
+                        .chain(stream::once(async move { (task, None) }));
                     followed.push(Box::pin(tagged));
                 }
                 Err(e) => warn!("External agent {} cannot follow its open task: {:#}", self.id(), e),
@@ -932,7 +933,6 @@ mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
     use caelumora_model::channel::ChannelId;
-    use caelumora_model::confidentiality::Classification;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::transcript::TranscriptStore;
     use caelumora_model::store::StateStore;

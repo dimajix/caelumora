@@ -41,6 +41,11 @@ use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio_util::sync::CancellationToken;
 use tracing::field::Empty;
+use axum::middleware;
+use axum::routing;
+use std::future;
+use tokio::signal::ctrl_c;
+use tokio::time;
 
 #[cfg(feature = "web-ui")]
 mod web_ui;
@@ -118,7 +123,7 @@ async fn main() -> Result<()> {
     });
     // The request id is set inside the request span, which is the outer layer.
     let app = app(routes::api(state, &rest_plugins))
-        .layer(axum::middleware::from_fn(error::request_id))
+        .layer(middleware::from_fn(error::request_id))
         .layer(trace_layer);
 
     let listener = TcpListener::bind(config.server.address).await?;
@@ -126,7 +131,7 @@ async fn main() -> Result<()> {
     let serving = axum::serve(listener, app).with_graceful_shutdown(shutdown_on_signal(session_manager, shutdown.clone()));
     tokio::select! {
         served = serving.into_future() => served?,
-        () = async { shutdown.cancelled().await; tokio::time::sleep(CONNECTIONS_CLOSE).await } => {
+        () = async { shutdown.cancelled().await; time::sleep(CONNECTIONS_CLOSE).await } => {
             tracing::warn!("Requests were still under way {:?} after the shutdown; they end with the process", CONNECTIONS_CLOSE);
         }
     }
@@ -159,14 +164,14 @@ async fn signalled() {
             }
             Err(e) => {
                 tracing::warn!("SIGTERM cannot be caught, and ends Caelumora without a shutdown: {e}");
-                std::future::pending::<()>().await;
+                future::pending::<()>().await;
             }
         }
     };
     let interrupted = async {
-        if let Err(e) = tokio::signal::ctrl_c().await {
+        if let Err(e) = ctrl_c().await {
             tracing::warn!("SIGINT cannot be caught, and ends Caelumora without a shutdown: {e}");
-            std::future::pending::<()>().await;
+            future::pending::<()>().await;
         }
     };
     tokio::select! {
@@ -213,7 +218,7 @@ fn app(api: Router) -> Router {
     let api = api.fallback(|| async { ApiError::not_found("not_found", "There is nothing at this path of the API") });
     let app = Router::new().nest(API_PATH, api);
     #[cfg(feature = "web-ui")]
-    let app = app.fallback_service(axum::routing::get(web_ui::serve));
+    let app = app.fallback_service(routing::get(web_ui::serve));
     app
 }
 

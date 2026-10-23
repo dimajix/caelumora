@@ -121,6 +121,9 @@ dbg_macro = "warn"
 todo = "warn"
 allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
-# A function longer than 100 lines says so with an `expect`, which fires once it is shorter
-# (CODING-GUIDELINES.md, issue 452).
+# No function longer than 100 lines; those that were longer before the lint carry an `expect`,
+# which fires once they are shorter (CODING-GUIDELINES.md, issue 452).
 too_many_lines = "warn"
+# Imported by name, or a function called by its module; never a longer path (CODING-GUIDELINES.md,
+# issue 452). clippy.toml allows two segments.
+absolute_paths = "warn"

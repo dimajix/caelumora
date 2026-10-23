@@ -40,6 +40,7 @@ use super::{SessionError, SessionLoop, purge_channel_document, require_attachabl
 use caelumora_model::session;
 use crate::template::{resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants};
 use tokio::sync::Mutex;
+use tokio::time;
 
 /// How long `SessionManager::shutdown` takes at most (issue 297): within
 /// the ten seconds Docker leaves between SIGTERM and SIGKILL, with the
@@ -517,7 +518,7 @@ impl SessionManager {
             })).await;
             self.command_reaper.shutdown().await;
         };
-        match tokio::time::timeout(SHUTDOWN_BOUND, ending).await {
+        match time::timeout(SHUTDOWN_BOUND, ending).await {
             Ok(()) => info!("Every session is shut down"),
             Err(_) => warn!("Shutting the sessions down took longer than {:?}; what is still under way ends with the process", SHUTDOWN_BOUND),
         }
@@ -778,6 +779,8 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::session::ChannelId;
     use tokio::sync::broadcast::Receiver;
+    use std::time::Instant;
+    use tokio::time;
 
     #[tokio::test]
     async fn create_session_emits_created_then_started() {
@@ -905,7 +908,7 @@ mod tests {
             let manager = Arc::clone(&manager);
             async move { manager.stop(&SecurityContext::system(), session_id).await.unwrap() }
         });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert!(!stopping.is_finished(), "the stop waits for the start");
 
         // ... and registers the session before it lets go: the stop then
@@ -953,8 +956,8 @@ mod tests {
         /// Waits until `holds` does, at most two seconds: a running channel
         /// follows the agent as the session learns of it.
         async fn until(holds: impl Fn() -> bool, what: &str) {
-            let waited = async { while !holds() { tokio::time::sleep(Duration::from_millis(10)).await } };
-            tokio::time::timeout(Duration::from_secs(2), waited).await.unwrap_or_else(|_| panic!("{what}"));
+            let waited = async { while !holds() { time::sleep(Duration::from_millis(10)).await } };
+            time::timeout(Duration::from_secs(2), waited).await.unwrap_or_else(|_| panic!("{what}"));
         }
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
@@ -1305,12 +1308,12 @@ mod tests {
         let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let mut session = make_session("thinking", ActorId::None);
         session.participants = participants;
-        session.participants.push(caelumora_model::session::Participant::Agent(thinker.id));
+        session.participants.push(session::Participant::Agent(thinker.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent])).await.unwrap();
         let mut events = channel.observe();
         channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
                 if envelope.context.sender_id == agent && matches!(envelope.event, ActorEvent::ResponseStarted { .. }) { break }
@@ -1337,7 +1340,7 @@ mod tests {
     async fn stopping_a_session_lets_its_agents_keep_their_turns() {
         let (manager, alice, session, agent, mut events) = with_a_hanging_answer().await;
 
-        let stopping = std::time::Instant::now();
+        let stopping = Instant::now();
         assert!(manager.stop(&alice, session.id()).await.unwrap(), "it ran");
         assert!(stopping.elapsed() < STOP_GRACE, "the actors ended by themselves");
         assert_eq!(turns_given_up(&mut events, agent), Vec::<GivenUpReason>::new(), "nothing is given up");
@@ -1353,7 +1356,7 @@ mod tests {
         manager.stop(&alice, stored).await.unwrap();
         let other = create(&manager, &alice, make_session("other", ActorId::None)).await.unwrap().id();
 
-        let shutting = std::time::Instant::now();
+        let shutting = Instant::now();
         manager.shutdown().await;
         assert!(shutting.elapsed() < SHUTDOWN_BOUND, "the actors ended by themselves");
         assert!(manager.running(session.id()).is_none() && manager.running(other).is_none(), "every session stopped");

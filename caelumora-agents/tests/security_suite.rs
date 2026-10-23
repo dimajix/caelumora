@@ -71,6 +71,8 @@ use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+use futures::stream;
+use tokio::time;
 
 // --- Personalities and agents ---------------------------------------------
 
@@ -200,12 +202,12 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
 
     let histories = world.runtime.history_store();
     let key = main.id();
-    let recorded = tokio::time::timeout(Duration::from_secs(5), async {
+    let recorded = time::timeout(Duration::from_secs(5), async {
         loop {
             if let Some((_, entry)) = histories.said(key, &Reader::Participant(ActorId::Agent(helper)), answered.id).await.unwrap() {
                 break entry;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("recorded");
     assert_eq!(recorded.said().and_then(|m| m.reasoning.as_deref()), Some("weighing"), "the record holds it, for the agent");
@@ -216,13 +218,13 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     assert_eq!(for_bob.message(answered.id).await.unwrap().reasoning, None, "nor read by its id");
 
     main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All).await.expect("it may run");
-    let caught_up = tokio::time::timeout(Duration::from_secs(5), async {
+    let caught_up = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = world.runtime.state_store().get_agent_channel_state(other, main.id()).await.unwrap();
             if let Some(message) = state.transcript.messages().into_iter().find(|m| m.id == answered.id) {
                 break message;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("caught up with");
     assert_eq!((caught_up.content.as_deref(), caught_up.reasoning), (Some("an answer"), None), "an agent that joins later is given what everybody was");
@@ -484,7 +486,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
     let (nudged, asked) = world.asked(bob.request_response(ActorId::Agent(helper))).await;
     nudged.expect("his to nudge, as a participant");
     assert!(asked.is_empty(), "nothing beyond taking part: {asked:?}");
-    let finished = tokio::time::timeout(Duration::from_secs(5), async {
+    let finished = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = his.recv().await.expect("the channel runs");
             if envelope.event.kind() == "TurnFinished" {
@@ -805,7 +807,7 @@ async fn sensitive_questions_reach_only_whom_they_are_put_to() {
     let refused = main.user_actor(world.bob).unwrap().answer_questions(request.id, Some(vec![Response::Text { text: "Bob".to_string() }])).await.expect_err("never shown to him");
     assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: QuestionError::NotOpen, .. })), "{refused}");
     main.user_actor(world.alice).unwrap().answer_questions(request.id, Some(vec![Response::Text { text: "Alice".to_string() }])).await.expect("put to her");
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     while let Ok(envelope) = his.try_recv() {
         assert!(!matches!(envelope.event, ActorEvent::QuestionRequested(_) | ActorEvent::QuestionClosed { .. }), "nothing of them reaches him: {}", envelope.event.kind());
     }
@@ -852,7 +854,7 @@ async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
     let mut watch = main.user_actor(user).expect("they take part").watch();
     main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
     let mut asked = Asked { request: None, by_rule: None, approved: None, decided_by: Vec::new() };
-    let _ = tokio::time::timeout(Duration::from_millis(1500), async {
+    let _ = time::timeout(Duration::from_millis(1500), async {
         loop {
             let envelope = watch.recv().await.expect("the channel runs");
             let from_approver = matches!(envelope.context.sender_id, ActorId::Approver(_));
@@ -901,7 +903,7 @@ impl ToolProvider for Commands {
 /// of the call keeps it in the channel's history, once it is there (issue
 /// 419).
 async fn recorded_approval(main: &ChannelLoop) -> Vec<ApprovalDecision> {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let recorded = main.history_entries().await.into_iter()
                 .filter_map(|entry| entry.said().and_then(|message| message.tool_results.first().map(|result| result.approval.clone())))
@@ -909,7 +911,7 @@ async fn recorded_approval(main: &ChannelLoop) -> Vec<ApprovalDecision> {
             if let Some(approval) = recorded {
                 break approval;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the call's result is recorded")
 }
@@ -1076,7 +1078,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
 
     main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
-    let request = tokio::time::timeout(Duration::from_secs(5), async {
+    let request = time::timeout(Duration::from_secs(5), async {
         loop {
             if let ActorEvent::ApprovalRequested(request) = watch.recv().await.expect("the channel runs").event {
                 break request;
@@ -1105,7 +1107,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
         let ActorEvent::MessageRejected { rejected, reason, .. } = shown(&mut his, "MessageRejected").await else { unreachable!() };
         assert_eq!((rejected.as_str(), reason), ("ApprovalDenied", Rejection::Forbidden), "his answer is refused, and he is told");
         main.user_actor(world.alice).unwrap().send_approval(response.clone(), true).await.expect("sent");
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             loop {
                 // The approver's decision, not the answers shown as given.
                 let envelope = watch.recv().await.expect("the channel runs");
@@ -1207,7 +1209,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
 
     let (answered, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_message("@helper send it".to_string(), None).await.expect("sent");
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             loop {
                 if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
                     if let Some(result) = message.tool_results.first() {
@@ -1328,7 +1330,7 @@ async fn asked_to_read_side(world: &World, main: &ChannelLoop, line: &str) -> Ve
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@reader what is on side?".to_string(), None).await.expect("sent");
         asked_for(world, line).await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        time::sleep(Duration::from_millis(200)).await;
     }).await;
     asked
 }
@@ -1377,7 +1379,7 @@ async fn an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not() {
 
 /// What the tool call recorded in `main` returned, once it is there.
 async fn tool_result(main: &ChannelLoop) -> String {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             let returned = main.history_entries().await.into_iter()
                 .filter_map(|entry| entry.said().and_then(|message| message.tool_results.first().map(|result| result.content.clone())))
@@ -1385,7 +1387,7 @@ async fn tool_result(main: &ChannelLoop) -> String {
             if let Some(content) = returned {
                 break content;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the call's result is recorded")
 }
@@ -1421,9 +1423,9 @@ struct Held {
 impl LLMClient for Held {
     async fn chat_completion(&self, messages: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
         self.given.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
-        let Some(answer) = self.answers.lock().unwrap().pop_front() else { return futures::stream::pending().boxed() };
+        let Some(answer) = self.answers.lock().unwrap().pop_front() else { return stream::pending().boxed() };
         let gate = Arc::clone(&self.gate);
-        futures::stream::once(async move {
+        stream::once(async move {
             gate.acquire().await.unwrap().forget();
             Ok(MessageEvent::Complete(answer))
         }).boxed()
@@ -1474,11 +1476,11 @@ async fn bob_speaks_while_alices_turn_works(others: OthersWords, alice_again: Op
 
     let (_, asked) = world.asked(async {
         main.user_actor(world.alice).expect("she takes part").send_message("@helper echo it".to_string(), None).await.expect("she asks");
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while model.given.lock().unwrap().is_empty() { tokio::time::sleep(Duration::from_millis(10)).await }
+        time::timeout(Duration::from_secs(5), async {
+            while model.given.lock().unwrap().is_empty() { time::sleep(Duration::from_millis(10)).await }
         }).await.expect("the model is asked");
         main.user_actor(world.bob).expect("he takes part").send_message("@helper and delete it".to_string(), None).await.expect("he speaks meanwhile");
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             loop {
                 if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
                     if message.content.as_deref() == Some("@helper and delete it") { break }
@@ -1487,7 +1489,7 @@ async fn bob_speaks_while_alices_turn_works(others: OthersWords, alice_again: Op
         }).await.expect("his message is said");
         if let Some(again) = alice_again {
             main.user_actor(world.alice).expect("she takes part").send_message(again.to_string(), None).await.expect("she speaks again");
-            tokio::time::timeout(Duration::from_secs(5), async {
+            time::timeout(Duration::from_secs(5), async {
                 loop {
                     if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
                         if message.content.as_deref() == Some(again) { break }
@@ -1496,7 +1498,7 @@ async fn bob_speaks_while_alices_turn_works(others: OthersWords, alice_again: Op
             }).await.expect("her message is said");
         }
         model.gate.add_permits(4);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             let mut answers = 0;
             while answers < 2 {
                 let envelope = watch.recv().await.expect("the channel runs");
@@ -1597,20 +1599,20 @@ impl RemoteAtWork {
 impl ExternalAgent for RemoteAtWork {
     async fn send(&self, security: &SecurityContext, _: Option<&ConversationId>, _: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
         self.called("send", security).await;
-        let started = futures::stream::iter([Ok(ExternalEvent::Started(TaskId("t-1".to_string())))]);
-        let Some(gate) = self.gate.clone() else { return Ok(Box::pin(started.chain(futures::stream::pending()))) };
-        let opened = futures::stream::once(async move {
+        let started = stream::iter([Ok(ExternalEvent::Started(TaskId("t-1".to_string())))]);
+        let Some(gate) = self.gate.clone() else { return Ok(Box::pin(started.chain(stream::pending()))) };
+        let opened = stream::once(async move {
             if let Ok(permit) = gate.acquire_owned().await {
                 permit.forget();
             }
         });
-        let answered = futures::stream::iter([Ok(ExternalEvent::Message("Found.".to_string())), Ok(ExternalEvent::Completed)]);
+        let answered = stream::iter([Ok(ExternalEvent::Message("Found.".to_string())), Ok(ExternalEvent::Completed)]);
         Ok(Box::pin(started.chain(opened.filter_map(|()| async { None })).chain(answered)))
     }
 
     async fn resume(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<ExternalStream> {
         self.called("resume", security).await;
-        Ok(Box::pin(futures::stream::pending()))
+        Ok(Box::pin(stream::pending()))
     }
 
     async fn cancel(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<()> {
@@ -1661,9 +1663,9 @@ async fn remote_personality(world: &World) -> Personality {
 
 /// Waits until `calls` holds `count` calls.
 async fn calls_made(calls: &Mutex<Vec<&'static str>>, count: usize) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while calls.lock().unwrap().len() < count {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the remote agent is called");
 }
@@ -1683,9 +1685,9 @@ async fn with_a_task_bob_asked_for(calls: &Arc<Mutex<Vec<&'static str>>>) -> (Wo
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
         calls_made(calls, 1).await;
     }).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while world.store.state_store().get_agent_channel_state(hermes, main.id()).await.unwrap().remote.open_tasks.is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the task is stored");
     (world, session, asked)
@@ -1782,18 +1784,18 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the
             && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_));
         let finished_by = |envelope: &Envelope, sender: ActorId| envelope.context.sender_id == sender
             && matches!(envelope.event, ActorEvent::TurnFinished { .. });
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             while !said_by(&events.recv().await.expect("the channel runs"), ActorId::User(world.bob)) {}
         }).await.expect("his message is said");
         gate.add_permits(3);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             let mut answers = 0;
             while answers < 2 {
                 answers += usize::from(finished_by(&events.recv().await.expect("the channel runs"), ActorId::Agent(hermes)));
             }
         }).await.expect("it answers the first request and then the rest");
         // A further answer would call the remote agent right away.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        time::sleep(Duration::from_millis(200)).await;
     }).await;
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "send"], "one call for all that was asked meanwhile");
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
@@ -1819,7 +1821,7 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
 
     let (failed, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel runs");
                 if let ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
@@ -1857,7 +1859,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
 
     let (failed, asked) = world.asked(async {
         main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public)).await.expect("hers to lower");
-        tokio::time::timeout(Duration::from_secs(5), async {
+        time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel runs");
                 if let ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
@@ -2286,11 +2288,11 @@ async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
                 .collect::<Vec<_>>()
         }
     };
-    let recorded = tokio::time::timeout(Duration::from_secs(5), async {
+    let recorded = time::timeout(Duration::from_secs(5), async {
         loop {
             let seen = answers(world.bob).await;
             if !seen.is_empty() { break seen }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("recorded");
     assert_eq!(recorded, ["mark: done"], "his, with what it answered");

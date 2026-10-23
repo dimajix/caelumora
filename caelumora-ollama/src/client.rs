@@ -71,6 +71,9 @@ use std::fmt;
 use std::error::Error;
 use std::fmt::Debug;
 use std::io::ErrorKind;
+use std::io;
+use std::mem;
+use tokio::time;
 
 #[derive(Debug, Serialize)]
 struct OllamaChatRequest {
@@ -146,7 +149,7 @@ impl OllamaFunctionParameters {
     fn defuse(&mut self, tokens: &ControlTokens) {
         match self {
             OllamaFunctionParameters::Object { properties, required } => {
-                *properties = std::mem::take(properties)
+                *properties = mem::take(properties)
                     .into_iter()
                     .map(|(name, mut parameter)| {
                         parameter.defuse(tokens);
@@ -561,7 +564,7 @@ fn api_url(endpoint: &RemoteEndpoint, path: &str) -> String {
 async fn send(request: RequestBuilder, endpoint: &RemoteEndpoint) -> LLMResult<Response> {
     let sent = request.send();
     let response = match endpoint.timeout_secs {
-        Some(secs) => tokio::time::timeout(Duration::from_secs(secs), sent).await
+        Some(secs) => time::timeout(Duration::from_secs(secs), sent).await
             .map_err(|_| LLMError::Connection { endpoint: endpoint.shown(), reason: format!("no answer within {secs} s") })?,
         None => sent.await,
     };
@@ -626,7 +629,7 @@ where
     let sender_id = ActorId::None;
     let sender_name = "ollama".to_string();
     stream! {
-        let reader = StreamReader::new(bytes.map(|chunk| chunk.map_err(std::io::Error::other)));
+        let reader = StreamReader::new(bytes.map(|chunk| chunk.map_err(io::Error::other)));
         let mut lines = std::pin::pin!(FramedRead::new(reader, LinesCodec::new()));
 
         let mut full_content = String::new();
@@ -858,6 +861,7 @@ mod tests {
     use caelumora_model::type_map::TypeKey;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_runtime::runtime::Services;
+    use futures::stream as futures_stream;
 
     #[test]
     fn test_ollama_chat_message_from_with_tool_calls() {
@@ -1178,7 +1182,7 @@ mod tests {
             "{\"message\":{\"role\":\"assistant\",\"content\":\"ße\"},\"done\":true}\n",
         );
         // Each byte a chunk of its own: an "ü", an "ß" and the line ends split.
-        let bytes = futures::stream::iter(body.bytes().map(|b| Ok::<_, Error>(Bytes::from(vec![b]))));
+        let bytes = futures_stream::iter(body.bytes().map(|b| Ok::<_, Error>(Bytes::from(vec![b]))));
 
         let events: Vec<_> = answer_of(bytes, "ollama".to_string(), "qwen3:8b".to_string()).collect().await;
         let parts: Vec<_> = events.iter().filter_map(|e| match e {

@@ -191,6 +191,8 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
     use serde_json::json;
+    use std::env;
+    use std::fs;
 
     /// A service of a plugin's, with a backend of its own.
     trait Greeter: Send + Sync {
@@ -263,15 +265,15 @@ mod tests {
     async fn the_secrets_come_from_a_file_and_from_the_environment() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("secrets.json");
-        std::fs::write(&file, r#"{"CAELUMORA_TEST_BACKEND_FILE": "from-file"}"#).unwrap();
-        std::env::set_var("CAELUMORA_TEST_BACKEND_ENV", "from-env");
+        fs::write(&file, r#"{"CAELUMORA_TEST_BACKEND_FILE": "from-file"}"#).unwrap();
+        env::set_var("CAELUMORA_TEST_BACKEND_ENV", "from-env");
         let configs = [BackendConfig::new("file", json!({ "path": file })), BackendConfig::new("env", json!(null))];
         let providers = Backends::built_in().make_chain::<dyn SecretProvider>("secret provider", &configs, &Services::empty()).unwrap();
         let secrets = SecretManager::new(providers, Arc::new(AllowAllPolicy::new()));
         let context = SecurityContext::default();
         assert_eq!(secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_FILE").await.unwrap(), "from-file");
         assert_eq!(secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_ENV").await.unwrap(), "from-env");
-        std::env::remove_var("CAELUMORA_TEST_BACKEND_ENV");
+        env::remove_var("CAELUMORA_TEST_BACKEND_ENV");
         let misspelt = Backends::built_in().make_chain::<dyn SecretProvider>("secret provider", &[BackendConfig::new("env", json!({ "prefix": "X" }))], &Services::empty());
         assert!(misspelt.is_err(), "env takes no parameters");
     }
@@ -283,7 +285,7 @@ mod tests {
         let alice = UserId::new();
         // The hash of "wonderland", made cheaply.
         let hash = "$argon2id$v=19$m=8,t=1,p=1$Y2FlbHVtb3JhLXRlc3RzIQ$O5O4BCrndw3DwlDMCkis9v7MtqH5yH38HhXnJ6aRr2M";
-        std::fs::write(&file, format!("users:\n  - id: {alice}\n    username: alice\n    roles: [hr]\n    password_hash: \"{hash}\"\n")).unwrap();
+        fs::write(&file, format!("users:\n  - id: {alice}\n    username: alice\n    roles: [hr]\n    password_hash: \"{hash}\"\n")).unwrap();
         let users = Persistence::in_memory().entity_stores().unwrap().users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();

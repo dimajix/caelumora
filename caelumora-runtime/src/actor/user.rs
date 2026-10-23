@@ -29,6 +29,8 @@ use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use caelumora_model::agent::AgentId;
+use std::future;
+use std::sync;
 
 #[derive(Debug)]
 pub struct UserActor {
@@ -55,11 +57,11 @@ pub struct UserActor {
     ended: CancellationToken,
     /// Where its run stands, so that its start and end are shown once each
     /// (issue 386).
-    run: std::sync::Mutex<Run>,
+    run: sync::Mutex<Run>,
     /// The questions shown to this user that are open (issue 165), as the
     /// agents asked them and until they close them: those put to the user
     /// are what they may answer, and what a message of theirs declines.
-    open_questions: std::sync::Mutex<HashMap<QuestionId, QuestionRequest>>,
+    open_questions: sync::Mutex<HashMap<QuestionId, QuestionRequest>>,
 }
 
 /// The channel as a user follows it (issues 104, 220, 386): what their
@@ -94,7 +96,7 @@ impl ChannelWatch {
     pub async fn next(&mut self) -> Result<Shown, RecvError> {
         match self.shown.recv().await {
             // Held by this watch, the outbox is never closed.
-            Err(RecvError::Closed) => std::future::pending().await,
+            Err(RecvError::Closed) => future::pending().await,
             shown => shown,
         }
     }
@@ -148,8 +150,8 @@ impl UserActor {
             user_tx: utx,
             outbox,
             ended: CancellationToken::new(),
-            run: std::sync::Mutex::new(Run::Before),
-            open_questions: std::sync::Mutex::new(HashMap::new()),
+            run: sync::Mutex::new(Run::Before),
+            open_questions: sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -790,13 +792,14 @@ mod tests {
     use crate::actor::manager::OUTBOX_CAPACITY;
     use crate::session::testing::{bare_session, test_runtime};
     use caelumora_model::actor::EventContext;
-    use caelumora_model::value::name::Name;
     use crate::runtime::ChannelRuntime;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::channel::{Channel, moderation_components};
     use caelumora_model::user::{User, UserId};
     use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
     use std::time::Duration;
+    use std::iter;
+    use tokio::time;
 
     /// A user's actor, with the channel it is in - to be kept while the
     /// actor is used: the actor's runtime holds it weakly.
@@ -876,7 +879,7 @@ mod tests {
         for _ in ["WakeupRequested", "CompleteMessageGenerated"] {
             channel_inbox.recv().await.expect("forwarded");
         }
-        let shown: Vec<&str> = std::iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
+        let shown: Vec<&str> = iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
         assert_eq!(shown, ["CompleteMessageGenerated"], "what it said, as it forwarded it, not the request to wake the channel (issue 220)");
 
         actor.send_approval(ApprovalResponse::new(Default::default(), Default::default()), true).await.unwrap();
@@ -907,7 +910,7 @@ mod tests {
         drop(channel_inbox);
 
         actor.send_message("hello".to_string(), None).await.unwrap();
-        let ended = tokio::time::timeout(
+        let ended = time::timeout(
             Duration::from_secs(5),
             actor.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output))),
         ).await.expect("the actor ends");
