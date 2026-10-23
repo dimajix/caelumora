@@ -3,7 +3,54 @@
 The general rules for code in Caelumora: style, error handling, asynchronous code, logging and
 tests. Rules that belong to one subject live with it - where permission checks go in
 [SECURITY.md](SECURITY.md), how a component is written in [COMPONENTS.md](COMPONENTS.md).
-[ARCHITECTURE.md](ARCHITECTURE.md) gives the overall picture.
+[ARCHITECTURE.md](ARCHITECTURE.md) gives the overall picture, the principles of design are in
+[AGENTS.md](../AGENTS.md#design-principles).
+
+## Rules for every change
+
+The rules most often missed, each with the section that gives its reasons. Every change is checked
+against this list, rule by rule, before it is reported (the self-review of
+[AGENTS.md](../AGENTS.md#workflow)).
+
+*   Import what you use with `use` at the top of the module and write it by its name: `impl
+    Stored for Skill`, `Skill::KIND` - never `impl crate::store::Stored for Skill` or
+    `caelumora_model::skill::Skill::KIND`, also not for a single use or in a test. A function may
+    be called by its module (`time::sleep` after `use tokio::time;`), never by a longer path. A
+    path is written out only where an import cannot serve ([Imports](#imports)).
+*   Every module begins with `//!` whose first sentence names its responsibility
+    ([Comments and documentation](#comments-and-documentation)).
+*   No `unwrap()` or `expect()` in production code ([Types](#types)).
+*   A method of a trait answers a specific error type, never `anyhow` - except the few named in
+    [Types](#types).
+*   Errors in a turn end the turn, not the agent: don't let a turn-time error escape
+    `AgentActor::run` ([Errors in a turn](#errors-in-a-turn-end-the-turn-not-the-agent)).
+*   Error messages name what failed and never contain secret values or file paths
+    ([Messages name what failed](#messages-name-what-failed)).
+*   Log through `tracing`, never through `log` or `println!`; message content only at `trace!`,
+    credentials never ([Logging](#logging)).
+*   REST handlers return `Result<_, crate::error::ApiError>`; never map an error to a bare status
+    code ([REST errors](#rest-errors)). Keep the REST API compatible with `caelumora-web-ui`
+    ([Crates and interfaces](#crates-and-interfaces)).
+*   A type takes the services it uses - the `AccessPolicy`, the stores, the event bus - when it
+    is made and keeps them as fields; it does not fetch them through the runtime at every use
+    ([Services are held, not fetched](#services-are-held-not-fetched)).
+*   A pure access question is a method of `AccessQuestions`, an operation checks its own permission
+    with `Enforcement::require` - before it asks anything of others - and a frontend never asks the
+    `AccessPolicy` itself (see [SECURITY.md](SECURITY.md)). A plugin does the same through
+    extension traits of its own - its questions on `AccessQuestions`, its views on `Views` - and
+    adds nothing about its kind to the core (see [PLUGINS.md](PLUGINS.md)).
+*   A new action that acts in someone's name, or a change to what an action asks, comes with its
+    test in the security suite (`caelumora-runtime/tests/security_suite.rs`, an agent's in
+    `caelumora-agents/tests/security_suite.rs`, see
+    [SECURITY.md](SECURITY.md#the-security-suite)) - a plugin's in its own tests, in the suite's
+    world (`caelumora_runtime::testing`, feature `test-support`; with agents,
+    `caelumora_agents::testing`).
+*   A change to what is stored comes without compatibility code; the summary says which stored
+    data has to be deleted ([Crates and interfaces](#crates-and-interfaces)).
+*   Comments and Markdown documents wrap prose at 100 characters
+    ([Comments and documentation](#comments-and-documentation)).
+*   `cargo clippy --workspace --all-targets` stays silent
+    ([Comments and documentation](#comments-and-documentation)).
 
 ## Comments and documentation
 
@@ -11,11 +58,18 @@ tests. Rules that belong to one subject live with it - where permission checks g
     return values and potential errors.
 *   **Internal comments:** use `//` for implementation details. Explain *why* something is done if
     it is not obvious from the code.
-*   **Module docs:** use `//!` at the top of new modules to describe their purpose.
+*   **Module docs:** every module begins with `//!`, and its first sentence names the module's
+    responsibility - one sentence, without an "and also" (the test of
+    [one owner per concern](../AGENTS.md#design-principles)). What follows describes the module in
+    detail. A change after which that sentence no longer holds is a
+    [finding](../AGENTS.md#findings); a module without such a sentence gets it when it is changed
+    anyway.
 *   **Consistency:** mirror the comment frequency and style of the module you are editing.
-*   **Comments wrap at 100 characters**, as the Markdown documents do (`AGENTS.md`). Older
-    comments are wrapped narrower; they are rewrapped when they are changed anyway, not on their
-    own.
+*   **Comments wrap at 100 characters**, as the Markdown documents do. Older comments are wrapped
+    narrower; they are rewrapped when they are changed anyway, not on their own.
+*   **Markdown documents** (`docs/`, `issues/`, `AGENTS.md`) wrap prose at 100 characters.
+    Headings, table rows, code blocks and links that would not fit stay on one line; field lines
+    such as `**Status:**` keep a line of their own.
 *   **No line of prose starts with a dash.** In a doc comment, a line that begins with `- ` is a
     list item to rustdoc, and the sentence it continues breaks apart (clippy:
     `doc_lazy_continuation`). Wrap so that a dash ends the line before it instead.
@@ -54,7 +108,9 @@ Agent`) - also when adding the import means touching the import block for a sing
 written out only where an import cannot serve: inside a `macro_rules!`, which expands in other
 modules and writes `$crate::…`; where two items of one name meet (`crate::chain::Stored` and
 `crate::store::Stored`), unless one of them is renamed on import; and where the module around it
-calls something by its module on purpose, so that the call says where the function lives. The
+calls a function by its module on purpose, so that the call says where the function lives - then
+the module is imported and named in the call (`use tokio::time;`, then `time::sleep(…)`), never a
+longer path (`tokio::time::sleep(…)`). The
 derive of `thiserror` is written by its path, `#[derive(Debug, thiserror::Error)]`: imported,
 `Error` would stand beside `std::error::Error` and `anyhow::Error`, which many of the same
 modules use.
@@ -75,6 +131,10 @@ modules use.
     in `[workspace.dependencies]`, with its version, `default-features = false` if any crate needs
     it, and the features every crate using it needs. A crate names it with `workspace = true` and
     adds only its own features and `optional`. A version is raised there, for all crates at once.
+*   **Stored data.** Stored data need not stay readable: until further notice, old data may be
+    deleted. A change to what is stored comes without compatibility code - no `serde` aliases, no
+    readers of an older form. Instead, the summary of the change says which stored data has to be
+    deleted.
 
 ### A module's manager
 
@@ -98,6 +158,15 @@ crate, not a public API - returns a tuple, not a type made for it: `Turn::full_c
 bundles a return value is one more name to read and keep. A type is worth it once the value has a
 meaning of its own: it gets methods, travels further than its caller, is stored or serialized, has
 more than two parts, or its parts have the same type and could be swapped unnoticed.
+
+### States are types
+
+Fields that make sense only in certain combinations - two `bool`s of which only three combinations
+occur, an `Option` that is set exactly when another field has a certain value - become an `enum`
+whose variants hold what belongs to them. A state that cannot be represented needs no check at its
+callers, and a `match` over it is checked by the compiler. The same holds for parameters: a `bool`
+that switches a function between two behaviours becomes two functions, or an `enum` that names the
+behaviours.
 
 ### Runtimes and their entities
 
@@ -313,6 +382,10 @@ Searching the log for one `span_id` therefore finds the request, the routing and
 that answered it.
 
 ## Testing
+
+A test uses what the code offers its callers. One that needs an internal - a field or method made
+visible for it, beyond what the `testing` modules below offer - says that a cut is wrong: it is a
+[finding](../AGENTS.md#findings), and the visibility is not widened for it.
 
 ### Unit tests
 
