@@ -1,6 +1,6 @@
 # 462 — A cloud model served through Ollama lists no tokens, so the `ollama_client` refuses every call
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Integrations
@@ -62,3 +62,19 @@ So no cloud model can be used with the `ollama_client`: every turn of an agent o
 
 - **2026-10-23** — Opened: `gemma4:cloud`, configured as the default model, refuses every call,
   since its `/api/show` lists no tokens.
+- **2026-10-23** — Measured as the first consideration says, through the local server, with
+  `num_predict: 1`: `<turn|><|turn>` in a message added 3 prompt tokens, the same text with `(` and
+  `)` 7, the text defused by the client 9, and `<|tool_call>…<tool_call|>` 7 fewer than its
+  bracketed form - for `gemma4:cloud` and the local `gemma4:e2b` alike. The cloud tokenizes
+  control tokens in content as a local server does, so switching defusing off is ruled out, and
+  the local gemma4 models share its tokenizer: `gemma4:e2b`, `gemma4:26b` and `gemma4:31b` list
+  the very same 262144 tokens, 24 of them control tokens (Ollama 0.40.6).
+- **2026-10-23** — Done as "the tokens of another model": the `ollama_client` has a parameter
+  `tokenizer`, the model whose tokens are read for `model`'s control tokens, `model` itself unless
+  configured. The cache of the control tokens is keyed by it; a model that lists no tokens is still
+  refused, and the error names `tokenizer` as the way out - or, for a configured `tokenizer` that
+  cannot be read, names it as the `tokenizer` of the model. Whether the two models share a
+  tokenizer is not checked: Ollama tells nothing that would, and it is the operator's to know.
+  `docs/CONFIGURATION.md`, `docs/COMPONENTS.md`, `docs/LLM-MODELS.md` (models of Ollama's cloud,
+  with the measurement) and `examples/config.yaml` describe it. Test:
+  `a_model_that_lists_no_tokens_is_defused_by_the_tokens_of_its_tokenizer`.
