@@ -62,7 +62,7 @@ use caelumora_model::session::Session;
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnapshot};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultExt, Stored};
 use caelumora_model::workspace::Workspace;
 use caelumora_model::workspace::WorkspaceId;
 use std::sync::Arc;
@@ -347,7 +347,7 @@ impl Views {
                 Found::Running(session_loop)
             }
             None => Found::Stored(self.stores.sessions.get(self.viewer.context(), id).await.map_err(|e| {
-                if matches!(e, StoreError::NotFound { .. } | StoreError::PermissionDenied(_)) { not_found() } else { ViewError::Failed(e.into()) }
+                if e.is_absent_or_refused() { not_found() } else { ViewError::Failed(e.into()) }
             })?),
         };
         Ok(SessionView::of(self.clone(), found))

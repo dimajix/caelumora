@@ -72,6 +72,14 @@ pub enum StoreError {
     PermissionDenied(#[source] Refused),
 }
 
+impl StoreError {
+    /// Whether it says that what was asked for is not there, or refused to the caller (`NotFound`,
+    /// `PermissionDenied`), rather than that the store failed or the request did not fit.
+    pub fn is_absent_or_refused(&self) -> bool {
+        matches!(self, Self::NotFound { .. } | Self::PermissionDenied(_))
+    }
+}
+
 pub type StoreResult<T> = Result<T, StoreError>;
 
 /// The `AccessPolicy` and the `ConfidentialityPolicy` every store of a

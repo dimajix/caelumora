@@ -7,7 +7,7 @@
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStore, StoreError};
+use caelumora_model::store::EntityStore;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::type_map::{TypeKey, TypeMap};
 use futures::future::BoxFuture;
@@ -498,7 +498,7 @@ impl ComponentRegistry {
         let name = ScopedName { name: target.name, scope: target.scope };
         let components = match self.bundles.find_by_name(context, &name).await {
             Ok(bundle) => bundle.components,
-            Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied(_))) => return Err(ComponentError::Unavailable { name: name.to_string(), cause }),
+            Err(cause) if cause.is_absent_or_refused() => return Err(ComponentError::Unavailable { name: name.to_string(), cause }),
             Err(e) => return Err(ComponentError::InvalidConfig(format!("no component bundle '{name}': {e}"))),
         };
         if let Some(inner) = components.component_nodes.iter().find(|inner| inner.kind == BUNDLE_REF_KIND) {

@@ -151,7 +151,7 @@ pub enum ChannelError {
 /// component bundles it includes (issue 270), are gone or not the
 /// agent's to read - rather than that the store failed.
 fn cannot_run(error: &Error) -> bool {
-    matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. } | StoreError::PermissionDenied(_)))
+    error.downcast_ref::<StoreError>().is_some_and(StoreError::is_absent_or_refused)
         || error.chain().any(|e| e.downcast_ref::<ComponentError>().is_some_and(ComponentError::is_unavailable))
 }
 
