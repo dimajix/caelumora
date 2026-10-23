@@ -88,11 +88,11 @@ under `## History`), and numbers are never reused.
     in the same change.
 *   **One owner per concern.** Every crate, module and type can be described in one sentence - for
     a module, the first sentence of its module docs; if the description of a change needs an "and
-    also", something is on the wrong object. Logic that
-    belongs together by subject lives together - its data, rules and checks in one place - and is
-    not spread over crates because its callers happen to be there: `caelumora-model` holds data
-    and rules, `caelumora-runtime` where everything runs, `caelumora-agents` what an agent does
-    there, `caelumora-rest-server` only maps HTTP to the runtime (see
+    also", something is on the wrong object. Logic that belongs together by subject lives
+    together - its data, rules and checks in one place - and is not spread over crates because its
+    callers happen to be there: `caelumora-model` holds data and rules, `caelumora-runtime` where
+    everything runs, `caelumora-agents` what an agent does there, `caelumora-rest-server` only
+    maps HTTP to the runtime (see
     [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an owner does not
     offer, extend the owner rather than computing it at the caller.
 *   **Few generic types, not many helpers.** A new type or trait needs a responsibility of its own.
@@ -128,7 +128,8 @@ under `## History`), and numbers are never reused.
     trait and method, and list the files and the tests. Where the work adds or changes a public
     interface or raises an architecture question, put the plan before the maintainer and wait for
     the decision.
-4.  **Implement.** Make the change completely: everything it needs, nothing beside it.
+4.  **Implement.** Make the change completely: everything it needs, nothing beside it - its tests
+    included.
 5.  **Document.** Update the document in `docs/` on the subject, `docs/ARCHITECTURE.md` and/or
     `README.md` where your change changes a concept, a rule or how the parts fit together; what a
     type or method does in detail goes into its doc comments. What belongs where is described in
@@ -145,14 +146,20 @@ under `## History`), and numbers are never reused.
         its [checklist](docs/CODING-GUIDELINES.md#rules-for-every-change) rule by rule against the
         diff.
 
-    Change what the answers call for, before you go on.
-7.  **Verify.** Run the existing tests and add tests that cover the change. Every test passes, as
-    does `cargo clippy --workspace --all-targets`.
+    Change what the answers call for. Then have the change reviewed with fresh eyes, by an agent
+    that has not seen the work - in Claude Code the `reviewer` agent
+    (`.claude/agents/reviewer.md`) -, telling it the issue and the pattern and interface agreed in
+    the plan. What it finds in the change itself - a rule broken, a design finding, a document
+    not updated - is fixed, unless it is an architecture question, which goes to the maintainer.
+    What it finds in the code around the change joins your findings, with your assessment; its
+    questions are answered, or passed on to the maintainer.
+7.  **Verify.** Run the tests. Every test passes, as does
+    `cargo clippy --workspace --all-targets`.
 8.  **Record.** If the change resolves or advances an issue, update its status in the issue file
     and append a dated entry under `## History`.
 9.  **Report.** Leave the change in the working tree and summarise it: what it changes, what the
-    self-review simplified and what it could not, your findings (below), and which stored data has
-    to be deleted, if any. Then wait for the maintainer's review.
+    self-review simplified and what it could not, your findings (below) and the reviewer's, and
+    which stored data has to be deleted, if any. Then wait for the maintainer's review.
 
 ## Working together
 
