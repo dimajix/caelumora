@@ -337,8 +337,10 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         json!({ "a": id }), json!({ "name": "Zoë Smith" }), json!({ "a": { "Session": "s" } }), json!({ "a": { "User": ["u1"] } }),
         json!({ "a": 3 }), json!({ "a": 7 }), json!({ "a": 4.5 }), json!({ "a": -1 }), json!({ "list": [{ "b": 2 }, { "b": 9 }] }),
     ];
+    // The ids in the order of the bodies, as `Uuid` orders them.
+    let id_of = |at: usize| Uuid::from_u128(at as u128);
     for (at, body) in bodies.iter().enumerate() {
-        storage.insert(Document { id: format!("{at:02}"), name: None, deleted: false, body: body.clone() }).await.unwrap();
+        storage.insert(Document { id: id_of(at), name: None, deleted: false, body: body.clone() }).await.unwrap();
     }
     const A: FieldPath = &["a"];
     const AB: FieldPath = &["a", "b"];
@@ -365,8 +367,8 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         Filter::any(LIST, Filter::within(B, 5..10)),
     ];
     for filter in filters {
-        let scanned: Vec<String> = storage.scan(Some(&filter), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
-        let meeting: Vec<String> = bodies.iter().enumerate().filter(|(_, body)| filter.matches(body)).map(|(at, _)| format!("{at:02}")).collect();
+        let scanned: Vec<Uuid> = storage.scan(Some(&filter), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
+        let meeting: Vec<Uuid> = bodies.iter().enumerate().filter(|(_, body)| filter.matches(body)).map(|(at, _)| id_of(at)).collect();
         assert!(meeting.iter().all(|id| scanned.contains(id)), "{filter:?}: meets {meeting:?}, scanned {scanned:?}");
         if !folded(&filter) {
             assert_eq!(scanned, meeting, "exactly what meets {filter:?}");

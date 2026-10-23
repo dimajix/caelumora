@@ -1,6 +1,6 @@
 # 455 — Preconfigured components are configuration kept as entities, the one kind without a UUID
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -112,3 +112,10 @@ Then the ids of every kind as UUIDs, as considered above.
   removed for good, so `CheckedStore::remove` and `DocumentStorage::remove` went too; the seed's
   section is `component_bundles`, and "preconfigured components" are called component bundles
   everywhere.
+- **2026-10-23** — Step 2: every kind's id is a UUID (`Stored::Id` is `From<Uuid>` and
+  `Into<Uuid>`, as `define_id!` gives it); `Document::id`, the scans and their cursors (`Cursor`,
+  which holds the id) are keyed by `Uuid`, ordered bytewise as Postgres orders a `uuid`; the JSON
+  files are named by its text, a file named otherwise is left out; the tables of the kinds keep it
+  as a `uuid`, their form 2. `Cursor::parse` and `Cursor::as_str`, which nothing called, went with
+  the cursor's text.
+- **2026-10-23** — Done: both steps merged.

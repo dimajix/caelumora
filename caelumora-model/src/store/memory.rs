@@ -19,6 +19,7 @@ use crate::tool::ToolSet;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use uuid::Uuid;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 use tracing::info;
@@ -215,7 +216,7 @@ where
 #[derive(Debug)]
 struct MemoryDocuments {
     kind: EntityKind,
-    documents: RwLock<HashMap<String, Document>>,
+    documents: RwLock<HashMap<Uuid, Document>>,
 }
 
 impl MemoryDocuments {
@@ -225,7 +226,7 @@ impl MemoryDocuments {
 
     /// Refuses `document` if another of `documents` that is not deleted has
     /// its name (issue 250).
-    fn name_free(&self, documents: &HashMap<String, Document>, document: &Document) -> StoreResult<()> {
+    fn name_free(&self, documents: &HashMap<Uuid, Document>, document: &Document) -> StoreResult<()> {
         let Some(name) = document.name.as_ref().filter(|_| !document.deleted) else { return Ok(()) };
         match documents.values().any(|other| other.id != document.id && !other.deleted && other.name.as_ref() == Some(name)) {
             false => Ok(()),
@@ -236,15 +237,15 @@ impl MemoryDocuments {
 
 #[async_trait]
 impl DocumentStorage for MemoryDocuments {
-    async fn get(&self, id: &str) -> StoreResult<Option<Value>> {
-        Ok(read_lock(&self.documents, |all| all.get(id).map(|document| document.body.clone())))
+    async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
+        Ok(read_lock(&self.documents, |all| all.get(&id).map(|document| document.body.clone())))
     }
 
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         Ok(read_lock(&self.documents, |all| {
             let meeting = all.values()
                 .filter(|document| document.deleted == deleted && filter.is_none_or(|filter| filter.matches(&document.body)))
-                .map(|document| (document.id.clone(), document))
+                .map(|document| (document.id, document))
                 .collect();
             ordered_after(meeting, after).take(limit).map(|(id, document)| (id, document.body.clone())).collect()
         }))
@@ -262,7 +263,7 @@ impl DocumentStorage for MemoryDocuments {
                 return Err(StoreError::Conflict(format!("{} {} already exists", self.kind, document.id)));
             }
             self.name_free(all, &document)?;
-            all.insert(document.id.clone(), document);
+            all.insert(document.id, document);
             Ok(())
         })
     }
@@ -270,15 +271,15 @@ impl DocumentStorage for MemoryDocuments {
     async fn replace(&self, document: Document) -> StoreResult<()> {
         write_lock(&self.documents, |all| {
             self.name_free(all, &document)?;
-            all.insert(document.id.clone(), document);
+            all.insert(document.id, document);
             Ok(())
         })
     }
 
-    async fn remove_deleted(&self, id: &str) -> StoreResult<bool> {
+    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
         Ok(write_lock(&self.documents, |all| {
-            let marked = all.get(id).is_some_and(|document| document.deleted);
-            marked && all.remove(id).is_some()
+            let marked = all.get(&id).is_some_and(|document| document.deleted);
+            marked && all.remove(&id).is_some()
         }))
     }
 }
@@ -505,7 +506,7 @@ mod tests {
                 hers.push(workspace.id);
             }
         }
-        hers.sort_by_key(|id| id.to_string());
+        hers.sort();
         let ctx = SecurityContext::new(ActorId::User(alice), Default::default(), Default::default());
         let mut read = Vec::new();
         let mut query = Query::all().limited(1);

@@ -333,7 +333,7 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
     }
     let ids = |page: &[Folder]| page.iter().map(|f| f.id).collect::<Vec<_>>();
     let mut sorted = made.clone();
-    sorted.sort_by_key(|id| id.to_string());
+    sorted.sort();
     let listed = folders.list(&ctx, &Query::all()).await.expect("all of them");
     assert_eq!(ids(&listed.items), sorted, "in the order of their ids");
     assert!(listed.next.is_none());
@@ -341,7 +341,7 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
     let owned = Filter::eq(FolderField::Owner, ActorId::User(bob));
     let found = folders.list(&ctx, &Query::filtered(owned)).await.unwrap();
     let mut bobs_own = vec![made[2], made[4]];
-    bobs_own.sort_by_key(|id| id.to_string());
+    bobs_own.sort();
     assert_eq!(ids(&found.items), bobs_own, "a field of the entity");
 
     let place = Filter::And(vec![Filter::eq(FolderField::DocumentSession, session), Filter::eq(FolderField::DocumentChannel, channel)]);
@@ -354,7 +354,7 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
         Filter::any(FolderField::Documents, Filter::any(FolderField::DocumentAcl, named)),
     ]);
     let mut with_bob = vec![made[3], made[4]];
-    with_bob.sort_by_key(|id| id.to_string());
+    with_bob.sort();
     assert_eq!(ids(&folders.list(&ctx, &Query::filtered(shared)).await.unwrap().items), with_bob, "an entry of its list or of a document's");
 
     let mut paged = Vec::new();
@@ -390,7 +390,7 @@ pub async fn queries_behave(stores: &EntityStores) {
     let holder = Scope::SessionScope { session_id };
     let lying = stores.personalities.list(&ctx, &Query { filter: holder.within::<ScopeField>(), ..Query::all() }).await.unwrap();
     let mut expected = vec![in_session.id, in_channel.id];
-    expected.sort_by_key(|id| id.to_string());
+    expected.sort();
     assert_eq!(lying.items.iter().map(|p| p.id).collect::<Vec<_>>(), expected, "what lies in the session or a channel of it");
 
     let agent = AgentId(Uuid::new_v4());

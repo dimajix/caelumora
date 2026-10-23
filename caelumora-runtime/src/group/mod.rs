@@ -335,7 +335,7 @@ mod tests {
         groups.purge(&system, purged.id).await.unwrap();
         // Kept as something that is no group, past the store.
         let storage = memory.documents(Group::KIND, |_| Err(StoreError::Backend("not read".to_string()))).unwrap();
-        storage.replace(Document { id: unreadable.id.to_string(), name: None, deleted: false, body: Value::from("not a group") }).await.unwrap();
+        storage.replace(Document { id: unreadable.id.into(), name: None, deleted: false, body: Value::from("not a group") }).await.unwrap();
 
         let entry = |group: &Group| AclEntry { subject: Subject::Group(group.id), grant: Grant::Read };
         let everyone = AclEntry { subject: Subject::Everyone, grant: Grant::Read };

@@ -137,19 +137,13 @@ pub enum KnowledgeSource {
 
 impl KnowledgeSource {
     /// That the entity of kind `T` with `id` was read, as `digest` says.
-    pub fn entity<T: Stored>(id: T::Id, digest: Option<Digest>) -> Self
-    where
-        T::Id: Into<Uuid>,
-    {
+    pub fn entity<T: Stored>(id: T::Id, digest: Option<Digest>) -> Self {
         Self::Entity { kind: T::KIND, id: id.into(), digest }
     }
 
     /// The id of the entity of kind `T` this is the knowledge of, and the
     /// digest of what was read; `None` for knowledge of anything else.
-    pub fn about<T: Stored>(&self) -> Option<(T::Id, Option<Digest>)>
-    where
-        T::Id: From<Uuid>,
-    {
+    pub fn about<T: Stored>(&self) -> Option<(T::Id, Option<Digest>)> {
         match *self {
             Self::Entity { kind, id, digest } if kind == T::KIND => Some((T::Id::from(id), digest)),
             _ => None,

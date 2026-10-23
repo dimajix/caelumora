@@ -16,6 +16,7 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::str::FromStr;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
@@ -180,8 +181,9 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
     /// named.
     const KIND: EntityKind;
 
-    /// What it is kept and found by.
-    type Id: Clone + Eq + Hash + Display + FromStr + Debug + Send + Sync + 'static;
+    /// What it is kept and found by: a UUID under a type of its kind's
+    /// (`define_id!`), so that every store keys every kind alike.
+    type Id: Clone + Eq + Hash + Display + FromStr + Debug + Send + Sync + From<Uuid> + Into<Uuid> + 'static;
 
     /// The kind of entity it lies in - a channel in a `Session` -, or
     /// `NoEntity` for a kind that lies in none (issue 335). Its events name

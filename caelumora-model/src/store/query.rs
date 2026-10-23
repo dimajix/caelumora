@@ -270,26 +270,17 @@ fn lookup(document: &Value, field: impl Field) -> Option<&Value> {
 /// Where a list goes on: after the entity it names, in the order of their
 /// keys. Opaque to whoever holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Cursor(String);
+pub struct Cursor(Uuid);
 
 impl Cursor {
-    /// The cursor after the entity of `key`.
-    pub fn after(key: impl Into<String>) -> Self {
-        Self(key.into())
+    /// The cursor after the entity `id`.
+    pub(crate) fn after(id: Uuid) -> Self {
+        Self(id)
     }
 
-    /// The cursor as it is handed out, to be given back by `Cursor::parse`.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// A cursor handed out before.
-    pub fn parse(text: &str) -> Self {
-        Self(text.to_string())
-    }
-
-    pub(crate) fn key(&self) -> &str {
-        &self.0
+    /// The id of the entity it goes on after.
+    pub(crate) fn id(&self) -> Uuid {
+        self.0
     }
 }
 
@@ -334,14 +325,14 @@ pub struct Page<T> {
     pub next: Option<Cursor>,
 }
 
-/// `candidates` in the order of their keys - as `str` orders them -, from
-/// after the key `after` on: what a storage that holds its documents in no
-/// order hands out in a scan (`DocumentStorage::scan`). Each key comes with
-/// what the document is found by.
-pub fn ordered_after<T>(mut candidates: Vec<(String, T)>, after: Option<&str>) -> impl Iterator<Item = (String, T)> {
-    candidates.sort_by(|(l, _), (r, _)| l.cmp(r));
+/// `candidates` in the order of their ids, from after the id `after` on:
+/// what a storage that holds its documents in no order hands out in a scan
+/// (`DocumentStorage::scan`). Each id comes with what the document is found
+/// by.
+pub fn ordered_after<T>(mut candidates: Vec<(Uuid, T)>, after: Option<Uuid>) -> impl Iterator<Item = (Uuid, T)> {
+    candidates.sort_by_key(|(id, _)| *id);
     let start = match after {
-        Some(after) => candidates.partition_point(|(key, _)| key.as_str() <= after),
+        Some(after) => candidates.partition_point(|(id, _)| *id <= after),
         None => 0,
     };
     candidates.into_iter().skip(start)
@@ -468,11 +459,12 @@ mod tests {
     }
 
     #[test]
-    fn candidates_are_gone_through_in_the_order_of_keys_after_the_cursor() {
-        let candidates: Vec<(String, u32)> = vec![("c".into(), 3), ("a".into(), 1), ("b".into(), 2)];
+    fn candidates_are_gone_through_in_the_order_of_ids_after_the_cursor() {
+        let id = Uuid::from_u128;
+        let candidates: Vec<(Uuid, u32)> = vec![(id(3), 3), (id(1), 1), (id(2), 2)];
         let all: Vec<u32> = ordered_after(candidates.clone(), None).map(|(_, n)| n).collect();
         assert_eq!(all, [1, 2, 3]);
-        let after: Vec<u32> = ordered_after(candidates, Some("a")).map(|(_, n)| n).collect();
+        let after: Vec<u32> = ordered_after(candidates, Some(id(1))).map(|(_, n)| n).collect();
         assert_eq!(after, [2, 3]);
     }
 }

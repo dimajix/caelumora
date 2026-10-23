@@ -342,7 +342,7 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move {
             let mut ids = views.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>();
-            ids.sort_by_key(|id| id.to_string());
+            ids.sort();
             ids
         }
     };
@@ -356,7 +356,7 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     manager(&world).set_access(&alice, alone.id, with_the_team(&alone), false).await.expect("shared with the team alone");
 
     let mut both = vec![whole.id, alone.id];
-    both.sort_by_key(|id| id.to_string());
+    both.sort();
     assert_eq!(listed(&carol).await, both, "a member finds both among hers");
     assert_eq!(read_version(&world, &carol, whole.id, 1).await, Read::Content(5, "final".to_string()), "and reads the version of the one shared with its versions");
     assert_eq!(read_version(&world, &carol, alone.id, 1).await, Read::NoVersion, "not that of the other, whose own list does not name the team");

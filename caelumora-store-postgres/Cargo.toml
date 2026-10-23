@@ -14,10 +14,11 @@ serde_json.workspace = true
 # Queries checked at run time (`sqlx::query`), so that building needs no
 # database; the migrations of the crate's own tables compiled in
 # (`sqlx::migrate!`).
-sqlx = { workspace = true, features = ["runtime-tokio", "tls-native-tls", "postgres", "json", "migrate", "macros"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "tls-native-tls", "postgres", "json", "migrate", "macros", "uuid"] }
 # The pool is made, and a kind's table, once, when first needed.
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
