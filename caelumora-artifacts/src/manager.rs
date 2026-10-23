@@ -29,6 +29,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -36,7 +37,7 @@ use caelumora_model::value::ValueError;
 use caelumora_runtime::component::{ComponentError, ComponentResult};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
-use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within, ScopeMember};
+use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
 use caelumora_runtime::terminal::ByteStream;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
@@ -497,7 +498,7 @@ impl ScopeMember for ArtifactManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for artifact in self.artifacts.list(&system, &within(holder)).await?.items {
+        for artifact in self.artifacts.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             if deleted_unless_refused(self.artifacts.delete(ctx, artifact.id).await)? {
                 self.events.announce(GlobalEvent::deleted::<Artifact>(&artifact.id), &artifact);
             } else {
@@ -518,7 +519,7 @@ impl ScopeMember for ArtifactManager {
     async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in deleted_since(self.artifacts.list_deleted(&system, &within(holder)).await?.items, since) {
+        for artifact in deleted_since(self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)? {
                 self.events.announce(GlobalEvent::restored::<Artifact>(&restored.id), &restored);
             }
@@ -535,7 +536,7 @@ impl ScopeMember for ArtifactManager {
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in self.artifacts.list_deleted(&system, &within(holder)).await?.items {
+        for artifact in self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             // Its content is its storage too.
             let unremoved = |e: ArtifactError| StoreError::Backend(format!("the content of artifact {} cannot be removed: {e}", artifact.id));
             self.storage(&artifact.storage).map_err(unremoved)?.remove(artifact.id).await.map_err(unremoved)?;

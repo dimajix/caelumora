@@ -50,7 +50,7 @@ use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Reading, Place};
-use caelumora_model::group::{Group, GroupField, GroupId};
+use caelumora_model::group::{Group, GroupId};
 use caelumora_model::message::MessageId;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
@@ -565,12 +565,7 @@ impl Views {
     /// is asked for alone, in their name: the teams of `groups`, and those
     /// `subjects` names them by.
     async fn teams(&self) -> StoreResult<Vec<Group>> {
-        let principal = self.viewer.context().principal_id;
-        let theirs = Filter::Or(vec![
-            Filter::eq(GroupField::Owner, principal),
-            Filter::with_member(principal),
-        ]);
-        let query = Query::filtered(Filter::And(vec![Filter::teams(), theirs]));
+        let query = Query::filtered(Filter::teams_of(self.viewer.context().principal_id));
         Ok(self.stores.groups.list(self.viewer.context(), &query).await?.items)
     }
 

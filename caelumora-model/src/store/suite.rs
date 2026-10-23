@@ -379,7 +379,6 @@ pub async fn queries_behave(stores: &EntityStores) {
     let (alice, bob) = (UserId::new(), UserId::new());
     // By scope, by the session of a channel, by a participant.
     use crate::channel::{ChannelField, Participant};
-    use crate::session::SessionField;
     let session_id = SessionId(Uuid::new_v4());
     let in_session = Personality { name: ScopedName::new("in-session", Scope::SessionScope { session_id }).unwrap(), ..personality() };
     let in_channel = Personality { name: ScopedName::new("in-channel", Scope::ChannelScope { session_id, channel_id: ChannelId(Uuid::new_v4()) }).unwrap(), ..personality() };
@@ -388,7 +387,7 @@ pub async fn queries_behave(stores: &EntityStores) {
         stores.personalities.create(&ctx, personality).await.unwrap();
     }
     let holder = Scope::SessionScope { session_id };
-    let lying = stores.personalities.list(&ctx, &Query { filter: Filter::lying_within(&holder), ..Query::all() }).await.unwrap();
+    let lying = stores.personalities.list(&ctx, &Query::filtered(Filter::lying_within(&holder))).await.unwrap();
     let mut expected = vec![in_session.id, in_channel.id];
     expected.sort();
     assert_eq!(lying.items.iter().map(|p| p.id).collect::<Vec<_>>(), expected, "what lies in the session or a channel of it");
@@ -399,8 +398,7 @@ pub async fn queries_behave(stores: &EntityStores) {
     let without = self::session();
     stores.sessions.create(&ctx, &with_agent).await.unwrap();
     stores.sessions.create(&ctx, &without).await.unwrap();
-    let taking_part = Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, ActorId::Agent(agent)));
-    let found = stores.sessions.list(&ctx, &Query::filtered(taking_part)).await.unwrap();
+    let found = stores.sessions.list(&ctx, &Query::filtered(Filter::with_participant(ActorId::Agent(agent)))).await.unwrap();
     assert_eq!(found.items.iter().map(|s| s.id).collect::<Vec<_>>(), [with_agent.id], "a participant, the whole element");
 
     let of_it = Channel { session_id: with_agent.id, ..self::channel() };

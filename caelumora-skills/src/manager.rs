@@ -18,12 +18,13 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::event::EventBus;
-use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within, ScopeMember};
+use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
@@ -256,7 +257,7 @@ impl ScopeMember for SkillManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for skill in self.skills.list(&system, &within(holder)).await?.items {
+        for skill in self.skills.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             if deleted_unless_refused(self.skills.delete(ctx, skill.id).await)? {
                 self.events.announce(GlobalEvent::deleted::<Skill>(&skill.id), &skill);
             } else {
@@ -277,7 +278,7 @@ impl ScopeMember for SkillManager {
     async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for skill in deleted_since(self.skills.list_deleted(&system, &within(holder)).await?.items, since) {
+        for skill in deleted_since(self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.skills.restore(ctx, skill.id).await, &skill)? {
                 self.events.announce(GlobalEvent::restored::<Skill>(&restored.id), &restored);
             }
@@ -293,7 +294,7 @@ impl ScopeMember for SkillManager {
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for skill in self.skills.list_deleted(&system, &within(holder)).await?.items {
+        for skill in self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             self.skills.purge(&system, skill.id).await?;
         }
         Ok(())

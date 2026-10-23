@@ -143,17 +143,17 @@ impl ScopedField for ScopeField {
 /// The conditions a list of what lies in a scope is asked by (issue 293).
 impl<F: ScopedField> Filter<F> {
     /// What lies in `scope` or within it, as `Scope::contains` says -
-    /// `None` for the global scope, which holds everything. Within a
+    /// everything for the global scope, which holds everything. Within a
     /// session's scope lie the scopes of its channels, which hold their
     /// session as well.
-    pub fn lying_within(scope: &Scope) -> Option<Self> {
+    pub fn lying_within(scope: &Scope) -> Self {
         match scope {
-            Scope::GlobalScope => None,
-            Scope::SessionScope { session_id } => Some(Filter::is_in(F::SCOPE, [
+            Scope::GlobalScope => Filter::all_of([]),
+            Scope::SessionScope { session_id } => Filter::is_in(F::SCOPE, [
                 FieldValue::from(scope),
                 FieldValue::tagged("ChannelScope", FieldValue::tagged("session_id", *session_id)),
-            ])),
-            other => Some(Filter::eq(F::SCOPE, other)),
+            ]),
+            other => Filter::eq(F::SCOPE, other),
         }
     }
 
@@ -433,8 +433,7 @@ mod tests {
         for holder in &scopes {
             let within = Filter::<ScopeField>::lying_within(holder);
             for scope in &scopes {
-                let found = within.as_ref().is_none_or(|filter| filter.matches(&document(scope)));
-                assert_eq!(found, holder.contains(scope), "{scope:?} within {holder:?}");
+                assert_eq!(within.matches(&document(scope)), holder.contains(scope), "{scope:?} within {holder:?}");
             }
         }
         for place in &scopes {

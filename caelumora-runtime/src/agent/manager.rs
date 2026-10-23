@@ -16,7 +16,7 @@
 
 use super::{store_error, AgentError, AgentResult};
 use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused};
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::Channel;
@@ -24,6 +24,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use chrono::{DateTime, Utc};
@@ -202,7 +203,7 @@ impl ScopeMember for AgentManager {
     async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let mut left = 0;
-        for agent in self.agents.list(&system, &within(holder)).await?.items {
+        for agent in self.agents.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             if deleted_unless_refused(self.agents.delete(ctx, agent.id).await)? {
                 self.events.publish(GlobalEvent::deleted::<Agent>(&agent.id), agent.security_attributes);
             } else {
@@ -222,7 +223,7 @@ impl ScopeMember for AgentManager {
     /// restored.
     async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for agent in deleted_since(self.agents.list_deleted(&system, &within(holder)).await?.items, since) {
+        for agent in deleted_since(self.agents.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)? {
                 self.events.publish(GlobalEvent::restored::<Agent>(&restored.id), restored.security_attributes);
             }
@@ -237,7 +238,7 @@ impl ScopeMember for AgentManager {
     /// Whatever the stores report; what was purged before stays purged.
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for agent in self.agents.list_deleted(&system, &within(holder)).await?.items {
+        for agent in self.agents.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             self.agents.purge(&system, agent.id).await?;
             self.states.delete_agent_state(agent.id).await?;
         }
