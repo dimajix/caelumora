@@ -9,6 +9,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
+| [457](457-store-answers-misread-by-seed-and-ref.md) | open | low | bug | The seed asks whether a document is there with `get`, which does not find one marked deleted, and then fails to create it again, so deleting a seeded personality makes every later start fail; and a store failure while a `ref` is resolved is reported as an invalid configuration that names no bundle. |
 
 ## Persistence
 
@@ -112,3 +113,4 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [444](444-texts-compiled-in-cannot-be-exported.md) | open | low | feature | A variant of the texts given to models is a directory of files of the form of those compiled in, but whoever runs the program without its sources has no copy of them to begin one with. |
 | [453](453-artifact-publish-takes-eight-parameters.md) | open | low | refactoring | `ArtifactManager::publish` takes the caller, the content, its classification, the name, the description, the session and the channel one by one, and carries an `expect(clippy::too_many_arguments)`. |
 | [454](454-rustdoc-warnings-unchecked.md) | open | low | refactoring | `cargo doc --workspace` warns 31 times that public documentation links to a private item, and neither clippy nor the pre-commit hook runs rustdoc, so such warnings only grow. |
+| [456](456-stored-and-deletable-apart-without-reason.md) | open | low | refactoring | Whether a kind is marked when it is deleted is a trait of its own beside `Stored`, with a default that says "never deleted", though once the component bundles are a kind like every other no stored kind is removed for good any more. |

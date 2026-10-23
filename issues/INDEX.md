@@ -54,6 +54,8 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [448](448-persistence-inherits-the-state-stores.md) | done | The trait `Persistence` inherits `StateStore`, `HistoryStore` and `TranscriptStore` to add two methods, so a backend configured for the entities has to be a state store as well, the runtime holds two `StoreBackend`s of which half is unused each - and the checked layer the runtime uses is called the backend, the backend `Persistence`. |
 | [450](450-store-overwrites-a-change-made-meanwhile.md) | open | `CheckedStore` reads a document, asks the policy and writes in steps of their own, so a second process that changes the same entity in between is overwritten without notice, and the permission is judged on what was stored before it. |
 | [451](451-history-reader-judged-after-reading.md) | done | Whether a reader is given an item of a history is judged in Rust after the store read it, so a page of a reader who sees little of a long history reads it far back, also in Postgres. |
+| [456](456-stored-and-deletable-apart-without-reason.md) | open | Whether a kind is marked when it is deleted is a trait of its own beside `Stored`, with a default that says "never deleted", though once the component bundles are a kind like every other no stored kind is removed for good any more. |
+| [457](457-store-answers-misread-by-seed-and-ref.md) | open | The seed asks whether a document is there with `get`, which does not find one marked deleted, and then fails to create it again, so deleting a seeded personality makes every later start fail; and a store failure while a `ref` is resolved is reported as an invalid configuration that names no bundle. |
 
 ## Sessions and channels
 
