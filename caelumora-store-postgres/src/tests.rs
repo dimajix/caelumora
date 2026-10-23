@@ -21,11 +21,12 @@ use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_model::work::Work;
 use caelumora_model::confidentiality::ConfidentialityRules;
-use caelumora_model::group::Group;
+use caelumora_model::group::{Group, GroupField};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{AccessPolicy, AllowAllPolicy, OwnershipPolicy, SecurityContext};
+use caelumora_model::security::{AccessPolicy, Admission, AllowAllPolicy, Grant, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject};
+use caelumora_model::role::RoleId;
 use caelumora_model::store::documents::Document;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
@@ -103,6 +104,16 @@ async fn answers_queries() {
     let stores = database.stores(Arc::new(AllowAllPolicy::new())).await;
     suite::queries_behave(&stores.entity_stores().unwrap()).await;
     suite::queries_reach_parts(stores.entity_store::<suite::Folder>().unwrap().as_ref()).await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn lists_what_check_decides() {
+    let Some(database) = Database::new() else { return };
+    let (memberships, access_policy) = suite::admitting_policy();
+    let stores = database.stores(Arc::clone(&access_policy)).await;
+    let folders = stores.entity_store::<suite::Folder>().unwrap();
+    suite::lists_admit_what_check_decides(&stores.entity_stores().unwrap(), folders.as_ref(), &memberships, access_policy.as_ref()).await;
     database.drop().await;
 }
 
@@ -310,6 +321,70 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
     database.drop().await;
 }
 
+/// A scan hands out what its admission admits (issue 332), by the access
+/// entries each write keeps in step with its document: by the owner, an
+/// entry for an actor, a role, everyone, or a group an actor belongs to - a
+/// deleted one only where the admission says so -, of a grant that covers
+/// the one needed; nothing else. They go with the document.
+#[tokio::test]
+async fn a_scan_hands_out_what_its_admission_admits() {
+    let Some(database) = Database::new() else { return };
+    let groups = Arc::new(PgDocuments::new(Arc::clone(&database.connection), Group::KIND, None).unwrap());
+    let storage = PgDocuments::new(Arc::clone(&database.connection), EntityKind::new("probe"), Some(Arc::clone(&groups))).unwrap();
+    let (alice, bob) = (UserId::new(), UserId::new());
+    let (hers, his) = (ActorId::User(alice), ActorId::User(bob));
+    let role = RoleId::new();
+    let group = |name: &str, members: Vec<ActorId>| Group { members, ..Group::team(ScopedName::new(name, Scope::GlobalScope).unwrap(), alice) };
+    let (team, gone, other) = (group("team", vec![his]), group("gone", vec![his]), group("other", vec![hers]));
+    for (group, deleted) in [(&team, false), (&gone, true), (&other, false)] {
+        groups.insert(Document { id: group.id.into(), name: None, deleted, security_attributes: group.security_attributes.clone(), body: json!(group) }).await.unwrap();
+    }
+    let shared = |subject, grant| SecurityAttributes::owned_by(hers).granting(subject, grant);
+    let made = [
+        SecurityAttributes::owned_by(his),
+        shared(Subject::Actor(his), Grant::Read),
+        shared(Subject::Actor(his), Grant::Join),
+        shared(Subject::Role(role), Grant::Read),
+        shared(Subject::Everyone, Grant::Read),
+        shared(Subject::Group(team.id), Grant::Write),
+        shared(Subject::Group(gone.id), Grant::Read),
+        SecurityAttributes::owned_by(hers),
+        SecurityAttributes::owned_by(ActorId::System),
+        shared(Subject::Group(other.id), Grant::Read),
+    ];
+    let id_of = |at: usize| Uuid::from_u128(at as u128 + 1);
+    for (at, security_attributes) in made.iter().enumerate() {
+        storage.insert(Document { id: id_of(at), name: None, deleted: false, security_attributes: security_attributes.clone(), body: json!({}) }).await.unwrap();
+    }
+    let scanned = |admission: Admission| {
+        let storage = &storage;
+        async move { storage.scan(None, Some(&admission), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect::<Vec<_>>() }
+    };
+    let reading = Admission { actors: vec![his], unowned: true, grant: Some(Grant::Read), roles: vec![role], everyone: true, deleted_groups: false };
+    let at = |indexes: &[usize]| indexes.iter().map(|index| id_of(*index)).collect::<Vec<_>>();
+    assert_eq!(scanned(reading.clone()).await, at(&[0, 1, 3, 4, 5, 8]), "his, shared with him, his role, everyone, his group by writing, the system's");
+    assert_eq!(scanned(Admission { deleted_groups: true, ..reading.clone() }).await, at(&[0, 1, 3, 4, 5, 6, 8]), "a deleted group only where it is to count");
+    assert_eq!(scanned(Admission { actors: vec![his], ..Admission::default() }).await, at(&[0]), "owning alone");
+    assert!(scanned(Admission::default()).await.is_empty(), "nobody");
+
+    // The groups themselves, filtered, as the teams of a viewer are asked
+    // for: each read by its members through its own list, its parameters
+    // numbered after the filter's.
+    let theirs = Filter::Or(vec![Filter::eq(GroupField::Owner, his), Group::with_member(his)]);
+    let teams = Filter::all_of([Group::teams(), theirs]).by_path();
+    let found: Vec<Uuid> = groups.scan(Some(&teams), Some(&reading), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
+    assert_eq!(found, [Uuid::from(team.id)], "his team, by its own list - not the one he is no member of, nor the deleted one");
+
+    storage.replace(Document { id: id_of(1), name: None, deleted: false, security_attributes: SecurityAttributes::owned_by(hers), body: json!({}) }).await.unwrap();
+    assert_eq!(scanned(reading.clone()).await, at(&[0, 3, 4, 5, 8]), "an entry taken away goes with the write");
+    storage.replace(Document { id: id_of(0), name: None, deleted: true, security_attributes: SecurityAttributes::owned_by(his), body: json!({}) }).await.unwrap();
+    assert!(storage.remove_deleted(id_of(0)).await.unwrap());
+    let pool = database.connection.pool().await.unwrap();
+    let left: i64 = sqlx::query_scalar(sql(format!("SELECT count(*) FROM {} WHERE entity_id = $1", quoted("entity_probe_access")))).bind(id_of(0)).fetch_one(pool).await.unwrap();
+    assert_eq!(left, 0, "and its entries with a document removed");
+    database.drop().await;
+}
+
 /// Whether `filter` compares names folded somewhere - what SQL cannot judge
 /// and leaves to the store.
 fn folded(filter: &Filter<FieldPath>) -> bool {
@@ -328,7 +403,8 @@ fn folded(filter: &Filter<FieldPath>) -> bool {
 async fn a_scan_hands_out_what_a_filter_meets() {
     let Some(database) = Database::new() else { return };
     database.connection.pool().await.unwrap();
-    let storage = PgDocuments::new(Arc::clone(&database.connection), EntityKind::new("probe")).unwrap();
+    let groups = Arc::new(PgDocuments::new(Arc::clone(&database.connection), Group::KIND, None).unwrap());
+    let storage = PgDocuments::new(Arc::clone(&database.connection), EntityKind::new("probe"), Some(groups)).unwrap();
     let id = "7f1e3c1a-2d3b-4c5d-8e9f-0a1b2c3d4e5f";
     let bodies = [
         json!({ "a": "x" }), json!({ "a": ["x"] }), json!({ "a": { "User": "u1" } }), json!({ "a": { "User": "u2", "Extra": 1 } }),
@@ -340,7 +416,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
     // The ids in the order of the bodies, as `Uuid` orders them.
     let id_of = |at: usize| Uuid::from_u128(at as u128);
     for (at, body) in bodies.iter().enumerate() {
-        storage.insert(Document { id: id_of(at), name: None, deleted: false, body: body.clone() }).await.unwrap();
+        storage.insert(Document { id: id_of(at), name: None, deleted: false, security_attributes: Default::default(), body: body.clone() }).await.unwrap();
     }
     const A: FieldPath = &["a"];
     const AB: FieldPath = &["a", "b"];
@@ -367,7 +443,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         Filter::any(LIST, Filter::within(B, 5..10)),
     ];
     for filter in filters {
-        let scanned: Vec<Uuid> = storage.scan(Some(&filter), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
+        let scanned: Vec<Uuid> = storage.scan(Some(&filter), None, false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
         let meeting: Vec<Uuid> = bodies.iter().enumerate().filter(|(_, body)| filter.matches(body)).map(|(at, _)| id_of(at)).collect();
         assert!(meeting.iter().all(|id| scanned.contains(id)), "{filter:?}: meets {meeting:?}, scanned {scanned:?}");
         if !folded(&filter) {

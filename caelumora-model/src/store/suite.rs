@@ -17,7 +17,9 @@ use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::scope::{Scoped, Scope};
-use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
+use crate::security::{AccessPolicy, AclEntry, ActionType, Grant, OwnershipPolicy, Secured, SecurityAttributes, SecurityContext, Subject};
+use crate::store::memberships::StoreMemberships;
+use std::sync::Arc;
 use crate::session::{Session, SessionId};
 use crate::store::{EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
 use crate::store::history::HistoryStore;
@@ -308,7 +310,6 @@ fn bundle() -> ComponentBundle {
 /// Asked of `folders`, a kind with parts (`Folder`), as a plugin's kind may
 /// have them.
 pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
-    use crate::security::{Grant, Subject};
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
     let (session, channel) = (SessionId::new(), ChannelId::new());
@@ -410,12 +411,11 @@ pub async fn queries_behave(stores: &EntityStores) {
     assert_eq!(found.items.iter().map(|c| c.id).collect::<Vec<_>>(), [of_it.id], "the channels of a session");
 
     // By a member (issue 308).
-    use crate::group::GroupField;
     let mut his = group(alice);
     his.members.push(ActorId::User(bob));
     stores.groups.create(&ctx, &his).await.unwrap();
     stores.groups.create(&ctx, &group(UserId::new())).await.unwrap();
-    let belonging = Filter::any(GroupField::Members, Filter::eq(GroupField::Member, ActorId::User(bob)));
+    let belonging = Group::with_member(ActorId::User(bob));
     let found = stores.groups.list(&ctx, &Query::filtered(belonging)).await.unwrap();
     assert_eq!(found.items.iter().map(|g| g.id).collect::<Vec<_>>(), [his.id], "the groups of a member, not those of their owner");
 }
@@ -1055,4 +1055,105 @@ pub async fn deleting_marks(stores: &EntityStores) {
     assert!(stores.users.delete(&system, carol.id).await.expect("delete user"));
     let found = stores.users.find_by_name(&system, &scoped("carol")).await;
     assert!(matches!(found, Err(StoreError::NotFound { .. })), "not found by name: {found:?}");
+}
+
+/// The ownership policy, learning who belongs to a group from what
+/// `lists_admit_what_check_decides` binds it to - for the stores that suite
+/// is run on.
+pub fn admitting_policy() -> (Arc<StoreMemberships>, Arc<dyn AccessPolicy>) {
+    let memberships = Arc::new(StoreMemberships::new());
+    let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
+    (memberships, access_policy)
+}
+
+/// A list hands out what `check` decides of each entity (issue 332), though
+/// the storage narrows it by the policy's admission first: of folders owned
+/// by a user, an agent, the system and nobody, with an entry for a user, a role, a
+/// group - one that was deleted too, one with an agent - and everyone, of
+/// every grant; listed by users, by an agent as its owner and as itself, by
+/// a role, by nobody; of what is there and what was deleted, in pages
+/// smaller than a scan. `stores` and `folders` ask `access_policy`, made by
+/// `admitting_policy` with `memberships`.
+pub async fn lists_admit_what_check_decides(stores: &EntityStores, folders: &dyn EntityStore<Folder>, memberships: &StoreMemberships, access_policy: &dyn AccessPolicy) {
+    memberships.bind(&stores.groups);
+    let system = SecurityContext::system();
+    let (alice, bob) = (UserId::new(), UserId::new());
+    let (hers, his) = (ActorId::User(alice), ActorId::User(bob));
+    let agent = ActorId::Agent(AgentId::new());
+    let role = RoleId::new();
+    let group = |name: &str, member: ActorId| Group { members: vec![member], ..Group::team(scoped(name), alice) };
+    let (team, gone) = (group("team", his), group("gone", his));
+    // The participants of a channel, among them an agent.
+    let channel_id = ChannelId::new();
+    let participants = ScopedName::new(Group::PARTICIPANTS, Scope::ChannelScope { session_id: SessionId::new(), channel_id }).unwrap();
+    let place = Group { id: GroupId::of_channel(channel_id), name: participants, ..group("place", agent) };
+    for group in [&team, &gone, &place] {
+        stores.groups.create(&system, group).await.expect("create group");
+    }
+    assert!(stores.groups.delete(&system, gone.id).await.expect("delete group"));
+
+    let subjects = [Subject::Actor(his), Subject::Role(role), Subject::Group(team.id), Subject::Group(gone.id), Subject::Group(place.id), Subject::Everyone];
+    let mut made = Vec::new();
+    for owner in [hers, his, agent, ActorId::System, ActorId::None] {
+        made.push(SecurityAttributes::owned_by(owner));
+        for subject in subjects {
+            for grant in Grant::ALL {
+                made.push(SecurityAttributes::owned_by(owner).granting(subject, grant));
+            }
+        }
+    }
+    for (index, security_attributes) in made.into_iter().enumerate() {
+        let folder = Folder { security_attributes, ..Folder::of(alice) };
+        folders.create(&system, &folder).await.expect("create folder");
+        if index % 3 == 0 {
+            assert!(folders.delete(&system, folder.id).await.expect("delete folder"));
+        }
+    }
+    let there = all_folders(folders, &system, false).await;
+    let deleted = all_folders(folders, &system, true).await;
+
+    let contexts = [
+        SecurityContext::new(hers, SessionId::new(), ChannelId::new()),
+        SecurityContext::new(his, SessionId::new(), ChannelId::new()),
+        SecurityContext::new(ActorId::User(UserId::new()), SessionId::new(), ChannelId::new()),
+        SecurityContext::new(his, SessionId::new(), ChannelId::new()).with_roles(vec![role], None),
+        SecurityContext::new(his, SessionId::new(), ChannelId::new()).next(agent, his, his),
+        SecurityContext::new(his, SessionId::new(), ChannelId::new()).next(agent, his, his).with_roles(vec![role], Some(Vec::new())),
+        SecurityContext::default(),
+    ];
+    for context in &contexts {
+        let mut readable = Vec::new();
+        for folder in &there {
+            if access_policy.check(context, ActionType::get(Folder::KIND, &folder.security_attributes)).await {
+                readable.push(folder.id);
+            }
+        }
+        let listed: Vec<FolderId> = all_folders(folders, context, false).await.iter().map(|folder| folder.id).collect();
+        assert_eq!(listed, readable, "listed what is read one by one, for {context:?}");
+
+        let mut readable_deleted = Vec::new();
+        for folder in &deleted {
+            if access_policy.check(context, ActionType::read_deleted(Folder::KIND, &folder.security_attributes)).await {
+                readable_deleted.push(folder.id);
+            }
+        }
+        let listed: Vec<FolderId> = all_folders(folders, context, true).await.iter().map(|folder| folder.id).collect();
+        assert_eq!(listed, readable_deleted, "and of what was deleted, for {context:?}");
+    }
+}
+
+/// Every folder `context` lists - those deleted if `deleted` -, in pages
+/// of a few.
+async fn all_folders(folders: &dyn EntityStore<Folder>, context: &SecurityContext, deleted: bool) -> Vec<Folder> {
+    let mut query = Query::all().limited(7);
+    let mut all = Vec::new();
+    loop {
+        let page = match deleted {
+            true => folders.list_deleted(context, &query).await,
+            false => folders.list(context, &query).await,
+        }.expect("list folders");
+        all.extend(page.items);
+        let Some(next) = page.next else { return all };
+        query = query.after(next);
+    }
 }

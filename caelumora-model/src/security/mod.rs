@@ -9,6 +9,9 @@
 //!   `Grant`s.
 //! - An `ActionType` (`action`) is what is asked: what is done with a
 //!   stored entity of any kind, by a `Verb`, or one of the core's acts.
+//! - An `Admission` (`admission`) is the policy's rule for a verb on
+//!   entities, by their attributes alone: what it decides one entity by,
+//!   and what a store narrows a list by (issue 332).
 //! - The `AccessPolicy` (`access`) decides, one per process; the questions
 //!   asked of it from outside are `AccessQuestions`, what an operation
 //!   enforces is `Enforcement`. The policy of a process is the
@@ -19,6 +22,7 @@
 
 mod access;
 mod action;
+mod admission;
 mod attributes;
 mod context;
 mod ownership;
@@ -26,6 +30,7 @@ mod ownership;
 mod testing;
 
 pub use access::{AccessPolicy, AccessQuestions, AllowAllPolicy, Enforcement};
+pub use admission::Admission;
 pub use action::{ActionType, CustomVerb, Reclassified, Refused, Requirement, Verb, JOIN, WRITE};
 pub use attributes::{AclEntry, Grant, Memberships, NoMemberships, Secured, SecurityAttributes, Subject};
 pub use context::SecurityContext;

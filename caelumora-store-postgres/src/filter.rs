@@ -53,6 +53,11 @@ impl Condition {
         condition
     }
 
+    /// The number of the parameter after the last it binds.
+    pub(crate) fn next(&self) -> usize {
+        self.first + self.binds.len()
+    }
+
     /// `query`, which binds the parameters before `first`, with what the
     /// condition binds bound after them.
     pub(crate) fn bound<'q, O>(&self, mut query: QueryAs<'q, Postgres, O, PgArguments>) -> QueryAs<'q, Postgres, O, PgArguments> {

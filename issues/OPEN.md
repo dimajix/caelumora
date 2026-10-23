@@ -99,7 +99,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [287](287-memberships-cache.md) | open | low | feature | Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber. |
 | [305](305-skill-versions.md) | open | low | feature | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
 | [307](307-load-and-performance-tests.md) | open | low | feature | Nothing measures how Caelumora behaves under load, so its bottlenecks are guessed at, and a real model would hide them behind its own latency. |
-| [332](332-policy-as-a-predicate.md) | open | low | feature | The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query. |
 | [339](339-default-access-of-new-versions.md) | open | low | feature | Whom a new version of an artifact reaches is fixed to the channel it is published in, and neither a default for new versions nor a version's own list can be changed. |
 | [340](340-teams-as-owners.md) | open | low | question | Only a person owns anything: no team can own what is done in its name, as a company does, so what is a team's result is one member's and goes with them. |
 | [342](342-invitations.md) | open | low | feature | Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline. |

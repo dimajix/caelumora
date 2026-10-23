@@ -10,8 +10,10 @@
 //!   `ConfidentialityPolicy` is asked next whether the caller is cleared
 //!   for it, and who is not does not find it either: for every operation
 //!   below, the deleted included, as for reading.
-//! - **Listing** asks whether the caller may list at all, then filters the
-//!   result by what they may read.
+//! - **Listing** asks whether the caller may list at all, has the storage
+//!   narrow it to what the policy admits them to by the attributes alone
+//!   (`Admission`, issue 332), then filters what it hands out by what they
+//!   may read.
 //! - **Creating** asks with the attributes of the new entity.
 //! - **Changing and deleting** ask with the attributes *as stored*, never
 //!   with those of a new value, which the caller controls - otherwise
@@ -37,7 +39,7 @@
 //! except filtering a list, which is a question.
 
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
-use crate::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy};
+use crate::security::{ActionType, Admission, Enforcement, Refused, SecurityContext, AccessPolicy, Verb};
 use crate::store::{StoreError, StoreResult, Stored};
 use std::slice;
 
@@ -91,6 +93,18 @@ impl<'a> Access<'a> {
     /// they may read it (`Get`) and are cleared for it.
     pub(crate) async fn readable<T: Stored>(&self, value: &T) -> bool {
         present(value) && self.reachable(value, ActionType::get(T::KIND, value.security_attributes())).await
+    }
+
+    /// What the policy admits the caller to among a list, by the attributes
+    /// alone (issue 332): the admission of what `readable` asks.
+    pub(crate) fn admission<T: Stored>(&self) -> Option<Admission> {
+        self.access_policy.admission(self.ctx, T::KIND, Verb::Get)
+    }
+
+    /// What the policy admits the caller to among a list of what was
+    /// deleted: the admission of what `readable_deleted` asks.
+    pub(crate) fn admission_deleted<T: Stored>(&self) -> Option<Admission> {
+        self.access_policy.admission(self.ctx, T::KIND, Verb::ReadDeleted)
     }
 
     /// Whether the caller reaches `value`, asked as `read`: `may_reach`,

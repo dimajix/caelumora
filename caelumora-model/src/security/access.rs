@@ -1,3 +1,7 @@
+//! The `AccessPolicy`, and what every policy offers by it: the questions
+//! asked from outside an entity (`AccessQuestions`) and the way an
+//! operation enforces its own permission (`Enforcement`).
+
 use crate::store::{EntityKind, Stored};
 use async_trait::async_trait;
 use std::fmt::Debug;
@@ -6,11 +10,22 @@ use crate::channel::Channel;
 use crate::group::Group;
 use crate::session::Session;
 use crate::workspace::Workspace;
-use super::{ActionType, Refused, SecurityAttributes, SecurityContext, WRITE};
+use super::{ActionType, Admission, Refused, SecurityAttributes, SecurityContext, Verb, WRITE};
 
+/// Decides what is done in someone's name (issues 11, 23): one per process.
 #[async_trait]
 pub trait AccessPolicy : Debug + Sync + Send {
+    /// Whether `context` may do `action`.
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool;
+
+    /// Which entities of `kind` `context` may do `verb` with, by their
+    /// security attributes alone (issue 332) - what a store narrows a list
+    /// by before each entity is decided; `None` where nothing is narrowed
+    /// up front, as by default. A policy that gives one decides `check` on
+    /// entities by it, so that the two cannot come apart.
+    fn admission(&self, _context: &SecurityContext, _kind: EntityKind, _verb: Verb) -> Option<Admission> {
+        None
+    }
 }
 
 /// The pure questions "may they?" that are asked from outside an entity -

@@ -40,10 +40,10 @@ use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::security::{ActionType, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
+use caelumora_model::security::{ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{Persistence, StoreError};
+use caelumora_model::store::{EntityKind, Persistence, StoreError};
 use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use crate::component::ComponentRegistry;
@@ -72,7 +72,8 @@ use futures::stream;
 use std::iter;
 use std::mem;
 
-/// The ownership policy, recording every question it is asked - who acted
+/// The ownership policy, recording every question it is asked to decide
+/// (`check`; not the admission a list is narrowed by) - who acted
 /// with whose rights and for whom, what, of whose entity, and what it
 /// answered - so that a test says which permissions an action needs (issue
 /// 198). Recorded as `principal as caller, asked by initiator`, each part
@@ -132,6 +133,12 @@ impl AccessPolicy for Recorder {
         let allowed = self.access_policy.check(context, action).await;
         self.record(context, self.label(&action), allowed);
         allowed
+    }
+
+    /// The ownership policy's, unrecorded: what a list is narrowed by is
+    /// decided again by `check` for whatever it lets through.
+    fn admission(&self, context: &SecurityContext, kind: EntityKind, verb: Verb) -> Option<Admission> {
+        self.access_policy.admission(context, kind, verb)
     }
 }
 

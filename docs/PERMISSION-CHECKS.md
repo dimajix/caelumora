@@ -19,7 +19,7 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 
 | No. | Concept | Decided by | Asked as |
 |---|---|---|---|
-| 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | the `AccessPolicy`, from `SecurityAttributes` (`owner_id`, `acl` naming actors, roles and groups) and the context's principal; `OwnershipPolicy::granted` | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `UseSkill`, `ReadDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) |
+| 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | the `AccessPolicy`, from `SecurityAttributes` (`owner_id`, `acl` naming actors, roles and groups) and the context's principal; the `Admission` the policy gives for a verb (issue 332) | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `UseSkill`, `ReadDeleted`, `HearDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) |
 | 2 | **Flow and clearance**: whether information may go where the act takes it, and who is cleared for it | the `ConfidentialityPolicy` (`ConfidentialityRules`), from the roles in the context, the classifications and the places | `may_publish`, `may_copy_information`, `cleared_for`, and their `require_*` forms; `require_classifiable` is validation |
 | 3 | **Rules of particular actions**: what is neither ownership nor flow | a rule written into the policy for the variant: authorship, who answers for an agent, the system alone; or nothing, the action being a hook | `ModifyMessage`, `RevokeMessage`, `Reclassify`, `ApproveToolCall`, `ShowAgentCommand`, `ExecuteAgentCommand`, `ShowCommand`, `ExecuteCommand`, `Purge`; `CallTool`, `ReadSecret` |
 | 4 | **Reach**: whether a thing can be reached from where one stands | reading it (1) followed by the flow (2), one question (`confidentiality::may_reach`, issue 322): the store's for what is classified - `Get*` or `ReadDeleted`, then `cleared_for` (`Stored::classification`); for a channel read from a place `view::channel_reading` over a document read in S - `GetChannel`, then for a user the clearance, for an agent the copy into its place; for an artifact the store's, the views cutting the versions by their own lists (issue 316) | no action of its own; answered "not found" |
@@ -35,6 +35,7 @@ a stored entity is decided by the verb, never by the kind (issue
 | Actions | Rule | Concept |
 |---|---|---|
 | `Get` of every kind (`GetSession`, `GetSkill`, …); a kind's own verb requiring `Read` (`UseSkill`) | system-owned, or owned by the principal or the caller, or an entry grants `Read` to the principal or the caller (`Actor`, `Group`, `Role`) - the caller for an agent reading what it takes part in (issue 264) | 1 |
+| `HearDeleted` of every kind | as reading, an entry for a deleted group counting as well | 1 |
 | a kind's own verb requiring `Write` (`WriteWorkspace`, `WriteArtifact`) | as reading, with `Write` | 1 |
 | `CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion` | the principal reads the channel | 1: reading grants acting in the conversation |
 | `ReadAgentTools` | the principal reads the agent or the channel | 1, two objects |
@@ -46,7 +47,7 @@ a stored entity is decided by the verb, never by the kind (issue
 | `Reclassify` | a channel its owner; a message the channel's owner or its author (the caller); a note or memory entry its author. Whether the new classification may be given there is the flow's | 1 or 3 |
 | `ModifyMessage`, `RevokeMessage` | the author is the caller | 3: authorship, not ownership |
 | `Purge` of every kind | nobody but the system (issue 125) | 3 |
-| `List` of every kind | always; the store filters each item with `Get` | 1 per item |
+| `List` of every kind | always; the storage narrows the list by the admission of `Get` - of `ReadDeleted` for the trash -, the store filters each item it hands out with that verb | 1 per item |
 | `CallTool`, `ReadSecret` | always: hooks for another `AccessPolicy`; a call is decided by the tools offered and the rules of its place, a secret has no owner yet (issue [310](../issues/310-secrets-have-no-owner.md)) | 3, decided elsewhere |
 
 Most variants are decided by the principal; `ModifyMessage`, `RevokeMessage` and `Reclassify` of a
@@ -59,7 +60,7 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 
 | Layer | Asks | Form | Refusal |
 |---|---|---|---|
-| **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then `Get*` per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
+| **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for the trash) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
 | **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ArtifactManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
 | **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the agent carrying out a command, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, `CommandFailed`, a left-out answer |
@@ -240,7 +241,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Flags of a session, channel, member, agent, workspace, skill, group, artifact | `may_change_session`, `may_change_channel`, `may_read_agent_context`, `may_read_agent_tools`, `may_read_agent_components`, `may_approve`, `may_retry_message`, `may_cancel_channel`, `may_change_agent`, `may_delete_agent`, the member's commands, `may_change_workspace`, `may_write_workspace`, `may_change_skill` (`SkillAccess`), `may_change_group`, `may_change_artifact`, `may_write_artifact` (`ArtifactAccess`) | R5 | a flag false |
 | A participant's tools, components, context, private notes (`tool_sets`, `components`, `context`) | `ReadAgentTools`, `ReadAgentComponents`, `ReadAgentContext` (V,1), the context also only of a channel read whole | R4: reading them is the views' act | `Forbidden` |
 | What was deleted (`deleted_*`) | store `ReadDeleted` per item; flags `may_restore`, `may_purge` | R1 + R5 | - |
-| An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event and party `may_reach`, as the store asks it: the read question - `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's -, and for what is classified `cleared_for` the classification it has, or had as it is reclassified (issues 312, 322) | R5 + reach | not delivered |
+| An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event and party `may_reach`, as the store asks it: the read question - `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's; `HearDeleted` instead for a deletion -, and for what is classified `cleared_for` the classification it has, or had as it is reclassified (issues 312, 322) | R5 + reach | not delivered |
 
 ### Users
 

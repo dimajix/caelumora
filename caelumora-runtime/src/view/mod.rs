@@ -568,7 +568,7 @@ impl Views {
         let principal = self.viewer.context().principal_id;
         let theirs = Filter::Or(vec![
             Filter::eq(GroupField::Owner, principal),
-            Filter::any(GroupField::Members, Filter::eq(GroupField::Member, principal)),
+            Group::with_member(principal),
         ]);
         let query = Query::filtered(Filter::And(vec![Group::teams(), theirs]));
         Ok(self.stores.groups.list(self.viewer.context(), &query).await?.items)
