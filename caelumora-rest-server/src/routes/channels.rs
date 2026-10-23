@@ -724,9 +724,8 @@ pub(super) async fn agent_tools(
     Ok(Json(AgentToolsResponse { tool_sets }))
 }
 
-/// The components actor `aid` was built from in the channel, the
-/// preconfigured ones it includes resolved (issue 270), for whoever may see
-/// them (`ReadAgentComponents`).
+/// The components actor `aid` was built from in the channel, the bundles it includes resolved
+/// (issue 270), for whoever may see them (`ReadAgentComponents`).
 pub(super) async fn agent_components(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,

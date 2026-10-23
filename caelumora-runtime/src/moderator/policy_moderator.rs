@@ -572,7 +572,7 @@ mod tests {
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
-        let registry = Arc::new(test_registry(store.component_store().unwrap()));
+        let registry = Arc::new(test_registry(&store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let config = ComponentConfig { component_nodes: config.iter().map(|(id, kind)| ComponentDescriptor::new(id, kind)).collect() };
         let container = ComponentContainer::from_config(&config, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.unwrap();
@@ -758,7 +758,7 @@ mod tests {
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
-        let registry = Arc::new(test_registry(store.component_store().unwrap()));
+        let registry = Arc::new(test_registry(&store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let configured = |max_agent_hops: Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
             params: serde_json::json!({ "max_agent_hops": max_agent_hops }),
@@ -802,7 +802,7 @@ mod tests {
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
-        let registry = Arc::new(test_registry(store.component_store().unwrap()));
+        let registry = Arc::new(test_registry(&store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let configured = |max_span_depth: Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
             params: serde_json::json!({ "max_span_depth": max_span_depth }),

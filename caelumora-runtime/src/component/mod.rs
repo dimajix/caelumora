@@ -32,7 +32,7 @@ pub mod testing;
 
 pub use container::{ComponentContainer, ComponentImpl};
 pub use context::{service_of, ComponentContext};
-pub use registry::{ComponentFacets, ComponentKind, ComponentRegistry, COMPONENT_DEFAULT_KIND, PRECONFIGURED_REF_KIND};
+pub use registry::{ComponentFacets, ComponentKind, ComponentRegistry, COMPONENT_DEFAULT_KIND, BUNDLE_REF_KIND};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComponentError {
@@ -60,16 +60,15 @@ pub enum ComponentError {
     /// of a container, one it was not built for (issue 337).
     #[error("{0} is not among the facets declared to be asked for")]
     Undeclared(&'static str),
-    /// The preconfigured components `id` a `ref` names cannot be read -
-    /// gone, or not the reader's to read, a share withdrawn (issue 270):
-    /// what keeps an agent from being run, as its personality's would
-    /// (`ComponentError::is_unavailable`).
-    #[error("preconfigured component '{id}' cannot be read: {cause}")]
-    Unavailable { id: String, cause: StoreError },
+    /// The component bundle a `ref` names cannot be read - gone, or not the reader's to read, a
+    /// share withdrawn (issues 270, 455): what keeps an agent from being run, as its personality's
+    /// would (`ComponentError::is_unavailable`).
+    #[error("component bundle '{name}' cannot be read: {cause}")]
+    Unavailable { name: String, cause: StoreError },
     /// A component of a kind only an operator configures was written in a
     /// request rather than named through a `ref` (issue 403,
     /// `ComponentKind::operator_only`).
-    #[error("components of kind '{0}' are configured by an operator: name a preconfigured one")]
+    #[error("components of kind '{0}' are configured by an operator: name a bundle that holds one")]
     OperatorOnly(String),
     /// A component of a graph could not be built. Wraps whatever went wrong
     /// with the component's id and kind, so that the message names the
@@ -89,7 +88,7 @@ impl ComponentError {
         Self::Build { component: entry.id.clone(), kind: entry.kind.clone(), cause: Box::new(cause) }
     }
 
-    /// Whether it says that preconfigured components cannot be read
+    /// Whether it says that a component bundle cannot be read
     /// (`Unavailable`) - itself, or as the cause of a component that could
     /// not be built.
     pub fn is_unavailable(&self) -> bool {

@@ -953,7 +953,7 @@ asked in the context of the event routed, in which the endpoint's credential is 
 was said before is left out if it may not; if what is to be answered may not, it asks as on
 failure. Since its parameters say where what it is given goes, an
 operator configures it alone (`ComponentKind::operator_only`): a channel created on request names it
-only through a `ref` to preconfigured components, while a template may write it.
+only through a `ref` to a component bundle, while a template may write it.
 
 | Parameter | Meaning | Default |
 |---|---|---|

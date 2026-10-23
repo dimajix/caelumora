@@ -522,12 +522,6 @@ impl DocumentStorage for JsonDocuments {
         write_json_atomic(&path, &document.body).await
     }
 
-    async fn remove(&self, id: &str) -> StoreResult<bool> {
-        let path = self.path(id);
-        debug!("Deleting {} at {}", self.kind, path.display());
-        delete_if_exists(&path).await
-    }
-
     /// Reads the document right before: restored meanwhile, it stays. A file
     /// cannot be removed on that condition atomically; whoever restores and
     /// purges at once serialises them (`SessionManager`).
@@ -792,12 +786,6 @@ mod tests {
         suite::history_store_behaves(&store, &store).await;
         suite::transcript_store_behaves(&store, &store).await;
         suite::given_store_behaves(&store, &store).await;
-    }
-
-    #[tokio::test]
-    async fn behaves_as_a_component_store() {
-        let dir = tempdir().unwrap();
-        suite::component_store_behaves(checked(dir.path(), Arc::new(AllowAllPolicy::new())).component_store().unwrap().as_ref()).await;
     }
 
     #[tokio::test]

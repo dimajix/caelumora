@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::StoredComponents;
+use crate::component::ComponentBundle;
 use crate::removal::{Deletable, Removal};
 use crate::confidentiality::{Classification, ConfidentialityPolicy};
 use crate::security::{Refused, Secured, SecurityContext, AccessPolicy};
@@ -35,7 +35,7 @@ use crate::intern::intern;
 use crate::store::history::HistoryStore;
 use crate::store::transcript::TranscriptStore;
 use crate::store::memory::MemoryStore;
-use crate::store::query::{Field, NoField, Page, Query};
+use crate::store::query::{Field, Page, Query};
 use crate::type_map::{TypeKey, TypeMap};
 use crate::store::documents::{CheckedStore, Document, DocumentOf, DocumentStorage};
 use crate::security::AllowAllPolicy;
@@ -120,9 +120,8 @@ pub trait Journaled: Serialize + DeserializeOwned + Send {
 }
 
 
-/// A kind the stores keep - of the entities of the `EntityStore` and the
-/// components of the `ComponentStore` (issue 164): what the actions that
-/// concern every kind alike are keyed by, and its name in errors. Open
+/// A kind of entity the stores keep: what the actions that concern every
+/// kind alike are keyed by, and its name in errors. Open
 /// (issue 323): each stored type names its own (`Stored::KIND`), so that a
 /// kind is added without a change here. Its name is unique among the kinds;
 /// it is also what the JSON store keeps the kind's files under.
@@ -202,8 +201,7 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
         None
     }
 
-    /// Whether, and by whom and when, it was deleted; never for a kind that
-    /// is not `Deletable`.
+    /// Whether, and by whom and when, it was deleted (`Deletable`).
     fn deleted(&self) -> Option<&Removal> {
         None
     }
@@ -364,6 +362,7 @@ pub struct EntityStores {
     pub agents: Arc<dyn EntityStore<Agent>>,
     pub channels: Arc<dyn EntityStore<Channel>>,
     pub sessions: Arc<dyn EntityStore<Session>>,
+    pub component_bundles: Arc<dyn EntityStore<ComponentBundle>>,
 }
 
 impl EntityStores {
@@ -382,6 +381,7 @@ impl EntityStores {
             agents: factory.entity_store()?,
             channels: factory.entity_store()?,
             sessions: factory.entity_store()?,
+            component_bundles: factory.entity_store()?,
         })
     }
 }
@@ -439,19 +439,18 @@ pub trait PersistenceBackend: Debug + Send + Sync {
     }
 }
 
-/// The stores (issues 323, 446, 448): of the entities of every kind, of the
-/// preconfigured components and of the states, over the backend of the
-/// entities and the backend of the states - one, or two - and the entities
-/// and the components checked by the policies it was made with, the same
-/// way for every backend (`CheckedStore`). It opens the store of a kind for
-/// whoever asks - the core, a plugin -, once, and refuses a kind whose name
-/// another kind has already, since the name is what a kind is kept, asked
-/// about and announced by (`EntityKind`). The three state stores are taken
-/// from the backend of the states when it is made, together, since they
-/// read what one another writes.
+/// The stores (issues 323, 446, 448): of the entities of every kind and of
+/// the states, over the backend of the entities and the backend of the
+/// states - one, or two - and the entities checked by the policies it was
+/// made with, the same way for every backend (`CheckedStore`). It opens the
+/// store of a kind for whoever asks - the core, a plugin -, once, and
+/// refuses a kind whose name another kind has already, since the name is
+/// what a kind is kept, asked about and announced by (`EntityKind`). The
+/// three state stores are taken from the backend of the states when it is
+/// made, together, since they read what one another writes.
 #[derive(Debug, Clone)]
 pub struct Persistence {
-    /// What the entities and the components are kept in.
+    /// What the entities are kept in.
     entities: Arc<dyn PersistenceBackend>,
     /// What the states are kept in - the same as the entities, or another.
     states: Arc<dyn PersistenceBackend>,
@@ -545,15 +544,6 @@ impl Persistence {
         EntityStores::open(self)
     }
 
-    /// The store of the preconfigured components, kept where the entities
-    /// are.
-    ///
-    /// # Errors
-    /// If it cannot be opened.
-    pub fn component_store(&self) -> StoreResult<Arc<dyn ComponentStore>> {
-        Ok(self.checked::<StoredComponents>()?)
-    }
-
     /// The store of the states.
     pub fn state_store(&self) -> Arc<dyn StateStore> {
         Arc::clone(&self.state_store)
@@ -599,21 +589,6 @@ impl EntityStoreFactory for Persistence {
     fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
         Ok(self.checked::<T>()?)
     }
-}
-
-/// The preconfigured components: runtime configuration that personalities
-/// and templates refer to by `kind: "ref"`, kept by id - not an entity of
-/// their own standing, so not in the `EntityStore`. The same five
-/// operations, checked the same way (`store::access`); deleting
-/// removes for good, since a component is hidden with what refers to it
-/// (issue 164).
-#[async_trait]
-pub trait ComponentStore : Debug + Sync + Send {
-    async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()>;
-    async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents>;
-    async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()>;
-    async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool>;
-    async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>>;
 }
 
 /// The runtime state (issue 193): every kind `Journaled`, read whole and
@@ -668,6 +643,7 @@ pub trait StateStore : Debug + Sync + Send {
 #[cfg(test)]
 mod tests {
     use crate::session::SessionId;
+    use crate::store::query::NoField;
     use super::*;
     use crate::security::{SecurityAttributes, SecurityContext};
     use crate::confidentiality::ConfidentialityRules;

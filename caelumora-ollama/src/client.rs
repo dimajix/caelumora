@@ -1098,7 +1098,7 @@ mod tests {
         let mut prompts = PromptCatalogue::new();
         let gemma = tempfile::tempdir().unwrap();
         prompts.add_variant("gemma4", gemma.path()).unwrap();
-        let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
+        let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
         // As the agents' plugin declares it.
         registry.single::<dyn ModelProfileProvider>(None);
         register(&mut registry);

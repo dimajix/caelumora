@@ -275,10 +275,6 @@ impl DocumentStorage for MemoryDocuments {
         })
     }
 
-    async fn remove(&self, id: &str) -> StoreResult<bool> {
-        Ok(write_lock(&self.documents, |all| all.remove(id).is_some()))
-    }
-
     async fn remove_deleted(&self, id: &str) -> StoreResult<bool> {
         Ok(write_lock(&self.documents, |all| {
             let marked = all.get(id).is_some_and(|document| document.deleted);
@@ -544,11 +540,6 @@ mod tests {
         suite::history_store_behaves(&store, &store).await;
         suite::transcript_store_behaves(&store, &store).await;
         suite::given_store_behaves(&store, &store).await;
-    }
-
-    #[tokio::test]
-    async fn behaves_as_a_component_store() {
-        suite::component_store_behaves(Persistence::in_memory().component_store().unwrap().as_ref()).await;
     }
 
     #[tokio::test]

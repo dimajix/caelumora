@@ -167,12 +167,6 @@ impl DocumentStorage for PgDocuments {
         Ok(())
     }
 
-    async fn remove(&self, id: &str) -> StoreResult<bool> {
-        let pool = self.ready().await?;
-        let done = sqlx::query(sql(format!("DELETE FROM {} WHERE id = $1", self.table))).bind(id).execute(pool).await.map_err(|e| self.failed(e))?;
-        Ok(done.rows_affected() > 0)
-    }
-
     async fn remove_deleted(&self, id: &str) -> StoreResult<bool> {
         let pool = self.ready().await?;
         let done = sqlx::query(sql(format!("DELETE FROM {} WHERE id = $1 AND deleted", self.table))).bind(id).execute(pool).await.map_err(|e| self.failed(e))?;

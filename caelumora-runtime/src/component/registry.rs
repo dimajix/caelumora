@@ -1,6 +1,14 @@
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+//! The registry of component kinds (`ComponentRegistry`): what each kind
+//! provides and needs, and how a configuration is checked against them
+//! before a container builds it - its `ref`s resolved to the component
+//! bundles they name (issue 455), its components on the defaults of the
+//! singles (issue 445).
+
+use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
+use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{ComponentStore, StoreError};
+use caelumora_model::store::{EntityStore, StoreError};
+use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::type_map::{TypeKey, TypeMap};
 use futures::future::BoxFuture;
 use serde::Deserialize;
@@ -42,7 +50,7 @@ impl ComponentKind {
     /// alone (issue 403): their params are trusted - where they send what
     /// they are given, what that is cleared for -, so they are written only
     /// where an operator writes, in the templates, personalities and
-    /// preconfigured components of the seed. A request names one only
+    /// component bundles of the seed. A request names one only
     /// through a `ref` (`require_acceptable`).
     pub fn operator_only(mut self) -> Self {
         self.operator_only = true;
@@ -100,13 +108,18 @@ struct Single {
     default_kind: Option<String>,
 }
 
-/// Reserved `kind` that resolves to a preconfigured component stored in the `ComponentStore`
-/// instead of invoking a factory. `params` must deserialize to `{ "id": "<preconfigured id>" }`.
-pub const PRECONFIGURED_REF_KIND: &str = "ref";
+/// Reserved `kind` that stands for the components of a bundle (`ComponentBundle`, issue 455)
+/// instead of invoking a factory. `params` must deserialize to `{ "name": "<its name>" }`, with
+/// `"scope"` beside it where the bundle lies in another than the global one.
+pub const BUNDLE_REF_KIND: &str = "ref";
 
+/// The bundle a `ref` names: its name, in exactly its scope.
 #[derive(Deserialize)]
-struct PreconfiguredRef {
-    id: String,
+#[serde(deny_unknown_fields)]
+struct BundleRef {
+    name: Name,
+    #[serde(default)]
+    scope: Scope,
 }
 
 /// Reserved `kind` that builds on a component default (issue 445): one of
@@ -135,7 +148,7 @@ pub struct ComponentRegistry {
     /// The configuration's defaults for singles (`AppConfig::component_defaults`),
     /// by the single they provide.
     defaults: HashMap<TypeId, ComponentDescriptor>,
-    component_store: Arc<dyn ComponentStore>,
+    bundles: Arc<dyn EntityStore<ComponentBundle>>,
 }
 
 impl Debug for ComponentRegistry {
@@ -148,26 +161,28 @@ impl Debug for ComponentRegistry {
 }
 
 impl ComponentRegistry {
-    pub fn new(component_store: Arc<dyn ComponentStore>) -> Self {
+    /// A registry without kinds, resolving the bundles a `ref` names in
+    /// `bundles`.
+    pub fn new(bundles: Arc<dyn EntityStore<ComponentBundle>>) -> Self {
         Self {
             kinds: HashMap::new(),
             singles: HashMap::new(),
             chosen: HashMap::new(),
             defaults: HashMap::new(),
-            component_store,
+            bundles,
         }
     }
 
     /// A registry with the runtime's own component kinds - the user
     /// commands (`command`) and a channel's moderation (`moderator`) -,
-    /// resolving references to preconfigured components in
-    /// `component_store`. The kinds of an agent's components are the agents'
-    /// plugin's (`caelumora_agents::plugin::AgentsPlugin`, issue 370), those of
-    /// other plugins theirs.
+    /// resolving the bundles a `ref` names in `bundles`. The kinds of an
+    /// agent's components are the agents' plugin's
+    /// (`caelumora_agents::plugin::AgentsPlugin`, issue 370), those of other
+    /// plugins theirs.
     /// A binary passes it to the `RuntimeBuilder` as it is; a test may
     /// register kinds of its own first, such as a stand-in for the model.
-    pub fn built_in(component_store: Arc<dyn ComponentStore>) -> Self {
-        let mut registry = Self::new(component_store);
+    pub fn built_in(bundles: Arc<dyn EntityStore<ComponentBundle>>) -> Self {
+        let mut registry = Self::new(bundles);
         command::register_all(&mut registry);
         moderator::register_all(&mut registry);
         registry
@@ -257,7 +272,7 @@ impl ComponentRegistry {
         // By its id a component builds on a default (`COMPONENT_DEFAULT_KIND`).
         let mut ids = HashSet::new();
         for node in &config.component_nodes {
-            if node.kind == PRECONFIGURED_REF_KIND {
+            if node.kind == BUNDLE_REF_KIND {
                 return Err(ComponentError::InvalidConfig(format!("component default '{}' cannot be a ref", node.id)));
             }
             if node.kind == COMPONENT_DEFAULT_KIND {
@@ -289,9 +304,8 @@ impl ComponentRegistry {
     /// which there is one - or else of the default built for it - as
     /// configured, without building anything (issue 174); of one that builds
     /// on a default, the default's. `None` if `T` is no such facet, or if
-    /// `config` refers to a preconfigured component (`ref`) and none of its
-    /// own provides `T`: what that one provides only its descriptor in the
-    /// store tells.
+    /// `config` refers to a bundle (`ref`) and none of its own provides `T`:
+    /// what that one provides only the bundle in the store tells.
     pub fn kind_of<T: ?Sized + 'static>(&self, config: &ComponentConfig) -> Option<String> {
         let facet = TypeKey::of::<T>();
         if !self.is_single(facet.id) {
@@ -305,7 +319,7 @@ impl ComponentRegistry {
         if let Some(kind) = config.component_nodes.iter().filter_map(kind_of).find(|kind| provides(kind)) {
             return Some(kind);
         }
-        if config.component_nodes.iter().any(|node| node.kind == PRECONFIGURED_REF_KIND) {
+        if config.component_nodes.iter().any(|node| node.kind == BUNDLE_REF_KIND) {
             return None;
         }
         self.default_of(facet.id).map(|descriptor| descriptor.kind)
@@ -385,12 +399,12 @@ impl ComponentRegistry {
             if !entries.insert(node.id.as_str()) {
                 return Err(ComponentError::DuplicateId(node.id.clone()));
             }
-            let brought_by = (node.kind == PRECONFIGURED_REF_KIND).then(|| node.clone());
+            let brought_by = (node.kind == BUNDLE_REF_KIND).then(|| node.clone());
             for descriptor in self.resolve(node, own_defaults, context).await.map_err(|cause| ComponentError::of_component(node, cause))? {
                 if let Some(earlier) = ids.insert(descriptor.id.clone(), node) {
                     // Two plain entries of one id are caught above: at least
                     // one of the two is a ref, and it is named.
-                    let entry = if node.kind == PRECONFIGURED_REF_KIND { node } else { earlier };
+                    let entry = if node.kind == BUNDLE_REF_KIND { node } else { earlier };
                     return Err(ComponentError::of_component(entry, ComponentError::DuplicateId(descriptor.id)));
                 }
                 let provides = self.provides(&descriptor.kind)
@@ -464,33 +478,31 @@ impl ComponentRegistry {
     }
 
     /// `node` itself; for `kind: "default"` the default it builds on
-    /// (`on_default`); or - for `kind: "ref"` - the preconfigured components
-    /// it names, in their order (issue 270), each built on its default as
-    /// `node` would be, fetched from the ComponentStore fresh on every call,
-    /// in the name `context` of whichever component graph is referencing it.
+    /// (`on_default`); or - for `kind: "ref"` - the components of the bundle
+    /// it names, in their order (issues 270, 455), each built on its default
+    /// as `node` would be, found by its name fresh on every call, in the
+    /// name `context` of whichever component graph is referencing it.
     /// This ensures things like secret resolution run under the actual
     /// caller's name rather than a synthetic one, at the cost of not sharing
-    /// a single instance across references (e.g. a preconfigured `mcp_tool`
+    /// a single instance across references (e.g. an `mcp_tool` of a bundle
     /// re-runs discovery for every personality that references it).
     async fn resolve(&self, node: &ComponentDescriptor, own_defaults: &HashMap<TypeId, ComponentDescriptor>, context: &SecurityContext) -> ComponentResult<Vec<ComponentDescriptor>> {
         if node.kind == COMPONENT_DEFAULT_KIND {
             return Ok(vec![self.on_default(node, own_defaults)?]);
         }
-        if node.kind != PRECONFIGURED_REF_KIND {
+        if node.kind != BUNDLE_REF_KIND {
             return Ok(vec![node.clone()]);
         }
-        let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
+        let target: BundleRef = serde_json::from_value(node.params.clone())
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-        let components = match self.component_store.get_components(context, &target.id).await {
-            Ok(stored) => stored.components,
-            Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied(_))) => return Err(ComponentError::Unavailable { id: target.id, cause }),
-            Err(e) => return Err(ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e))),
+        let name = ScopedName { name: target.name, scope: target.scope };
+        let components = match self.bundles.find_by_name(context, &name).await {
+            Ok(bundle) => bundle.components,
+            Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied(_))) => return Err(ComponentError::Unavailable { name: name.to_string(), cause }),
+            Err(e) => return Err(ComponentError::InvalidConfig(format!("no component bundle '{name}': {e}"))),
         };
-        if let Some(inner) = components.component_nodes.iter().find(|inner| inner.kind == PRECONFIGURED_REF_KIND) {
-            return Err(ComponentError::InvalidConfig(format!(
-                "preconfigured component '{}' cannot include a ref ('{}')",
-                target.id, inner.id
-            )));
+        if let Some(inner) = components.component_nodes.iter().find(|inner| inner.kind == BUNDLE_REF_KIND) {
+            return Err(ComponentError::InvalidConfig(format!("component bundle '{name}' cannot include a ref ('{}')", inner.id)));
         }
         components.component_nodes.into_iter()
             .map(|inner| match inner.kind.as_str() {
@@ -543,8 +555,9 @@ mod tests {
     use super::*;
     use crate::component::testing::*;
     use crate::component::ComponentContainer;
-    use caelumora_model::component::{ComponentFailPolicy, StoredComponents};
+    use caelumora_model::component::{ComponentBundle, ComponentFailPolicy};
     use caelumora_model::session::SessionId;
+    use caelumora_model::user::UserId;
     use caelumora_model::store::Persistence;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -554,17 +567,22 @@ mod tests {
         struct MarkerImpl;
         impl Marker for MarkerImpl {}
 
-        /// A store holding the preconfigured components `id`, the list `nodes`.
-        async fn store_with(preconfigured: &[(&str, &[(&str, &str)])]) -> Arc<dyn ComponentStore> {
-            let store = Persistence::in_memory().component_store().unwrap();
-            for (id, nodes) in preconfigured {
-                store.create_components(&SecurityContext::default(), &StoredComponents::new(id, config(nodes), Default::default())).await.unwrap();
+        /// A store holding the global bundles `name`, each the list `nodes`.
+        async fn store_with(bundles: &[(&str, &[(&str, &str)])]) -> Arc<dyn EntityStore<ComponentBundle>> {
+            let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
+            for (name, nodes) in bundles {
+                store.create(&SecurityContext::default(), &bundle(name, config(nodes))).await.unwrap();
             }
             store
         }
 
+        /// The global bundle `name` of `components`.
+        fn bundle(name: &str, components: ComponentConfig) -> ComponentBundle {
+            ComponentBundle::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), components, Default::default())
+        }
+
         fn reference(id: &str, target: &str) -> ComponentDescriptor {
-            descriptor(id, PRECONFIGURED_REF_KIND, json!({ "id": target }))
+            descriptor(id, BUNDLE_REF_KIND, json!({ "name": target }))
         }
 
         #[tokio::test]
@@ -601,7 +619,7 @@ mod tests {
 
         /// A registry of the kind `named`, whose components are named by their
         /// id, resolving references in `store`.
-        fn named_registry(store: Arc<dyn ComponentStore>) -> Arc<ComponentRegistry> {
+        fn named_registry(store: Arc<dyn EntityStore<ComponentBundle>>) -> Arc<ComponentRegistry> {
             let mut registry = ComponentRegistry::new(store);
             registry.register(ComponentKind::new("named").provides::<dyn Named>(), |node, _| Ok(named(&node.id)));
             Arc::new(registry)
@@ -647,7 +665,7 @@ mod tests {
 
         #[tokio::test]
         async fn a_ref_to_nothing_stored_is_refused_as_unavailable() {
-            let registry = named_registry(Persistence::in_memory().component_store().unwrap());
+            let registry = named_registry(Persistence::in_memory().entity_stores().unwrap().component_bundles);
             let config = ComponentConfig { component_nodes: vec![reference("ref-a", "does-not-exist")] };
             let error = ComponentContainer::from_config(&config, ASKED, &registry, &test_context()).await.unwrap_err();
             assert!(matches!(causes(&error)[..], [ComponentError::Build { .. }, ComponentError::Unavailable { .. }]), "{error}");
@@ -655,11 +673,34 @@ mod tests {
             assert!(error.to_string().contains("'does-not-exist'"), "names what it could not read: {error}");
         }
 
+        /// A `ref` names a bundle by its name in exactly its scope, the global
+        /// one unless it names another (issue 455), and by nothing else.
         #[tokio::test]
-        async fn preconfigured_components_cannot_include_a_ref() {
-            let store = Persistence::in_memory().component_store().unwrap();
+        async fn a_ref_names_a_bundle_in_exactly_its_scope() {
+            let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
+            let user_id = UserId::new();
+            let own = ComponentBundle::new(ScopedName::new("mine", Scope::UserScope { user_id }).unwrap(), config(&[("stop", "named")]), Default::default());
+            store.create(&SecurityContext::default(), &own).await.unwrap();
+            let registry = named_registry(store);
+            let built = |params: Value| {
+                let config = ComponentConfig { component_nodes: vec![descriptor("ref", BUNDLE_REF_KIND, params)] };
+                let registry = Arc::clone(&registry);
+                async move { ComponentContainer::from_config(&config, ASKED, &registry, &test_context()).await }
+            };
+
+            let found = built(json!({ "name": "mine", "scope": { "UserScope": { "user_id": user_id } } })).await.unwrap();
+            assert_eq!(names(&found), ["stop"], "in the scope it names");
+            let global = built(json!({ "name": "mine" })).await.unwrap_err();
+            assert!(global.is_unavailable(), "not looked for elsewhere than the global scope: {global}");
+            let by_id = built(json!({ "id": own.id })).await.unwrap_err();
+            assert!(matches!(causes(&by_id)[..], [ComponentError::Build { .. }, ComponentError::InvalidConfig(_)]), "nor by its id: {by_id}");
+        }
+
+        #[tokio::test]
+        async fn a_bundle_cannot_include_a_ref() {
+            let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
             let nested = ComponentConfig { component_nodes: vec![descriptor("plain", "named", json!(null)), reference("inner", "b")] };
-            store.create_components(&SecurityContext::default(), &StoredComponents::new("a", nested, Default::default())).await.unwrap();
+            store.create(&SecurityContext::default(), &bundle("a", nested)).await.unwrap();
             let registry = named_registry(store);
             let config = ComponentConfig { component_nodes: vec![reference("ref-a", "a")] };
             let error = ComponentContainer::from_config(&config, ASKED, &registry, &test_context()).await.unwrap_err();
@@ -672,7 +713,7 @@ mod tests {
         /// needing `Choice`; and the single `Choice`, whose default kind
         /// `choosing` needs `Other`, and `other`, which needs nothing.
         fn needing() -> (Arc<ComponentRegistry>, Arc<AtomicUsize>) {
-            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
             let built = Arc::new(AtomicUsize::new(0));
             let counted = Arc::clone(&built);
             let choice = |id: &str| ComponentFacets::empty().with(Arc::new(Name(id.to_string())) as Arc<dyn Choice>);
@@ -752,7 +793,7 @@ mod tests {
             let (mut registry, built) = choices();
             assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("a", "part"), ("mine", "other")])).as_deref(), Some("other"));
             assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("a", "part")])).as_deref(), Some("declared"), "the default if none provides it");
-            assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("shared", PRECONFIGURED_REF_KIND)])), None, "a preconfigured one might provide it");
+            assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("shared", BUNDLE_REF_KIND)])), None, "one of a bundle might provide it");
             assert_eq!(registry.kind_of::<dyn Named>(&config(&[("a", "part")])), None, "of Named there may be any number");
             registry.set_defaults(&config(&[("configured", "other")])).unwrap();
             assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])).as_deref(), Some("other"), "the configured default");
@@ -763,7 +804,7 @@ mod tests {
         fn a_default_the_configuration_cannot_use_is_refused() {
             let (mut registry, _) = choices();
             for (nodes, expected) in [
-                (config(&[("x", PRECONFIGURED_REF_KIND)]), "cannot be a ref"),
+                (config(&[("x", BUNDLE_REF_KIND)]), "cannot be a ref"),
                 (config(&[("x", "unknown")]), "unknown kind 'unknown'"),
                 (config(&[("x", "part")]), "provides no facet of which there is one"),
                 (config(&[("x", "other"), ("y", "declared")]), "'x' and 'y' both provide Choice"),
@@ -812,15 +853,14 @@ mod tests {
         }
 
         /// The default is found among the container's own defaults first, then
-        /// the configuration's; within a preconfigured list as where it is
-        /// written.
+        /// the configuration's; within a bundle as where it is written.
         #[tokio::test]
         async fn a_component_builds_on_the_containers_own_default_and_within_a_ref_as_well() {
-            let store = Persistence::in_memory().component_store().unwrap();
-            let shared = StoredComponents::new("shared", ComponentConfig { component_nodes: vec![on_default("listed", "model", json!(null))] }, Default::default());
-            store.create_components(&SecurityContext::default(), &shared).await.unwrap();
+            let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
+            let shared = bundle("shared", ComponentConfig { component_nodes: vec![on_default("listed", "model", json!(null))] });
+            store.create(&SecurityContext::default(), &shared).await.unwrap();
             let (choices, _) = choices();
-            let mut registry = ComponentRegistry { component_store: store, ..choices };
+            let mut registry = ComponentRegistry { bundles: store, ..choices };
             registry.set_defaults(&config(&[("model", "other")])).unwrap();
             let registry = Arc::new(registry);
             let kinds = |container: &ComponentContainer| container.components().component_nodes.into_iter().map(|node| (node.id, node.kind)).collect::<Vec<_>>();

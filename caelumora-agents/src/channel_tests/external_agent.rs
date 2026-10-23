@@ -96,7 +96,7 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
-    let mut registry = test_registry(store.component_store().unwrap());
+    let mut registry = test_registry(&store);
     registry.register(
         ComponentKind::new("test_remote").provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>(),
         move |_descriptor, _context| {
@@ -1229,7 +1229,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob."), answer("Back.")]));
     let store = Persistence::in_memory();
-    let mut registry = test_registry(store.component_store().unwrap());
+    let mut registry = test_registry(&store);
     registry.register(
         ComponentKind::new("test_remote").provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>(),
         { let remote = Arc::clone(&remote); move |_descriptor, _context| {

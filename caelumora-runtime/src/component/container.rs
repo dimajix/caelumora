@@ -254,7 +254,7 @@ impl ComponentContainer {
     /// rest in the order of the configuration -, for an owner that asks it
     /// for the facets `asked` and no other (issue 337).
     ///
-    /// A `ref` stands for the preconfigured components it names, in their
+    /// A `ref` stands for the components of the bundle it names, in their
     /// order, where it is written (issue 270).
     ///
     /// What it accepts is the closure of `asked`: the components that
@@ -316,7 +316,7 @@ impl ComponentContainer {
     }
 
     /// What it was built from: its configuration with every `ref` resolved
-    /// to the preconfigured components it stood for (issue 270), in their
+    /// to the components of the bundle it stood for (issue 270), in their
     /// order. The defaults built for singles it does not configure are not
     /// among them.
     pub fn components(&self) -> ComponentConfig {
@@ -370,7 +370,7 @@ mod tests {
 
         #[tokio::test]
         async fn components_that_need_each_other_are_refused_naming_both() {
-            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
             registry.register_async(ComponentKind::new("chicken").provides::<dyn Named>().needs::<dyn Other>(), |descriptor, context| async move {
                 context.all::<dyn Other>().await?;
                 Ok(named(&descriptor.id))
@@ -392,7 +392,7 @@ mod tests {
 
         #[tokio::test]
         async fn a_component_must_provide_what_its_kind_declares() {
-            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
             registry.register(ComponentKind::new("liar").provides::<dyn Named>(), |_, _| Ok(ComponentFacets::empty()));
             let registry = Arc::new(registry);
 
@@ -446,7 +446,7 @@ mod tests {
         /// declared or the configuration's.
         #[tokio::test]
         async fn a_default_of_two_singles_is_built_once_for_both() {
-            let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
+            let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
             let built = Arc::new(AtomicUsize::new(0));
             let counted = Arc::clone(&built);
             registry.register(ComponentKind::new("pair").provides::<dyn Choice>().provides::<dyn Other>(), move |descriptor, _| {

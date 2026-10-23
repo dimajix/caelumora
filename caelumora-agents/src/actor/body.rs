@@ -84,7 +84,7 @@ pub(super) struct AgentBody {
     /// The agent's own state, shared with its actors in other channels and
     /// sessions (issue 62).
     agent_state: Arc<AgentStateHandle>,
-    /// What it was built from, its preconfigured components resolved
+    /// What it was built from, the component bundles it includes resolved
     /// (issue 270).
     built_from: ComponentConfig,
     /// Its state in this channel, held by its actor's run loop for as long
@@ -203,8 +203,8 @@ impl AgentBody {
         self.personality.load().hears_during_turn
     }
 
-    /// What it was built from, its preconfigured components resolved (issue
-    /// 270).
+    /// What it was built from, the component bundles it includes resolved
+    /// (issue 270).
     pub(super) fn components(&self) -> ComponentConfig {
         self.built_from.clone()
     }

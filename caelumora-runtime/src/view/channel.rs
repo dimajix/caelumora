@@ -95,14 +95,14 @@ impl ChannelView {
     }
 
     /// The kind of the channel's moderator, e.g. `policy_moderator` (issue
-    /// 174); `None` if it is a preconfigured component.
+    /// 174); `None` if it comes from a component bundle.
     pub fn moderator(&self) -> Option<String> {
         self.views().components().kind_of::<dyn Moderator>(&self.channel.components)
     }
 
     /// The kind of the policy configured for the moderator's slot, e.g.
-    /// `round_robin_policy` (issues 44, 174); `None` if it is a
-    /// preconfigured component.
+    /// `round_robin_policy` (issues 44, 174); `None` if it comes from a
+    /// component bundle.
     pub fn responder_policy(&self) -> Option<String> {
         self.views().components().kind_of::<dyn ResponderPolicy>(&self.channel.components)
     }
@@ -699,11 +699,10 @@ impl ParticipantView {
         Ok(actor.tool_sets().await)
     }
 
-    /// The components the participant was built from in this channel, the
-    /// preconfigured ones it includes resolved (issue 270) - read from its
-    /// actor, which recorded them when it was built: what it is, not what
-    /// its personality would make of it now. None if it is no agent run
-    /// here or has left - and also while the channel does not run.
+    /// The components the participant was built from in this channel, the bundles it includes
+    /// resolved (issue 270) - read from its actor, which recorded them when it was built: what it
+    /// is, not what its personality would make of it now. None if it is no agent run here or has
+    /// left - and also while the channel does not run.
     ///
     /// # Errors
     /// `Forbidden` if the participant is an agent whose components the viewer

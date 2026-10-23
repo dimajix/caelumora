@@ -1,5 +1,5 @@
 //! Demo data a binary puts into its stores at startup (issue 105): the
-//! files `AppConfig::seed` names, each holding preconfigured components,
+//! files `AppConfig::seed` names, each holding component bundles,
 //! personalities and session templates as the stores keep them
 //! (`examples/seed.yaml`), and the sections of the plugins - the skills
 //! among them (issue 323).
@@ -9,11 +9,11 @@
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::Personality;
-use caelumora_model::component::StoredComponents;
+use caelumora_model::component::ComponentBundle;
 use caelumora_model::config::parse_yaml;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{ComponentStore, EntityStores, StoreResultExt};
+use caelumora_model::store::{EntityStores, StoreResultExt};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -29,9 +29,9 @@ use std::fs;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Seed {
-    /// Preconfigured components (issue 270), which the personalities
-    /// include by `kind: ref` - a bundle every agent of a kind shares.
-    pub components: Vec<StoredComponents>,
+    /// Component bundles (issues 270, 455), which the personalities
+    /// include by `kind: ref` - what every agent of a kind shares.
+    pub component_bundles: Vec<ComponentBundle>,
     pub personalities: Vec<SeedPersonality>,
     pub session_templates: Vec<SessionTemplate>,
     /// The sections of the plugins, by name, as they were written: each
@@ -94,28 +94,26 @@ impl Seed {
         parse_yaml(&content).with_context(|| format!("Cannot parse the seed file {}", path.display()))
     }
 
-    /// Puts every document into `stores` - a preconfigured component into
-    /// `components` - that it does not have yet, by id - so that seeding
-    /// again changes nothing, and a document changed in the store stays as
-    /// it is. Stored as the system: the seed belongs to it, every user may
-    /// use it and only the system may change it. The roles it names are
-    /// resolved by the roles `confidentiality` is configured with (issue 23).
-    /// The sections of the plugins are seeded last, each by the
-    /// `SeedSection` of `sections` that claims it.
+    /// Puts every document into `stores` that they do not have yet, by id - so that seeding again
+    /// changes nothing, and a document changed in the store stays as it is. Stored as the system:
+    /// the seed belongs to it, every user may use it and only the system may change it. The roles
+    /// it names are resolved by the roles `confidentiality` is configured with (issue 23). The
+    /// sections of the plugins are seeded last, each by the `SeedSection` of `sections` that claims
+    /// it.
     ///
     /// # Errors
     /// A section no plugin claims, before anything is stored; a role that
     /// is not configured; whatever the stores report. What was stored
     /// before stays.
-    pub async fn apply(&self, stores: &EntityStores, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>) -> Result<()> {
+    pub async fn apply(&self, stores: &EntityStores, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>) -> Result<()> {
         if let Some(name) = self.plugins.keys().find(|name| !sections.contains_key(*name)) {
             bail!("The seed has a section '{name}' that no plugin claims");
         }
         let system = SecurityContext::system();
-        for component in &self.components {
-            if components.get_components(&system, component.id()).await.optional()?.is_none() {
-                components.create_components(&system, component).await?;
-                info!("Seeded preconfigured component {}", component.id());
+        for bundle in &self.component_bundles {
+            if stores.component_bundles.get(&system, bundle.id).await.optional()?.is_none() {
+                stores.component_bundles.create(&system, bundle).await?;
+                info!("Seeded component bundle {} ({})", bundle.name, bundle.id);
             }
         }
         for seeded in &self.personalities {
@@ -141,14 +139,14 @@ impl Seed {
 }
 
 /// Reads and applies the seed files `paths`, in order, to `stores` and
-/// `components` and through the plugins' `sections`, the roles they name
-/// resolved by `confidentiality`.
+/// through the plugins' `sections`, the roles they name resolved by
+/// `confidentiality`.
 ///
 /// # Errors
 /// As `Seed::read` and `Seed::apply`.
-pub async fn load(stores: &EntityStores, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>, paths: &[PathBuf]) -> Result<()> {
+pub async fn load(stores: &EntityStores, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>, paths: &[PathBuf]) -> Result<()> {
     for path in paths {
-        Seed::read(path)?.apply(stores, components, confidentiality, sections).await
+        Seed::read(path)?.apply(stores, confidentiality, sections).await
             .with_context(|| format!("Cannot seed the stores from {}", path.display()))?;
     }
     Ok(())
@@ -179,11 +177,11 @@ mod tests {
     async fn a_seed_names_roles_which_are_stored_by_their_ids() {
         let seed: Seed = parse_yaml("personalities:\n- id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: limited\n  roles: [staff]\n").unwrap();
         let (store, policy) = (Persistence::in_memory(), policy());
-        seed.apply(&store.entity_stores().unwrap(), store.component_store().unwrap().as_ref(), policy.as_ref(), &BTreeMap::new()).await.unwrap();
+        seed.apply(&store.entity_stores().unwrap(), policy.as_ref(), &BTreeMap::new()).await.unwrap();
         let stored = store.entity_stores().unwrap().personalities.list(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(stored[0].roles, Some(vec![policy.roles().unwrap().id_of("staff").unwrap()]), "by the id the configuration gives it");
         let unknown: Seed = parse_yaml("personalities:\n- id: 1f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: typo\n  roles: [staf]\n").unwrap();
-        let error = unknown.apply(&store.entity_stores().unwrap(), store.component_store().unwrap().as_ref(), policy.as_ref(), &BTreeMap::new()).await.expect_err("a role not configured");
+        let error = unknown.apply(&store.entity_stores().unwrap(), policy.as_ref(), &BTreeMap::new()).await.expect_err("a role not configured");
         assert!(error.to_string().contains("staf"), "{error}");
     }
 
@@ -205,11 +203,11 @@ mod tests {
         let given = Arc::new(Given::default());
         let sections: BTreeMap<String, Arc<dyn SeedSection>> = [("notes".to_string(), Arc::<Given>::clone(&given) as Arc<dyn SeedSection>)].into();
         let seed: Seed = parse_yaml("notes:\n- text: remember\n").unwrap();
-        seed.apply(&store.entity_stores().unwrap(), store.component_store().unwrap().as_ref(), policy.as_ref(), &sections).await.unwrap();
+        seed.apply(&store.entity_stores().unwrap(), policy.as_ref(), &sections).await.unwrap();
         assert_eq!(*given.0.lock().unwrap(), [serde_json::json!([{"text": "remember"}])]);
 
         let typo: Seed = parse_yaml("personalites: []\npersonalities:\n- id: 2f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: kept-out\n").unwrap();
-        let error = typo.apply(&store.entity_stores().unwrap(), store.component_store().unwrap().as_ref(), policy.as_ref(), &sections).await.expect_err("a typo");
+        let error = typo.apply(&store.entity_stores().unwrap(), policy.as_ref(), &sections).await.expect_err("a typo");
         assert!(error.to_string().contains("'personalites'"), "{error}");
         let stored = store.entity_stores().unwrap().personalities.list(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
         assert!(stored.is_empty(), "nothing stored");

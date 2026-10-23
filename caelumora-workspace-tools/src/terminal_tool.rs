@@ -281,7 +281,7 @@ pub(crate) mod tests {
     /// takes its default.
     #[tokio::test]
     async fn is_built_without_parameters() {
-        let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
+        let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
         // The agents' kinds, with a model whose profile names the variant.
         with_agent_kinds(&mut registry);
         register(&mut registry);

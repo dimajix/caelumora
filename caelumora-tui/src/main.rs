@@ -571,7 +571,7 @@ async fn main() -> Result<()> {
 
     // Who answers, as the views tell it (issue 174).
     let view = session_manager.views(Viewer::new(security.clone())).session(session_id).await?.channel(channel.id()).await?;
-    let unknown = || "preconfigured".to_string();
+    let unknown = || "from a bundle".to_string();
     println!("Moderator: {}, responders: {}", view.moderator().unwrap_or_else(unknown), view.responder_policy().unwrap_or_else(unknown));
 
     // Start the interactive loop; however it ends, the session is shut

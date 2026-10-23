@@ -26,11 +26,9 @@ impl Removal {
     }
 }
 
-/// A stored kind that deleting marks rather than removes (issue 164): what
-/// holds content, an identity, or a definition that is managed - sessions,
-/// channels, agents, users and their profiles, personalities and session
-/// templates. Not a preconfigured component: it is reached only through the
-/// personalities and templates that refer to it, and hidden with them.
+/// A stored kind that deleting marks rather than removes (issue 164) - every
+/// kind there is: what holds content, an identity, or a definition that is
+/// managed.
 pub trait Deletable: Stored {
     /// Marks it deleted, or with `None` takes the mark away.
     fn set_deleted(&mut self, deleted: Option<Removal>);

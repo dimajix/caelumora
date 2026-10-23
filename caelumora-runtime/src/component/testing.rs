@@ -83,7 +83,7 @@ pub const NAMED: &[TypeKey] = &[TypeKey::of::<dyn Named>()];
 /// A registry with the single `Choice`, the kinds `declared` and `other`
 /// that provide it, and how often `declared` was built.
 pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
-    let mut registry = ComponentRegistry::new(Persistence::in_memory().component_store().unwrap());
+    let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
     let built = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&built);
     let choice = |id: &str| {

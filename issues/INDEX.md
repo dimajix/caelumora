@@ -494,7 +494,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [452](452-guideline-rules-not-checked-by-lints.md) | done | Most rules of CODING-GUIDELINES.md that clippy could check - imports, no `unwrap`, `pub(crate)` by default, `expect` instead of `allow`, no `println!` - are only written down, and are missed; nothing notices when a function grows too complex. |
 | [453](453-artifact-publish-takes-eight-parameters.md) | open | `ArtifactManager::publish` takes the caller, the content, its classification, the name, the description, the session and the channel one by one, and carries an `expect(clippy::too_many_arguments)`. |
 | [454](454-rustdoc-warnings-unchecked.md) | open | `cargo doc --workspace` warns 31 times that public documentation links to a private item, and neither clippy nor the pre-commit hook runs rustdoc, so such warnings only grow. |
-| [455](455-components-configuration-kept-as-entities.md) | open | The preconfigured components are copied once from the seed into a store of their own, read only to resolve a `ref` and written by nothing else, and theirs is the one kind whose id is not a UUID - so no store can key every kind by one. |
+| [455](455-components-configuration-kept-as-entities.md) | in progress | The preconfigured components are copied once from the seed into a store of their own, read only to resolve a `ref` and written by nothing else, and theirs is the one kind whose id is not a UUID - so no store can key every kind by one. |
 
 ## Integrations
 

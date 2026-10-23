@@ -279,7 +279,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
-        let mut builder = RuntimeBuilder::new(store.clone(), secrets, access_policy, config.create_confidentiality_policy(), config, ComponentRegistry::built_in(store.component_store().unwrap()), Backends::with_plugins(&plugins)).unwrap();
+        let mut builder = RuntimeBuilder::new(store.clone(), secrets, access_policy, config.create_confidentiality_policy(), config, ComponentRegistry::built_in(store.entity_stores().unwrap().component_bundles), Backends::with_plugins(&plugins)).unwrap();
         for plugin in plugins {
             builder.plugin(plugin).unwrap();
         }
@@ -328,8 +328,8 @@ mod tests {
         let seeded = seed.plugins.get("skills").and_then(|section| section.as_array()).map_or(0, Vec::len);
         assert!(!skills.is_empty() && skills.len() == seeded, "the skills, once, by their plugin (issues 22, 323)");
         assert!(skills.iter().all(|s| s.security_attributes.owner_id == ActorId::System), "the system's");
-        let components = store.component_store().unwrap().list_components(&system, &Query::all()).await.map(|page| page.items).unwrap();
-        assert!(!components.is_empty() && components.len() == seed.components.len(), "the preconfigured components, once (issue 270)");
+        let bundles = stores.component_bundles.list(&system, &Query::all()).await.map(|page| page.items).unwrap();
+        assert!(!bundles.is_empty() && bundles.len() == seed.component_bundles.len(), "the component bundles, once (issues 270, 455)");
     }
 
     /// Every personality of the example seed can be built with what the

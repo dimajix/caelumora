@@ -1,6 +1,6 @@
 //! What lies in a scope goes with what holds it (issue 178): the
-//! personalities, session templates, agents, workspaces, skills and
-//! artifacts of a session's scope - and of the scopes of its channels - are
+//! personalities, session templates, component bundles, agents, workspaces,
+//! skills and artifacts of a session's scope - and of the scopes of its channels - are
 //! deleted with the session, restored with it and purged with it, a
 //! workspace with its place (issue 251), an artifact with its content
 //! (issue 271); those of a channel's scope are deleted and restored with the
@@ -15,8 +15,9 @@
 //! its own - agents, workspaces, skills and artifacts - is a member
 //! by its owner (`…_lying_in`, issue 319): it announces what it deletes and
 //! restores as it announces its own deletions, and holds its lock of
-//! writing as it does. Personalities and session templates, which have
-//! none, are members by their store (`Unowned`), which marks them alone.
+//! writing as it does. Personalities, session templates and component
+//! bundles, which have none, are members by their store (`Unowned`), which
+//! marks them alone.
 //!
 //! What lies in the scope is listed in the runtime's name, so that all of
 //! it is found, whatever the caller may read; nothing of the list reaches

@@ -8,12 +8,11 @@
 //! storage is not generic, so that a backend is a trait object and opens the
 //! storage of a kind it was never told the type of - a plugin's too.
 
-use crate::component::StoredComponents;
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, SecurityContext};
 use crate::store::access::Access;
-use crate::store::query::{Cursor, FieldPath, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, EntityStore, Policies, StoreError, StoreResult, Stored};
+use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
+use crate::store::{EntityStore, Policies, StoreError, StoreResult, Stored};
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -98,9 +97,6 @@ pub trait DocumentStorage: Debug + Send + Sync {
     /// `StoreError::NameTaken` if another that is not deleted has its name.
     async fn replace(&self, document: Document) -> StoreResult<()>;
 
-    /// Removes the document `id` for good; whether there was one.
-    async fn remove(&self, id: &str) -> StoreResult<bool>;
-
     /// Removes the document `id` for good if it is marked deleted, in the
     /// same step; whether it was removed. What was restored meanwhile
     /// stays.
@@ -181,15 +177,6 @@ impl<T: Stored> CheckedStore<T> {
         let stored = self.stored(&id).await?;
         self.access(ctx).change(stored.as_ref(), value, id.to_string()).await?;
         self.storage.replace(Document::of(value)?).await
-    }
-
-    /// Removes the entity for good: deleting a kind that is not marked.
-    async fn remove(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        let stored = self.stored(&id).await?;
-        if !self.access(ctx).delete(stored.as_ref()).await? {
-            return Ok(false);
-        }
-        self.storage.remove(&id.to_string()).await
     }
 
     /// The page `query` asks for, among what is deleted if `deleted`: read
@@ -303,27 +290,6 @@ impl<T: Deletable> EntityStore<T> for CheckedStore<T> {
     }
 }
 
-/// Preconfigured components, kept like the entities and removed for good
-/// (issue 164).
-#[async_trait]
-impl ComponentStore for CheckedStore<StoredComponents> {
-    async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.create(ctx, value).await
-    }
-    async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
-        self.get(ctx, id.to_string()).await
-    }
-    async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.update(ctx, value).await
-    }
-    async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.remove(ctx, id.to_string()).await
-    }
-    async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
-        self.page(ctx, query, false).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,10 +334,6 @@ mod tests {
 
         async fn replace(&self, _document: Document) -> StoreResult<()> {
             Ok(())
-        }
-
-        async fn remove(&self, _id: &str) -> StoreResult<bool> {
-            Ok(false)
         }
 
         async fn remove_deleted(&self, _id: &str) -> StoreResult<bool> {

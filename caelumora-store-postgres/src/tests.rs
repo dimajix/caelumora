@@ -107,13 +107,6 @@ async fn answers_queries() {
 }
 
 #[tokio::test]
-async fn behaves_as_a_component_store() {
-    let Some(database) = Database::new() else { return };
-    suite::component_store_behaves(database.stores(Arc::new(AllowAllPolicy::new())).await.component_store().unwrap().as_ref()).await;
-    database.drop().await;
-}
-
-#[tokio::test]
 async fn keeps_what_is_deleted_marked() {
     let Some(database) = Database::new() else { return };
     suite::deleting_marks(&database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap()).await;

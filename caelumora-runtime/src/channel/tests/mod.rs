@@ -47,7 +47,7 @@ pub(super) async fn channel_with(users: &[&User], access_policy: Arc<dyn AccessP
 
 /// A channel of `participants`, whose actors are read from `store`.
 async fn channel_of(store: Persistence, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>) -> Arc<ChannelLoop> {
-    let registry = test_registry(store.component_store().unwrap());
+    let registry = test_registry(&store);
     channel_built(store, participants, access_policy, registry, moderation_components(None, Some("broadcast_policy"))).await
 }
 
@@ -141,7 +141,7 @@ pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn Mod
         store.entity_stores().unwrap().users.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
-    let mut registry = test_registry(store.component_store().unwrap());
+    let mut registry = test_registry(&store);
     registry.register(ComponentKind::new("test_moderator").provides::<dyn Moderator>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn Moderator>(Arc::clone(&moderator));

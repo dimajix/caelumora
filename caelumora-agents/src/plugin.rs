@@ -93,7 +93,7 @@ mod tests {
     /// moderator; each takes what it asks for and what that needs.
     #[tokio::test]
     async fn a_channel_takes_no_tool_and_an_agent_no_moderator() {
-        let registry = Arc::new(test_registry(Persistence::in_memory().component_store().unwrap()));
+        let registry = Arc::new(test_registry(&Persistence::in_memory()));
         // The texts its tools are made with.
         let context = ComponentContext::new(SecurityContext::default(), Services::empty().with(testing::catalogue()));
 

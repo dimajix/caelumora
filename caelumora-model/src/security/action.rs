@@ -52,7 +52,7 @@ pub enum ActionType<'a> {
     /// built.
     ReadAgentTools { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
     /// Reading which components an agent was built from in a channel, the
-    /// preconfigured ones it includes resolved (issue 270): its
+    /// bundles it includes resolved (issue 270): its
     /// configuration, with what was shared with its owner. Carries the
     /// agent's attributes.
     ReadAgentComponents(&'a SecurityAttributes),

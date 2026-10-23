@@ -50,8 +50,8 @@ pub(crate) use manager::Found;
 pub enum SessionError {
     /// The channel's components cannot be built (issue 174): a kind that
     /// does not exist, two moderators, two policies, a component nobody asks
-    /// for (issue 337), preconfigured components whoever creates the channel
-    /// may not read (issue 321) - found before it is created; or whatever
+    /// for (issue 337), component bundles whoever creates the channel may
+    /// not read (issue 321) - found before it is created; or whatever
     /// fails as they are built, after which a channel created so is taken
     /// back out.
     #[error("The channel's components cannot be built: {0}")]

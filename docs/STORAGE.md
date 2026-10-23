@@ -2,18 +2,18 @@
 
 Caelumora keeps two kinds of data apart: long-lived **entities** - definitions and identities - in
 the entity stores, one `EntityStore<T>` per kind, and frequently changing runtime **state** in the
-`StateStore`, with the histories the states hold read through the `HistoryStore`; preconfigured
-components have a `ComponentStore` of their own. This document describes the stores, who writes
-what, and the controllers that hold the entities of a running session live. How access to stored
-entities is checked is in [SECURITY.md](SECURITY.md); which stores are used is configured in
-[CONFIGURATION.md](CONFIGURATION.md).
+`StateStore`, with the histories the states hold read through the `HistoryStore`. This document
+describes the stores, who writes what, and the controllers that hold the entities of a running
+session live. How access to stored entities is checked is in [SECURITY.md](SECURITY.md); which
+stores are used is configured in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## The entity store
 
 The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived domain entities:
 
-*   **Personalities**, the definitions of agents, and **session templates**, which sessions are
-    made from.
+*   **Personalities**, the definitions of agents, **component bundles**, the components several of
+    them include (see [Component bundles](#component-bundles)), and **session templates**, which
+    sessions are made from.
 *   **Identities**: agents, sessions, channels and users. A channel is a document of its own, which
     its session lists by id.
 *   **User profiles**: what a user says about themselves - introduction, preferred language,
@@ -71,11 +71,11 @@ the documents from the first, as their kinds are opened, and the three state sto
 when it is made, together - so that a backend that keeps no states fails the start, as the state
 store. It opens the store of a kind for whoever asks (`EntityStoreFactory::entity_store::<T>()`),
 once - whoever asks for a kind again, the core or a plugin, is given the same store -, refuses a
-kind whose name another kind has, and gives the component store and the state stores. The stores of
-the core's kinds are `EntityStores`, which the runtime is given; a plugin asks for the store of its
-kind while it registers. A manager is made with `&EntityStores` - or the store of its kind - and
-keeps the stores of the kinds it uses as fields, as every service is held. Tests make their stores
-the same way, `Persistence::in_memory()` for stores in memory that permit everything,
+kind whose name another kind has, and gives the state stores. The stores of the core's kinds are
+`EntityStores`, which the runtime is given; a plugin asks for the store of its kind while it
+registers. A manager is made with `&EntityStores` - or the store of its kind - and keeps the stores
+of the kinds it uses as fields, as every service is held. Tests make their stores the same way,
+`Persistence::in_memory()` for stores in memory that permit everything,
 `Persistence::in_memory_with` for the policies of a test - both cannot fail, since the memory store
 is the three state stores itself.
 
@@ -149,23 +149,24 @@ comes from is its caller's. Artifacts are entities, not state: each has its own 
 a name unique in its scope and a trash, and one that is kept outlives the session it was published
 in.
 
-### Preconfigured components
+### Component bundles
 
-Preconfigured components are runtime configuration that personalities and templates refer to by
-`kind: "ref"`. The `ComponentStore` keeps them as `StoredComponents` - one or several component
-descriptors with the attributes of who may use and change them - with the same operations as
-entities, checked the same way. A descriptor inside a personality or template carries no attributes;
-it is covered by those of what holds it. The component store is opened where the entity store is.
+A component bundle (`ComponentBundle`) is what personalities, templates and channels
+include by `kind: "ref"` and its name: one or several component descriptors, kept as an entity like
+a personality - with an owner, an access list and a name unique in its scope, marked when it is
+deleted - so that a user who keeps personalities of their own may keep the bundles they include as
+well. A descriptor inside a personality or template carries no attributes; it is covered by those
+of what holds it.
 
 ### Names and scopes
 
 Every entity has a name, and the fields that mean something for it:
 
 *   **What is a scope** - a session, a channel, a user - has a name only.
-*   **What lies in a scope** - a personality, a session template, an agent, a workspace, a skill, an
-    artifact - has a name and a `Scope`: where it is found by name. The store finds one in exactly
-    its scope; from a place, `scope::find_by_name` finds the innermost of a name - in the place's
-    scope, in those around it or in the user's own.
+*   **What lies in a scope** - a personality, a session template, a component bundle, an agent, a
+    workspace, a skill, an artifact - has a name and a `Scope`: where it is found by name. The store
+    finds one in exactly its scope; from a place, `scope::find_by_name` finds the innermost of a
+    name - in the place's scope, in those around it or in the user's own.
 *   **What is offered for choosing** - a personality, a session template - has a `description`, a
     catalogue line.
 
@@ -251,9 +252,8 @@ at the caller.
 
 What a user deletes is kept, marked, and removed for good only by a purge - an administrator's act
 or a retention policy's. The kinds that deleting marks implement `Deletable` and carry who deleted
-them and when: sessions, channels, agents, users, user profiles, personalities, session templates
-and workspaces. A preconfigured component is not marked: it is reached only through what refers to
-it, and is deleted for good.
+them and when - every kind: sessions, channels, agents, users, user profiles, personalities,
+session templates, component bundles, workspaces, groups and the kinds of the plugins.
 
 A marked document is not there for the ordinary operations, before anything is asked: not read,
 listed, found by name, changed or deleted again - also not by the system, so that no caller has to
@@ -281,8 +281,8 @@ state](#deleting-state)).
 
 ### Demo data
 
-Demo data is not part of any binary. The files the configuration's `seed` names hold preconfigured
-components, personalities and session templates as the stores keep them, with fixed ids, and the
+Demo data is not part of any binary. The files the configuration's `seed` names hold component
+bundles, personalities and session templates as the stores keep them, with fixed ids, and the
 sections of the plugins - `skills` among them -, each seeded by the plugin that claims it
 (`SeedSection`); a section no plugin claims is an error before anything is stored. At startup both
 binaries put into the stores whatever they do not have yet, by id, as the system

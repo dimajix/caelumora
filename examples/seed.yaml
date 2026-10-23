@@ -1,4 +1,4 @@
-# Demo data (issue 105): preconfigured components, personalities, session
+# Demo data (issue 105): component bundles, personalities, session
 # templates and skills that a binary puts into its stores at startup, when
 # `seed` in its configuration names this file (see config.yaml). Every
 # document is stored under the id it has here, and only if the store has no document with that id yet - so
@@ -18,18 +18,20 @@
 # has the `skills` component finds them, loads them when a task calls for one,
 # and a member gives one to an agent with `/skill @agent <name>`.
 #
-# Preconfigured components (issue 270) are kept in the component store under
-# their id. A personality includes one with `kind: ref` and `params: { id: ... }`,
-# and gets all of its components there, in their order: what every agent should
-# have is written once, and an addition reaches every personality that includes
-# it. A component of an included one must not be written again beside it.
+# Component bundles (issues 270, 455) are entities like the personalities, found
+# by their name in their scope. A personality includes one with `kind: ref` and
+# `params: { name: ... }`, and gets all of its components there, in their order:
+# what every agent should have is written once, and an addition reaches every
+# personality that includes it. A component of an included one must not be
+# written again beside it.
 
-components:
+component_bundles:
 # Who is in the channel, which language it speaks, what it is about, what
 # time it is, - when only the responder policy chose the agent - that it
 # may stay silent, and - where another agent could be asked - when to write
 # an @handle and when a name.
-- id: channel-context
+- id: 3b1f7e52-6a0c-4d8e-9f21-5c7a2b9d4e10
+  name: channel-context
   components:
   - id: channel-participants
     kind: channel_participants_prompt_provider
@@ -50,7 +52,8 @@ components:
     kind: channel_mentions_prompt_provider
     fail_policy: FailClosed
 # What every agent run here needs to take part in a channel.
-- id: agent-basics
+- id: 8d4c2a91-0e57-4b3f-a6d8-17f9c3e5b204
+  name: agent-basics
   components:
   - id: stop-tool
     kind: stop_tool
@@ -94,11 +97,11 @@ personalities:
   - id: channel-context
     kind: ref
     params:
-      id: channel-context
+      name: channel-context
   - id: agent-basics
     kind: ref
     params:
-      id: agent-basics
+      name: agent-basics
   - id: create-plan-tool
     kind: create_plan_tool
     fail_policy: FailClosed
@@ -136,11 +139,11 @@ personalities:
   - id: channel-context
     kind: ref
     params:
-      id: channel-context
+      name: channel-context
   - id: agent-basics
     kind: ref
     params:
-      id: agent-basics
+      name: agent-basics
   - id: create-plan-tool
     kind: create_plan_tool
     fail_policy: FailClosed
@@ -222,11 +225,11 @@ personalities:
   - id: channel-context
     kind: ref
     params:
-      id: channel-context
+      name: channel-context
   - id: agent-basics
     kind: ref
     params:
-      id: agent-basics
+      name: agent-basics
   - id: workspace
     kind: workspace_prompt_provider
     fail_policy: FailClosed
@@ -258,11 +261,11 @@ personalities:
   - id: channel-context
     kind: ref
     params:
-      id: channel-context
+      name: channel-context
   - id: agent-basics
     kind: ref
     params:
-      id: agent-basics
+      name: agent-basics
   - id: workspace
     kind: workspace_prompt_provider
     fail_policy: FailClosed
@@ -293,11 +296,11 @@ personalities:
   - id: channel-context
     kind: ref
     params:
-      id: channel-context
+      name: channel-context
   - id: agent-basics
     kind: ref
     params:
-      id: agent-basics
+      name: agent-basics
   - id: create-plan-tool
     kind: create_plan_tool
     fail_policy: FailClosed
@@ -475,7 +478,7 @@ session_templates:
 # what is classified with a compartment is not sent, and nobody is asked, as
 # when the model cannot be reached (`on_failure: none`). A template may write
 # the policy itself - its params are the operator's -, a channel created on
-# request only names preconfigured ones.
+# request only names a bundle that holds one.
 - id: b6f36657-cb30-4fac-8873-c216b46bbf2c
   name: team-session
   description: A coder, a reviewer and a planner; a decision model chooses who answers

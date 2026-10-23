@@ -148,7 +148,7 @@ pub enum ChannelError {
 
 /// Whether `error` of `Participation::resolve` or of building its actor says
 /// that the participant cannot be run - its agent's personality, or the
-/// preconfigured components it includes (issue 270), are gone or not the
+/// component bundles it includes (issue 270), are gone or not the
 /// agent's to read - rather than that the store failed.
 fn cannot_run(error: &Error) -> bool {
     matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. } | StoreError::PermissionDenied(_)))
