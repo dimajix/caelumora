@@ -10,7 +10,7 @@ use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::store::{EntityKind, Journaled, NoEntity, Stored, Updatable};
 use crate::message::MessageId;
 use crate::store::query::{Field, NoField};
@@ -70,6 +70,10 @@ impl Stored for User {
         self.deleted.as_ref()
     }
 
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }
@@ -90,12 +94,6 @@ impl Updatable for User {
     }
 }
 
-impl Deletable for User {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
-    }
-}
-
 impl Stored for UserProfile {
     const KIND: EntityKind = EntityKind::new("user_profile");
     type Id = UserId;
@@ -109,9 +107,7 @@ impl Stored for UserProfile {
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }
-}
 
-impl Deletable for UserProfile {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
     }

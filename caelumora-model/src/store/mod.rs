@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentBundle;
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::confidentiality::{Classification, ConfidentialityPolicy};
 use crate::security::{Refused, Secured, SecurityContext, AccessPolicy};
 use crate::session::Session;
@@ -171,11 +171,10 @@ impl Display for EntityKind {
     }
 }
 
-/// An entity the `EntityStore` keeps: what the stores are generic over,
-/// besides `Secured`. Whether it was deleted is asked of every kind alike,
-/// so that every kind is read the same way; only a `Deletable` kind can be.
-/// A store keeps it as it is serialized, and hands out copies, so that a
-/// backend can keep any kind (issue 323).
+/// An entity the `EntityStore` keeps: what the stores are generic over, besides `Secured`. Every
+/// kind is marked when it is deleted, not removed (issue 164): what holds content, an identity, or
+/// a definition that is managed. A store keeps it as it is serialized, and hands out copies, so
+/// that a backend can keep any kind (issue 323).
 pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Its kind (issue 323), by which what is done with it is asked and
     /// named.
@@ -203,10 +202,11 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
         None
     }
 
-    /// Whether, and by whom and when, it was deleted (`Deletable`).
-    fn deleted(&self) -> Option<&Removal> {
-        None
-    }
+    /// Whether, and by whom and when, it was deleted (issue 164).
+    fn deleted(&self) -> Option<&Removal>;
+
+    /// Marks it deleted, or with `None` takes the mark away.
+    fn set_deleted(&mut self, deleted: Option<Removal>);
 
     /// Nothing if it may be stored as it is; why not otherwise, which the
     /// store answers as `StoreError::Validation` when it is created or
@@ -320,7 +320,7 @@ pub type Address<T> = <<T as Stored>::Within as Enclosing>::Address<<T as Stored
 /// `purge` removes what was deleted for good (`Purge`) - only what is
 /// marked, so that a purge never takes what was restored.
 #[async_trait]
-pub trait EntityStore<T: Deletable>: Debug + Send + Sync {
+pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
@@ -346,7 +346,7 @@ pub trait EntityStoreFactory {
     ///
     /// # Errors
     /// If the store cannot be opened.
-    fn entity_store<T: Deletable>(&self) -> Result<Arc<dyn EntityStore<T>>, Self::Error>;
+    fn entity_store<T: Stored>(&self) -> Result<Arc<dyn EntityStore<T>>, Self::Error>;
 }
 
 /// The stores of the entities (issue 323), one per kind of the core,
@@ -588,7 +588,7 @@ impl EntityStoreFactory for Persistence {
     /// # Errors
     /// `StoreError::Conflict` if another kind has the name of `T`; whatever
     /// opening it fails with.
-    fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
+    fn entity_store<T: Stored>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
         Ok(self.checked::<T>()?)
     }
 }
@@ -740,9 +740,7 @@ mod tests {
         fn deleted(&self) -> Option<&Removal> {
             self.deleted.as_ref()
         }
-    }
 
-    impl Deletable for Note {
         fn set_deleted(&mut self, deleted: Option<Removal>) {
             self.deleted = deleted;
         }
@@ -767,10 +765,14 @@ mod tests {
         fn id(&self) -> NoteId {
             self.0.id
         }
-    }
 
-    impl Deletable for Impostor {
-        fn set_deleted(&mut self, _deleted: Option<Removal>) {}
+        fn deleted(&self) -> Option<&Removal> {
+            self.0.deleted()
+        }
+
+        fn set_deleted(&mut self, deleted: Option<Removal>) {
+            self.0.set_deleted(deleted);
+        }
     }
 
     #[tokio::test]

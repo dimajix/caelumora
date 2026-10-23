@@ -45,7 +45,7 @@ mod tests {
     use caelumora_model::config::AppConfig;
     use caelumora_model::define_id;
     use caelumora_model::group::Group;
-    use caelumora_model::removal::{Deletable, Removal};
+    use caelumora_model::removal::Removal;
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::{PersistenceBackend, StateStore, StoreResult};
@@ -95,9 +95,7 @@ mod tests {
         fn deleted(&self) -> Option<&Removal> {
             self.deleted.as_ref()
         }
-    }
 
-    impl Deletable for Note {
         fn set_deleted(&mut self, deleted: Option<Removal>) {
             self.deleted = deleted;
         }
@@ -172,9 +170,12 @@ mod tests {
                 fn id(&self) -> NoteId {
                     self.0.id
                 }
-            }
-            impl Deletable for Groupie {
-                fn set_deleted(&mut self, _deleted: Option<Removal>) {}
+                fn deleted(&self) -> Option<&Removal> {
+                    self.0.deleted()
+                }
+                fn set_deleted(&mut self, deleted: Option<Removal>) {
+                    self.0.set_deleted(deleted);
+                }
             }
             runtime.entity_store::<Groupie>()?;
             Ok(())

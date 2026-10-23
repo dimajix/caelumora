@@ -11,7 +11,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::define_id;
 use caelumora_model::digest::Digest;
-use caelumora_model::removal::{Deletable, Removal};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::{validate_users_own, Scope, Scoped, ScopedField};
 use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
@@ -240,6 +240,10 @@ impl Stored for Artifact {
         self.deleted.as_ref()
     }
 
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+
     /// An artifact is a user's own, as a workspace is, and has its versions
     /// numbered from 1 without gaps; a version's list names whom an
     /// artifact's may (issue 23) and grants reading alone - reading the
@@ -263,12 +267,6 @@ impl Stored for Artifact {
 
     fn classification(&self) -> Option<&Classification> {
         Some(&self.classification)
-    }
-}
-
-impl Deletable for Artifact {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
     }
 }
 

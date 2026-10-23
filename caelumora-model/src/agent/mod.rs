@@ -16,7 +16,7 @@ mod state;
 pub(crate) mod testing;
 
 use crate::actor::ActorId;
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::scope::{ScopeField, Scoped};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::session::{ChannelId, SessionId};
@@ -107,6 +107,10 @@ impl Stored for Agent {
         self.deleted.as_ref()
     }
 
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }
@@ -132,12 +136,6 @@ impl Updatable for Agent {
             AgentUpdateEvent::NameChanged(name) => self.name.name = Name::new(name)?,
         }
         Ok(())
-    }
-}
-
-impl Deletable for Agent {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
     }
 }
 

@@ -14,7 +14,7 @@ use crate::value::time_zone::TimeZone;
 use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Description, Summary};
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
@@ -287,18 +287,16 @@ impl Stored for SessionTemplate {
         self.deleted.as_ref()
     }
 
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+
     fn validate(&self) -> Result<(), String> {
         match self.name.scope {
             Scope::SessionScope { .. } | Scope::ChannelScope { .. } =>
                 Err(format!("the session template '{}' cannot lie in a session's or a channel's scope", self.name)),
             Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => Ok(()),
         }
-    }
-}
-
-impl Deletable for SessionTemplate {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
     }
 }
 

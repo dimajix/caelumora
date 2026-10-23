@@ -15,7 +15,7 @@ use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::store::{EntityKind, NoEntity, Stored, Updatable};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +119,10 @@ impl Stored for Session {
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }
+
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
 }
 
 /// What a change of the session says is made into its values here (issue
@@ -142,12 +146,6 @@ impl Updatable for Session {
 
     fn touch(&mut self, at: DateTime<Utc>) {
         self.updated_at = at;
-    }
-}
-
-impl Deletable for Session {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
     }
 }
 

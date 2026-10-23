@@ -35,7 +35,6 @@
 
 use crate::session::SessionError;
 use async_trait::async_trait;
-use caelumora_model::removal::Deletable;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
@@ -167,12 +166,12 @@ impl ScopedEntities {
 /// A kind without an owner of its own - personalities and session
 /// templates - as a `ScopeMember`: marked and purged in its store alone,
 /// with nothing announced.
-pub(crate) struct Unowned<T: Deletable>(pub(crate) Arc<dyn EntityStore<T>>);
+pub(crate) struct Unowned<T: Stored>(pub(crate) Arc<dyn EntityStore<T>>);
 
 #[async_trait]
 impl<T> ScopeMember for Unowned<T>
 where
-    T: Deletable,
+    T: Stored,
     T::Field: ScopedField,
 {
     fn kind(&self) -> EntityKind {

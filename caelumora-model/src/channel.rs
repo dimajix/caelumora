@@ -7,7 +7,7 @@ use crate::group::GroupId;
 use crate::chain::Position;
 use crate::history::{History, WINDOW};
 use crate::message::{Message, MessageId};
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::scope::{Scope, Scoped};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{Session, SessionId};
@@ -242,6 +242,10 @@ impl Stored for Channel {
         self.deleted.as_ref()
     }
 
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+
     fn classification(&self) -> Option<&Classification> {
         Some(&self.classification)
     }
@@ -262,12 +266,6 @@ impl Updatable for Channel {
             ChannelUpdateEvent::UsesWorkspaceChanged(uses) => self.uses_workspace = *uses,
         }
         Ok(())
-    }
-}
-
-impl Deletable for Channel {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
     }
 }
 

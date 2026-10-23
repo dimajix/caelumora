@@ -7,7 +7,7 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
-use crate::removal::{Deletable, Removal};
+use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped, validate_users_own};
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
@@ -127,6 +127,10 @@ impl Stored for Workspace {
         self.deleted.as_ref()
     }
 
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+
     /// A workspace is a user's - the system's everybody could use - and
     /// lies in a session's scope, its owner's or the global one: not in a
     /// channel's, since a session's channels share one.
@@ -159,12 +163,6 @@ impl Updatable for Workspace {
 
     fn touch(&mut self, at: DateTime<Utc>) {
         self.updated_at = at;
-    }
-}
-
-impl Deletable for Workspace {
-    fn set_deleted(&mut self, deleted: Option<Removal>) {
-        self.deleted = deleted;
     }
 }
 
