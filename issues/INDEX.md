@@ -492,6 +492,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [445](445-model-parameters-repeated-per-personality.md) | done | A personality that needs one parameter of its model changed - the variant of the texts it is given, say - has to write out a model of its own with every parameter of the configured default, which then no longer follows a change of the default. |
 | [449](449-runtime-given-the-policies-twice.md) | open | `RuntimeBuilder::new` and `RuntimeManager::new` take the `AccessPolicy` and the `ConfidentialityPolicy` beside a `Persistence` that was made with them, and nothing but a doc comment says that they have to be the same instances - tests already run with stores that permit everything under a runtime that checks. |
 | [452](452-guideline-rules-not-checked-by-lints.md) | open | Most rules of CODING-GUIDELINES.md that clippy could check - imports, no `unwrap`, `pub(crate)` by default, `expect` instead of `allow`, no `println!` - are only written down, and are missed; nothing notices when a function grows too complex. |
+| [453](453-artifact-publish-takes-eight-parameters.md) | open | `ArtifactManager::publish` takes the caller, the content, its classification, the name, the description, the session and the channel one by one, and carries an `expect(clippy::too_many_arguments)`. |
 
 ## Integrations
 
