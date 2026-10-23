@@ -26,7 +26,7 @@ use tokio::runtime::Handle;
 
 /// A shell command (issue 251): its `command` as a line of code, its
 /// `output` as a terminal shows it, and its exit code.
-pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
+const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
 
 pub const RUN_COMMAND: &str = "run_command";
 pub const COMMAND_OUTPUT: &str = "command_output";

@@ -39,7 +39,7 @@ use std::sync::Arc;
 use chrono::Utc;
 
 #[derive(Debug)]
-pub struct AgentActor {
+pub(crate) struct AgentActor {
     /// What it is in the channel, as every agent is (issue 355): who it is,
     /// in whose name it acts, its state there, how it hears, its commands,
     /// and where its run loop stands (issue 363).
@@ -61,7 +61,7 @@ pub struct AgentActor {
 impl AgentActor {
     /// The facets it asks its components for (issue 337) - its commands
     /// through its body.
-    pub const COMPONENT_FACETS: &[TypeKey] = &[
+    pub(crate) const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ContextProvider>(),
         TypeKey::of::<dyn LLMClient>(),
         TypeKey::of::<dyn ModelProfileProvider>(),
@@ -78,7 +78,7 @@ impl AgentActor {
     /// channels (issue 120) - built from the personality `personality`
     /// holds, the instance's controller of it (issue 406), in the channel of
     /// `actor_runtime`.
-    pub async fn new(agent_controller: Arc<AgentController>, personality: Arc<PersonalityController>, actor_runtime: ActorRuntime) -> Result<Self> {
+    pub(crate) async fn new(agent_controller: Arc<AgentController>, personality: Arc<PersonalityController>, actor_runtime: ActorRuntime) -> Result<Self> {
         let channel_id = actor_runtime.channel_controller().id();
         let agent_id = agent_controller.id();
         // A turn stored under way is resumed (issue 75).

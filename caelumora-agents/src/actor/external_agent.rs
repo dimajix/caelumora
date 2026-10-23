@@ -68,7 +68,7 @@ use uuid::Uuid;
 use caelumora_model::digest;
 
 #[derive(Debug)]
-pub struct ExternalAgentActor {
+pub(crate) struct ExternalAgentActor {
     /// What it is in the channel, as every agent is (issue 355): who it is,
     /// in whose name it acts, its state there, how it hears, its commands -
     /// what they stage is in its transcript, given to the remote agent with
@@ -118,7 +118,7 @@ enum Ending {
 impl ExternalAgentActor {
     /// The facets it asks its components for (issue 337) - its commands
     /// through its body.
-    pub const COMPONENT_FACETS: &[TypeKey] = &[
+    pub(crate) const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ExternalAgent>(),
         TypeKey::of::<dyn ModelProfileProvider>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
@@ -136,7 +136,7 @@ impl ExternalAgentActor {
     /// If its personality provides no `ExternalAgent` - or more than one -
     /// or its answers, as the component classifies them, may not be
     /// published in the channel; whatever its state store reports.
-    pub async fn new(agent_controller: Arc<AgentController>, personality: Arc<PersonalityController>, actor_runtime: ActorRuntime) -> Result<Self> {
+    pub(crate) async fn new(agent_controller: Arc<AgentController>, personality: Arc<PersonalityController>, actor_runtime: ActorRuntime) -> Result<Self> {
         let channel = Arc::clone(&actor_runtime.channel_controller().load());
         // Its context provider is, unless it configures one, not a turn's.
         let defaults = ComponentConfig {

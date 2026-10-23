@@ -23,7 +23,7 @@ const INDEX: &str = "index.html";
 const HASHED: &str = "assets/";
 
 /// The file `uri` names, or `index.html`.
-pub async fn serve(uri: Uri) -> Response {
+pub(crate) async fn serve(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     match Build::get(path).filter(|_| !path.is_empty()) {
         Some(file) => file_response(path, file.data.into_owned()),

@@ -51,10 +51,10 @@ pub struct SessionView {
 
 /// The least of a name one searches by (`SessionView::candidates`): fewer
 /// characters would list nearly everyone.
-pub const MIN_PREFIX: usize = 2;
+const MIN_PREFIX: usize = 2;
 
 /// The most users, and the most agents, a search finds.
-pub const CANDIDATES: usize = 20;
+const CANDIDATES: usize = 20;
 
 /// Why someone cannot be taken in, as `error` of `resolve_to_take_in` says it;
 /// `None` for an error that says nothing about them - a store that failed -,

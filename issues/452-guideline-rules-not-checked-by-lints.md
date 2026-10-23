@@ -77,3 +77,11 @@ checks.
   `Null` - an exception the maintainer accepted. Turned into `expect`, three `allow`s turned out
   to suppress nothing any more and were removed (`ArtifactManager::new`, `HistoryEntry`,
   `TranscriptEntry`).
+- **2026-10-23** — Step 2: `unreachable_pub` is on, as a lint of `[workspace.lints.rust]`; its 128
+  places - most of them the handlers of the REST routes - are `pub(crate)` or `pub(super)` now,
+  as the lint proposed, ten constants used only in their own file private. The lint finds only
+  the `pub` items a crate's root cannot reach; a `pub` item in a public module that only its own
+  crate uses passes it (`routes::ensure_session`, say), and is left for its owner to find.
+  Seven of the modules it touched have no sentence of their module docs; decided with the
+  maintainer that a mechanical change does not count as changing a module, and the rule in
+  CODING-GUIDELINES.md says so now.

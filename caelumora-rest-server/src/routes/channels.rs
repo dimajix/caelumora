@@ -40,7 +40,7 @@ use tracing::Span;
 
 /// The channels of the session the user may read - or, with
 /// `?deleted=true`, those deleted from it they may read as such (issue 164).
-pub async fn list_channels(
+pub(super) async fn list_channels(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Query(options): Query<ListOptions>,
@@ -64,7 +64,7 @@ pub async fn list_channels(
 /// Restores a channel deleted from the session (issue 164), starts it again
 /// and answers it as `GET` does. Only who may change the session and
 /// restore the channel may.
-pub async fn restore_channel(
+pub(super) async fn restore_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -77,7 +77,7 @@ pub async fn restore_channel(
 
 /// Creates a channel in the session and starts it (issue 09). Only who may
 /// change the session may do it.
-pub async fn create_channel(
+pub(super) async fn create_channel(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
@@ -94,7 +94,7 @@ pub async fn create_channel(
 }
 
 /// Stops and deletes a channel of the session, with its history (issue 09).
-pub async fn delete_channel(
+pub(super) async fn delete_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -107,7 +107,7 @@ pub async fn delete_channel(
 }
 
 
-pub async fn get_channel(
+pub(super) async fn get_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -124,7 +124,7 @@ const SNAPSHOT_ITEMS: usize = 20;
 /// A page of the history of the channel, as the user may see it (issues 46,
 /// 218): its messages and how turns ended (issue 258), oldest first - the
 /// last ones, or those before `?before=`.
-pub async fn get_channel_history(
+pub(super) async fn get_channel_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     Query(query): Query<HistoryQuery>,
@@ -141,7 +141,7 @@ pub async fn get_channel_history(
 /// channel_not_found` for a channel they do not read and
 /// `message_not_found` for a message they do not see in it. Kept by the
 /// user's controller, without starting the session.
-pub async fn mark_read(
+pub(super) async fn mark_read(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -155,7 +155,7 @@ pub async fn mark_read(
 /// The message `mid` of the channel as it stands (issue 218), if the user
 /// sees it in the history - what a client reads back after a change of it
 /// was not let in.
-pub async fn get_message(
+pub(super) async fn get_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -167,7 +167,7 @@ pub async fn get_message(
 /// The notes every agent of the channel published (issue 17) - what a
 /// client reloads on the channel's `channel::AGENT_STATE_CHANGED` (issue
 /// 65).
-pub async fn get_notes(
+pub(super) async fn get_notes(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -216,7 +216,7 @@ async fn channel_snapshot(state: &AppState, session_id: SessionId, channel_id: C
 /// `started` and `stopped`. It ends when the user is no longer a
 /// participant - they left, or the channel or its session was deleted
 /// while it ran.
-pub async fn join_channel(
+pub(super) async fn join_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     Query(options): Query<StreamOptions>,
@@ -299,7 +299,7 @@ impl ChannelFollower {
 /// history as the request grants - one not in the session yet to the
 /// session, too (issue 221). Only who may change the session and the
 /// channel may do it.
-pub async fn add_participant(
+pub(super) async fn add_participant(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -316,7 +316,7 @@ pub async fn add_participant(
 /// One participant of the channel, with what its model calls used (issue
 /// 209) - what a client fetches again when an agent's turn ends, instead
 /// of the whole channel.
-pub async fn get_participant(
+pub(super) async fn get_participant(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -327,7 +327,7 @@ pub async fn get_participant(
         .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))
 }
 
-pub async fn remove_participant(
+pub(super) async fn remove_participant(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -341,7 +341,7 @@ pub async fn remove_participant(
 }
 
 
-pub async fn send_message(
+pub(super) async fn send_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -357,7 +357,7 @@ pub async fn send_message(
 /// Modifies the authenticated user's message `mid` (issue 234): it reads as
 /// `content` from now on, in its place. Answered once it is on its way; the
 /// channel's stream shows it as `MessageModified`.
-pub async fn modify_message(
+pub(super) async fn modify_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -375,7 +375,7 @@ pub async fn modify_message(
 /// does is its own to decide, and the channel's stream shows its answer as
 /// `RetryAccepted` - followed by the message taken back and the new answer -
 /// or `RetryRejected` with the reason.
-pub async fn retry_message(
+pub(super) async fn retry_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -393,7 +393,7 @@ pub async fn retry_message(
 /// (`409 turn_not_retryable`); otherwise the channel ends a turn under way
 /// as it delivers the request, and the stream shows `RetryAccepted` and the
 /// new answer.
-pub async fn retry_turn(
+pub(super) async fn retry_turn(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -411,7 +411,7 @@ pub async fn retry_turn(
 /// Takes the authenticated user's message `mid` back (issue 234): it stays
 /// in its place without what it said, and the agents are no longer given
 /// it - not a deletion. Shown on the channel's stream as `MessageRevoked`.
-pub async fn revoke_message(
+pub(super) async fn revoke_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -459,7 +459,7 @@ fn not_a_participant(id: ChannelId) -> ApiError {
 /// Ends the turn of every agent in the channel - an operation on the
 /// channel, like renaming it, not an act of taking part: whoever the policy
 /// lets cancel it may (`CancelChannel`, checked by the channel).
-pub async fn cancel_channel(
+pub(super) async fn cancel_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -472,7 +472,7 @@ pub async fn cancel_channel(
 /// Ends the turn of one participant of the channel (issue 235), under the
 /// same permission as cancelling the channel (`CancelChannel`, checked by
 /// the channel). The others go on, and the channel stays answering.
-pub async fn cancel_participant(
+pub(super) async fn cancel_participant(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -489,7 +489,7 @@ pub async fn cancel_participant(
 /// interrupted and the agent's turn goes on. Under the same permission as
 /// cancelling the channel (`CancelChannel`, checked by the channel). A call
 /// that does not run, or no longer, is `409 tool_call_not_running`.
-pub async fn interrupt_tool_call(
+pub(super) async fn interrupt_tool_call(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid, call_id)): Path<(Uuid, Uuid, Uuid, String)>,
     user: AuthenticatedUser,
@@ -504,7 +504,7 @@ pub async fn interrupt_tool_call(
 
 /// Reclassifies the channel (issue 133): only its owner. Lowering it
 /// releases what is in it. Answers with the channel as the user sees it now.
-pub async fn reclassify_channel(
+pub(super) async fn reclassify_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -519,7 +519,7 @@ pub async fn reclassify_channel(
 /// BCP 47 tag such as `"de"` - or in none in particular (`null`, issue
 /// 56): whoever may change the channel. Its agents are told from their next
 /// turn on. Answers with the channel as the user sees it now.
-pub async fn set_channel_language(
+pub(super) async fn set_channel_language(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -535,7 +535,7 @@ pub async fn set_channel_language(
 /// channel. Answers `400 invalid_rule` for a rule that would allow, is
 /// narrower than the channel or cannot be matched, and otherwise the
 /// channel as the user sees it now.
-pub async fn update_channel_approval_rules(
+pub(super) async fn update_channel_approval_rules(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -551,7 +551,7 @@ pub async fn update_channel_approval_rules(
 /// `null` or empty to remove one - whoever may change the channel. Its
 /// agents are told from their next turn on. Answers `400 invalid_value` for
 /// one that does not fit, and otherwise the channel as the user sees it now.
-pub async fn update_channel_description(
+pub(super) async fn update_channel_description(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -566,7 +566,7 @@ pub async fn update_channel_description(
 /// the channel's owner, never above the channel - as a participant, through
 /// their actor, as every change to a message. Answered once it is on its
 /// way; the channel's stream shows it as `MessageReclassified`.
-pub async fn reclassify_message(
+pub(super) async fn reclassify_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -581,7 +581,7 @@ pub async fn reclassify_message(
 
 /// The commands the authenticated user may see in the channel, for
 /// completion (issue 28).
-pub async fn list_commands(
+pub(super) async fn list_commands(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -594,7 +594,7 @@ pub async fn list_commands(
 /// Runs a user command in the channel (issue 28). Commands are recognised by
 /// the client - a message that starts with a slash is sent here instead of to
 /// `messages` - and never enter the conversation.
-pub async fn execute_command(
+pub(super) async fn execute_command(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -613,7 +613,7 @@ pub async fn execute_command(
 /// What the actor `aid` saw when it produced message `mid` (issues 06, 47):
 /// its context with the prompt parts where they were placed. The actor answers: only the agent that
 /// produced a message has a context for it.
-pub async fn message_context(
+pub(super) async fn message_context(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid, mid)): Path<(Uuid, Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -697,7 +697,7 @@ async fn knowledge_response(session: &SessionView, knowledge: &KnowledgeRef, cau
 /// said itself (issues 207, 218), and how its turns ended (issue 258),
 /// oldest first - the last ones, or those before `?before=` -, for whoever
 /// may read what it saw.
-pub async fn agent_history(
+pub(super) async fn agent_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     Query(query): Query<HistoryQuery>,
@@ -713,7 +713,7 @@ pub async fn agent_history(
 
 /// The tools actor `aid` has now in the channel (issue 194), for whoever
 /// may see them (`ReadAgentTools`).
-pub async fn agent_tools(
+pub(super) async fn agent_tools(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -726,7 +726,7 @@ pub async fn agent_tools(
 /// The components actor `aid` was built from in the channel, the
 /// preconfigured ones it includes resolved (issue 270), for whoever may see
 /// them (`ReadAgentComponents`).
-pub async fn agent_components(
+pub(super) async fn agent_components(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -736,7 +736,7 @@ pub async fn agent_components(
     Ok(Json(AgentComponentsResponse { components }))
 }
 
-pub async fn send_approval(
+pub(super) async fn send_approval(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
@@ -753,7 +753,7 @@ pub async fn send_approval(
 
 /// Answers the questions `qid` an agent's call put to the user (issue 165),
 /// or declines them: exactly one of `responses` and `declined: true`.
-pub async fn answer_questions(
+pub(super) async fn answer_questions(
     State(state): State<Arc<AppState>>,
     Path((id, cid, qid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,

@@ -63,8 +63,9 @@ against this list, rule by rule, before it is reported (the self-review of
     responsibility - one sentence, without an "and also" (the test of
     [one owner per concern](../AGENTS.md#design-principles)). What follows describes the module in
     detail. A change after which that sentence no longer holds is a
-    [finding](../AGENTS.md#findings); a module without such a sentence gets it when it is changed
-    anyway.
+    [finding](../AGENTS.md#findings); a module without such a sentence gets it when its content
+    is changed anyway. A mechanical change across many modules - a lint's fix, a rename - does not
+    count, so that it stays one change of its own.
 *   **Consistency:** mirror the comment frequency and style of the module you are editing.
 *   **Comments wrap at 100 characters**, as the Markdown documents do. Older comments are wrapped
     narrower; they are rewrapped when they are changed anyway, not on their own.
@@ -84,13 +85,16 @@ against this list, rule by rule, before it is reported (the self-review of
     `#[expect(clippy::…, reason = "…")]` on the item - `expect` rather than `allow`, so that it is
     noticed once the lint no longer fires.
 *   **Rules a lint checks.** `[workspace.lints]` in `Cargo.toml` turns on the lints that check
-    rules of these guidelines (issue 452): `unwrap_used` and `expect_used` ([Types](#types)),
-    `print_stdout` and `print_stderr` ([Logging](#logging)), `allow_attributes` and
-    `allow_attributes_without_reason` (the rule above); and `dbg_macro` and `todo`, so that no
-    debugging output and no unfinished code is committed. `clippy.toml`
-    allows unwrapping and printing in tests; test code outside `#[cfg(test)]` - a `testing`
-    module, a suite, the helpers of an integration test - says so at its top with
-    `#![expect(clippy::unwrap_used, …, reason = "test code: …")]`.
+    rules (issue 452): `unwrap_used` and `expect_used` ([Types](#types)), `print_stdout` and
+    `print_stderr` ([Logging](#logging)), `allow_attributes` and
+    `allow_attributes_without_reason` (the rule above), `unreachable_pub` (visible only what is
+    used from outside, [AGENTS.md](../AGENTS.md#design-principles)); and `dbg_macro` and `todo`,
+    so that no debugging output and no unfinished code is committed. `clippy.toml` allows
+    unwrapping and printing in tests; test code outside `#[cfg(test)]` - a `testing` module, a
+    suite, the helpers of an integration test - says so at its top with
+    `#![expect(clippy::unwrap_used, …, reason = "test code: …")]`. `unreachable_pub` checks only
+    part of its rule: it finds a `pub` item its crate's root cannot reach, not one in a public
+    module that only its own crate uses, nor a `pub(crate)` item that only its own module uses.
 
 ### What goes where
 

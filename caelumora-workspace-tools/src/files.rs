@@ -39,36 +39,36 @@ use regex::{Regex, RegexBuilder};
 /// A file read (issue 251): its `path`, and the `content` of its result
 /// as text, with the lines it covers - `start_line`, `end_line`,
 /// `total_lines` - and where to read on (`next`).
-pub const FILE_READ_PRESENTATION: ToolPresentation = ToolPresentation::new("file_read");
+const FILE_READ_PRESENTATION: ToolPresentation = ToolPresentation::new("file_read");
 
 /// A file written: its `path` and its `content` as text, and how many
 /// `bytes` its result says were written.
-pub const FILE_WRITE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_write");
+const FILE_WRITE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_write");
 
 /// A replacement in a file: its `path`, its `old_text` and `new_text`
 /// as text, whether it replaces every occurrence (`replace_all`), and
 /// how many `replacements` its result counts.
-pub const FILE_EDIT_PRESENTATION: ToolPresentation = ToolPresentation::new("file_edit");
+const FILE_EDIT_PRESENTATION: ToolPresentation = ToolPresentation::new("file_edit");
 
 /// A directory listed (issue 265): its `path`, and the `entries` of its
 /// result - each `name`, `is_dir`, `size` and `modified` - and whether
 /// they are `complete`.
-pub const FILE_LIST_PRESENTATION: ToolPresentation = ToolPresentation::new("file_list");
+const FILE_LIST_PRESENTATION: ToolPresentation = ToolPresentation::new("file_list");
 
 /// Files searched (issue 265): its `pattern` and `path`, and the
 /// `matches` of its result - each `path`, `line` and `text` - with how
 /// many files were searched and skipped, and whether it is `complete`.
-pub const FILE_SEARCH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_search");
+const FILE_SEARCH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_search");
 
 /// A file or directory moved or renamed (issue 267): its `from` and
 /// `to`, and whether its result says it was `renamed` - moved within
 /// its directory.
-pub const FILE_MOVE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_move");
+const FILE_MOVE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_move");
 
 /// A file of the workspace offered for download (issue 273): its
 /// `name`, `size`, `description` and `path`, and whether the file is
 /// still as it was (`size`, `modified`) or gone.
-pub const FILE_PUBLISH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_publish");
+const FILE_PUBLISH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_publish");
 
 pub const LIST_FILES: &str = "list_files";
 pub const READ_FILE: &str = "read_file";
