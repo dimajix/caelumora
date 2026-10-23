@@ -75,6 +75,21 @@ impl Field for GroupField {
     }
 }
 
+/// The conditions a list of groups is asked by.
+impl Filter<GroupField> {
+    /// The teams (issue 317): the groups that lie where a team lies - the
+    /// global scope or a user's -, not the participants of a session or
+    /// channel (`Group::is_participants`).
+    pub fn teams() -> Self {
+        Filter::is_in(GroupField::Scope, [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")])
+    }
+
+    /// The groups `actor` belongs to (`Group::has_member`).
+    pub fn with_member(actor: ActorId) -> Self {
+        Filter::any(GroupField::Members, Filter::eq(GroupField::Member, actor))
+    }
+}
+
 /// A change of a group, as it was asked (issue 248).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GroupUpdateEvent {
@@ -158,18 +173,6 @@ impl Group {
     /// that alone - not a team anyone changes by hand.
     pub fn is_participants(&self) -> bool {
         matches!(self.name.scope, Scope::SessionScope { .. } | Scope::ChannelScope { .. })
-    }
-
-    /// The teams, as a query (issue 317): the groups that lie where a team
-    /// lies - the global scope or a user's -, not the participants of a
-    /// session or channel (`is_participants`).
-    pub fn teams() -> Filter<GroupField> {
-        Filter::is_in(GroupField::Scope, [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")])
-    }
-
-    /// The groups `actor` belongs to, as a query.
-    pub fn with_member(actor: ActorId) -> Filter<GroupField> {
-        Filter::any(GroupField::Members, Filter::eq(GroupField::Member, actor))
     }
 
     /// Whether `actor` belongs to it.
@@ -265,10 +268,10 @@ mod tests {
         assert!(with_system.validate().is_err());
     }
 
-    /// The query for teams (issue 317) finds exactly the groups that are
-    /// not the participants of a session or channel.
+    /// The condition of the teams (issue 317) meets exactly the groups that
+    /// are not the participants of a session or channel.
     #[test]
-    fn the_query_for_teams_finds_what_is_no_group_of_participants() {
+    fn the_teams_are_what_is_no_group_of_participants() {
         let alice = UserId::new();
         let session = SessionId::new();
         let mut channel = Channel::build(session, ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None);
@@ -276,7 +279,19 @@ mod tests {
         let session_group = Group { id: GroupId::of_session(session), name: ScopedName { name: Group::participants_name(), scope: Scope::SessionScope { session_id: session } }, ..team(Scope::GlobalScope, alice) };
         for group in [team(Scope::GlobalScope, alice), team(Scope::UserScope { user_id: alice }, alice), Group::of_channel(&channel), session_group] {
             let document = serde_json::to_value(&group).unwrap();
-            assert_eq!(Group::teams().matches(&document), !group.is_participants(), "{:?}", group.name.scope);
+            assert_eq!(Filter::teams().matches(&document), !group.is_participants(), "{:?}", group.name.scope);
+        }
+    }
+
+    /// The condition of the groups of an actor meets exactly those it is a
+    /// member of - not one it owns alone.
+    #[test]
+    fn the_groups_with_a_member_are_those_it_belongs_to() {
+        let (alice, bob, carol) = (UserId::new(), ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let group = Group { members: vec![bob], ..team(Scope::GlobalScope, alice) };
+        let document = serde_json::to_value(&group).unwrap();
+        for actor in [bob, ActorId::User(alice), carol] {
+            assert_eq!(Filter::with_member(actor).matches(&document), group.has_member(actor), "{actor}");
         }
     }
 

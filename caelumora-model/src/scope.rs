@@ -101,35 +101,6 @@ impl Scope {
         holders
     }
 
-    /// A condition for a list (issue 293): what lies in this scope or
-    /// within it, as `contains` says - `None` for the global scope, which
-    /// holds everything. Within a session's scope lie the scopes of its
-    /// channels, which hold their session as well.
-    pub fn within<F: ScopedField>(&self) -> Option<Filter<F>> {
-        match self {
-            Scope::GlobalScope => None,
-            Scope::SessionScope { session_id } => Some(Filter::is_in(F::SCOPE, [
-                FieldValue::from(self),
-                FieldValue::tagged("ChannelScope", FieldValue::tagged("session_id", *session_id)),
-            ])),
-            other => Some(Filter::eq(F::SCOPE, other)),
-        }
-    }
-
-    /// A condition for a list (issue 293): what is seen from `place` by
-    /// `user`, as `visible_from` says - what lies in a scope that holds
-    /// `place`, and in the user's own.
-    pub fn seen_from<F: ScopedField>(place: &Scope, user: Option<UserId>) -> Filter<F> {
-        let mut seen: Vec<Scope> = place.holders().into_iter().filter(|scope| !matches!(scope, Scope::GroupScope { .. })).collect();
-        if let Some(user_id) = user {
-            let own = Scope::UserScope { user_id };
-            if !seen.contains(&own) {
-                seen.push(own);
-            }
-        }
-        Filter::is_in(F::SCOPE, &seen)
-    }
-
     /// Whether what lies in this scope is found from `place` by `user`: it
     /// is the place's scope or one around it, or the user's own.
     fn visible_from(&self, place: &Scope, user: Option<UserId>) -> bool {
@@ -167,6 +138,37 @@ impl Field for ScopeField {
 
 impl ScopedField for ScopeField {
     const SCOPE: Self = ScopeField::Scope;
+}
+
+/// The conditions a list of what lies in a scope is asked by (issue 293).
+impl<F: ScopedField> Filter<F> {
+    /// What lies in `scope` or within it, as `Scope::contains` says -
+    /// `None` for the global scope, which holds everything. Within a
+    /// session's scope lie the scopes of its channels, which hold their
+    /// session as well.
+    pub fn lying_within(scope: &Scope) -> Option<Self> {
+        match scope {
+            Scope::GlobalScope => None,
+            Scope::SessionScope { session_id } => Some(Filter::is_in(F::SCOPE, [
+                FieldValue::from(scope),
+                FieldValue::tagged("ChannelScope", FieldValue::tagged("session_id", *session_id)),
+            ])),
+            other => Some(Filter::eq(F::SCOPE, other)),
+        }
+    }
+
+    /// What is seen from `place` by `user`, as `Scope::visible_from` says:
+    /// what lies in a scope that holds `place`, and in the user's own.
+    pub fn seen_from(place: &Scope, user: Option<UserId>) -> Self {
+        let mut seen: Vec<Scope> = place.holders().into_iter().filter(|scope| !matches!(scope, Scope::GroupScope { .. })).collect();
+        if let Some(user_id) = user {
+            let own = Scope::UserScope { user_id };
+            if !seen.contains(&own) {
+                seen.push(own);
+            }
+        }
+        Filter::is_in(F::SCOPE, &seen)
+    }
 }
 
 /// A scope as a query compares it, after serde's tags: by what identifies
@@ -429,7 +431,7 @@ mod tests {
         ];
         let document = |scope: &Scope| serde_json::json!({ "scope": scope });
         for holder in &scopes {
-            let within = holder.within::<ScopeField>();
+            let within = Filter::<ScopeField>::lying_within(holder);
             for scope in &scopes {
                 let found = within.as_ref().is_none_or(|filter| filter.matches(&document(scope)));
                 assert_eq!(found, holder.contains(scope), "{scope:?} within {holder:?}");
@@ -437,7 +439,7 @@ mod tests {
         }
         for place in &scopes {
             for user in [None, Some(alice)] {
-                let seen = Scope::seen_from::<ScopeField>(place, user);
+                let seen = Filter::<ScopeField>::seen_from(place, user);
                 for scope in &scopes {
                     assert_eq!(seen.matches(&document(scope)), scope.visible_from(place, user), "{scope:?} seen from {place:?} by {user:?}");
                 }

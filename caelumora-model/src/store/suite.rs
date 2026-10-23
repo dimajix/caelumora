@@ -379,7 +379,6 @@ pub async fn queries_behave(stores: &EntityStores) {
     let (alice, bob) = (UserId::new(), UserId::new());
     // By scope, by the session of a channel, by a participant.
     use crate::channel::{ChannelField, Participant};
-    use crate::scope::ScopeField;
     use crate::session::SessionField;
     let session_id = SessionId(Uuid::new_v4());
     let in_session = Personality { name: ScopedName::new("in-session", Scope::SessionScope { session_id }).unwrap(), ..personality() };
@@ -389,7 +388,7 @@ pub async fn queries_behave(stores: &EntityStores) {
         stores.personalities.create(&ctx, personality).await.unwrap();
     }
     let holder = Scope::SessionScope { session_id };
-    let lying = stores.personalities.list(&ctx, &Query { filter: holder.within::<ScopeField>(), ..Query::all() }).await.unwrap();
+    let lying = stores.personalities.list(&ctx, &Query { filter: Filter::lying_within(&holder), ..Query::all() }).await.unwrap();
     let mut expected = vec![in_session.id, in_channel.id];
     expected.sort();
     assert_eq!(lying.items.iter().map(|p| p.id).collect::<Vec<_>>(), expected, "what lies in the session or a channel of it");
@@ -415,7 +414,7 @@ pub async fn queries_behave(stores: &EntityStores) {
     his.members.push(ActorId::User(bob));
     stores.groups.create(&ctx, &his).await.unwrap();
     stores.groups.create(&ctx, &group(UserId::new())).await.unwrap();
-    let belonging = Group::with_member(ActorId::User(bob));
+    let belonging = Filter::with_member(ActorId::User(bob));
     let found = stores.groups.list(&ctx, &Query::filtered(belonging)).await.unwrap();
     assert_eq!(found.items.iter().map(|g| g.id).collect::<Vec<_>>(), [his.id], "the groups of a member, not those of their owner");
 }

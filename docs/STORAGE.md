@@ -111,7 +111,7 @@ over one pool.
     document's `SecurityAttributes` in the transaction that writes it and removed with it. A list is
     narrowed by them: the admission becomes a semi-join over the entries of the actors, their roles
     and everyone, and over those of the groups an actor belongs to, found in `entity_group` by
-    containment of the members in its bodies (`Group::with_member`), a deleted group only where the
+    containment of the members in its bodies (`Filter::with_member`), a deleted group only where the
     admission counts it. Ids of different subjects that met would only let more through, which the
     store decides again. Laying a kind out in a form of its own - the memberships of the groups in a
     table - is issue [460](../issues/460-kinds-kept-in-one-form-in-postgres.md).
@@ -234,8 +234,9 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
     `Filter::within`) exactly, whatever its form - a negative one below every bound -, as `jsonb`
     compares numbers; what is no number meets no comparison. A position in a range of a history is
     one (issue [451](../issues/451-history-reader-judged-after-reading.md)).
-*   **Scope conditions** are made by the scope (`Scope::within`, `Scope::seen_from`), so that the
-    rule lives with `Scope`.
+*   **The conditions of a kind** are constructors of its filter, beside its fields (see
+    [CODING-GUIDELINES.md](CODING-GUIDELINES.md#conditions-are-made-by-filter)): `Filter::teams`
+    beside `GroupField`, `Filter::lying_within` and `Filter::seen_from` beside `ScopedField`.
 *   **A limit and a cursor**, in the order of the entities' ids. A page cut short hands out the
     cursor to go on with; the page after it may be empty.
 *   **Who may read what is narrowed first and asked afterwards**: the storage is handed what the

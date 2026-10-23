@@ -370,8 +370,8 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     // The groups themselves, filtered, as the teams of a viewer are asked
     // for: each read by its members through its own list, its parameters
     // numbered after the filter's.
-    let theirs = Filter::Or(vec![Filter::eq(GroupField::Owner, his), Group::with_member(his)]);
-    let teams = Filter::all_of([Group::teams(), theirs]).by_path();
+    let theirs = Filter::Or(vec![Filter::eq(GroupField::Owner, his), Filter::with_member(his)]);
+    let teams = Filter::all_of([Filter::teams(), theirs]).by_path();
     let found: Vec<Uuid> = groups.scan(Some(&teams), Some(&reading), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
     assert_eq!(found, [Uuid::from(team.id)], "his team, by its own list - not the one he is no member of, nor the deleted one");
 

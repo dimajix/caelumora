@@ -220,7 +220,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 
 | Operation | Questions in order | Rule | Refusal |
 |---|---|---|---|
-| List, reach (`Views::groups`, `group`) | the teams the viewer owns or belongs to asked for alone (`Group::teams`, issue 317), store `GetGroup` (V,1) | R1 | left out; `GroupNotFound` |
+| List, reach (`Views::groups`, `group`) | the teams the viewer owns or belongs to asked for alone (`Filter::teams`, issue 317), store `GetGroup` (V,1) | R1 | left out; `GroupNotFound` |
 | Make a team (`GroupManager::create`) | store `CreateGroup` (U,1) | R1 | `PermissionDenied`, `NameTaken` |
 | Set members (`set_members`) | store `GetGroup`; a participants' group refused (structural); `UpdateGroup` (U,1), before whether the users exist is asked (issue 312); the users read in S; store `GetGroup` + `UpdateGroup` | R2 + R1 | `NotFound`, `Participants`, `PermissionDenied`, `UnknownMember` |
 | Rename (`update`) | store `GetGroup`; a participants' group refused (structural); store `UpdateGroup` | R1 | `NotFound`, `Participants`, `PermissionDenied` |

@@ -568,9 +568,9 @@ impl Views {
         let principal = self.viewer.context().principal_id;
         let theirs = Filter::Or(vec![
             Filter::eq(GroupField::Owner, principal),
-            Group::with_member(principal),
+            Filter::with_member(principal),
         ]);
-        let query = Query::filtered(Filter::And(vec![Group::teams(), theirs]));
+        let query = Query::filtered(Filter::And(vec![Filter::teams(), theirs]));
         Ok(self.stores.groups.list(self.viewer.context(), &query).await?.items)
     }
 
@@ -594,7 +594,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn deleted_groups(&self) -> ViewResult<Vec<DeletedSnapshot<GroupId>>> {
-        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::filtered(Group::teams())).await.map(|page| page.items)
+        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::filtered(Filter::teams())).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
         let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(groups.len());

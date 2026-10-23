@@ -38,7 +38,7 @@ use async_trait::async_trait;
 use caelumora_model::removal::Deletable;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::query::Query;
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, Stored};
 use chrono::{DateTime, Utc};
 use std::fmt;
@@ -233,7 +233,7 @@ pub fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: 
 /// The query of what lies in `holder` or within it (issue 293), which the
 /// store answers by the scope.
 pub fn within<F: ScopedField>(holder: &Scope) -> Query<F> {
-    Query { filter: holder.within(), ..Query::all() }
+    Query { filter: Filter::lying_within(holder), ..Query::all() }
 }
 
 /// Those of `deleted` that were deleted at `since` or later - a comparison
