@@ -124,6 +124,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [437](437-mentions-of-people-and-failed-decisions-ask-agents.md) | done | A message that `@`-mentions only a person is answered by the agents the responder policy chooses, and when the decision model of `decision_policy` does not choose in time, every agent of the channel is asked - so in a channel of several agents, agents answer what was not meant for them. |
 | [439](439-an-agent-is-not-told-why-it-was-asked.md) | done | A request to respond carries no reason, so an agent cannot tell whether it was mentioned or only chosen by a responder policy that guessed it might fit, takes every request as an order to answer, and answers with small talk or that it has nothing to say instead of staying silent. |
 | [441](441-nobody-is-told-when-no-responder-was-chosen.md) | open | When the decision model of `decision_policy` does not choose - a timeout, an error, an answer naming no option - and nobody is asked, a person's message that mentions nobody stays unanswered without anyone telling them why. |
+| [458](458-deleted-while-it-runs.md) | open | Deleting a session or a channel marks it, deletes what lies in its scope and the groups of its participants while it still runs, and stops it only afterwards, so what its agents write into its scope meanwhile is left behind, and what it announces as it stops reaches its owner alone. |
 
 ## Identity and access management
 
