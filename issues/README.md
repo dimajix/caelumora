@@ -72,15 +72,20 @@ lines, each on a line of its own:
 ## Creating a new issue
 
 A new issue is opened on `main` alone, from its newest version, in a commit of its own that is
-pushed at once; its branch comes only with its implementation. Why, and how exactly, is in
-[AGENTS.md](../AGENTS.md#branches-and-commits): a number is taken where everybody takes them, and is
-published before anyone else can take it.
+pushed at once; its branch comes only with its implementation. That way issue numbers are counted
+consistently: a number is taken where everybody takes them, and is published before anyone else
+can take it.
 
 1. Check [INDEX.md](INDEX.md) first — an issue for it may already exist, in which case add to that
    file's `## History` rather than opening a second one.
-2. Take the next free number and create `issues/<number>-<slug>.md` with the heading, the fields,
-   the problem, why it matters, the considerations (options and their trade-offs), a "done when",
-   and a first `## History` entry.
-3. Run `issues/generate.sh`, or let the pre-commit hook run it.
-4. Cross-reference related issues by number, e.g. `[19](19-memory-tiers.md)`, where one genuinely
-   blocks or overlaps another.
+2. Update `main` from the remote repository (`git fetch`, then fast-forward `main` to its
+   upstream, `git merge --ff-only @{upstream}`), and take the next free number from that.
+3. Create `issues/<number>-<slug>.md` with the heading, the fields, the problem, why it matters,
+   the considerations (options and their trade-offs), a "done when", and a first `## History`
+   entry. Cross-reference related issues by number, e.g. `[19](19-memory-tiers.md)`, where one
+   genuinely blocks or overlaps another.
+4. Run `issues/generate.sh`, or let the pre-commit hook run it.
+5. Commit the issue alone - its file and the regenerated `INDEX.md` and `OPEN.md`, no change of
+   code or of anything else - and push the commit at once, without waiting to be asked: an issue
+   that is committed but not pushed holds a number nobody else can see.
+6. Only then, for implementing the issue, create its branch from `main`.
