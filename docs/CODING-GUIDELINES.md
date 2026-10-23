@@ -47,7 +47,8 @@ against this list, rule by rule, before it is reported (the self-review of
     `caelumora_agents::testing`).
 *   A change to what is stored comes without compatibility code; the summary says which stored
     data has to be deleted ([Crates and interfaces](#crates-and-interfaces)).
-*   Comments and Markdown documents wrap prose at 100 characters
+*   Comments and Markdown documents wrap prose at 100 characters; `scripts/line-length.sh` finds
+    the lines of a change that are longer
     ([Comments and documentation](#comments-and-documentation)).
 *   `cargo clippy --workspace --all-targets` stays silent
     ([Comments and documentation](#comments-and-documentation)).
@@ -67,9 +68,13 @@ against this list, rule by rule, before it is reported (the self-review of
 *   **Consistency:** mirror the comment frequency and style of the module you are editing.
 *   **Comments wrap at 100 characters**, as the Markdown documents do. Older comments are wrapped
     narrower; they are rewrapped when they are changed anyway, not on their own.
-*   **Markdown documents** (`docs/`, `issues/`, `AGENTS.md`) wrap prose at 100 characters.
-    Headings, table rows, code blocks and links that would not fit stay on one line; field lines
-    such as `**Status:**` keep a line of their own.
+*   **Markdown documents** (`docs/`, `issues/`, `AGENTS.md`, `.claude/agents/`) wrap prose at 100
+    characters. Headings, table rows, code blocks and links that would not fit stay on one line;
+    field lines such as `**Status:**` keep a line of their own.
+*   **Line lengths are counted by `scripts/line-length.sh`**, in characters, not bytes, by the
+    exceptions above. Without arguments it checks the lines a change adds or changes, against
+    `HEAD`, and new files whole; given files, it checks them whole. Lengths are not counted by hand
+    or with another tool, which counts bytes or knows no exceptions.
 *   **No line of prose starts with a dash.** In a doc comment, a line that begins with `- ` is a
     list item to rustdoc, and the sentence it continues breaks apart (clippy:
     `doc_lazy_continuation`). Wrap so that a dash ends the line before it instead.
