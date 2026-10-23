@@ -29,7 +29,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
-use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::{UserId, UserProfile, User};
 use caelumora_runtime::agent::AgentError;
@@ -1501,7 +1501,9 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
 /// G1 (issue 286): a team's members read what is shared with it, wherever
 /// they act; who leaves it no longer does, and a stranger never did. Its
 /// owner changes it; a participant reads it but changes nothing, and finds it
-/// among his teams, which are asked for alone (issue 317).
+/// among his teams, which are asked for alone (issue 317). Deleted, it grants
+/// nothing until it is restored, though its members hear that it went
+/// (issue 332).
 #[tokio::test]
 async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_members() {
     let world = World::new().await;
@@ -1535,6 +1537,14 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
 
     groups.set_members(&alice, project.id, Vec::new()).await.unwrap();
     assert!(matches!(views(&bob).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))), "who left no longer reads it");
+
+    groups.set_members(&alice, project.id, vec![world.bob]).await.unwrap();
+    let mut bobs = world.runtime.event_bus().subscribe_as(bob.clone());
+    groups.delete(&alice, project.id).await.unwrap();
+    assert!(matches!(views(&elsewhere).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))), "a team deleted grants nothing");
+    hears(&mut bobs, [GlobalEvent::deleted::<Group>(&project.id)]).await;
+    groups.restore(&alice, project.id).await.unwrap();
+    views(&elsewhere).workspace(docs.id).await.expect("restored, it grants again");
 }
 
 /// G2 (issue 286): whoever names a group in an access list must read it -
@@ -1626,7 +1636,10 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
     let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
-    hears(&mut bobs, [GlobalEvent::deleted::<Group>(&of_session), GlobalEvent::deleted::<Group>(&of_channel)]).await;
+    hears(&mut bobs, [
+        GlobalEvent::deleted::<Group>(&of_session), GlobalEvent::deleted::<Group>(&of_channel),
+        GlobalEvent::deleted::<Channel>(&(session_id, main)), GlobalEvent::deleted::<Session>(&session_id),
+    ]).await;
 
     world.manager.restore(&alice, session_id).await.unwrap();
     hears(&mut bobs, [GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;

@@ -85,6 +85,8 @@ it -, and a store is told them as such, in a form that says what they mean, not 
         pub roles: Vec<RoleId>,
         /// Whether an entry for everyone admits.
         pub everyone: bool,
+        /// Whether an entry for a group admits the members it had when it was deleted.
+        pub deleted_groups: bool,
     }
     ```
 
@@ -96,13 +98,18 @@ it -, and a store is told them as such, in a form that says what they mean, not 
     `Grant::covering`), the roles that count the context's (`has_role`), so neither is listed by
     the policy. For the `OwnershipPolicy`, reading as a user is `actors = [principal]`, `unowned`,
     `grant = Some(Read)`, the roles that count and `everyone`; as an agent the owner and the agent,
-    without `everyone`; what was deleted (`ReadDeleted`) the principal alone, `grant = None`.
+    with `everyone` by its owner; what was deleted (`ReadDeleted`) the principal alone,
+    `grant = None`.
 2.  **One rule.** `check` decides the verbs on entities by the admission it gives
     (`admission(..)?.admits(..)`), so that the condition a store applies and the single decision
     cannot come apart; the other actions - two sets of attributes, authors - stay as they are.
-3.  **A deleted group admits nobody.** Its access entries grant nothing once it is deleted; the
-    policy asks for the members of a group that is not deleted, while `Memberships::members_of`
-    keeps answering for a deleted one too, for whom its members are told of the deletion.
+3.  **A deleted group admits nobody**, but where a deletion is told. Its access entries grant
+    nothing once it is deleted. The groups of a session's participants go with it, before its
+    deletion is announced, and the event bus asks the policy later still, as it delivers; so who
+    is told of a deletion is asked by a verb of its own, `HearDeleted`, whose admission is
+    reading's with the flag `deleted_groups`: an entry for a group admits the members it had when
+    it was deleted. `Memberships` answers the group with its members and whether it was deleted
+    (`Memberships::group`); the admission decides whether that counts.
 4.  **The groups stay with the store**, not in the `SecurityContext`: the groups of an actor are
     unbounded - one per session and channel they take part in -, and a store resolves membership
     where the groups are kept, a database by a join. This reverses the consideration "Memberships
@@ -166,14 +173,16 @@ their members (`uuid[]`, GIN) took 67 ms, by a table of memberships 41 ms.
 
 ## Steps
 
-1.  **The model.** `Admission`, `AccessPolicy::admission`, `Grant::covering`, the roles that count
-    of a context; the `OwnershipPolicy` gives its admission and decides `check` on entities by it;
-    a deleted group admits nobody.
+1.  **The model.** `Admission`, `AccessPolicy::admission`, the roles that count of a context; the
+    `OwnershipPolicy` gives its admission and decides `check` on entities by it; a deleted group
+    admits nobody, but where a deletion is told (`HearDeleted`), which the event bus asks.
 2.  **The stores.** `Document` with its security attributes, `DocumentStorage::scan` with the
-    admission, `CheckedStore::page` asking for it; memory and the JSON files apply it.
-3.  **Postgres** (after 455). The table of the access entries per kind - a new form of the tables
-    of the kinds -, the admission as a semi-join, a test that what the database admits is what
-    `check` decides.
+    admission, `CheckedStore::page` asking for it; memory and the JSON files apply it; a policy
+    wrapping another - the recorder of the security suite - gives the admission of the one it
+    wraps.
+3.  **Postgres** (after 455). The table of the access entries per kind - a new form of the tables of
+    the kinds -, the admission as a semi-join, `Grant::covering` for the grants it names, a test
+    that what the database admits is what `check` decides.
 
 ## Done when
 
@@ -205,3 +214,17 @@ their members (`uuid[]`, GIN) took 67 ms, by a table of memberships 41 ms.
   entries per kind, chosen by measurement, after issue
   [455](455-components-configuration-kept-as-entities.md). Status in progress, priority medium:
   the condition of a Postgres store that scales.
+- **2026-10-23** — Decided with the maintainer, amending point 3: the participants of a session
+  reach it by its group, which is deleted before the deletion is announced and asked about after,
+  as the bus delivers - so "a deleted group admits nobody" alone would tell them nothing. Who is
+  told of a deletion is asked by a verb of its own, `HearDeleted`, admitted as reading with
+  `deleted_groups`. Point 1 said an agent reads without `everyone`, which was wrong and is
+  corrected there: an entry for everyone admits an agent by its owner, as it did, and still does.
+- **2026-10-23** — Step 1: `Admission` in the module `security::admission`, given by
+  `AccessPolicy::admission` - `None` by default and for the system - and deciding every verb on
+  entities of the `OwnershipPolicy`, whose other actions are decided by an admission of reading or
+  owning as well; `SecurityContext::counting_roles`; `Memberships::group` in place of
+  `members_of`, answering the group and whether it was deleted; `Verb::HearDeleted`, asked by the
+  event bus of a deletion. A deleted team grants nothing until it is restored. What a deleted
+  session or channel announces as it stops reaches its owner alone, since it is stopped only once
+  its groups are gone - accepted, the order left to issue [458](458-deleted-while-it-runs.md).

@@ -1,7 +1,6 @@
-//! What the policy learns of actors from the store (issues 23, 286): who
-//! belongs to a group an access list names.
+//! What the policy learns of actors from the store (issues 23, 286): the
+//! group an access list names, with who belongs to it.
 
-use crate::actor::ActorId;
 use crate::group::{Group, GroupId};
 use crate::security::{Memberships, SecurityContext};
 use crate::store::{EntityStore, StoreResult, StoreResultExt};
@@ -41,25 +40,25 @@ impl StoreMemberships {
         store
     }
 
-    /// The members of `group` - also of one that was deleted: who belonged
-    /// to it does not change with that, and the participants of a deleted
-    /// session or channel are told of the deletion.
-    async fn members(store: &dyn EntityStore<Group>, group: GroupId) -> StoreResult<Vec<ActorId>> {
+    /// The group `id` - also one that was deleted: who belonged to it does
+    /// not change with that, and the participants of a deleted session or
+    /// channel are told of the deletion.
+    async fn find(store: &dyn EntityStore<Group>, id: GroupId) -> StoreResult<Option<Group>> {
         let system = SecurityContext::system();
-        Ok(match store.get(&system, group).await.optional()? {
-            Some(group) => group.members,
-            None => store.get_deleted(&system, group).await.optional()?.map(|g| g.members).unwrap_or_default(),
-        })
+        match store.get(&system, id).await.optional()? {
+            Some(group) => Ok(Some(group)),
+            None => store.get_deleted(&system, id).await.optional(),
+        }
     }
 }
 
 #[async_trait]
 impl Memberships for StoreMemberships {
-    async fn members_of(&self, group: GroupId) -> Vec<ActorId> {
-        let Some(store) = self.store() else { return Vec::new() };
-        Self::members(store.as_ref(), group).await.unwrap_or_else(|e| {
-            tracing::warn!("Cannot read who belongs to group {group}; nobody counts as a member: {e}");
-            Vec::new()
+    async fn group(&self, id: GroupId) -> Option<Group> {
+        let store = self.store()?;
+        Self::find(store.as_ref(), id).await.unwrap_or_else(|e| {
+            tracing::warn!("Cannot read who belongs to group {id}; nobody counts as a member: {e}");
+            None
         })
     }
 }
@@ -67,24 +66,28 @@ impl Memberships for StoreMemberships {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::ActorId;
     use crate::store::Persistence;
     use crate::user::UserId;
     use crate::value::name::ScopedName;
 
     #[tokio::test]
-    async fn the_members_of_a_group_are_read_also_of_one_that_was_deleted() {
+    async fn a_group_is_read_also_once_it_was_deleted() {
         let memberships = StoreMemberships::new();
         let alice = UserId::new();
         let bob = ActorId::User(UserId::new());
         let team = Group { members: vec![bob], ..Group::team(ScopedName::new("project", Default::default()).unwrap(), alice) };
-        assert!(memberships.members_of(team.id).await.is_empty(), "nobody before a store is bound");
+        assert!(memberships.group(team.id).await.is_none(), "none before a store is bound");
         let store = Persistence::in_memory().entity_stores().unwrap().groups;
         memberships.bind(&store);
         store.create(&SecurityContext::system(), &team).await.unwrap();
-        assert_eq!(memberships.members_of(team.id).await, [bob]);
-        assert!(memberships.members_of(GroupId::new()).await.is_empty(), "nobody of a group that does not exist");
+        let kept = memberships.group(team.id).await.expect("the group");
+        assert_eq!((kept.members, kept.deleted), (vec![bob], None));
+        assert!(memberships.group(GroupId::new()).await.is_none(), "none that does not exist");
         store.delete(&SecurityContext::system(), team.id).await.unwrap();
-        assert_eq!(memberships.members_of(team.id).await, [bob], "who belonged to what was deleted still did");
+        let deleted = memberships.group(team.id).await.expect("the deleted group");
+        assert_eq!(deleted.members, [bob], "who belonged to what was deleted still did");
+        assert!(deleted.deleted.is_some(), "and that it was deleted is said");
     }
 
 }

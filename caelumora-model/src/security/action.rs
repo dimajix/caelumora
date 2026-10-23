@@ -1,3 +1,6 @@
+//! What the `AccessPolicy` is asked about (issue 323): the actions, among
+//! them the verbs on stored entities.
+
 use crate::actor::ActorId;
 use crate::command::Command;
 use crate::store::EntityKind;
@@ -143,6 +146,11 @@ impl<'a> ActionType<'a> {
         Self::entity(kind, Verb::ReadDeleted, attributes)
     }
 
+    /// Being told that an entity of `kind` with `attributes` was deleted.
+    pub const fn hear_deleted(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::HearDeleted, attributes)
+    }
+
     /// Restoring a deleted entity of `kind` that has `attributes`.
     pub const fn restore(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
         Self::entity(kind, Verb::Restore, attributes)
@@ -239,6 +247,10 @@ pub enum Verb {
     /// Reading what was deleted - marked, not purged (issue 164): one
     /// entity, or each of a listing. The trash.
     ReadDeleted,
+    /// Being told that an entity was deleted (issue 332): allowed to whom
+    /// reading it was until then, by the groups it was read by as well,
+    /// though they went with it. An event's, not a store's.
+    HearDeleted,
     /// Taking the mark of a deletion away (issue 164).
     Restore,
     /// Removing an entity for good, marked or not, with what belongs to it
@@ -258,6 +270,7 @@ impl Verb {
             Verb::Update => "Update",
             Verb::Delete => "Delete",
             Verb::ReadDeleted => "ReadDeleted",
+            Verb::HearDeleted => "HearDeleted",
             Verb::Restore => "Restore",
             Verb::Purge => "Purge",
             Verb::Custom(custom) => custom.name,

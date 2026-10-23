@@ -21,13 +21,20 @@ Security is a context that travels with every operation, and explicit checks aga
     and not looked up while the decision is made. A context continued for
     another caller (`SecurityContext::next`) carries no roles until whoever continues it gives
     them: the initiator lends none.
-*   **`AccessPolicy`** authorizes actions: `check(context, action)`.
+*   **`AccessPolicy`** authorizes actions: `check(context, action)`. For a verb on entities it may
+    also give an **`Admission`** (`admission(context, kind, verb)`, issue
+    [332](../issues/332-policy-as-a-predicate.md)): which entities it admits by their attributes
+    alone - the actors an owner or an entry has to name, what an entry has to grant, the roles that
+    count, whether what the system owns and an entry for everyone admit. A policy that gives one
+    decides `check` on entities by it, so that what a store narrows a list by and the decision on
+    one entity cannot come apart; one that gives none (`None`, the default) narrows nothing up
+    front.
 *   **`ActionType`** enumerates every securable action. An action on a stored entity carries the
-    entity's `SecurityAttributes`, not the entity itself, and is asked alike for every kind
-    (issue [323](../issues/323-kinds-enumerated-in-the-core.md)): `ActionType::Entity`, by the
-    entity's kind and a `Verb` - `Get`, `Create`, `Update`, `Delete`, `ReadDeleted`, `Restore`,
-    `Purge` - and `ActionType::List` by the kind alone. It is named by both in the log and in this
-    documentation: `GetSession`, `DeleteWorkspace`; a listing as `List(session)`.
+    entity's `SecurityAttributes`, not the entity itself, and is asked alike for every kind (issue
+    [323](../issues/323-kinds-enumerated-in-the-core.md)): `ActionType::Entity`, by the entity's
+    kind and a `Verb` - `Get`, `Create`, `Update`, `Delete`, `ReadDeleted`, `HearDeleted`,
+    `Restore`, `Purge` - and `ActionType::List` by the kind alone. It is named by both in the log
+    and in this documentation: `GetSession`, `DeleteWorkspace`; a listing as `List(session)`.
 *   **A kind's own verb** - using a skill (`skill::USE`, the plugin's own), writing a workspace's
     files or adding an artifact's version (`WRITE`, the core's, which any kind may use, issue
     328) - is a `CustomVerb`, named likewise (`UseSkill`, `WriteWorkspace`). It says what it
@@ -186,7 +193,8 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   Creating is only allowed with oneself as owner; changing and deleting only for the owner.
 *   What was deleted is the owner's to read (`ReadDeleted`) and to restore (`Restore`). Removing it
     for good (`Purge`) is the system's alone - the retention policy's - until there is an
-    administrator.
+    administrator. Being told of a deletion (`HearDeleted`) is allowed to whom reading it was
+    until then, by the groups it was read by as well, though they went with it.
 *   A message is its author's to modify and to take back: whoever said it - the context's caller, an
     agent for its own message even when it acts for its owner - not the channel's owner.
 *   A command an agent carries out itself is seen and asked for (`ShowAgentCommand`,
@@ -282,26 +290,30 @@ lose theirs.
         agent its owner's, narrowed by its personality's limiting roles wherever a role is matched -
         the one way an agent may do less than its owner.
     *   `Group` - a team, or the participants of a session or a channel. A member counts wherever
-        they act, not only in that place.
+        they act, not only in that place, and only while the group is there: a deleted group
+        grants nothing - except that its members are told of a deletion (`HearDeleted`), since
+        the participants' groups of a session go with it, before its deletion is announced.
     *   `Everyone` - every user, an agent by its owner: a session anybody may join, a workspace
         anybody may read.
 *   **What the policy learns.** Who belongs to a group is a fact neither the attributes nor the
     context carry. The policy asks a `Memberships` source - the store of groups, read in the
     system's name (`StoreMemberships`) -, only where an entry names a group, and only about that
-    one group - never what an actor is a member of, which may be thousands of places. Until the
-    source is bound, nobody is a member of anything.
+    one group - never what an actor is a member of, which may be thousands of places. The source
+    answers the group with its members, also one that was deleted; whether that still counts is
+    the policy's to decide. Until the source is bound, nobody is a member of anything.
 *   **Who may name a group.** Whoever writes an access list names a group in it only if they read
     the group (`GetGroup`): naming one grants its members something, and nobody grants what they
     cannot tell to whom. It is asked after the permission to change the list, and only of a group
     the list did not name before.
-*   **Entries for groups that are gone.** An entry naming a group that was purged - a team for
-    good, the participants of a session or channel with it - grants nobody anything, but stays in
-    the list until it is stored again: whoever stores a workspace or an artifact drops such entries
-    from its lists, its versions' included (`group::prune_gone_groups`, issue
-    [347](../issues/347-entries-naming-purged-groups.md)), looked for in the system's name. A
-    group in the trash keeps its entries, since it comes back with what it belongs to, and so does
-    one that cannot be looked up. Until then its owner sees the entry without a name. Sessions and
-    channels do not prune: their lists come from their templates and do not grow.
+*   **Entries for groups that are gone.** An entry naming a group that was purged - a team for good,
+    the participants of a session or channel with it - grants nobody anything, but stays in the list
+    until it is stored again: whoever stores a workspace or an artifact drops such entries from its
+    lists, its versions' included (`group::prune_gone_groups`, issue
+    [347](../issues/347-entries-naming-purged-groups.md)), looked for in the system's name. A group
+    in the trash keeps its entries, granting nothing meanwhile, since it comes back with what it
+    belongs to, and so does one that cannot be looked up. Until then its owner sees the entry
+    without a name. Sessions and channels do not prune: their lists come from their templates and do
+    not grow.
 *   **Roles by id.** What is stored names a role by its id; what is written by hand - the user
     providers' configuration, a seed - names roles and is resolved when it is loaded, an unknown
     name being an error.

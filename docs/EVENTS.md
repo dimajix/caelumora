@@ -106,12 +106,17 @@ reclassification, with both classifications, and a leave, which reaches whoever 
 ### Subscribing as someone
 
 `subscribe_as(context)` receives the events about the entities `context` may read. It asks the
-`AccessPolicy` the same question the `EntityStore` asks for reading them. The events of a
-channel - its creation, change, start and stop, who joins and leaves it, an agent's state in it - go
-by the channel's attributes and are asked as reading the channel. A user's record is everybody's to
-read, their profile only theirs, so an update of a `user_profile`, which carries the profile,
-reaches nobody else. A deletion is decided by the attributes it was published with, since the entity
-is gone by then.
+`AccessPolicy` the same question the `EntityStore` asks for reading them. The events of a channel -
+its creation, change, start and stop, who joins and leaves it, an agent's state in it - go by the
+channel's attributes and are asked as reading the channel. A user's record is everybody's to read,
+their profile only theirs, so an update of a `user_profile`, which carries the profile, reaches
+nobody else. A deletion is decided by the attributes it was published with, since the entity is gone
+by then, and asked as `HearDeleted`: whoever read it until then hears of it, also by a group that
+went with it - the groups of a session's participants are deleted before the session's deletion is
+announced, and the policy is asked later still. What a deleted session or channel announces as it
+stops (`session::STOPPED`, `channel::STOPPED`) is asked as reading it and reaches its owner alone,
+since it is stopped only once its groups are gone (issue
+[458](../issues/458-deleted-while-it-runs.md)); its participants learn of it by the deletion.
 
 An event published with classifications reaches only who is also cleared for one of them, as the
 views reach a classified entity: a reader of a channel they are not cleared for does not hear of

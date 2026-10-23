@@ -1,5 +1,9 @@
+//! What an entity carries of who may reach it (issues 11, 23): its owner
+//! and its access list, and what a policy learns besides of the groups the
+//! list names.
+
 use crate::actor::ActorId;
-use crate::group::GroupId;
+use crate::group::{Group, GroupId};
 use crate::role::RoleId;
 use crate::store::query::FieldValue;
 use async_trait::async_trait;
@@ -26,6 +30,11 @@ impl SecurityAttributes {
     /// Attributes of an entity owned by `owner`, with an empty access list.
     pub fn owned_by(owner: ActorId) -> Self {
         Self { owner_id: owner, acl: Vec::new() }
+    }
+
+    /// Whether the system or nobody owns the entity.
+    pub fn unowned(&self) -> bool {
+        matches!(self.owner_id, ActorId::None | ActorId::System)
     }
 
     /// These attributes, granting `subject` what `grant` covers besides.
@@ -72,7 +81,8 @@ pub enum Subject {
     Role(RoleId),
     /// The members of a group (issues 286, 304) - a team, or the current
     /// participants of a session or a channel -, as the policy learns from
-    /// its `Memberships`.
+    /// its `Memberships`, while the group is there; once it is deleted, for
+    /// being told of a deletion alone (`Verb::HearDeleted`).
     Group(GroupId),
     /// Every user (issue 221) - an agent by its owner -, as for a session
     /// or channel anybody may join.
@@ -119,16 +129,16 @@ impl Grant {
 }
 
 /// What a policy needs to know of actors that the attributes it is handed
-/// do not say (issue 23): who belongs to a group an access list names
-/// (issue 286). A fact, not a decision
-/// - the decision stays the policy's. Implemented over the stores, read in
-/// the system's name: one group at a time, never what an actor is a member
-/// of.
+/// do not say (issue 23): the group an access list names (issue 286), with
+/// who belongs to it and whether it was deleted. A fact, not a decision -
+/// whether a deleted group still admits is the policy's (`Admission`).
+/// Implemented over the stores, read in the system's name: one group at a
+/// time, never what an actor is a member of.
 #[async_trait]
 pub trait Memberships: Debug + Send + Sync {
-    /// The members of `group` - also of one that was deleted, whose members
-    /// are told of the deletion; none of one that does not exist.
-    async fn members_of(&self, group: GroupId) -> Vec<ActorId>;
+    /// The group `id` - also one that was deleted, with the members it had;
+    /// none that does not exist.
+    async fn group(&self, id: GroupId) -> Option<Group>;
 }
 
 /// Knows of no membership: for a policy without access lists
@@ -138,8 +148,8 @@ pub struct NoMemberships;
 
 #[async_trait]
 impl Memberships for NoMemberships {
-    async fn members_of(&self, _group: GroupId) -> Vec<ActorId> {
-        Vec::new()
+    async fn group(&self, _id: GroupId) -> Option<Group> {
+        None
     }
 }
 

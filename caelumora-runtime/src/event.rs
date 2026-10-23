@@ -1,7 +1,10 @@
+//! The runtime's event bus (issue 39): what happens to entities, delivered
+//! to the subscribers of its topics and to whoever may read it.
+
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{may_reach, Classification, ConfidentialityPolicy};
-use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::event::{EntityChange, EventPublisher, GlobalEvent};
 use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -45,20 +48,29 @@ impl Secured for PublishedEvent {
 }
 
 impl PublishedEvent {
-    /// What a party must be allowed to receive this event: to read the
-    /// entity it is about - the same question the `EntityStore` asks. What
-    /// happens to a channel's participants and to an agent's state in it is an
-    /// event of the channel, and goes by its attributes (issue 304).
-    fn read_action(&self) -> ActionType<'_> {
-        ActionType::get(self.event.kind, self.security_attributes())
+    /// What a party must be allowed to receive this event, of what has
+    /// `attributes` - the entity it is about, or its part: to read it - the
+    /// same question the `EntityStore` asks -, or, for its deletion, to have
+    /// read it until then (`Verb::HearDeleted`): the groups that reached it
+    /// may have gone with it, and are asked after they went, as the bus
+    /// delivers. What happens to a channel's participants and to an agent's
+    /// state in it is an event of the channel, and goes by its attributes
+    /// (issue 304).
+    fn action_on<'a>(&self, attributes: &'a SecurityAttributes) -> ActionType<'a> {
+        match self.event.change {
+            EntityChange::Deleted => ActionType::hear_deleted(self.event.kind, attributes),
+            EntityChange::Created | EntityChange::Updated(_) | EntityChange::Restored | EntityChange::Custom { .. } => {
+                ActionType::get(self.event.kind, attributes)
+            }
+        }
     }
 
-    /// Whether `context` may read the part the event is about, besides the
-    /// entity (issue 316): asked as reading the entity is, with the part's
-    /// attributes. Nothing to ask of an event about the whole.
-    async fn part_readable(&self, access_policy: &dyn AccessPolicy, context: &SecurityContext) -> bool {
+    /// Whether `context` may receive the event of the part it is about,
+    /// besides the entity (issue 316): asked as for the entity, with the
+    /// part's attributes. Nothing to ask of an event about the whole.
+    async fn part_receivable(&self, access_policy: &dyn AccessPolicy, context: &SecurityContext) -> bool {
         match &self.part {
-            Some(part) => access_policy.check(context, ActionType::get(self.event.kind, part)).await,
+            Some(part) => access_policy.check(context, self.action_on(part)).await,
             None => true,
         }
     }
@@ -203,8 +215,8 @@ impl EventBus {
                 for (context, tx) in current {
                     // Reached as the store reaches it: read, and cleared for
                     // what it is, or was (issues 312, 322).
-                    if !may_reach(access_policy.as_ref(), confidentiality.as_ref(), &context, published.read_action(), &published.classifications).await
-                        || !published.part_readable(access_policy.as_ref(), &context).await {
+                    if !may_reach(access_policy.as_ref(), confidentiality.as_ref(), &context, published.action_on(published.security_attributes()), &published.classifications).await
+                        || !published.part_receivable(access_policy.as_ref(), &context).await {
                         continue;
                     }
                     // A send fails only when the subscription is gone.
@@ -339,7 +351,6 @@ mod tests {
     use std::time::Duration;
     use caelumora_model::channel::{self, ChannelUpdateEvent};
     use caelumora_model::security::{Grant, Subject};
-    use caelumora_model::event::EntityChange;
     use caelumora_model::store::Stored;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
     use caelumora_model::scope::Scope;
@@ -483,6 +494,32 @@ mod tests {
         bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::AGENT_STATE_CHANGED, &AgentId::new()), attributes);
 
         assert_eq!(described(drain(&mut alices).await), ["channel Created", "channel joined", "channel agent_state_changed"], "asked as reading the channel (issue 304), the session's as reading it");
+    }
+
+    #[tokio::test]
+    async fn a_deletion_is_received_by_who_may_hear_of_it() {
+        use caelumora_model::security::Verb;
+
+        /// Lets hear of deletions alone, so that the question asked shows.
+        #[derive(Debug)]
+        struct DeletionsOnly;
+
+        #[async_trait::async_trait]
+        impl AccessPolicy for DeletionsOnly {
+            async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
+                matches!(action, ActionType::Entity { verb: Verb::HearDeleted, .. })
+            }
+        }
+
+        let bus = EventBus::new(Arc::new(DeletionsOnly), Arc::new(ConfidentialityRules::default()));
+        let alice = UserId::new();
+        let mut alices = bus.subscribe_as(as_user(alice));
+        let (session, attributes) = (SessionId::new(), SecurityAttributes::owned_by(ActorId::User(alice)));
+        bus.publish(GlobalEvent::created::<Session>(&session), attributes.clone());
+        bus.publish(GlobalEvent::deleted::<Session>(&session), attributes.clone());
+        bus.publish(GlobalEvent::restored::<Session>(&session), attributes);
+
+        assert_eq!(described(drain(&mut alices).await), ["session Deleted"], "asked as hearing of the deletion (issue 332), the rest as reading");
     }
 
     #[tokio::test]

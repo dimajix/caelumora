@@ -1,3 +1,6 @@
+//! In whose name something is done (issues 255, 341): the
+//! `SecurityContext` every operation is asked in.
+
 use crate::actor::ActorId;
 use crate::session::SessionId;
 use crate::channel::ChannelId;
@@ -69,6 +72,13 @@ impl SecurityContext {
     pub fn has_role(&self, role: RoleId) -> bool {
         self.roles.contains(&role) && self.limiting_roles.as_ref().is_none_or(|limit| limit.contains(&role))
     }
+
+    /// The roles that count for the context: those of the owner that
+    /// `has_role` accepts.
+    pub fn counting_roles(&self) -> Vec<RoleId> {
+        self.roles.iter().copied().filter(|role| self.has_role(*role)).collect()
+    }
+
     /// The context of the runtime acting on its own - for work that follows
     /// from an action already permitted, or that no user started (initial
     /// data, records kept in step with events). The ownership policy allows
