@@ -275,6 +275,7 @@ impl ExternalAgentActor {
 
     /// Gives the remote agent what it has not heard yet and collects what
     /// comes back, until the task ends, asks back, or `token` is cancelled.
+    #[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
     async fn exchange(
         &self,
         state: &mut AgentChannelState,

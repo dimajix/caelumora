@@ -329,6 +329,7 @@ pub fn history_chain(previous: Option<&Digest>, recorded: &Recorded) -> Digest {
 
 /// The digest of `entry` after `previous`, by what it says: the part of a
 /// history's digest (`history_chain`) that the entry itself contributes.
+#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
     match entry {
         HistoryEntry::Said { message } => message_chain(previous, message),

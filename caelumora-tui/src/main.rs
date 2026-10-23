@@ -138,6 +138,7 @@ fn questions_named(open: &[QuestionRequest], arg: &str, me: ActorId) -> Option<Q
 }
 
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
+#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
     let user_actor = channel.user_actor(user)
         .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the channel"))?;

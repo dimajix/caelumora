@@ -382,6 +382,7 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
 /// files of `workspace` - as `tool` is configured, with the largest file the
 /// workspaces take and the texts its results give -, recording in `turn`
 /// what was read.
+#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, turn: &mut Turn<'_>) -> ToolResult<Value> {
     let (config, prompts, max_file_bytes) = (&tool.config, &tool.prompts, tool.workspaces.max_file_bytes());
     let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {

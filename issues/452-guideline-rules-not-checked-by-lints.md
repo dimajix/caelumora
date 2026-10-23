@@ -85,3 +85,8 @@ checks.
   Seven of the modules it touched have no sentence of their module docs; decided with the
   maintainer that a mechanical change does not count as changing a module, and the rule in
   CODING-GUIDELINES.md says so now.
+- **2026-10-23** — Step 3, changed with the maintainer: only `too_many_lines` is on, and the five
+  functions longer than 100 lines carry its `expect`. `cognitive_complexity` found 28 functions in
+  the build of the workspace and none in the build of a single crate: the workspace enables the
+  feature `log` of `tracing`, whose macros then expand to branches the lint counts. It measured
+  the logging more than the logic, and its `expect`s would have flipped between builds.

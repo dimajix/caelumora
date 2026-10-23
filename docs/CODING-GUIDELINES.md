@@ -95,6 +95,12 @@ against this list, rule by rule, before it is reported (the self-review of
     `#![expect(clippy::unwrap_used, …, reason = "test code: …")]`. `unreachable_pub` checks only
     part of its rule: it finds a `pub` item its crate's root cannot reach, not one in a public
     module that only its own crate uses, nor a `pub(crate)` item that only its own module uses.
+*   **Long functions.** `too_many_lines` warns of a function longer than 100 lines. One that was
+    longer before the lint carries `#[expect(clippy::too_many_lines, reason = "…")]`, which fires
+    as unfulfilled once the function is shorter, and is then removed: these attributes are the
+    list of what is still to be simplified, and it only gets shorter. `cognitive_complexity` is
+    not on: it counts what the logging macros expand to, which differs with the features a build
+    enables (issue 452).
 
 ### What goes where
 
