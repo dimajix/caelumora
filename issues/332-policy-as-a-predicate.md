@@ -1,8 +1,8 @@
 # 332 — The policy answers entity by entity, so no database can filter by it
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
-**Priority:** low
+**Priority:** medium
 **Area:** Identity and access management
 **Summary:** The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query.
 
@@ -64,15 +64,125 @@ what the caller may reach at all.
   its table and columns and appends the condition the backend translates, without knowing the
   policy.
 
+## Decision
+
+Access lists are row-level security - an aspect of their own beside a query, not a condition in
+it -, and a store is told them as such, in a form that says what they mean, not as a `Filter`.
+
+1.  **The policy gives an `Admission`** (`caelumora-model`, `security`): which entities a caller is
+    admitted to by their security attributes, in the words of `SecurityAttributes` -
+
+    ```rust
+    pub struct Admission {
+        /// Who is admitted as themselves - by owning it, by an entry naming them or a group of
+        /// theirs: the principal, and the caller where it takes part itself (issue 264).
+        pub actors: Vec<ActorId>,
+        /// Whether what the system or nobody owns admits as well.
+        pub unowned: bool,
+        /// What an entry of the access list must cover to admit; `None` where owning alone does.
+        pub grant: Option<Grant>,
+        /// The roles an entry may name (those that count, `SecurityContext::has_role`).
+        pub roles: Vec<RoleId>,
+        /// Whether an entry for everyone admits.
+        pub everyone: bool,
+    }
+    ```
+
+    with `Admission::admits(attributes, memberships)`, and `AccessPolicy::admission(context, kind,
+    verb) -> Option<Admission>` beside `check`, `None` by default: where a policy cannot say its
+    rule so, a list is filtered entity by entity, as today. A request is made in the name of one
+    context, which stands for one actor or two - the principal and the caller - and for several
+    roles; the grants that cover the one needed are the model's rule (`Grant::covers`, offered as
+    `Grant::covering`), the roles that count the context's (`has_role`), so neither is listed by
+    the policy. For the `OwnershipPolicy`, reading as a user is `actors = [principal]`, `unowned`,
+    `grant = Some(Read)`, the roles that count and `everyone`; as an agent the owner and the agent,
+    without `everyone`; what was deleted (`ReadDeleted`) the principal alone, `grant = None`.
+2.  **One rule.** `check` decides the verbs on entities by the admission it gives
+    (`admission(..)?.admits(..)`), so that the condition a store applies and the single decision
+    cannot come apart; the other actions - two sets of attributes, authors - stay as they are.
+3.  **A deleted group admits nobody.** Its access entries grant nothing once it is deleted; the
+    policy asks for the members of a group that is not deleted, while `Memberships::members_of`
+    keeps answering for a deleted one too, for whom its members are told of the deletion.
+4.  **The groups stay with the store**, not in the `SecurityContext`: the groups of an actor are
+    unbounded - one per session and channel they take part in -, and a store resolves membership
+    where the groups are kept, a database by a join. This reverses the consideration "Memberships
+    turn round" above, and settles the point 295 left open in its favour.
+5.  **The storage is told the attributes.** A `Document` carries its `security_attributes`, as it
+    carries its name and its mark of deletion - what a storage needs to know of it without reading
+    it as its type -, and `DocumentStorage::scan` takes the caller's admission beside the filter of
+    the query: two aspects, not joined into one filter. A scan may hand out more than it admits,
+    never less; `CheckedStore::page` asks for the admission through `Access` and still decides
+    every candidate as today (`Access::readable`), now only those the storage handed out.
+6.  **Each storage applies it as it can.** In memory and in the JSON files, by the document's
+    attributes - owner, actors, roles, everyone -, an entry for a group counting as admitting,
+    since a storage of one kind does not read the groups; the decision after the scan settles it.
+    In Postgres, by a table of the access entries per kind, `entity_<kind>_access` - the owner and
+    every entry of the access list as a row `(subject, relation, entity_id)`, written from the
+    document's attributes in the transaction that writes it and removed with it -, and the
+    admission as a semi-join over it and the groups an actor belongs to (`entity_group`). Who is
+    everyone, and what nobody or the system owns, have no UUID: the Postgres store names them as
+    values of their own.
+7.  **What is classified** stays decided entity by entity (`may_reach`): it narrows what the access
+    list let in and was nowhere the cost measured. Should it be needed, it becomes a second part of
+    the same aspect, not a filter.
+8.  **Lists only.** Reading, changing and deleting one entity stay as they are.
+9.  **Issue [455](455-components-configuration-kept-as-entities.md) comes before the Postgres
+    step**, so that every kind is keyed by a UUID - the table of a kind, of its access entries and
+    of the groups joined by a `uuid` instead of a text.
+
+### What was weighed and not done
+
+- **A `Filter` over the security fields, with a reference to another kind** (`Filter::Refers`, a
+  group whose members contain the actor), judged in memory and translated by `Condition`: general,
+  but the store loses what the condition means. Translated as it reads - a correlated `EXISTS` per
+  row - it walks the table of the kind; the form that scales would have to be recognised in it
+  again. It would also have needed fields of the security attributes by path in every body, a
+  judgement of three values in `matches`, and a reference only loosely judged in memory.
+- **The groups of the principal in the `SecurityContext`**, listed into the query: unbounded.
+- **The access list as an array column** of the table of a kind (`jsonb[]`, or a composite of a
+  `uuid` and a grant), compared by `&&` with the entries of the caller and of their groups: fast
+  for whoever sees little, but compared row by row with every group of an actor, so slow for one
+  in many groups.
+- **Containment on the body's GIN index**: no statistics to choose a plan by, and no join under an
+  `OR`.
+
+### Measured
+
+On the test database (Postgres 17): 100 000 private sessions, each with a group of its
+participants - 100 000 groups -, users skewed; a page of 100, the best of three runs, prepared and
+generic plans alike.
+
+| reader | today: body, walked by id | access list as array | access table |
+|---|---|---|---|
+| in 101 groups, sees 0.1 % | 375 ms | 0.8 ms | 0.3 ms |
+| in 177 groups | 86 ms | 1.3 ms | 0.6 ms |
+| sees nothing | 158 ms | 0.0 ms | 0.0 ms |
+| in 30 160 groups, sees 30 % | 0.7 ms | 590 ms | 41-67 ms |
+
+With 5 % of the sessions for everyone, and on templates 90 % of which the system owns, every form
+answered in under 7 ms. With the access table, the planner chose by its statistics - a nested loop
+for a reader who sees little, a merge join for one in many groups; the groups found by a column of
+their members (`uuid[]`, GIN) took 67 ms, by a table of memberships 41 ms.
+
+## Steps
+
+1.  **The model.** `Admission`, `AccessPolicy::admission`, `Grant::covering`, the roles that count
+    of a context; the `OwnershipPolicy` gives its admission and decides `check` on entities by it;
+    a deleted group admits nobody.
+2.  **The stores.** `Document` with its security attributes, `DocumentStorage::scan` with the
+    admission, `CheckedStore::page` asking for it; memory and the JSON files apply it.
+3.  **Postgres** (after 455). The table of the access entries per kind - a new form of the tables
+    of the kinds -, the admission as a semi-join, a test that what the database admits is what
+    `check` decides.
+
 ## Done when
 
-- The policy gives, for every verb on entities, a condition that a store can evaluate in memory and
-  a database can translate, and `check` on an entity is decided by the same condition.
-- The stores in memory and in JSON files filter by it; `Access::page` no longer asks entity by
-  entity.
-- What a decision needs of the subject - roles, groups, clearance - is in the `SecurityContext`.
-- The security suite shows that the condition and the single decision agree.
-- `docs/SECURITY.md` and `docs/STORAGE.md` describe it.
+- The policy gives, for the verbs on entities, an admission that a store applies and a database
+  translates, and `check` on an entity is decided by it.
+- A list hands the storage the admission, and the stores in memory, in the JSON files and in
+  Postgres apply it; what the storage hands out is still decided entity by entity.
+- A test of the security suite shows that what each store admits is what `check` decides.
+- `docs/SECURITY.md`, `docs/PERMISSION-CHECKS.md` and `docs/STORAGE.md` describe it.
 
 ## History
 
@@ -89,3 +199,9 @@ what the caller may reach at all.
   295 keeps `check` per entity as a second safeguard with a test holding both forms together,
   where this issue decides `check` by the same condition; and 295 resolves membership as a join in
   the store, where this issue puts the principal's groups into the `SecurityContext`.
+- **2026-10-23** — Decided with the maintainer: access lists as row-level security, given to the
+  store as an `Admission` beside the query rather than as a filter; `check` decided by it; the
+  groups resolved by the store, a deleted group admitting nobody; in Postgres a table of access
+  entries per kind, chosen by measurement, after issue
+  [455](455-components-configuration-kept-as-entities.md). Status in progress, priority medium:
+  the condition of a Postgres store that scales.
