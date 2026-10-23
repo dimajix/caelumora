@@ -1,6 +1,7 @@
 //! The stores in Postgres (issues 03, 04): a backend of the stores
 //! (`PersistenceBackend`) that keeps the documents of every kind in a table
-//! of its own, `entity_<kind>`, and the states in tables of their own shape
+//! of its own, `entity_<kind>`, with their access entries (`access`, issue
+//! 332), and the states in tables of their own shape
 //! (`states`), with the transcripts (`transcripts`) and the histories
 //! (`histories`), each chain a row per node (`chains`). What is asked of the
 //! entities and in which order is the model's, as for every backend
@@ -14,6 +15,7 @@
 //! opened are made. A kind opened later gets its table when it is first
 //! used.
 
+mod access;
 mod chains;
 mod connection;
 mod documents;
@@ -29,7 +31,8 @@ use async_trait::async_trait;
 use caelumora_model::store::documents::{DocumentOf, DocumentStorage};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::store::{EntityKind, PersistenceBackend, StateStore, StoreResult};
+use caelumora_model::group::Group;
+use caelumora_model::store::{EntityKind, PersistenceBackend, StateStore, StoreResult, Stored};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -69,6 +72,21 @@ impl PostgresStore {
     fn new(connection: Arc<Connection>) -> Self {
         Self { connection, documents: Default::default() }
     }
+
+    /// The storage of `kind` among `all`, made if it is not there yet - with
+    /// the storage of the groups, which its lists are narrowed by.
+    fn storage(&self, all: &mut HashMap<EntityKind, Arc<PgDocuments>>, kind: EntityKind) -> StoreResult<Arc<PgDocuments>> {
+        if let Some(storage) = all.get(&kind) {
+            return Ok(Arc::clone(storage));
+        }
+        let groups = match kind == Group::KIND {
+            true => None,
+            false => Some(self.storage(all, Group::KIND)?),
+        };
+        let storage = Arc::new(PgDocuments::new(Arc::clone(&self.connection), kind, groups)?);
+        all.insert(kind, Arc::clone(&storage));
+        Ok(storage)
+    }
 }
 
 /// Opens a kind in its table, `entity_<kind>`; the store of the states is
@@ -77,12 +95,7 @@ impl PostgresStore {
 impl PersistenceBackend for PostgresStore {
     fn documents(&self, kind: EntityKind, _document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
         let mut all = self.documents.write().unwrap_or_else(PoisonError::into_inner);
-        if let Some(storage) = all.get(&kind) {
-            return Ok(Arc::<PgDocuments>::clone(storage));
-        }
-        let storage = Arc::new(PgDocuments::new(Arc::clone(&self.connection), kind)?);
-        all.insert(kind, Arc::clone(&storage));
-        Ok(storage)
+        Ok(self.storage(&mut all, kind)?)
     }
 
     fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {

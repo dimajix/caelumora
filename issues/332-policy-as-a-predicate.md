@@ -1,6 +1,6 @@
 # 332 — The policy answers entity by entity, so no database can filter by it
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Identity and access management
@@ -240,3 +240,14 @@ their members (`uuid[]`, GIN) took 67 ms, by a table of memberships 41 ms.
   out what it did until step 3. The `Recorder` of the security suite gives the admission of the
   policy it wraps. The store suite holds every backend to what `check` decides
   (`lists_admit_what_check_decides`).
+- **2026-10-23** — Step 3: the tables of the kinds keep the access entries of their documents
+  beside them, `entity_<kind>_access`, written in the transaction of each write - a new form of the
+  tables, 3 -, and a scan narrows by the admission as a semi-join over them and over the groups an
+  actor belongs to (`Admitted`). The groups are found by containment of the members in the bodies
+  of `entity_group` (`Group::with_member`), not by a table of memberships: measured on 100 000
+  documents and groups, a reader in 30 000 groups took 66 ms that way, 43 ms by such a table, every
+  other reader about 1 ms either way; a table of memberships would have been a special case of the
+  storage of the groups, and laying kinds out in forms of their own is issue
+  [460](460-kinds-kept-in-one-form-in-postgres.md). `Grant::covering` gives the relations an entry
+  must have. Done: what each store hands out is what `check` decides, held by the store suite for
+  memory, the JSON files and Postgres.

@@ -167,6 +167,11 @@ impl Group {
         Filter::is_in(GroupField::Scope, [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")])
     }
 
+    /// The groups `actor` belongs to, as a query.
+    pub fn with_member(actor: ActorId) -> Filter<GroupField> {
+        Filter::any(GroupField::Members, Filter::eq(GroupField::Member, actor))
+    }
+
     /// Whether `actor` belongs to it.
     pub fn has_member(&self, actor: ActorId) -> bool {
         self.members.contains(&actor)

@@ -73,6 +73,8 @@ impl ActorId {
         }
     }
 
+    /// The id of the actor - the nil UUID for the system and for nobody,
+    /// who have none of their own.
     pub fn id(&self) -> Uuid {
         match &self {
             ActorId::None => {Uuid::nil()}

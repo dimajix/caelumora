@@ -121,10 +121,19 @@ pub enum Grant {
 }
 
 impl Grant {
+    /// Every grant there is.
+    pub const ALL: [Grant; 3] = [Grant::Read, Grant::Write, Grant::Join];
+
     /// Whether this grant covers what `needed` asks for: each itself, and
     /// writing reading.
     pub fn covers(self, needed: Grant) -> bool {
         self == needed || (self == Grant::Write && needed == Grant::Read)
+    }
+
+    /// The grants that cover `needed` (`covers`): what an entry must grant,
+    /// as a database that keeps the entries asks for them (issue 332).
+    pub fn covering(needed: Grant) -> impl Iterator<Item = Grant> {
+        Grant::ALL.into_iter().filter(move |grant| grant.covers(needed))
     }
 }
 
@@ -179,6 +188,24 @@ mod tests {
         }
         let written: SecurityAttributes = serde_json::from_value(serde_json::json!({"owner_id": alice})).unwrap();
         assert!(written.acl.is_empty(), "the list may be left out where it is written by hand");
+    }
+
+    #[test]
+    fn the_grants_covering_one_are_those_that_cover_it() {
+        // Every grant is in `ALL`: a new one does not compile here until it is.
+        let place = |grant: Grant| match grant {
+            Grant::Read => 0,
+            Grant::Write => 1,
+            Grant::Join => 2,
+        };
+        for grant in Grant::ALL {
+            assert_eq!(Grant::ALL[place(grant)], grant);
+        }
+        for needed in Grant::ALL {
+            let covering: Vec<Grant> = Grant::covering(needed).collect();
+            assert_eq!(covering, Grant::ALL.into_iter().filter(|grant| grant.covers(needed)).collect::<Vec<_>>(), "for {needed:?}");
+        }
+        assert_eq!(Grant::covering(Grant::Read).collect::<Vec<_>>(), [Grant::Read, Grant::Write], "reading by a grant to read or to write");
     }
 
     /// A subject as a query compares it (issue 293).

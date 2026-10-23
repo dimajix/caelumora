@@ -104,6 +104,17 @@ over one pool.
     on `name_key WHERE NOT deleted` keeps names unique across every process that writes, a GIN index
     answers containment of the body. A subtype within a kind is a field of the document, not a
     table.
+*   **The access entries of a kind** (issue [332](../issues/332-policy-as-a-predicate.md)),
+    `entity_<kind>_access(subject, relation, entity_id)`: a row for the owner (`owner`) and one for
+    each entry of the access list (`read`, `write`, `join`), the subject by its id alone - everyone
+    by the largest UUID, what the system or nobody owns by the nil one -, written from the
+    document's `SecurityAttributes` in the transaction that writes it and removed with it. A list is
+    narrowed by them: the admission becomes a semi-join over the entries of the actors, their roles
+    and everyone, and over those of the groups an actor belongs to, found in `entity_group` by
+    containment of the members in its bodies (`Group::with_member`), a deleted group only where the
+    admission counts it. Ids of different subjects that met would only let more through, which the
+    store decides again. Laying a kind out in a form of its own - the memberships of the groups in a
+    table - is issue [460](../issues/460-kinds-kept-in-one-form-in-postgres.md).
 *   **Tables made in code.** The table of a kind is made when the backend is opened at start, or
     when a kind opened later is first used, under a lock of the kind, and entered in `kinds(name,
     table_name, schema_version)`; one of a form this program does not know is refused. The core's
@@ -257,8 +268,9 @@ as it carries its name and its mark. Memory narrows by them as far as it can tel
 (`Admission::may_admit`): an entry for a group lets a document through, for the store to decide,
 since a storage of one kind does not read the groups. The JSON files leave it to the store, as they
 leave the mark: they know the attributes only of a body read as its type, which the store does next.
-Postgres does not narrow by it yet. What a list hands out is what `check` decides of each entity;
-the store suite holds every backend to that (`lists_admit_what_check_decides`).
+Postgres narrows by the access entries it keeps of every kind (below). What a list hands out is what
+`check` decides of each entity; the store suite holds every backend to that
+(`lists_admit_what_check_decides`).
 
 Without an index - in memory and in the JSON files -, a list without a limit still goes through
 every entity of the kind. Every list that narrows what it read says so in its query; what a query

@@ -411,12 +411,11 @@ pub async fn queries_behave(stores: &EntityStores) {
     assert_eq!(found.items.iter().map(|c| c.id).collect::<Vec<_>>(), [of_it.id], "the channels of a session");
 
     // By a member (issue 308).
-    use crate::group::GroupField;
     let mut his = group(alice);
     his.members.push(ActorId::User(bob));
     stores.groups.create(&ctx, &his).await.unwrap();
     stores.groups.create(&ctx, &group(UserId::new())).await.unwrap();
-    let belonging = Filter::any(GroupField::Members, Filter::eq(GroupField::Member, ActorId::User(bob)));
+    let belonging = Group::with_member(ActorId::User(bob));
     let found = stores.groups.list(&ctx, &Query::filtered(belonging)).await.unwrap();
     assert_eq!(found.items.iter().map(|g| g.id).collect::<Vec<_>>(), [his.id], "the groups of a member, not those of their owner");
 }
@@ -1098,7 +1097,7 @@ pub async fn lists_admit_what_check_decides(stores: &EntityStores, folders: &dyn
     for owner in [hers, his, agent, ActorId::System, ActorId::None] {
         made.push(SecurityAttributes::owned_by(owner));
         for subject in subjects {
-            for grant in [Grant::Read, Grant::Write, Grant::Join] {
+            for grant in Grant::ALL {
                 made.push(SecurityAttributes::owned_by(owner).granting(subject, grant));
             }
         }
