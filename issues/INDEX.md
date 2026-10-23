@@ -57,6 +57,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [456](456-stored-and-deletable-apart-without-reason.md) | open | Whether a kind is marked when it is deleted is a trait of its own beside `Stored`, with a default that says "never deleted", though once the component bundles are a kind like every other no stored kind is removed for good any more. |
 | [457](457-store-answers-misread-by-seed-and-ref.md) | open | The seed asks whether a document is there with `get`, which does not find one marked deleted, and then fails to create it again, so deleting a seeded personality makes every later start fail; and a store failure while a `ref` is resolved is reported as an invalid configuration that names no bundle. |
 | [459](459-deleted-entities-a-flag-not-a-concept.md) | open | Whether an operation of a store is about the entities there or those deleted is a `bool` passed down, and the access checks come in pairs that differ only in it, so that what makes reaching a deleted entity special - kept for the record, asked by a verb of its own - is nowhere one concept; and the documents call it a trash. |
+| [460](460-kinds-kept-in-one-form-in-postgres.md) | open | The Postgres store keeps every kind alike - a table of id, name, mark and body, searched by a GIN index of the body -, so a kind that is reached in a way of its own, such as the groups by their members, cannot have a table or column of its own that answers that faster. |
 
 ## Sessions and channels
 
