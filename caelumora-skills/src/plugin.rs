@@ -9,11 +9,11 @@ use crate::manager::SkillManager;
 use crate::skill::Skill;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::security::{SecurityAttributes, SecurityContext};
-use caelumora_model::store::{EntityStore, StoreResultExt};
+use caelumora_model::security::SecurityAttributes;
+use caelumora_model::store::EntityStore;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
-use caelumora_runtime::seed::SeedSection;
+use caelumora_runtime::seed::{create_unless_taken, SeedSection};
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
@@ -57,13 +57,11 @@ impl fmt::Debug for SeededSkills {
 #[async_trait]
 impl SeedSection for SeededSkills {
     async fn seed(&self, section: Value) -> Result<()> {
-        let system = SecurityContext::system();
         for skill in serde_json::from_value::<Vec<Skill>>(section)? {
-            if self.0.get(&system, skill.id).await.optional()?.is_none() {
-                // The system's, as everything seeded: a skill says so, since
-                // nobody's is no skill at all (`Skill::validate`).
-                let owned = Skill { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..skill };
-                self.0.create(&system, &owned).await?;
+            // The system's, as everything seeded: a skill says so, since
+            // nobody's is no skill at all (`Skill::validate`).
+            let owned = Skill { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..skill };
+            if create_unless_taken(self.0.as_ref(), &owned).await? {
                 info!("Seeded skill {} ({})", owned.name, owned.id);
             }
         }

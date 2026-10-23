@@ -60,11 +60,12 @@ pub enum ComponentError {
     /// of a container, one it was not built for (issue 337).
     #[error("{0} is not among the facets declared to be asked for")]
     Undeclared(&'static str),
-    /// The component bundle a `ref` names cannot be read - gone, or not the reader's to read, a
-    /// share withdrawn (issues 270, 455): what keeps an agent from being run, as its personality's
-    /// would (`ComponentError::is_unavailable`).
+    /// The component bundle a `ref` names cannot be read (issues 270, 455, 457): gone, not the
+    /// reader's to read - a share withdrawn -, or its store failed, as `cause` says. Gone or not
+    /// the reader's, it keeps an agent from being run, as its personality's would
+    /// (`ComponentError::is_unavailable`).
     #[error("component bundle '{name}' cannot be read: {cause}")]
-    Unavailable { name: String, cause: StoreError },
+    Bundle { name: String, cause: StoreError },
     /// A component of a kind only an operator configures was written in a
     /// request rather than named through a `ref` (issue 403,
     /// `ComponentKind::operator_only`).
@@ -88,12 +89,12 @@ impl ComponentError {
         Self::Build { component: entry.id.clone(), kind: entry.kind.clone(), cause: Box::new(cause) }
     }
 
-    /// Whether it says that a component bundle cannot be read
-    /// (`Unavailable`) - itself, or as the cause of a component that could
-    /// not be built.
+    /// Whether it says that a component bundle is gone or not the reader's
+    /// (`Bundle`, `StoreError::is_absent_or_refused`) - itself, or as the
+    /// cause of a component that could not be built.
     pub fn is_unavailable(&self) -> bool {
         match self {
-            Self::Unavailable { .. } => true,
+            Self::Bundle { cause, .. } => cause.is_absent_or_refused(),
             Self::Build { cause, .. } => cause.is_unavailable(),
             _ => false,
         }
@@ -142,6 +143,18 @@ mod tests {
     use super::*;
     use serde::Deserialize;
     use serde_json::json;
+
+        /// A bundle gone keeps an agent from being run; a store that failed
+        /// while it was looked for is told as the store's failure, not as a
+        /// bundle missing (issue 457).
+        #[test]
+        fn a_bundle_is_unavailable_by_its_cause() {
+            let gone = ComponentError::Bundle { name: "tools".to_string(), cause: StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() } };
+            assert!(gone.is_unavailable());
+            let failed = ComponentError::Bundle { name: "tools".to_string(), cause: StoreError::Backend("unreachable".to_string()) };
+            assert!(!failed.is_unavailable(), "the store failed");
+            assert!(failed.to_string().contains("unreachable"), "names the store's failure: {failed}");
+        }
 
         #[test]
         fn params_left_out_give_the_defaults() {

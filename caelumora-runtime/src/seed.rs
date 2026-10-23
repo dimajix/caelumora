@@ -13,7 +13,7 @@ use caelumora_model::component::ComponentBundle;
 use caelumora_model::config::parse_yaml;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStores, StoreResultExt};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, Stored};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -45,8 +45,9 @@ pub struct Seed {
 #[async_trait]
 pub trait SeedSection: Debug + Send + Sync {
     /// Puts what `section` holds into the plugin's stores as the system,
-    /// each document it does not have yet, by id - so that seeding again
-    /// changes nothing, and a document changed in the store stays as it is.
+    /// each document whose id they do not have yet (`create_unless_taken`) -
+    /// so that seeding again changes nothing, and a document changed or
+    /// deleted in the store stays as it is.
     ///
     /// # Errors
     /// If `section` is not what the plugin seeds; whatever the stores
@@ -94,12 +95,12 @@ impl Seed {
         parse_yaml(&content).with_context(|| format!("Cannot parse the seed file {}", path.display()))
     }
 
-    /// Puts every document into `stores` that they do not have yet, by id - so that seeding again
-    /// changes nothing, and a document changed in the store stays as it is. Stored as the system:
-    /// the seed belongs to it, every user may use it and only the system may change it. The roles
-    /// it names are resolved by the roles `confidentiality` is configured with (issue 23). The
-    /// sections of the plugins are seeded last, each by the `SeedSection` of `sections` that claims
-    /// it.
+    /// Puts every document into `stores` whose id they do not have yet (`create_unless_taken`) - so
+    /// that seeding again changes nothing, and a document changed or deleted in the store stays as
+    /// it is. Stored as the system: the seed belongs to it, every user may use it and only the
+    /// system may change it. The roles it names are resolved by the roles `confidentiality` is
+    /// configured with (issue 23). The sections of the plugins are seeded last, each by the
+    /// `SeedSection` of `sections` that claims it.
     ///
     /// # Errors
     /// A section no plugin claims, before anything is stored; a role that
@@ -109,23 +110,19 @@ impl Seed {
         if let Some(name) = self.plugins.keys().find(|name| !sections.contains_key(*name)) {
             bail!("The seed has a section '{name}' that no plugin claims");
         }
-        let system = SecurityContext::system();
         for bundle in &self.component_bundles {
-            if stores.component_bundles.get(&system, bundle.id).await.optional()?.is_none() {
-                stores.component_bundles.create(&system, bundle).await?;
+            if create_unless_taken(stores.component_bundles.as_ref(), bundle).await? {
                 info!("Seeded component bundle {} ({})", bundle.name, bundle.id);
             }
         }
         for seeded in &self.personalities {
             let personality = seeded.resolved(confidentiality)?;
-            if stores.personalities.get(&system, personality.id).await.optional()?.is_none() {
-                stores.personalities.create(&system, &personality).await?;
+            if create_unless_taken(stores.personalities.as_ref(), &personality).await? {
                 info!("Seeded personality {} ({})", personality.name, personality.id);
             }
         }
         for template in &self.session_templates {
-            if stores.session_templates.get(&system, template.id).await.optional()?.is_none() {
-                stores.session_templates.create(&system, template).await?;
+            if create_unless_taken(stores.session_templates.as_ref(), template).await? {
                 info!("Seeded session template {} ({})", template.name, template.id);
             }
         }
@@ -135,6 +132,21 @@ impl Seed {
             }
         }
         Ok(())
+    }
+}
+
+/// Creates `value` in `store` as the system unless its id is taken - also by one marked deleted,
+/// which was deleted on purpose and stays so (issue 457); a purge frees the id, and the next seed
+/// brings it back. Whether it was created. The store's `create` alone is asked, so that two that
+/// seed at once do not both create it.
+///
+/// # Errors
+/// Whatever the store reports but a taken id - also a name another has (`StoreError::NameTaken`).
+pub async fn create_unless_taken<T: Stored>(store: &dyn EntityStore<T>, value: &T) -> StoreResult<bool> {
+    match store.create(&SecurityContext::system(), value).await {
+        Ok(()) => Ok(true),
+        Err(StoreError::Conflict(_)) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 

@@ -1,6 +1,6 @@
 # 457 — A deleted seeded document fails every start, and a failing store reads as a configuration error
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** Persistence
@@ -54,3 +54,18 @@ store reported as an error of the configuration, with a message that says there 
   [455](455-components-configuration-kept-as-entities.md): with the component bundles marked when
   deleted, the seed's check by `get` meets the case for one more kind, and the resolution of a
   `ref` was rewritten without changing how it reports a failing store.
+- **2026-10-23** — Decided, in two steps. First, without a change of behaviour: whether a
+  `StoreError` says that what was asked for is not there, or refused to the caller, is said once,
+  by `StoreError::is_absent_or_refused`, where four places matched `NotFound` and
+  `PermissionDenied` themselves. Then the fix: every seeder creates through one function of the
+  seed, `create_unless_taken`, which asks the store by `create` alone and leaves a document whose
+  id is taken - also by one marked deleted - as it is; and a `ref` reports every failure of the
+  store as one variant of `ComponentError` with its cause, `Bundle`, renamed from `Unavailable`,
+  whose cause alone says whether the bundle is absent or refused (`is_unavailable`).
+- **2026-10-23** — Step 1: `StoreError::is_absent_or_refused`, used by `restored_unless_refused`,
+  the session view, `cannot_run` of the channels and the resolution of a `ref`.
+- **2026-10-23** — Step 2: `seed::create_unless_taken`, through which `Seed::apply` and the
+  skills' `SeedSection` create - a seeded document deleted stays deleted, and a purge lets the
+  next start seed it again; `ComponentError::Unavailable` is `Bundle` and carries every failure of
+  the store while a `ref` is resolved, `is_unavailable` asking its cause. `docs/STORAGE.md` (demo
+  data) and `docs/COMPONENTS.md` say so.

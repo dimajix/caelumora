@@ -332,6 +332,34 @@ mod tests {
         assert!(!bundles.is_empty() && bundles.len() == seed.component_bundles.len(), "the component bundles, once (issues 270, 455)");
     }
 
+    /// A seeded document that was deleted stays deleted, of every kind the
+    /// seed and the plugins' sections write, and the next start does not
+    /// fail on its taken id (issue 457).
+    #[tokio::test]
+    async fn a_seeded_document_that_was_deleted_stays_so_and_seeding_again_succeeds() {
+        let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
+        let store = Persistence::in_memory();
+        let runtime = runtime(&store);
+        let stores = store.entity_stores().unwrap();
+        let skills = store.entity_store::<Skill>().unwrap();
+        let system = SecurityContext::system();
+        runtime.seed(&[example("seed.yaml")]).await.unwrap();
+        let bundle = seed.component_bundles[0].id;
+        let personality = seed.personalities[0].personality.id;
+        let template = seed.session_templates[0].id;
+        let skill = skills.list(&system, &Query::all()).await.unwrap().items[0].id;
+        assert!(stores.component_bundles.delete(&system, bundle).await.unwrap());
+        assert!(stores.personalities.delete(&system, personality).await.unwrap());
+        assert!(stores.session_templates.delete(&system, template).await.unwrap());
+        assert!(skills.delete(&system, skill).await.unwrap());
+
+        runtime.seed(&[example("seed.yaml")]).await.expect("a taken id is no failure");
+        assert!(stores.component_bundles.get(&system, bundle).await.is_err() && stores.component_bundles.get_deleted(&system, bundle).await.is_ok(), "the bundle stays deleted");
+        assert!(stores.personalities.get(&system, personality).await.is_err() && stores.personalities.get_deleted(&system, personality).await.is_ok(), "the personality stays deleted");
+        assert!(stores.session_templates.get(&system, template).await.is_err() && stores.session_templates.get_deleted(&system, template).await.is_ok(), "the template stays deleted");
+        assert!(skills.get(&system, skill).await.is_err() && skills.get_deleted(&system, skill).await.is_ok(), "the skill stays deleted");
+    }
+
     /// Every personality of the example seed can be built with what the
     /// seed and the program's plugins bring: the components it includes
     /// are there, and none of them is written twice (issue 270).

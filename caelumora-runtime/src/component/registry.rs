@@ -7,7 +7,7 @@
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStore, StoreError};
+use caelumora_model::store::EntityStore;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::type_map::{TypeKey, TypeMap};
 use futures::future::BoxFuture;
@@ -364,8 +364,8 @@ impl ComponentRegistry {
     ///
     /// # Errors
     /// As `ComponentContainer::from_config` before it builds anything:
-    /// `ComponentError::Unavailable`, wrapped with the `ref`, for one
-    /// `context` may not read; `ComponentError::DuplicateId`,
+    /// `ComponentError::Bundle`, wrapped with the `ref`, for one `context`
+    /// may not read or whose store fails; `ComponentError::DuplicateId`,
     /// `ComponentError::UnsupportedKind`, `ComponentError::InvalidConfig` for
     /// two components of a single or one nobody asks for; and
     /// `ComponentError::OperatorOnly`, wrapped with the component, for one
@@ -496,11 +496,8 @@ impl ComponentRegistry {
         let target: BundleRef = serde_json::from_value(node.params.clone())
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
         let name = ScopedName { name: target.name, scope: target.scope };
-        let components = match self.bundles.find_by_name(context, &name).await {
-            Ok(bundle) => bundle.components,
-            Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied(_))) => return Err(ComponentError::Unavailable { name: name.to_string(), cause }),
-            Err(e) => return Err(ComponentError::InvalidConfig(format!("no component bundle '{name}': {e}"))),
-        };
+        let components = self.bundles.find_by_name(context, &name).await
+            .map_err(|cause| ComponentError::Bundle { name: name.to_string(), cause })?.components;
         if let Some(inner) = components.component_nodes.iter().find(|inner| inner.kind == BUNDLE_REF_KIND) {
             return Err(ComponentError::InvalidConfig(format!("component bundle '{name}' cannot include a ref ('{}')", inner.id)));
         }
@@ -668,7 +665,7 @@ mod tests {
             let registry = named_registry(Persistence::in_memory().entity_stores().unwrap().component_bundles);
             let config = ComponentConfig { component_nodes: vec![reference("ref-a", "does-not-exist")] };
             let error = ComponentContainer::from_config(&config, ASKED, &registry, &test_context()).await.unwrap_err();
-            assert!(matches!(causes(&error)[..], [ComponentError::Build { .. }, ComponentError::Unavailable { .. }]), "{error}");
+            assert!(matches!(causes(&error)[..], [ComponentError::Build { .. }, ComponentError::Bundle { .. }]), "{error}");
             assert!(error.is_unavailable(), "through the component it was building");
             assert!(error.to_string().contains("'does-not-exist'"), "names what it could not read: {error}");
         }

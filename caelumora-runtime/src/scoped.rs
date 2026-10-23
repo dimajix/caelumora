@@ -221,7 +221,7 @@ pub fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: 
             warn!(kind = %D::KIND, id = %deleted.id(), "Stays deleted: its name was taken while what holds its scope was deleted");
             Ok(None)
         }
-        Err(StoreError::NotFound { .. } | StoreError::PermissionDenied(_)) => {
+        Err(e) if e.is_absent_or_refused() => {
             info!(kind = %D::KIND, id = %deleted.id(), "Stays deleted: it is not the caller's to restore");
             Ok(None)
         }

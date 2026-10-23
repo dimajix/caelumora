@@ -68,7 +68,9 @@ personalities:
 *   A bundle cannot include a `ref` itself: there is no depth and no cycle.
 *   A bundle that cannot be read - gone, deleted, or a share withdrawn - fails as unavailable. An
     agent whose personality includes it is left out of its channel, as one whose personality was
-    withdrawn is; the channel runs with everyone else ([CHANNELS.md](CHANNELS.md)).
+    withdrawn is; the channel runs with everyone else ([CHANNELS.md](CHANNELS.md)). A store that
+    fails while the bundle is looked for fails with its own error, not as a bundle missing
+    (`ComponentError::Bundle` carries the store's error either way).
 *   What an agent was built from is recorded, not computed again: the configuration with every
     `ref` resolved is kept by its actor and shown to the agent's owner (`ReadAgentComponents`).
 *   Only components are shared. A personality's kind, roles, introduction and reasoning visibility
