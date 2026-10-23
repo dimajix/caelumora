@@ -11,7 +11,7 @@ use crate::actor::{ActorId, ActorState};
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
 use crate::channel::{Channel, ChannelId, ChannelState, moderation_components};
-use crate::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
+use crate::component::{ComponentBundle, ComponentBundleId, ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
@@ -19,7 +19,7 @@ use crate::value::text::Introduction;
 use crate::scope::{Scoped, Scope};
 use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
 use crate::session::{Session, SessionId};
-use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
+use crate::store::{EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
 use crate::store::history::HistoryStore;
 use crate::store::transcript::TranscriptStore;
 use crate::actor::{ActorEvent, Envelope, EventContext};
@@ -297,8 +297,8 @@ impl Deletable for Folder {
     }
 }
 
-fn component() -> StoredComponents {
-    StoredComponents::new("search", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search")] }, Default::default())
+fn bundle() -> ComponentBundle {
+    ComponentBundle::new(scoped("search"), ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search")] }, Default::default())
 }
 
 /// A store answers a query of a list (issue 293): those that meet its
@@ -333,7 +333,7 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
     }
     let ids = |page: &[Folder]| page.iter().map(|f| f.id).collect::<Vec<_>>();
     let mut sorted = made.clone();
-    sorted.sort_by_key(|id| id.to_string());
+    sorted.sort();
     let listed = folders.list(&ctx, &Query::all()).await.expect("all of them");
     assert_eq!(ids(&listed.items), sorted, "in the order of their ids");
     assert!(listed.next.is_none());
@@ -341,7 +341,7 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
     let owned = Filter::eq(FolderField::Owner, ActorId::User(bob));
     let found = folders.list(&ctx, &Query::filtered(owned)).await.unwrap();
     let mut bobs_own = vec![made[2], made[4]];
-    bobs_own.sort_by_key(|id| id.to_string());
+    bobs_own.sort();
     assert_eq!(ids(&found.items), bobs_own, "a field of the entity");
 
     let place = Filter::And(vec![Filter::eq(FolderField::DocumentSession, session), Filter::eq(FolderField::DocumentChannel, channel)]);
@@ -354,7 +354,7 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
         Filter::any(FolderField::Documents, Filter::any(FolderField::DocumentAcl, named)),
     ]);
     let mut with_bob = vec![made[3], made[4]];
-    with_bob.sort_by_key(|id| id.to_string());
+    with_bob.sort();
     assert_eq!(ids(&folders.list(&ctx, &Query::filtered(shared)).await.unwrap().items), with_bob, "an entry of its list or of a document's");
 
     let mut paged = Vec::new();
@@ -390,7 +390,7 @@ pub async fn queries_behave(stores: &EntityStores) {
     let holder = Scope::SessionScope { session_id };
     let lying = stores.personalities.list(&ctx, &Query { filter: holder.within::<ScopeField>(), ..Query::all() }).await.unwrap();
     let mut expected = vec![in_session.id, in_channel.id];
-    expected.sort_by_key(|id| id.to_string());
+    expected.sort();
     assert_eq!(lying.items.iter().map(|p| p.id).collect::<Vec<_>>(), expected, "what lies in the session or a channel of it");
 
     let agent = AgentId(Uuid::new_v4());
@@ -420,13 +420,6 @@ pub async fn queries_behave(stores: &EntityStores) {
     assert_eq!(found.items.iter().map(|g| g.id).collect::<Vec<_>>(), [his.id], "the groups of a member, not those of their owner");
 }
 
-/// Preconfigured components go through the same life as the entities.
-pub async fn component_store_behaves(store: &dyn ComponentStore) {
-    lifecycle!(store, component(), component_id,
-        components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "renamed")] }, "components",
-        create_components, get_components, update_components, delete_components, list_components);
-}
-
 /// A definition of a kind is found by its name in exactly its scope (issue
 /// 178): compared as names are, not in another scope, not once deleted.
 /// `$make` makes one of a `ScopedName`.
@@ -453,12 +446,6 @@ macro_rules! found_by_name {
     }};
 }
 
-// A named function rather than a closure: a closure returning a borrow of
-// its argument doesn't get the lifetime inferred.
-fn component_id(value: &StoredComponents) -> &str {
-    value.id()
-}
-
 /// Every kind of entity goes through the same life; users are also found
 /// by name, and so are definitions in their scope.
 pub async fn entity_store_behaves(stores: &EntityStores) {
@@ -479,6 +466,8 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     lifecycle!(stores.workspaces.as_ref(), workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
         create, get, update, delete, list);
     lifecycle!(stores.groups.as_ref(), group(UserId::new()), |v: &Group| v.id, name.name, "group",
+        create, get, update, delete, list);
+    lifecycle!(stores.component_bundles.as_ref(), bundle(), |v: &ComponentBundle| v.id, name.name, "component_bundle",
         create, get, update, delete, list);
 
     let ctx = SecurityContext::default();
@@ -506,6 +495,9 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     found_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name, id: SessionTemplateId::new(), ..session_template() }, "session_template",
         create, delete, find_by_name);
     found_by_name!(stores.agents.as_ref(), |name| Agent::new(name, personality().id, ActorId::None), "agent",
+        create, delete, find_by_name);
+
+    found_by_name!(stores.component_bundles.as_ref(), |name| ComponentBundle { name, ..bundle() }, "component_bundle",
         create, delete, find_by_name);
 
     found_by_name!(stores.workspaces.as_ref(), workspace_named, "workspace",
@@ -583,6 +575,10 @@ pub async fn names_are_unique(stores: &EntityStores) {
     unique_by_name!(stores.groups.as_ref(), |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
         elsewhere: |name| Group { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: GroupId::new(), ..group(bob) },
         rename: |value: Group, name| Group { name: in_scope(name, &value.name.scope), ..value }, "group",
+        create, update, delete, restore);
+    unique_by_name!(stores.component_bundles.as_ref(), |name| ComponentBundle { name: in_scope(name, &global), id: ComponentBundleId::new(), ..bundle() },
+        elsewhere: |name| ComponentBundle { name: in_scope(name, &users), id: ComponentBundleId::new(), ..bundle() },
+        rename: |value: ComponentBundle, name| ComponentBundle { name: in_scope(name, &value.name.scope), ..value }, "component_bundle",
         create, update, delete, restore);
 
     // Moved into a scope where its name is taken.

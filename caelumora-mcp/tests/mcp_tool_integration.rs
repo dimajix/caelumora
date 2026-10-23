@@ -9,18 +9,19 @@ use caelumora_mcp::plugin::McpPlugin;
 use caelumora_mcp::tool::MCP_TOOL_KIND;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, StoredComponents};
+use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
+use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::channel::Channel;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
 use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
-use caelumora_model::value::name::Name;
+use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_agents::turn::Turn;
-use caelumora_runtime::component::{ComponentContainer, ComponentContext, PRECONFIGURED_REF_KIND};
+use caelumora_runtime::component::{ComponentContainer, ComponentContext, BUNDLE_REF_KIND};
 use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
 use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
 use caelumora_runtime::testing::{asked_for, TestRuntime, World};
@@ -221,14 +222,14 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     let store = Persistence::in_memory();
 
-    // Preconfigured components live in the ComponentStore rather than in application-level
-    // config, so seed it directly.
+    // A bundle is an entity like any other, so it is put into the store directly.
     store
-        .component_store()
+        .entity_stores()
         .unwrap()
-        .create_components(
+        .component_bundles
+        .create(
             &SecurityContext::default(),
-            &StoredComponents::new("shared-echo", ComponentConfig {
+            &ComponentBundle::new(ScopedName::new("shared-echo", Scope::GlobalScope).unwrap(), ComponentConfig {
                 component_nodes: vec![ComponentDescriptor {
                     id: "shared-echo".to_string(),
                     kind: MCP_TOOL_KIND.to_string(),
@@ -248,15 +249,15 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "github-tool".to_string(),
-            kind: PRECONFIGURED_REF_KIND.to_string(),
-            params: json!({ "id": "shared-echo" }),
+            kind: BUNDLE_REF_KIND.to_string(),
+            params: json!({ "name": "shared-echo" }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,
         }],
     };
 
     // Two independent containers (simulating two personalities, each with its own
-    // SecurityContext) both referencing the same shared component config by id.
+    // SecurityContext) both referencing the same bundle by name.
     let container_a = ComponentContainer::from_config(&ref_config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap();
     let container_b = ComponentContainer::from_config(&ref_config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap();
 

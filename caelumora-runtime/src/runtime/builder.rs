@@ -143,6 +143,7 @@ impl RuntimeBuilder {
         let scope_members: Vec<Arc<dyn ScopeMember>> = vec![
             Arc::new(Unowned(Arc::clone(&entity_stores.personalities))),
             Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
+            Arc::new(Unowned(Arc::clone(&entity_stores.component_bundles))),
             Arc::<AgentManager>::clone(&agents),
             Arc::<WorkspaceManager>::clone(&workspaces),
         ];
@@ -216,8 +217,9 @@ impl RuntimeBuilder {
         let states = backend("state store", "state_store", &config.persistence.state_store)?;
         let entities = backend("entity store", "entity_store", &config.persistence.entity_store)?;
         let persistence = Persistence::new(entities, states, Arc::clone(&access_policy), Arc::clone(&confidentiality)).context("Cannot make the state store")?;
-        memberships.bind(&persistence.entity_stores()?.groups);
-        let registry = ComponentRegistry::built_in(persistence.component_store()?);
+        let stores = persistence.entity_stores()?;
+        memberships.bind(&stores.groups);
+        let registry = ComponentRegistry::built_in(stores.component_bundles);
         let mut builder = Self::new(persistence.clone(), secret_manager, access_policy, confidentiality, config, registry, backends)?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
@@ -372,7 +374,6 @@ impl RuntimeBuilder {
             history_store: self.persistence.history_store(),
             transcript_store: self.persistence.transcript_store(),
             entity_stores: self.entity_stores,
-            component_store: self.persistence.component_store()?,
             secret_manager: self.secret_manager,
             user_manager: self.user_manager,
             component_registry: Arc::new(self.component_registry),

@@ -2,18 +2,18 @@
 
 Caelumora keeps two kinds of data apart: long-lived **entities** - definitions and identities - in
 the entity stores, one `EntityStore<T>` per kind, and frequently changing runtime **state** in the
-`StateStore`, with the histories the states hold read through the `HistoryStore`; preconfigured
-components have a `ComponentStore` of their own. This document describes the stores, who writes
-what, and the controllers that hold the entities of a running session live. How access to stored
-entities is checked is in [SECURITY.md](SECURITY.md); which stores are used is configured in
-[CONFIGURATION.md](CONFIGURATION.md).
+`StateStore`, with the histories the states hold read through the `HistoryStore`. This document
+describes the stores, who writes what, and the controllers that hold the entities of a running
+session live. How access to stored entities is checked is in [SECURITY.md](SECURITY.md); which
+stores are used is configured in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## The entity store
 
 The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived domain entities:
 
-*   **Personalities**, the definitions of agents, and **session templates**, which sessions are
-    made from.
+*   **Personalities**, the definitions of agents, **component bundles**, the components several of
+    them include (see [Component bundles](#component-bundles)), and **session templates**, which
+    sessions are made from.
 *   **Identities**: agents, sessions, channels and users. A channel is a document of its own, which
     its session lists by id.
 *   **User profiles**: what a user says about themselves - introduction, preferred language,
@@ -71,18 +71,19 @@ the documents from the first, as their kinds are opened, and the three state sto
 when it is made, together - so that a backend that keeps no states fails the start, as the state
 store. It opens the store of a kind for whoever asks (`EntityStoreFactory::entity_store::<T>()`),
 once - whoever asks for a kind again, the core or a plugin, is given the same store -, refuses a
-kind whose name another kind has, and gives the component store and the state stores. The stores of
-the core's kinds are `EntityStores`, which the runtime is given; a plugin asks for the store of its
-kind while it registers. A manager is made with `&EntityStores` - or the store of its kind - and
-keeps the stores of the kinds it uses as fields, as every service is held. Tests make their stores
-the same way, `Persistence::in_memory()` for stores in memory that permit everything,
+kind whose name another kind has, and gives the state stores. The stores of the core's kinds are
+`EntityStores`, which the runtime is given; a plugin asks for the store of its kind while it
+registers. A manager is made with `&EntityStores` - or the store of its kind - and keeps the stores
+of the kinds it uses as fields, as every service is held. Tests make their stores the same way,
+`Persistence::in_memory()` for stores in memory that permit everything,
 `Persistence::in_memory_with` for the policies of a test - both cannot fail, since the memory store
 is the three state stores itself.
 
 Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an `EntityKind`
-named by a string (`"skill"`) that is unique among the kinds; its id and the fields a query names;
-the kind of entity it lies in, `Stored::Within` - a channel in a `Session`, every other kind of the
-core in `NoEntity` -, by which its events name where it lies (issue 335, see
+named by a string (`"skill"`) that is unique among the kinds; its id - a UUID under a type of its
+kind's (`define_id!`), so that every store keys every kind alike - and the fields a query names; the
+kind of entity it lies in, `Stored::Within` - a channel in a `Session`, every other kind of the core
+in `NoEntity` -, by which its events name where it lies (issue 335, see
 [EVENTS.md](EVENTS.md#the-form-of-an-event)); and, if its kind is `Scoped`, the name that is unique
 in its scope (`Stored::unique_name`). The stores take all of it from the type they read and write:
 what is asked of the `AccessPolicy` (`ActionType::get(T::KIND, …)`), the name in errors, logs and
@@ -92,23 +93,24 @@ without a change to the stores or to `EntityKind`.
 
 ### In Postgres
 
-The plugin `caelumora-store-postgres` brings the backend `postgres`, which keeps the entities - and
-the components - (issue [03](../issues/03-postgres-entity-store.md)) and the states (issue
+The plugin `caelumora-store-postgres` brings the backend `postgres`, which keeps the entities (issue
+[03](../issues/03-postgres-entity-store.md)) and the states (issue
 [04](../issues/04-postgres-state-store.md)): the entity store, the store of the states, or both,
 over one pool.
 
 *   **A table per kind**, `entity_<kind>`, the prefix keeping a kind clear of the words of SQL: the
-    id (`text`, ordered `COLLATE "C"`, as `str` orders it), the key of the name (`name_key`,
+    id (`uuid`, ordered bytewise, as `Uuid` orders it), the key of the name (`name_key`,
     `ScopedName::key`), whether it is marked deleted, and the body (`jsonb`). A partial unique index
     on `name_key WHERE NOT deleted` keeps names unique across every process that writes, a GIN index
     answers containment of the body. A subtype within a kind is a field of the document, not a
     table.
 *   **Tables made in code.** The table of a kind is made when the backend is opened at start, or
-    when a kind opened later is first used, under a lock of the kind, and entered in
-    `kinds(name, table_name, schema_version)`; one of a form this program does not know is refused.
-    The core's kinds are made as a plugin's are, since every one has one form: a change of it counts
-    `schema_version` up and migrates every table in code. The migrations checked in (`sqlx`, in the
-    crate's `migrations/`) make the tables of the crate's own, `kinds` among them.
+    when a kind opened later is first used, under a lock of the kind, and entered in `kinds(name,
+    table_name, schema_version)`; one of a form this program does not know is refused. The core's
+    kinds are made as a plugin's are, since every one has one form: a change of it counts
+    `schema_version` up, and the tables of an older form are refused at start - they are deleted, as
+    stored data that is no longer read is. The migrations checked in (`sqlx`, in the crate's
+    `migrations/`) make the tables of the crate's own, `kinds` among them.
 *   **A connection by a secret.** The configuration names the secret that holds the URL of the
     database, a schema - its tables there, as the `search_path` of its connections - and the size
     of its pool. The secret is resolved when the backend is opened, so that a wrong one fails the
@@ -149,23 +151,24 @@ comes from is its caller's. Artifacts are entities, not state: each has its own 
 a name unique in its scope and a trash, and one that is kept outlives the session it was published
 in.
 
-### Preconfigured components
+### Component bundles
 
-Preconfigured components are runtime configuration that personalities and templates refer to by
-`kind: "ref"`. The `ComponentStore` keeps them as `StoredComponents` - one or several component
-descriptors with the attributes of who may use and change them - with the same operations as
-entities, checked the same way. A descriptor inside a personality or template carries no attributes;
-it is covered by those of what holds it. The component store is opened where the entity store is.
+A component bundle (`ComponentBundle`) is what personalities, templates and channels
+include by `kind: "ref"` and its name: one or several component descriptors, kept as an entity like
+a personality - with an owner, an access list and a name unique in its scope, marked when it is
+deleted - so that a user who keeps personalities of their own may keep the bundles they include as
+well. A descriptor inside a personality or template carries no attributes; it is covered by those
+of what holds it.
 
 ### Names and scopes
 
 Every entity has a name, and the fields that mean something for it:
 
 *   **What is a scope** - a session, a channel, a user - has a name only.
-*   **What lies in a scope** - a personality, a session template, an agent, a workspace, a skill, an
-    artifact - has a name and a `Scope`: where it is found by name. The store finds one in exactly
-    its scope; from a place, `scope::find_by_name` finds the innermost of a name - in the place's
-    scope, in those around it or in the user's own.
+*   **What lies in a scope** - a personality, a session template, a component bundle, an agent, a
+    workspace, a skill, an artifact - has a name and a `Scope`: where it is found by name. The store
+    finds one in exactly its scope; from a place, `scope::find_by_name` finds the innermost of a
+    name - in the place's scope, in those around it or in the user's own.
 *   **What is offered for choosing** - a personality, a session template - has a `description`, a
     catalogue line.
 
@@ -228,8 +231,9 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
     read.
 
 **A list reads in batches** (issue [447](../issues/447-store-seam-not-fit-for-a-database.md)). The
-store asks the storage for the documents after the cursor, in the order of their ids - as `str`
-orders them -, among what is deleted or not and meeting the filter, a batch at a time
+store asks the storage for the documents after the cursor, in the order of their ids - as `Uuid`
+orders them, bytewise, as Postgres orders a `uuid` too, so that a cursor goes on alike in every
+store -, among what is deleted or not and meeting the filter, a batch at a time
 (`DocumentStorage::scan`), the filter by the paths of its fields (`Filter::by_path`). A storage may
 hand out more than it is asked for, never less: the store judges every document against the whole
 filter again, reads it as its type and asks the policy, and reads the next batch until the page is
@@ -237,10 +241,10 @@ full. So a database translates what it can of a filter and leaves the rest to th
 prefix and words in a text, which compare as names are folded -, and the JSON files judge the filter
 on each file and leave the mark of a deletion to the store. What follows a page's limit is read only
 as far as its batch. A page that stops at its limit hands out the cursor unless the storage showed
-that nothing follows. A document a storage cannot read as it is kept - a file that is not JSON - or
-one that cannot be read as its type is left out of a list and logged; any other failure of the
-storage fails the list. Finding by name asks the storage for the one document of the name that is
-not deleted (`DocumentStorage::named`), and then the policy, as a list asks.
+that nothing follows. A document a storage cannot read as it is kept - a file that is not JSON, or
+not named by an id - or one that cannot be read as its type is left out of a list and logged; any
+other failure of the storage fails the list. Finding by name asks the storage for the one document
+of the name that is not deleted (`DocumentStorage::named`), and then the policy, as a list asks.
 
 Without an index - in memory and in the JSON files -, a list without a limit still goes through
 every entity of the kind. Every list that narrows what it read says so in its query; what a query
@@ -251,9 +255,8 @@ at the caller.
 
 What a user deletes is kept, marked, and removed for good only by a purge - an administrator's act
 or a retention policy's. The kinds that deleting marks implement `Deletable` and carry who deleted
-them and when: sessions, channels, agents, users, user profiles, personalities, session templates
-and workspaces. A preconfigured component is not marked: it is reached only through what refers to
-it, and is deleted for good.
+them and when - every kind: sessions, channels, agents, users, user profiles, personalities,
+session templates, component bundles, workspaces, groups and the kinds of the plugins.
 
 A marked document is not there for the ordinary operations, before anything is asked: not read,
 listed, found by name, changed or deleted again - also not by the system, so that no caller has to
@@ -281,8 +284,8 @@ state](#deleting-state)).
 
 ### Demo data
 
-Demo data is not part of any binary. The files the configuration's `seed` names hold preconfigured
-components, personalities and session templates as the stores keep them, with fixed ids, and the
+Demo data is not part of any binary. The files the configuration's `seed` names hold component
+bundles, personalities and session templates as the stores keep them, with fixed ids, and the
 sections of the plugins - `skills` among them -, each seeded by the plugin that claims it
 (`SeedSection`); a section no plugin claims is an error before anything is stored. At startup both
 binaries put into the stores whatever they do not have yet, by id, as the system

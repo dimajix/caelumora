@@ -38,8 +38,8 @@ position, `the secret provider 2 (vault)`. An unknown type is answered with the 
 
 | Section | What it configures | Default |
 |---|---|---|
-| `persistence` | Where the `EntityStore` (`entity_store`) and the `StateStore` (`state_store`) keep their data, each a [backend](#backends): `type: json` with a `path`, and optionally `journal_floor`, the size in bytes a journal reaches before it is folded into its snapshot; `type: memory`; or `type: postgres` with `url_secret` (the name of the secret holding the URL of the database) and optionally `schema` (`public`) and `max_connections` (10). The two may differ. The `ComponentStore` is kept where the entity store is. See [STORAGE.md](STORAGE.md). | `memory` for both - gone when the process ends; `journal_floor` 65536 |
-| `seed` | Files of demo data - preconfigured components, personalities and session templates, and the sections of the plugins, `skills` among them - put into the stores at startup, only what they do not have yet, by id. A section of a seed file that no plugin claims is an error. | none |
+| `persistence` | Where the `EntityStore` (`entity_store`) and the `StateStore` (`state_store`) keep their data, each a [backend](#backends): `type: json` with a `path`, and optionally `journal_floor`, the size in bytes a journal reaches before it is folded into its snapshot; `type: memory`; or `type: postgres` with `url_secret` (the name of the secret holding the URL of the database) and optionally `schema` (`public`) and `max_connections` (10). The two may differ. See [STORAGE.md](STORAGE.md). | `memory` for both - gone when the process ends; `journal_floor` 65536 |
+| `seed` | Files of demo data - component bundles, personalities and session templates, and the sections of the plugins, `skills` among them - put into the stores at startup, only what they do not have yet, by id. A section of a seed file that no plugin claims is an error. | none |
 | `secrets` | The chain of secret providers, each a [backend](#backends), tried in order: `type: file` with a `path` (a flat JSON key/value file), `type: env`. See [SECURITY.md](SECURITY.md#secrets). | `local/secrets.json`, then the environment |
 | `users` | The chain of user providers, each a [backend](#backends): `type: file` with a `path`, a YAML file of users written by hand, with their ids, roles by name and Argon2 password hashes; or `type: accept_any`, a development stand-in that accepts any username, with any password - or none, from the TUI; it gives the users named under `roles` their roles and everybody else `default_roles`, by the roles' names. See [SECURITY.md](SECURITY.md#users). | none - nobody can log in |
 | `auth` | How the REST server keeps a browser logged in: `jwt_secret` (the name of the secret holding the signing key), `token_lifetime_secs`, `max_session_secs`, `secure_cookie`. See [REST-SERVER.md](REST-SERVER.md#authentication). | `CAELUMORA_JWT_SECRET`, 15 minutes, 12 hours, `true` |
@@ -167,11 +167,12 @@ keeps them from being produced by any text it sends; if they cannot be read, the
 
 A channel may choose who answers by asking a decision model (`decision_policy`, see
 [CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). Only an operator configures it: in a
-template, or as preconfigured components a channel created on request names by a `ref`:
+template, or in a component bundle a channel created on request names by a `ref`:
 
 ```yaml
-components:                      # of the seed: kept in the ComponentStore
-- id: by-content
+component_bundles:               # of the seed: entities, found by name
+- id: 6f0d2b84-93c1-4e7a-b5f2-0a8e4c1d7b39
+  name: by-content
   components:
   - id: responders
     kind: decision_policy

@@ -43,7 +43,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{ActionType, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{ComponentStore, Persistence, StoreError};
+use caelumora_model::store::{Persistence, StoreError};
 use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use crate::component::ComponentRegistry;
@@ -227,7 +227,7 @@ impl TestRuntime<'_> {
     pub fn try_build(self) -> Result<RuntimeManager> {
         let registry = match self.registry {
             Some(registry) => registry,
-            None => test_registry(self.store.component_store()?),
+            None => test_registry(&self.store),
         };
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
         RuntimeManager::new(self.store, secrets, self.access_policy, self.confidentiality, &self.config, registry, &self.plugins)
@@ -280,7 +280,7 @@ impl World {
         let access_policy: Arc<dyn AccessPolicy> = Arc::<Recorder>::clone(&recorder);
         let store = Persistence::in_memory_with(Arc::clone(&access_policy), Arc::<Recorder>::clone(&recorder));
         memberships.bind(&store.entity_stores().unwrap().groups);
-        let mut registry = test_registry(store.component_store().unwrap());
+        let mut registry = test_registry(&store);
         register(&mut registry);
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new("local", json!({ "root": files.path().join("shell"), "shell": true, "destination": { "level": "internal" } }));
@@ -515,12 +515,12 @@ pub async fn shown(watch: &mut ChannelWatch, wanted: &str) -> ActorEvent {
     }).await.unwrap_or_else(|_| panic!("{wanted} is shown"))
 }
 
-/// The component kinds the tests build with, resolving references to
-/// preconfigured components in `component_store`: the runtime's own
-/// (`ComponentRegistry::built_in`). Those of an agent and a model are the
-/// agents' tests' (`caelumora_agents::testing::test_registry`, issue 370).
-pub fn test_registry(component_store: Arc<dyn ComponentStore>) -> ComponentRegistry {
-    ComponentRegistry::built_in(component_store)
+/// The component kinds the tests build with, resolving the bundles a `ref`
+/// names in `store`: the runtime's own (`ComponentRegistry::built_in`).
+/// Those of an agent and a model are the agents' tests'
+/// (`caelumora_agents::testing::test_registry`, issue 370).
+pub fn test_registry(store: &Persistence) -> ComponentRegistry {
+    ComponentRegistry::built_in(store.entity_stores().unwrap().component_bundles)
 }
 
 /// `lines`, as `World::asked` records them.

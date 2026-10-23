@@ -122,7 +122,7 @@ pub struct ChannelSnapshot {
     /// `Detail::BRIEFING`.
     pub briefing: Option<Briefing>,
     /// The kind of the channel's moderator, e.g. `policy_moderator` (issue
-    /// 174); `None` if it is a preconfigured component, whose kind is not
+    /// 174); `None` if it comes from a component bundle, whose kind is not
     /// known without reading it.
     pub moderator: Option<String>,
     /// The kind of the policy configured for the moderator's slot, e.g.

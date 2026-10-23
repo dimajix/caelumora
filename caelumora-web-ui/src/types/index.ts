@@ -182,9 +182,9 @@ export interface ChannelResponse {
   briefing?: string;
   /** All participants, in no particular order. */
   participants: ChannelParticipant[];
-  /** The kind of the moderator, e.g. `policy_moderator`; `null` if preconfigured (issue 174). */
+  /** The kind of the moderator, e.g. `policy_moderator`; `null` if it comes from a component bundle (issue 174). */
   moderator: string | null;
-  /** The kind of the policy in the moderator's slot - who answers - e.g. `round_robin_policy` or `mentions_only_policy` (issues 44, 174); `null` if preconfigured. */
+  /** The kind of the policy in the moderator's slot - who answers - e.g. `round_robin_policy` or `mentions_only_policy` (issues 44, 174); `null` if it comes from a component bundle. */
   responder_policy: string | null;
   /** The classification of the channel's contents (issue 133). */
   classification: Classification;

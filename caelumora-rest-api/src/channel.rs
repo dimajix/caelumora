@@ -143,7 +143,7 @@ pub struct ChannelResponse {
     /// completion and to render the `mentions` of a message.
     pub participants: Vec<ChannelParticipantResponse>,
     /// The kind of the moderator, e.g. `policy_moderator` (issue 174);
-    /// `null` if it is a preconfigured component.
+    /// `null` if it comes from a component bundle.
     pub moderator: Option<String>,
     /// The kind of the policy for the moderator's slot, e.g.
     /// `round_robin_policy` or `mentions_only_policy` - who is asked to

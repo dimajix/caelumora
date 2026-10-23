@@ -1180,10 +1180,12 @@ mod tests {
     #[tokio::test]
     async fn what_lies_in_a_scope_goes_with_its_session_or_channel() {
         use caelumora_model::agent::{Personality, PersonalityId};
+        use caelumora_model::component::ComponentBundle;
         use caelumora_model::user::UserId;
 
         let runtime = test_runtime();
         let personalities = Arc::clone(&runtime.entity_stores().personalities);
+        let bundles = Arc::clone(&runtime.entity_stores().component_bundles);
         let agents = Arc::clone(&runtime.entity_stores().agents);
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
@@ -1198,6 +1200,8 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
+        let bundle = ComponentBundle::new(ScopedName::new("tools", Scope::SessionScope { session_id: id }).unwrap(), Default::default(), Default::default());
+        bundles.create(&system, &bundle).await.unwrap();
         let agent_in = |name: &str, scope| Agent::new(ScopedName::new(name, scope).unwrap(), personality.id, ActorId::None);
         let sessions = agent_in("helper", Scope::SessionScope { session_id: id });
         let sides = agent_in("aside", Scope::ChannelScope { session_id: id, channel_id: side });
@@ -1221,11 +1225,13 @@ mod tests {
         manager.delete(&ctx, id).await.unwrap();
         assert!(!present(&sessions).await && !present(&sides).await, "the session's and its channels' go with it");
         assert!(personalities.get(&system, personality.id).await.is_err(), "so do its personalities");
+        assert!(bundles.get(&system, bundle.id).await.is_err(), "and its component bundles");
         assert!(present(&users).await, "the user's stays");
 
         manager.restore(&ctx, id).await.unwrap();
         assert!(present(&sessions).await && present(&sides).await, "back with it");
         assert!(personalities.get(&system, personality.id).await.is_ok());
+        assert!(bundles.get(&system, bundle.id).await.is_ok());
         assert!(!present(&earlier).await, "but not what was deleted before it");
 
         // A name taken meanwhile (issue 250): that one stays deleted, the

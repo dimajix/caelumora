@@ -19,6 +19,7 @@ use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::session::testing::{bare_channel, bare_session, detached_actor_runtime_in};
 use caelumora_runtime::testing::TestRuntime;
 use caelumora_model::session::SessionId;
+use caelumora_model::store::Persistence;
 use caelumora_runtime::workspace::testing::WithWorkspace;
 use caelumora_runtime::testing::{actor_runtime_in, test_registry as runtime_registry, World, STAFF};
 use async_trait::async_trait;
@@ -30,7 +31,6 @@ use caelumora_model::context::ModelProfile;
 use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{Grant, SecurityContext};
-use caelumora_model::store::ComponentStore;
 use caelumora_model::tool::{Tool, ToolCall, ToolVisibility};
 use caelumora_model::user::UserId;
 use futures::stream::BoxStream;
@@ -184,11 +184,11 @@ pub fn prompts() -> PromptTexts {
     PromptTexts::new(catalogue(), None)
 }
 
-/// The component kinds the tests of the agents build with, resolving
-/// references to preconfigured components in `component_store`: the
-/// runtime's (`testing::test_registry`) and an agent's (`with_agent_kinds`).
-pub fn test_registry(component_store: Arc<dyn ComponentStore>) -> ComponentRegistry {
-    let mut registry = runtime_registry(component_store);
+/// The component kinds the tests of the agents build with, resolving the
+/// bundles a `ref` names in `store`: the runtime's
+/// (`testing::test_registry`) and an agent's (`with_agent_kinds`).
+pub fn test_registry(store: &Persistence) -> ComponentRegistry {
+    let mut registry = runtime_registry(store);
     with_agent_kinds(&mut registry);
     registry
 }

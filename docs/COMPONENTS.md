@@ -26,12 +26,15 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
     an external agent, a channel, a session's commands - and hands out the facets that owner
     declared it asks for, and no other ([What a container accepts](#what-a-container-accepts)).
 
-A descriptor of the reserved kind `ref` builds no component of its own: its `params` name, by `id`,
-a list of preconfigured components kept in the `ComponentStore`, and it stands for all of them, in
-their order, where it is written. It is read afresh every time it is built, in the context of the
-graph that refers to it, so secrets are resolved as that caller and a list the caller may not read
-cannot be built. The price is that the components are not shared between references: a
-preconfigured `mcp_tool` discovers its tools on its own for every personality that uses it.
+A descriptor of the reserved kind `ref` builds no component of its own: its `params` name a
+component bundle (`ComponentBundle`) - an entity like a personality, with an owner, an
+access list and a name unique in its scope - by its `name`, and `scope` where it lies in another
+than the global one; it stands for all of the bundle's components, in their order, where it is
+written. The bundle is found by its name in exactly that scope, afresh every time the `ref` is
+built, in the context of the graph that refers to it, so secrets are resolved as that caller and a
+bundle the caller may not read cannot be built. The price is that the components are not shared
+between references: an `mcp_tool` of a bundle discovers its tools on its own for every personality
+that uses it.
 
 A descriptor of the reserved kind `default` builds on one of the defaults of the singles, with
 params of its own over the default's ([Building on a default](#building-on-a-default)).
@@ -39,11 +42,12 @@ params of its own over the default's ([Building on a default](#building-on-a-def
 ### Sharing components between personalities
 
 What many personalities should have alike - the channel's context, the tools every agent needs - is
-kept once, as preconfigured components, and each personality includes it with a `ref`:
+kept once, as a component bundle, and each personality includes it with a `ref`:
 
 ```yaml
-components:                      # of the seed: kept in the ComponentStore
-- id: channel-context
+component_bundles:               # of the seed: entities, found by name
+- id: 3b1f7e52-6a0c-4d8e-9f21-5c7a2b9d4e10
+  name: channel-context
   components:
   - { id: channel-participants, kind: channel_participants_prompt_provider }
   - { id: channel-language, kind: channel_language_prompt_provider }
@@ -51,20 +55,20 @@ personalities:
 - name: jonathan-assistant
   components:
   - { id: system-prompt, kind: static_system_prompt_provider, params: { ... } }
-  - { id: channel-context, kind: ref, params: { id: channel-context } }
+  - { id: channel-context, kind: ref, params: { name: channel-context } }
   - { id: memory, kind: agent_memory }
 ```
 
-*   An addition to a list reaches every personality that includes it the next time its agents are
+*   An addition to a bundle reaches every personality that includes it the next time its agents are
     built - not a running agent, as a change of its own personality does not either.
 *   Ids are unique across a `ComponentConfig` and the components its `ref`s stand for. A component
-    of an included list written again - beside the `ref` or through a second one - is a
+    of an included bundle written again - beside the `ref` or through a second one - is a
     configuration error naming the `ref`, not an override; a personality that wants a component
-    otherwise does not include the list, or includes a finer one.
-*   Preconfigured components cannot include a `ref` themselves: there is no depth and no cycle.
-*   A list that cannot be read - gone, or a share withdrawn - fails as unavailable. An agent whose
-    personality includes it is left out of its channel, as one whose personality was withdrawn is;
-    the channel runs with everyone else ([CHANNELS.md](CHANNELS.md)).
+    otherwise does not include the bundle, or includes a finer one.
+*   A bundle cannot include a `ref` itself: there is no depth and no cycle.
+*   A bundle that cannot be read - gone, deleted, or a share withdrawn - fails as unavailable. An
+    agent whose personality includes it is left out of its channel, as one whose personality was
+    withdrawn is; the channel runs with everyone else ([CHANNELS.md](CHANNELS.md)).
 *   What an agent was built from is recorded, not computed again: the configuration with every
     `ref` resolved is kept by its actor and shown to the agent's owner (`ReadAgentComponents`).
 *   Only components are shared. A personality's kind, roles, introduction and reasoning visibility
@@ -72,11 +76,11 @@ personalities:
 *   It serves every `ComponentConfig` alike - a channel's components and a session's commands too.
 *   A `ref` is read in the name the graph is built in, and also in the name of whoever names it,
     where that is someone else: a channel's components are built in its owner's name, so whoever
-    creates the channel may name only lists they may read themselves
+    creates the channel may name only bundles they may read themselves
     (`ComponentRegistry::require_acceptable`, issue 321).
 *   A kind whose params are trusted - where it sends what it is given, what that is cleared for -
     is declared `operator_only` (issue 403): it is written only where an operator writes, in the
-    seed's templates, personalities and preconfigured components. A request that writes one itself
+    seed's templates, personalities and component bundles. A request that writes one itself
     is refused (`ComponentError::OperatorOnly`); it names one through a `ref`.
 
 ## Facets
@@ -202,7 +206,7 @@ agent's body takes it once, as its components are built, and keeps it with every
     always named. A container asked for it that provides none fails then; nothing is checked
     beforehand. The `LLMClient` has no default in the core, only the one the program names.
 *   What a container's single is, is known without building it (`ComponentRegistry::kind_of`) -
-    unless the container refers to preconfigured components, which might provide it.
+    unless the container refers to a component bundle, which might provide it.
 *   The default comes from, in this order: the container's own component; the defaults the
     container was built with (an external agent's actor gives its `ContextProvider` so,
     `external_context_provider`); the configuration (`AppConfig::component_defaults`, see
@@ -249,8 +253,8 @@ personalities:                   # of the seed
     agent's `ContextProvider`), then among the configuration's. One that is not configured keeps
     the component from being built, with a message that names it: a seed that builds on `model`
     needs a configuration whose default has that id.
-*   It may stand among preconfigured components as well; there it builds on the defaults of the
-    container that includes them. A default cannot build on a default itself.
+*   It may stand in a component bundle as well; there it builds on the defaults of the container
+    that includes the bundle. A default cannot build on a default itself.
 *   What the container was built from (`ComponentContainer::components`) shows the component as it
     is built, its params merged; `ComponentRegistry::kind_of` tells the default's kind.
 *   A component that builds on a default of a kind only an operator configures counts as written,

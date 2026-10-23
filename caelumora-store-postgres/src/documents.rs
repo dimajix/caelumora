@@ -13,18 +13,20 @@ use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tracing::info;
+use uuid::Uuid;
 
 /// The form of the tables of the kinds this program makes and reads, as
 /// `kinds.schema_version` records it: a change of the form that all of them
-/// share counts it up and migrates every table in code.
-const KIND_TABLE_VERSION: i32 = 1;
+/// share counts it up, and a table of an older form is refused - it is
+/// deleted, as stored data that is no longer read is.
+const KIND_TABLE_VERSION: i32 = 2;
 
 /// The longest identifier Postgres keeps; a longer one would be cut short,
 /// and two kinds could meet in one table.
 const MAX_IDENTIFIER: usize = 63;
 
 /// The documents of one kind in its table (issue 03), `entity_<kind>`: the
-/// id - ordered as `str` orders it (`COLLATE "C"`) -, the key of the name
+/// id, a `uuid` - ordered bytewise, as `Uuid` orders it -, the key of the name
 /// (`ScopedName::key`), whether it is marked deleted, and the body. A name is
 /// kept unique among what is not deleted by a partial unique index, the body
 /// searched by a GIN index.
@@ -87,7 +89,7 @@ impl PgDocuments {
     async fn create_table(&self, tx: &mut Transaction<'_, Postgres>) -> StoreResult<()> {
         let table = &self.table;
         let statements = [
-            format!("CREATE TABLE {table} (id text COLLATE \"C\" PRIMARY KEY, name_key text, deleted boolean NOT NULL, body jsonb NOT NULL)"),
+            format!("CREATE TABLE {table} (id uuid PRIMARY KEY, name_key text, deleted boolean NOT NULL, body jsonb NOT NULL)"),
             format!("CREATE UNIQUE INDEX {} ON {table} (name_key) WHERE NOT deleted", quoted(&self.name_index)),
             format!("CREATE INDEX {} ON {table} USING gin (body jsonb_path_ops)", quoted(&format!("entity_{}_body", self.kind))),
         ];
@@ -107,7 +109,7 @@ impl PgDocuments {
 
     /// `err` of a write of the document `id`: a name taken if the index of
     /// the names refused it, a conflict if the id is taken.
-    fn refused(&self, err: sqlx::Error, id: &str) -> StoreError {
+    fn refused(&self, err: sqlx::Error, id: Uuid) -> StoreError {
         if let sqlx::Error::Database(database) = &err {
             if database.is_unique_violation() {
                 return match database.constraint() == Some(self.name_index.as_str()) {
@@ -122,19 +124,19 @@ impl PgDocuments {
 
 #[async_trait]
 impl DocumentStorage for PgDocuments {
-    async fn get(&self, id: &str) -> StoreResult<Option<Value>> {
+    async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
         let pool = self.ready().await?;
         sqlx::query_scalar(sql(format!("SELECT body FROM {} WHERE id = $1", self.table))).bind(id).fetch_optional(pool).await.map_err(|e| self.failed(e))
     }
 
     /// What of `filter` SQL can judge is judged by the database
     /// (`Condition`), the rest by the store.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         let pool = self.ready().await?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let condition = filter.map(|filter| Condition::of(filter, "body", 4));
         let meeting = condition.as_ref().map_or("true", |condition| condition.sql.as_str());
-        let statement = format!("SELECT id, body FROM {} WHERE deleted = $1 AND ($2::text IS NULL OR id > $2) AND {meeting} ORDER BY id LIMIT $3", self.table);
+        let statement = format!("SELECT id, body FROM {} WHERE deleted = $1 AND ($2::uuid IS NULL OR id > $2) AND {meeting} ORDER BY id LIMIT $3", self.table);
         let query = sqlx::query_as(sql(statement)).bind(deleted).bind(after).bind(limit);
         let query = match condition {
             Some(condition) => condition.bound(query),
@@ -152,8 +154,8 @@ impl DocumentStorage for PgDocuments {
     async fn insert(&self, document: Document) -> StoreResult<()> {
         let pool = self.ready().await?;
         sqlx::query(sql(format!("INSERT INTO {} (id, name_key, deleted, body) VALUES ($1, $2, $3, $4)", self.table)))
-            .bind(&document.id).bind(document.name.as_ref().map(ScopedName::key)).bind(document.deleted).bind(&document.body)
-            .execute(pool).await.map_err(|e| self.refused(e, &document.id))?;
+            .bind(document.id).bind(document.name.as_ref().map(ScopedName::key)).bind(document.deleted).bind(&document.body)
+            .execute(pool).await.map_err(|e| self.refused(e, document.id))?;
         Ok(())
     }
 
@@ -162,18 +164,12 @@ impl DocumentStorage for PgDocuments {
         let upsert = format!("INSERT INTO {} (id, name_key, deleted, body) VALUES ($1, $2, $3, $4) \
             ON CONFLICT (id) DO UPDATE SET name_key = EXCLUDED.name_key, deleted = EXCLUDED.deleted, body = EXCLUDED.body", self.table);
         sqlx::query(sql(upsert))
-            .bind(&document.id).bind(document.name.as_ref().map(ScopedName::key)).bind(document.deleted).bind(&document.body)
-            .execute(pool).await.map_err(|e| self.refused(e, &document.id))?;
+            .bind(document.id).bind(document.name.as_ref().map(ScopedName::key)).bind(document.deleted).bind(&document.body)
+            .execute(pool).await.map_err(|e| self.refused(e, document.id))?;
         Ok(())
     }
 
-    async fn remove(&self, id: &str) -> StoreResult<bool> {
-        let pool = self.ready().await?;
-        let done = sqlx::query(sql(format!("DELETE FROM {} WHERE id = $1", self.table))).bind(id).execute(pool).await.map_err(|e| self.failed(e))?;
-        Ok(done.rows_affected() > 0)
-    }
-
-    async fn remove_deleted(&self, id: &str) -> StoreResult<bool> {
+    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
         let pool = self.ready().await?;
         let done = sqlx::query(sql(format!("DELETE FROM {} WHERE id = $1 AND deleted", self.table))).bind(id).execute(pool).await.map_err(|e| self.failed(e))?;
         Ok(done.rows_affected() > 0)

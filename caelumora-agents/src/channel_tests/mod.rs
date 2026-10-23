@@ -162,7 +162,7 @@ async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn Ac
     personalities.update(&system, &personality).await.expect("stored");
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
-    let mut registry = test_registry(store.component_store().unwrap());
+    let mut registry = test_registry(&store);
     registry.register(
         ComponentKind::new("test_model").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(),
         move |_descriptor, _context| {

@@ -301,7 +301,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator_tool:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
         let store = Persistence::in_memory();
-        let mut registry = test_registry(store.component_store().unwrap());
+        let mut registry = test_registry(&store);
         registry.register(ComponentKind::new("gemma").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), |_, _| {
             let model = Arc::new(Gemma);
             let mut facets = ComponentFacets::empty();

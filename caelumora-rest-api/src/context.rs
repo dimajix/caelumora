@@ -43,8 +43,8 @@ pub struct AgentToolsResponse {
     pub tool_sets: Vec<ToolSet>,
 }
 
-/// The components an agent was built from in a channel, the preconfigured
-/// ones it includes resolved (issue 270), in their order. None if it is no
+/// The components an agent was built from in a channel, the bundles it
+/// includes resolved (issue 270), in their order. None if it is no
 /// agent run here or has left - and also while the channel does not run.
 #[derive(Debug, Serialize)]
 pub struct AgentComponentsResponse {

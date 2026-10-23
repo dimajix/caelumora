@@ -111,9 +111,9 @@ moves information asks both, its own permission first.
 
 ## Ownership
 
-Every stored entity - session, channel, agent, personality, session template, workspace, skill,
-artifact, group, preconfigured component - carries `SecurityAttributes`: an owner and an access
-list. This is the one place ownership and access are recorded; see [Access lists](#access-lists).
+Every stored entity - session, channel, agent, personality, session template, component bundle,
+workspace, skill, artifact, group - carries `SecurityAttributes`: an owner and an access list.
+This is the one place ownership and access are recorded; see [Access lists](#access-lists).
 
 *   A session and its channels are owned by the user they were created for, and read by their
     members: an entry naming the group of their participants (see [Groups](#groups)), which follows
@@ -203,13 +203,13 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   Deleting an agent is its owner's. The channels it takes part in are not changed: it rests in
     them, and that its actors stop there - and start again once it is restored - is done in the
     runtime's name, a consequence of the deletion, not a change of channels owned by others.
-*   What lies in a session's or a channel's scope - personalities, session templates, agents,
-    workspaces, skills, artifacts - is deleted and restored with it in the name of whoever deletes
-    or restores it (issue 320); only finding it is done in the runtime's name. Whoever deletes a
-    session deletes what of its scope they may; if something is left - an artifact another
-    participant published there, a contributor's agent -, the session is kept, and they are told
-    what is left, by kind and count (`SessionError::ScopeNotEmpty`). What they may is deleted all
-    the same, so that what is left to do is plain: its owners keep it elsewhere or delete it.
+*   What lies in a session's or a channel's scope - personalities, session templates, component
+    bundles, agents, workspaces, skills, artifacts - is deleted and restored with it in the name of
+    whoever deletes or restores it (issue 320); only finding it is done in the runtime's name.
+    Whoever deletes a session deletes what of its scope they may; if something is left - an artifact
+    another participant published there, a contributor's agent -, the session is kept, and they are
+    told what is left, by kind and count (`SessionError::ScopeNotEmpty`). What they may is deleted
+    all the same, so that what is left to do is plain: its owners keep it elsewhere or delete it.
     Whoever restores a session restores it and what of its scope they may; the rest stays deleted
     for its owner to restore. Purging is the system's anyway and done in the runtime's name.
 *   The groups of the participants of a session and its channels are not among it: they go and come
@@ -549,8 +549,8 @@ question, in the viewer's name:
 *   A participant answers what may be read of it: an agent's context to whom may read it
     (`ReadAgentContext`); its tools to whoever reads the agent and every participant of the channel,
     since what an agent can do there is no secret among those it works with (`ReadAgentTools`); what
-    it was built from to its owner alone, since that is configuration and its preconfigured
-    components may have been shared with its owner alone (`ReadAgentComponents`).
+    it was built from to its owner alone, since that is configuration and the component bundles it
+    includes may have been shared with its owner alone (`ReadAgentComponents`).
 *   Workspaces and artifacts are reached by their access lists, wherever the viewer acts, cleared
     for their classification; an artifact's view holds and hands out only the versions the viewer
     may read. Where a version was published and by whom is named only where the viewer reaches that

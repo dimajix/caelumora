@@ -116,8 +116,8 @@ impl SessionLoop {
     /// by the store); the channel belongs to the session's owner, like the
     /// session's others, and its components are built in that owner's name
     /// (issue 321). In the order of issue 304: what `spec` asks for is
-    /// validated - the preconfigured components it names read in the name
-    /// of `context`, who names them -, then creating the channel is asked,
+    /// validated - the component bundles it names read in the name of
+    /// `context`, who names them -, then creating the channel is asked,
     /// then its participants' admission, and the store asks again as it stores
     /// (issue 312). It is built and stored empty and started; then its
     /// participants join it as its founders, by the one way in
@@ -129,9 +129,8 @@ impl SessionLoop {
     /// - `ValueError` if its name is no name or its language no tag.
     /// - `StoreError::NameTaken` if the session has a channel of that name
     ///   (issue 250).
-    /// - [`SessionError`] if `spec` asks for something that cannot be:
-    ///   components that make no moderator, or name preconfigured ones
-    ///   `context` may not read, or a participant who is not one of the
+    /// - [`SessionError`] if `spec` asks for something that cannot be: components that make no
+    ///   moderator, or name bundles `context` may not read, or a participant who is not one of the
     ///   session's.
     /// - `StoreError::PermissionDenied` if `context` may not create the
     ///   channel or change the session; nothing is changed then.
@@ -160,8 +159,8 @@ impl SessionLoop {
         }
 
         // Components the channel would not take are refused before the verb
-        // (issue 337); and whoever names preconfigured components names only
-        // what they may read themselves, though the channel builds them in
+        // (issue 337); and whoever names component bundles names only what
+        // they may read themselves, though the channel builds them in
         // its owner's name (issue 321): their own request.
         self.runtime_manager.component_registry()
             .require_acceptable(&spec.components, ChannelLoop::COMPONENT_FACETS, context).await

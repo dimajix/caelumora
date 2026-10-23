@@ -88,8 +88,8 @@ pub trait Actor: Any + Debug + Send + Sync {
         Vec::new()
     }
 
-    /// What it was built from, its preconfigured components resolved (issue
-    /// 270). None for an actor that is built from no components - a user,
+    /// What it was built from, the component bundles it includes resolved
+    /// (issue 270). None for an actor that is built from no components - a user,
     /// an approver.
     fn components(&self) -> ComponentConfig {
         ComponentConfig::default()

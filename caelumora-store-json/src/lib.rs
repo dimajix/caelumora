@@ -224,11 +224,12 @@ async fn read_body(path: &Path) -> StoreResult<Option<Value>> {
     }
 }
 
-/// The documents in `dir` - every `*.json` file -, each with its key, the
-/// file's name without `.json`, and its path; temporary files of writes in
-/// progress, or left behind by a crash, are not among them. Only the
-/// directory is read: a document is read when it is its turn.
-async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(String, PathBuf)>> {
+/// The documents in `dir` - every `*.json` file named by a UUID -, each with
+/// its id, the file's name without `.json`, and its path; temporary files of
+/// writes in progress, or left behind by a crash, are not among them, and a
+/// file of another name is left out and logged. Only the directory is read:
+/// a document is read when it is its turn.
+async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(Uuid, PathBuf)>> {
     let mut documents = Vec::new();
     let mut entries = fs::read_dir(dir).await.map_err(to_backend_error)?;
     loop {
@@ -245,8 +246,13 @@ async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(String, PathBuf)>> {
             continue;
         }
 
-        let key = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default().to_string();
-        documents.push((key, path));
+        // Named as `JsonDocuments::path` names it - hyphenated, in small
+        // letters -, so that what a scan lists is found by its id.
+        let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
+        match Uuid::parse_str(stem) {
+            Ok(id) if id.to_string() == stem => documents.push((id, path)),
+            _ => warn!("A document in {:?} is not named by its id: {:?}", dir, path.file_name()),
+        }
     }
     Ok(documents)
 }
@@ -345,13 +351,6 @@ fn to_backend_error(err: impl Display) -> StoreError {
     StoreError::Backend(err.to_string())
 }
 
-fn sanitize_file_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-        .collect()
-}
-
 /// Opens a kind in the directory of its name, `entities/<kind>`. The store of
 /// the states is the JSON file store itself.
 impl PersistenceBackend for JsonFileStore {
@@ -410,8 +409,8 @@ impl JsonDocuments {
     }
 
     /// Where the document of `id` is.
-    fn path(&self, id: &str) -> PathBuf {
-        self.dir.join(format!("{}.json", sanitize_file_component(id)))
+    fn path(&self, id: Uuid) -> PathBuf {
+        self.dir.join(format!("{id}.json"))
     }
 
     /// The kind's lock for names, if `document` has one to take.
@@ -463,7 +462,7 @@ fn named(document: &Document) -> Option<&ScopedName> {
 
 #[async_trait]
 impl DocumentStorage for JsonDocuments {
-    async fn get(&self, id: &str) -> StoreResult<Option<Value>> {
+    async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
         read_json_opt(&self.path(id)).await
     }
 
@@ -471,7 +470,7 @@ impl DocumentStorage for JsonDocuments {
     /// turn, and judges `filter` on what they hold; whether one is marked
     /// deleted it leaves to the store, which would read it as its type to
     /// tell. A file that is not JSON is left out and logged.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         let mut found = Vec::new();
         for (id, path) in ordered_after(documents_in_dir(&self.dir).await?, after) {
             if found.len() >= limit {
@@ -497,7 +496,7 @@ impl DocumentStorage for JsonDocuments {
     }
 
     async fn insert(&self, document: Document) -> StoreResult<()> {
-        let path = self.path(&document.id);
+        let path = self.path(document.id);
         let _names = self.names_lock(&document).await;
         if fs::try_exists(&path).await.map_err(to_backend_error)? {
             return Err(StoreError::Conflict(format!("{} {} already exists", self.kind, document.id)));
@@ -510,7 +509,7 @@ impl DocumentStorage for JsonDocuments {
     /// Reads the others of the kind only if `document` takes another name
     /// than it has as stored: whatever else changes takes nobody's name.
     async fn replace(&self, document: Document) -> StoreResult<()> {
-        let path = self.path(&document.id);
+        let path = self.path(document.id);
         let _names = self.names_lock(&document).await;
         if named(&document).is_some() {
             let stored = self.read(&path).await;
@@ -522,16 +521,10 @@ impl DocumentStorage for JsonDocuments {
         write_json_atomic(&path, &document.body).await
     }
 
-    async fn remove(&self, id: &str) -> StoreResult<bool> {
-        let path = self.path(id);
-        debug!("Deleting {} at {}", self.kind, path.display());
-        delete_if_exists(&path).await
-    }
-
     /// Reads the document right before: restored meanwhile, it stays. A file
     /// cannot be removed on that condition atomically; whoever restores and
     /// purges at once serialises them (`SessionManager`).
-    async fn remove_deleted(&self, id: &str) -> StoreResult<bool> {
+    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
         let path = self.path(id);
         let Some(body) = read_json_opt::<Value>(&path).await? else { return Ok(false) };
         if !(self.document_of)(body)?.deleted {
@@ -740,6 +733,18 @@ mod tests {
         Persistence::over(Arc::new(store(dir)), policy, Arc::new(ConfidentialityRules::default())).unwrap()
     }
 
+    /// A new session of `name`, of nobody, with nothing in it.
+    fn session(name: &str) -> Session {
+        Session {
+            summary: None, briefing: None, language: None, time_zone: None,
+            approval_rules: Vec::new(),
+            workspace: None,
+            id: SessionId(Uuid::new_v4()), name: Name::new(name).unwrap(), participants: Vec::new(), channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
+            security_attributes: SecurityAttributes::default(), deleted: None,
+        }
+    }
+
     /// The store of the kind `T` in the files under `dir`, which permits
     /// everything.
     fn of_kind<T: Deletable>(dir: &Path) -> Arc<dyn EntityStore<T>> {
@@ -795,12 +800,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn behaves_as_a_component_store() {
-        let dir = tempdir().unwrap();
-        suite::component_store_behaves(checked(dir.path(), Arc::new(AllowAllPolicy::new())).component_store().unwrap().as_ref()).await;
-    }
-
-    #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
         let dir = tempdir().unwrap();
         suite::deleting_marks(&checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap()).await;
@@ -819,18 +818,28 @@ mod tests {
         let dir = tempdir().unwrap();
         let sessions = of_kind::<Session>(dir.path());
         let system = SecurityContext::system();
-        let session = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            id: SessionId(Uuid::new_v4()), name: Name::new("old").unwrap(), participants: Vec::new(), channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(), deleted: None,
-        };
+        let session = session("old");
         sessions.create(&system, &session).await.unwrap();
         let text = fs::read_to_string(path_of::<Session>(dir.path(), &session.id)).await.unwrap();
         assert!(!text.contains("deleted"), "{text}");
         assert!(sessions.get(&system, session.id).await.unwrap().deleted.is_none());
+    }
+
+    /// A file in the directory of a kind that is not named by a UUID is no
+    /// document of it (issue 455): a list leaves it out, and the rest is
+    /// listed.
+    #[tokio::test]
+    async fn a_file_not_named_by_an_id_is_left_out_of_a_list() {
+        let dir = tempdir().unwrap();
+        let sessions = of_kind::<Session>(dir.path());
+        let system = SecurityContext::system();
+        let session = session("kept");
+        sessions.create(&system, &session).await.unwrap();
+        let stray = path_of::<Session>(dir.path(), &session.id).with_file_name("notes.json");
+        fs::copy(path_of::<Session>(dir.path(), &session.id), &stray).await.unwrap();
+
+        let listed = sessions.list(&system, &Query::all()).await.unwrap();
+        assert_eq!(listed.items.iter().map(|s| s.id).collect::<Vec<_>>(), [session.id], "the stray file is no session");
     }
 
     #[tokio::test]
@@ -928,21 +937,7 @@ mod tests {
             deleted: None,
         };
         let channel_id = channel.id;
-        let session = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            commands: Default::default(),
-            privacy: Default::default(),
-            id: session_id,
-            name: Name::new("to-delete").unwrap(),
-            participants: Vec::new(),
-            channels: vec![channel.id],
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(),
-            deleted: None,
-        };
+        let session = Session { id: session_id, channels: vec![channel.id], ..session("to-delete") };
         sessions.create(&ctx, &session).await.unwrap();
 
         // Write out channel state so we can assert it gets removed.
@@ -980,25 +975,11 @@ mod tests {
         let sessions = of_kind::<Session>(dir.path());
         let ctx = SecurityContext::default();
 
-        let s1 = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            commands: Default::default(),
-            privacy: Default::default(),
-            id: SessionId(Uuid::new_v4()),
-            name: Name::new("session-1").unwrap(),
-            participants: Vec::new(),
-            channels: Vec::new(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(),
-            deleted: None,
-        };
+        let s1 = session("session-1");
         sessions.create(&ctx, &s1).await.unwrap();
 
         // Create a corrupted JSON file
-        let corrupted_path = dir.path().join("entities/session/corrupted.json");
+        let corrupted_path = dir.path().join(format!("entities/session/{}.json", Uuid::new_v4()));
         std_fs::write(corrupted_path, "invalid json").unwrap();
 
         // This should NOT fail, it should return s1 and log a warning

@@ -8,26 +8,26 @@
 //! storage is not generic, so that a backend is a trait object and opens the
 //! storage of a kind it was never told the type of - a plugin's too.
 
-use crate::component::StoredComponents;
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, SecurityContext};
 use crate::store::access::Access;
-use crate::store::query::{Cursor, FieldPath, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, EntityStore, Policies, StoreError, StoreResult, Stored};
+use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
+use crate::store::{EntityStore, Policies, StoreError, StoreResult, Stored};
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
 use serde_json::Value;
-use std::fmt::{self, Debug};
+use std::fmt::{self, Debug, Display};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tracing::warn;
+use uuid::Uuid;
 
 /// A document as it is handed to a storage: its body, and what the storage
 /// needs to know of it without reading it as its type - its id, its name
 /// unique in its scope, whether it is marked deleted.
 #[derive(Debug, Clone)]
 pub struct Document {
-    pub id: String,
+    pub id: Uuid,
     /// Its name, if its kind keeps names unique in their scope
     /// (`Stored::unique_name`): no other document of the kind that is not
     /// deleted may have it. A storage compares names by `==`, or - where it
@@ -46,7 +46,7 @@ impl Document {
     /// `StoreError::Backend` if `value` cannot be serialized.
     pub(crate) fn of<T: Stored>(value: &T) -> StoreResult<Self> {
         let body = serde_json::to_value(value).map_err(|e| StoreError::Backend(format!("a {} cannot be serialized: {e}", T::KIND)))?;
-        Ok(Self { id: value.id().to_string(), name: value.unique_name(), deleted: value.deleted().is_some(), body })
+        Ok(Self { id: value.id().into(), name: value.unique_name(), deleted: value.deleted().is_some(), body })
     }
 
     /// The document of `body`, read as a `T`: what a storage that keeps
@@ -57,7 +57,7 @@ impl Document {
     /// `StoreError::Backend` if `body` is no `T`.
     pub(crate) fn read<T: Stored>(body: Value) -> StoreResult<Self> {
         let value: T = read_as(body.clone())?;
-        Ok(Self { id: value.id().to_string(), name: value.unique_name(), deleted: value.deleted().is_some(), body })
+        Ok(Self { id: value.id().into(), name: value.unique_name(), deleted: value.deleted().is_some(), body })
     }
 }
 
@@ -73,17 +73,16 @@ pub type DocumentOf = fn(Value) -> StoreResult<Document>;
 pub trait DocumentStorage: Debug + Send + Sync {
     /// The body of the document `id`, deleted or not; `None` if there is
     /// none.
-    async fn get(&self, id: &str) -> StoreResult<Option<Value>>;
+    async fn get(&self, id: Uuid) -> StoreResult<Option<Value>>;
 
-    /// The documents after the id `after`, in the order of their ids - as
-    /// `str` orders them -, at most `limit`, each with its id (issue 447):
-    /// every one that is marked deleted if `deleted`, not marked otherwise,
-    /// and meets `filter` - and others besides, if the storage cannot tell:
-    /// a scan may hand out more than it is asked for, never less, since the
-    /// store judges every document again. It hands out fewer than `limit`
-    /// only where none follow. A document a storage cannot read as it is
-    /// kept is left out and logged; any other failure fails the scan.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>>;
+    /// The documents after the id `after`, in the order of their ids - as `Uuid` orders them,
+    /// bytewise -, at most `limit`, each with its id (issue 447): every one that
+    /// is marked deleted if `deleted`, not marked otherwise, and meets `filter` - and others
+    /// besides, if the storage cannot tell: a scan may hand out more than it is asked for, never
+    /// less, since the store judges every document again. It hands out fewer than `limit` only
+    /// where none follow. A document a storage cannot read as it is kept is left out and logged;
+    /// any other failure fails the scan.
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>>;
 
     /// The body of the document of `name` that is not marked deleted, if
     /// there is one - there is at most one (issue 250).
@@ -98,13 +97,10 @@ pub trait DocumentStorage: Debug + Send + Sync {
     /// `StoreError::NameTaken` if another that is not deleted has its name.
     async fn replace(&self, document: Document) -> StoreResult<()>;
 
-    /// Removes the document `id` for good; whether there was one.
-    async fn remove(&self, id: &str) -> StoreResult<bool>;
-
     /// Removes the document `id` for good if it is marked deleted, in the
     /// same step; whether it was removed. What was restored meanwhile
     /// stays.
-    async fn remove_deleted(&self, id: &str) -> StoreResult<bool>;
+    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool>;
 }
 
 /// How many documents a list asks a storage for at a time (issue 447):
@@ -146,14 +142,14 @@ impl<T: Stored> CheckedStore<T> {
 
     /// The entity of `id` as it is stored, deleted or not.
     async fn stored(&self, id: &T::Id) -> StoreResult<Option<T>> {
-        self.storage.get(&id.to_string()).await?.map(read_as).transpose()
+        self.storage.get(id.clone().into()).await?.map(read_as).transpose()
     }
 
     /// The entity of `body`, the document `id`, if it meets `filter` -
     /// judged on the document, before it is read as its type. `None` as well
     /// if it cannot be read as its type, which is logged: one broken document
     /// does not break a list.
-    fn meeting(id: &str, body: Value, filter: Option<&Filter<T::Field>>) -> Option<T> {
+    fn meeting(id: impl Display, body: Value, filter: Option<&Filter<T::Field>>) -> Option<T> {
         if filter.is_some_and(|filter| !filter.matches(&body)) {
             return None;
         }
@@ -183,15 +179,6 @@ impl<T: Stored> CheckedStore<T> {
         self.storage.replace(Document::of(value)?).await
     }
 
-    /// Removes the entity for good: deleting a kind that is not marked.
-    async fn remove(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        let stored = self.stored(&id).await?;
-        if !self.access(ctx).delete(stored.as_ref()).await? {
-            return Ok(false);
-        }
-        self.storage.remove(&id.to_string()).await
-    }
-
     /// The page `query` asks for, among what is deleted if `deleted`: read
     /// from the storage in batches (issue 447), each document judged against
     /// the whole filter and asked about, until the limit counts what the
@@ -203,14 +190,14 @@ impl<T: Stored> CheckedStore<T> {
         access.allow(ActionType::List(T::KIND)).await?;
         let filter = query.filter.as_ref();
         let by_path = filter.map(Filter::by_path);
-        let mut after = query.after.as_ref().map(|cursor| cursor.key().to_string());
+        let mut after = query.after.as_ref().map(Cursor::id);
         let mut items = Vec::new();
         loop {
-            let batch = self.storage.scan(by_path.as_ref(), deleted, after.as_deref(), SCAN_BATCH).await?;
+            let batch = self.storage.scan(by_path.as_ref(), deleted, after, SCAN_BATCH).await?;
             let more = batch.len() == SCAN_BATCH;
             let mut rest = batch.into_iter().peekable();
             while let Some((id, body)) = rest.next() {
-                if let Some(candidate) = Self::meeting(&id, body, filter) {
+                if let Some(candidate) = Self::meeting(id, body, filter) {
                     let readable = match deleted {
                         true => access.readable_deleted(&candidate).await,
                         false => access.readable(&candidate).await,
@@ -277,7 +264,7 @@ impl<T: Deletable> EntityStore<T> for CheckedStore<T> {
         }
         // Only if it is still marked: restored while the purge was asked
         // about, it stays.
-        self.storage.remove_deleted(&id.to_string()).await
+        self.storage.remove_deleted(id.into()).await
     }
 
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
@@ -296,31 +283,10 @@ impl<T: Deletable> EntityStore<T> for CheckedStore<T> {
         access.allow(ActionType::List(T::KIND)).await?;
         let not_found = || StoreError::NotFound { entity: T::KIND.name(), id: name.to_string() };
         let Some(body) = self.storage.named(name).await? else { return Err(not_found()) };
-        match Self::meeting(&name.to_string(), body, None) {
+        match Self::meeting(name, body, None) {
             Some(value) if access.readable(&value).await => Ok(value),
             _ => Err(not_found()),
         }
-    }
-}
-
-/// Preconfigured components, kept like the entities and removed for good
-/// (issue 164).
-#[async_trait]
-impl ComponentStore for CheckedStore<StoredComponents> {
-    async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.create(ctx, value).await
-    }
-    async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
-        self.get(ctx, id.to_string()).await
-    }
-    async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.update(ctx, value).await
-    }
-    async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.remove(ctx, id.to_string()).await
-    }
-    async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
-        self.page(ctx, query, false).await
     }
 }
 
@@ -341,17 +307,17 @@ mod tests {
     /// whatever it is asked: what a storage that cannot tell may do.
     #[derive(Debug, Default)]
     struct Careless {
-        documents: Mutex<Vec<(String, Value)>>,
+        documents: Mutex<Vec<(Uuid, Value)>>,
         scans: AtomicUsize,
     }
 
     #[async_trait]
     impl DocumentStorage for Careless {
-        async fn get(&self, id: &str) -> StoreResult<Option<Value>> {
-            Ok(self.documents.lock().unwrap().iter().find(|(found, _)| found == id).map(|(_, body)| body.clone()))
+        async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
+            Ok(self.documents.lock().unwrap().iter().find(|(found, _)| *found == id).map(|(_, body)| body.clone()))
         }
 
-        async fn scan(&self, _filter: Option<&Filter<FieldPath>>, _deleted: bool, after: Option<&str>, limit: usize) -> StoreResult<Vec<(String, Value)>> {
+        async fn scan(&self, _filter: Option<&Filter<FieldPath>>, _deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
             self.scans.fetch_add(1, Ordering::SeqCst);
             let documents = self.documents.lock().unwrap().clone();
             Ok(ordered_after(documents, after).take(limit).collect())
@@ -370,11 +336,7 @@ mod tests {
             Ok(())
         }
 
-        async fn remove(&self, _id: &str) -> StoreResult<bool> {
-            Ok(false)
-        }
-
-        async fn remove_deleted(&self, _id: &str) -> StoreResult<bool> {
+        async fn remove_deleted(&self, _id: Uuid) -> StoreResult<bool> {
             Ok(false)
         }
     }
@@ -403,7 +365,7 @@ mod tests {
         let mut marked = deleted.clone();
         marked.set_deleted(Some(Removal::now(ActorId::None)));
         storage.insert(Document::of(&marked).unwrap()).await.unwrap();
-        hers.sort_by_key(|id| id.to_string());
+        hers.sort();
 
         let theirs = Query::filtered(Filter::eq(GroupField::Owner, ActorId::User(alice)));
         let page = groups.list(&system, &theirs).await.unwrap();

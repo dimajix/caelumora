@@ -27,7 +27,7 @@ use caelumora_model::actor::{ActorId, Rejection, ActorEvent, Envelope};
 use caelumora_model::agent::{Agent, AgentId, HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalDecision, ApprovalRule, ArgumentMatcher, Reach, RuleDecision, ToolMatcher, ApprovalRequest, ApprovalRuleId};
 use caelumora_model::channel::HistoryAccess;
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
+use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
 use caelumora_model::value::name::{Name, ScopedName};
@@ -42,7 +42,7 @@ use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError,
 use caelumora_model::user::UserId;
 use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
 use caelumora_agents::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_agents::testing::{calling, register_once, Once, TestAgents};
 use caelumora_agents::testing as agent_testing;
@@ -251,7 +251,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// P7: the preconfigured components a personality includes (issue 270) -
+/// P7: the component bundles a personality includes (issue 270) -
 /// shared with the agent's owner by someone else - are read in the agent's
 /// name, as its channel starts, as its personality is; once the share is
 /// withdrawn, the agent is not run, but its session opens without it, as
@@ -259,25 +259,25 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
 #[tokio::test]
 async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let world = agent_testing::world().await;
-    let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.component_store().unwrap().create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
+    let tools = ComponentBundle::new(ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(), ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.entity_stores().unwrap().component_bundles.create(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
-    hers.components = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] };
+    hers.components = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: serde_json::json!({ "name": "bobs-tools" }), ..ComponentDescriptor::new("tools", BUNDLE_REF_KIND) }] };
     world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &hers).await.unwrap();
     let helper = world.agent("helper", world.alice, &hers).await;
 
     let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
     let personality = asked.iter().position(|line| line == "alice as helper: GetPersonality(alice's) yes").expect("its personality is read in its name");
-    let components = asked.iter().position(|line| line == "alice as helper: GetComponents(bob's) yes").expect("and so are the components it includes");
+    let components = asked.iter().position(|line| line == "alice as helper: GetComponentBundle(bob's) yes").expect("and so are the components it includes");
     assert!(personality < components, "first the personality, then what it includes: {asked:?}");
     assert!(session.channels()[0].participant_ids().contains(&ActorId::Agent(helper)), "it runs");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
-    let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..tools };
-    world.store.component_store().unwrap().update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns them");
+    let withdrawn = ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..tools };
+    world.store.entity_stores().unwrap().component_bundles.update(&World::as_user(world.bob), &withdrawn).await.expect("bob owns them");
     let (reopened, asked) = world.asked(world.manager.open(&World::as_user(world.alice), session.id())).await;
     let reopened = reopened.expect("the session still opens: bob cannot stop alice's session so");
-    assert!(asked.contains(&"alice as helper: GetComponents(bob's) no".to_string()), "{asked:?}");
+    assert!(asked.contains(&"alice as helper: GetComponentBundle(bob's) no".to_string()), "{asked:?}");
     assert!(!reopened.channels()[0].participant_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
     assert!(reopened.channels()[0].participant_ids().contains(&ActorId::User(world.alice)), "everyone else is");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -581,19 +581,18 @@ async fn which_tools_an_agent_has_is_read_by_the_participants_of_its_channel() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// What an agent was built from - its components, the preconfigured ones
-/// it includes resolved (issue 270) - is read by its owner alone: it is
-/// configuration, and what it includes may have been shared with the owner
-/// alone. Not by bob, who takes part in the channel and sees its tools.
+/// What an agent was built from - its components, the bundles it includes resolved (issue 270) - is
+/// read by its owner alone: it is configuration, and what it includes may have been shared with the
+/// owner alone. Not by bob, who takes part in the channel and sees its tools.
 #[tokio::test]
 async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
     let world = agent_testing::world().await;
-    let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.component_store().unwrap().create_components(&World::as_user(world.bob), &tools).await.unwrap();
+    let tools = ComponentBundle::new(ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(), ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.entity_stores().unwrap().component_bundles.create(&World::as_user(world.bob), &tools).await.unwrap();
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
     hers.components = ComponentConfig { component_nodes: vec![
         ComponentDescriptor::new("stop", "stop_tool"),
-        ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) },
+        ComponentDescriptor { params: serde_json::json!({ "name": "bobs-tools" }), ..ComponentDescriptor::new("tools", BUNDLE_REF_KIND) },
     ] };
     world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &hers).await.unwrap();
     let helper = world.agent("helper", world.alice, &hers).await;

@@ -301,10 +301,9 @@ Details: [SECURITY.md](SECURITY.md#views), [MEMORY.md](MEMORY.md#reading-other-c
 
 Two stores, configured separately:
 
-*   the **`EntityStore`** keeps long-lived documents - personalities, templates, agents, users and
-    their profiles, sessions and channels, and the kinds of the plugins, one store per kind, which
-    the backend opens for any kind - and, beside it, the **`ComponentStore`** the preconfigured
-    components that personalities and templates refer to;
+*   the **`EntityStore`** keeps long-lived documents - personalities, templates, the component
+    bundles they include, agents, users and their profiles, sessions and channels, and the kinds of
+    the plugins, one store per kind, which the backend opens for any kind;
 *   the **`StateStore`** keeps what changes while a session runs - the channel's history, each
     agent's state in each channel, and each agent's own state -, the **`HistoryStore`** reads
     the histories the states hold, in pages, without loading a state, and the

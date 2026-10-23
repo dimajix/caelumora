@@ -1,6 +1,6 @@
 # 455 — Preconfigured components are configuration kept as entities, the one kind without a UUID
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -13,8 +13,8 @@ kept in the `ComponentStore`, a store of the documents of the kind `components` 
 entities, checked as they are (`CheckedStore`). What uses it:
 
 - **Writing:** the seed alone (`Seed::apply`), which creates a component whose id is not there yet
-  and never changes one that is: a component changed in a seed file stays as it was first seeded,
-  until its stored copy is deleted by hand.
+  and never changes one that is - as it seeds the personalities, the templates and the sections of
+  the plugins: demo data put into the stores once (issue 105).
 - **Reading:** the `ComponentRegistry` alone, resolving a `ref` in the name of whoever builds
   (`get_components`). No route of the REST server and no controller creates, changes, lists or
   deletes a component; `update_components`, `delete_components` and `list_components` have no
@@ -56,15 +56,45 @@ the model could say so, an entity's id being a UUID (`Stored::Id`, `Document::id
   as Postgres orders a `uuid`, bytewise, the ids keep the order of their text, so cursors
   (`DocumentStorage::scan`) do not change.
 
-Recommended: B, then the ids of every kind as UUIDs, each a step of its own, before the Postgres
-step of 332.
+## Decision
+
+Neither A nor B as weighed, but A carried through: the preconfigured components become an entity
+kind like every other - a personality, a template, a skill -, since they are what a personality is
+made of, and a user who keeps personalities of their own one day keeps the bundles they include as
+well. As an ordinary kind, the special path goes:
+
+1.  **`ComponentBundle`**, the kind `component_bundle`, in place of `StoredComponents`: an id of its
+    own (`ComponentBundleId`, `define_id!`), a `ScopedName` unique in its scope (issue 250), its
+    `components`, its `security_attributes` and the mark of a deletion (issue 164) - `Stored`,
+    `Secured`, `Scoped` and `Deletable`, as `Personality` is. Named after what it is - a bundle of
+    components that several personalities include, as 270 called it - rather than after where it
+    was kept.
+2.  **The `ComponentStore` goes**, with `Persistence::component_store`, its implementation on
+    `CheckedStore` and its part of the suite: the bundles are an `EntityStore` of `EntityStores`,
+    asked as every kind is. Deleting marks it, as every kind's does; the rule that a preconfigured
+    component is removed for good (issue 164) is reversed, since it stands on its own now.
+3.  **A `ref` names a bundle by its name**, `params: { name: …, scope: … }` - a `ScopedName`, the
+    scope global unless named -, found in exactly that scope (`EntityStore::find_by_name`) in the
+    name of whoever builds, as it is read now. Looking through the scopes seen from a place, as for
+    skills (`Scope::seen_from`), is left until users keep bundles of their own.
+4.  **The seed** writes a bundle with its `id` and `name`, as it writes a personality.
+
+Then the ids of every kind as UUIDs, as considered above.
+
+## Steps
+
+1.  **Component bundles as a kind**, as decided.
+2.  **Every id a UUID**: `Stored::Id` a UUID under a type of its kind's, `Document::id` a `Uuid`,
+    the storages keyed by it, the column of the id a `uuid` in Postgres - a new form of the tables
+    of the kinds.
 
 ## Done when
 
-- The preconfigured components are kept as the decision says, and a change of a seed file
-  reaches them (B) or is resolved by name (A).
+- The preconfigured components are a kind of entity, `ComponentBundle`, kept, checked and found by
+  name as every kind is, and the `ComponentStore` is gone.
 - Every kind is identified by a UUID, and the stores key it as one.
-- `docs/STORAGE.md`, `docs/COMPONENTS.md` and `docs/ARCHITECTURE.md` describe it.
+- `docs/STORAGE.md`, `docs/COMPONENTS.md`, `docs/CONFIGURATION.md` and `docs/ARCHITECTURE.md`
+  describe it.
 
 ## History
 
@@ -72,3 +102,20 @@ step of 332.
   [332](332-policy-as-a-predicate.md): measured, an access table per kind joined with the groups
   is the form that scales, and keying it by `uuid` needs every kind to have a UUID; the
   preconfigured components are the one that has not, and they behave as configuration.
+- **2026-10-23** — Decided with the maintainer: the preconfigured components become a kind of entity
+  like every other, `ComponentBundle`, found by name - so that users may keep bundles of their own,
+  as they will personalities -; the `ComponentStore` goes. That a seed file reaches nothing it
+  seeded once holds for every kind it seeds, by design, and is no reason of its own.
+- **2026-10-23** — Step 1: `ComponentBundle` a kind like every other - `Stored`, `Scoped`,
+  `Deletable`, a member of the scope it lies in, run through the store suite -; a `ref` names it by
+  `name` and `scope`, found by `find_by_name`; the `ComponentStore` gone, and with it the last kind
+  removed for good, so `CheckedStore::remove` and `DocumentStorage::remove` went too; the seed's
+  section is `component_bundles`, and "preconfigured components" are called component bundles
+  everywhere.
+- **2026-10-23** — Step 2: every kind's id is a UUID (`Stored::Id` is `From<Uuid>` and
+  `Into<Uuid>`, as `define_id!` gives it); `Document::id`, the scans and their cursors (`Cursor`,
+  which holds the id) are keyed by `Uuid`, ordered bytewise as Postgres orders a `uuid`; the JSON
+  files are named by its text, a file named otherwise is left out; the tables of the kinds keep it
+  as a `uuid`, their form 2. `Cursor::parse` and `Cursor::as_str`, which nothing called, went with
+  the cursor's text.
+- **2026-10-23** — Done: both steps merged.

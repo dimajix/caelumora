@@ -19,7 +19,7 @@ use caelumora_model::actor::{ActorId, Rejection};
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{Channel, HistoryAccess, LEFT};
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
+use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::role::RoleId;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -34,7 +34,7 @@ use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::{UserId, UserProfile, User};
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
 use caelumora_runtime::moderator::ResponderPolicy;
 use caelumora_runtime::moderator::broadcast_policy::BroadcastPolicy;
 use caelumora_runtime::testing::{attributes, checks, denied, file, not_found, quiet, read, shown, workspace, World, STAFF};
@@ -875,41 +875,43 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// The preconfigured components a new channel names are read in the name
-/// of whoever creates it, before creating it is asked (issue 321): the
+/// The component bundles a new channel names are read in the name of
+/// whoever creates it, before creating it is asked (issue 321): the
 /// channel builds them in its owner's, but whoever names them names only
 /// what they may read. Once the share is withdrawn, the channel is refused
 /// before anything else is asked or stored.
 #[tokio::test]
 async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     let world = World::new().await;
-    let policy = StoredComponents::new("bobs-policy", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.component_store().unwrap().create_components(&World::as_user(world.bob), &policy).await.expect("bob keeps his policy");
+    let policy = ComponentBundle::new(ScopedName::new("bobs-policy", Scope::GlobalScope).unwrap(), ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.entity_stores().unwrap().component_bundles.create(&World::as_user(world.bob), &policy).await.expect("bob keeps his policy");
     let session = world.shared_session(&[], &[]).await;
     let spec = |name: &str| ChannelSpec {
         name: name.to_string(),
-        components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "id": "bobs-policy" }), ..ComponentDescriptor::new("policy", PRECONFIGURED_REF_KIND) }] },
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "name": "bobs-policy" }), ..ComponentDescriptor::new("policy", BUNDLE_REF_KIND) }] },
         participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
     };
 
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("side"))).await;
     assert!(created.is_ok(), "shared with her");
     assert_eq!(asked, checks(&[
-        "alice: GetComponents(bob's) yes",
+        "alice: List(component_bundle) yes",
+        "alice: GetComponentBundle(bob's) yes",
         "alice: CreateChannel(alice's) yes",
         "alice: JoinChannel(alice) yes",
         "alice: CreateChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
-        "alice: GetComponents(bob's) yes",
+        "alice: List(component_bundle) yes",
+        "alice: GetComponentBundle(bob's) yes",
         "alice: JoinChannel(alice) yes",
     ]), "read as she names it, and again as the channel is built in its owner's name - hers; then its founder joins");
 
-    let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..policy };
-    world.store.component_store().unwrap().update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
+    let withdrawn = ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..policy };
+    world.store.entity_stores().unwrap().component_bundles.update(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("other"))).await;
     assert!(matches!(refused.err().and_then(|e| e.downcast::<SessionError>().ok()), Some(SessionError::InvalidComponents(_))));
-    assert_eq!(asked, checks(&["alice: GetComponents(bob's) no"]));
+    assert_eq!(asked, checks(&["alice: List(component_bundle) yes", "alice: GetComponentBundle(bob's) no"]));
     assert!(session.channel_named("other").is_none(), "nothing is created");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -921,12 +923,12 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
 #[tokio::test]
 async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     let world = World::new().await;
-    let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("echo", "echo_tool")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.component_store().unwrap().create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
+    let tools = ComponentBundle::new(ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(), ComponentConfig { component_nodes: vec![ComponentDescriptor::new("echo", "echo_tool")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.entity_stores().unwrap().component_bundles.create(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
     let session = world.shared_session(&[], &[]).await;
     let spec = ChannelSpec {
         name: "tooled".to_string(),
-        components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] },
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "name": "bobs-tools" }), ..ComponentDescriptor::new("tools", BUNDLE_REF_KIND) }] },
         participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
     };
 
@@ -934,7 +936,7 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     let refused = refused.err().and_then(|e| e.downcast::<SessionError>().ok());
     assert!(matches!(&refused, Some(SessionError::InvalidComponents(_))), "{refused:?}");
     assert!(refused.is_some_and(|e| e.to_string().contains("'tools'")), "named by the ref that brings it");
-    assert_eq!(asked, checks(&["alice: GetComponents(bob's) yes"]), "only the list read as she names it");
+    assert_eq!(asked, checks(&["alice: List(component_bundle) yes", "alice: GetComponentBundle(bob's) yes"]), "only the bundle read as she names it");
     assert!(session.channel_named("tooled").is_none(), "nothing is created");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -942,7 +944,7 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
 /// A component of a kind only an operator configures (issue 403) - whose
 /// params say where what it is given goes - is refused in a request that
 /// writes it, before anything is asked, and taken where the request names it
-/// through a `ref` to preconfigured components the creator may read.
+/// through a `ref` to a component bundle the creator may read.
 #[tokio::test]
 async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_ref() {
     let world = World::with(&[], |registry| {
@@ -952,8 +954,8 @@ async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_r
             Ok(facets)
         });
     }).await;
-    let operated = StoredComponents::new("operated", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "operated_policy")] }, attributes(None, &[world.alice]));
-    world.store.component_store().unwrap().create_components(&World::system(), &operated).await.expect("the operator's");
+    let operated = ComponentBundle::new(ScopedName::new("operated", Scope::GlobalScope).unwrap(), ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "operated_policy")] }, attributes(None, &[world.alice]));
+    world.store.entity_stores().unwrap().component_bundles.create(&World::system(), &operated).await.expect("the operator's");
     let session = world.shared_session(&[], &[]).await;
     let spec = |name: &str, policy: ComponentDescriptor| ChannelSpec {
         name: name.to_string(),
@@ -967,7 +969,7 @@ async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_r
     assert!(asked.is_empty(), "nothing asked: {asked:?}");
     assert!(session.channel_named("written").is_none(), "nothing is created");
 
-    let named = ComponentDescriptor { params: json!({ "id": "operated" }), ..ComponentDescriptor::new("policy", PRECONFIGURED_REF_KIND) };
+    let named = ComponentDescriptor { params: json!({ "name": "operated" }), ..ComponentDescriptor::new("policy", BUNDLE_REF_KIND) };
     session.create_channel(&World::as_user(world.alice), spec("named", named)).await.expect("named through a ref");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

@@ -17,7 +17,7 @@ use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::UserManager;
 use crate::backend::Backends;
 use caelumora_model::session::Session;
-use caelumora_model::store::{ComponentStore, EntityStores, StateStore, Persistence};
+use caelumora_model::store::{EntityStores, StateStore, Persistence};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::type_map::TypeKey;
@@ -46,8 +46,6 @@ pub struct RuntimeManager {
     /// The read side of the agents' transcripts the states hold (issue 380).
     pub(super) transcript_store: Arc<dyn TranscriptStore>,
     pub(super) entity_stores: EntityStores,
-    /// The preconfigured components, which the seed puts in.
-    pub(super) component_store: Arc<dyn ComponentStore>,
     pub(super) secret_manager: Arc<SecretManager>,
     /// The one writer of user records, asked at a login (issue 306).
     pub(super) user_manager: Arc<UserManager>,
@@ -121,7 +119,7 @@ impl RuntimeManager {
     /// # Errors
     /// As `seed::load`.
     pub async fn seed(&self, paths: &[PathBuf]) -> Result<()> {
-        seed::load(&self.entity_stores, self.component_store.as_ref(), self.confidentiality.as_ref(), &self.seed_sections, paths).await
+        seed::load(&self.entity_stores, self.confidentiality.as_ref(), &self.seed_sections, paths).await
     }
 
     /// The executor for the user commands of `session`: the global ones and
