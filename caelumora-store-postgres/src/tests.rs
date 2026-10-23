@@ -107,6 +107,16 @@ async fn answers_queries() {
 }
 
 #[tokio::test]
+async fn lists_what_check_decides() {
+    let Some(database) = Database::new() else { return };
+    let (memberships, access_policy) = suite::admitting_policy();
+    let stores = database.stores(Arc::clone(&access_policy)).await;
+    let folders = stores.entity_store::<suite::Folder>().unwrap();
+    suite::lists_admit_what_check_decides(&stores.entity_stores().unwrap(), folders.as_ref(), &memberships, access_policy.as_ref()).await;
+    database.drop().await;
+}
+
+#[tokio::test]
 async fn keeps_what_is_deleted_marked() {
     let Some(database) = Database::new() else { return };
     suite::deleting_marks(&database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap()).await;
@@ -340,7 +350,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
     // The ids in the order of the bodies, as `Uuid` orders them.
     let id_of = |at: usize| Uuid::from_u128(at as u128);
     for (at, body) in bodies.iter().enumerate() {
-        storage.insert(Document { id: id_of(at), name: None, deleted: false, body: body.clone() }).await.unwrap();
+        storage.insert(Document { id: id_of(at), name: None, deleted: false, security_attributes: Default::default(), body: body.clone() }).await.unwrap();
     }
     const A: FieldPath = &["a"];
     const AB: FieldPath = &["a", "b"];
@@ -367,7 +377,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         Filter::any(LIST, Filter::within(B, 5..10)),
     ];
     for filter in filters {
-        let scanned: Vec<Uuid> = storage.scan(Some(&filter), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
+        let scanned: Vec<Uuid> = storage.scan(Some(&filter), None, false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
         let meeting: Vec<Uuid> = bodies.iter().enumerate().filter(|(_, body)| filter.matches(body)).map(|(at, _)| id_of(at)).collect();
         assert!(meeting.iter().all(|id| scanned.contains(id)), "{filter:?}: meets {meeting:?}, scanned {scanned:?}");
         if !folded(&filter) {

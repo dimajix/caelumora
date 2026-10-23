@@ -8,6 +8,7 @@ use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use crate::store::documents::{Document, DocumentOf, DocumentStorage};
+use crate::security::Admission;
 use crate::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
 use crate::store::kept_chain::KeptChain;
 use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
@@ -241,10 +242,14 @@ impl DocumentStorage for MemoryDocuments {
         Ok(read_lock(&self.documents, |all| all.get(&id).map(|document| document.body.clone())))
     }
 
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    /// Narrowed by the admission as far as told without the groups
+    /// (`Admission::may_admit`): an entry for a group lets a document
+    /// through, for the store to decide.
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         Ok(read_lock(&self.documents, |all| {
             let meeting = all.values()
                 .filter(|document| document.deleted == deleted && filter.is_none_or(|filter| filter.matches(&document.body)))
+                .filter(|document| admission.is_none_or(|admission| admission.may_admit(&document.security_attributes)))
                 .map(|document| (document.id, document))
                 .collect();
             ordered_after(meeting, after).take(limit).map(|(id, document)| (id, document.body.clone())).collect()
@@ -468,7 +473,8 @@ mod tests {
     use crate::store::query::Query;
     use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
-    use crate::security::{OwnershipPolicy, SecurityContext};
+    use crate::group::GroupId;
+    use crate::security::{Grant, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject};
 
     /// The stores of a memory store, as the owners' policy checks them.
     fn owners() -> Persistence {
@@ -478,6 +484,43 @@ mod tests {
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
         suite::entity_store_behaves(&Persistence::in_memory().entity_stores().unwrap()).await;
+    }
+
+    /// A scan hands out what the admission may admit (issue 332): what
+    /// the owner, a user or a role admits, and whatever names a group, for
+    /// the store to decide - nothing else.
+    #[tokio::test]
+    async fn a_scan_is_narrowed_by_the_admission() {
+        let documents = MemoryDocuments::new(EntityKind::new("folder"));
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let kept = [
+            SecurityAttributes::owned_by(bob),
+            SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read),
+            SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::new()), Grant::Read),
+            SecurityAttributes::owned_by(alice),
+            SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Join),
+        ];
+        let mut ids = Vec::new();
+        for security_attributes in kept {
+            let id = Uuid::new_v4();
+            documents.insert(Document { id, name: None, deleted: false, security_attributes, body: Value::Null }).await.unwrap();
+            ids.push(id);
+        }
+        let bobs = Admission { actors: vec![bob], grant: Some(Grant::Read), ..Admission::default() };
+        let mut scanned: Vec<Uuid> = documents.scan(None, Some(&bobs), false, None, 10).await.unwrap().into_iter().map(|(id, _)| id).collect();
+        let mut admitted = ids[..3].to_vec();
+        scanned.sort();
+        admitted.sort();
+        assert_eq!(scanned, admitted, "his own, shared with him, shared with a group - not hers, nor what lets him join");
+        assert_eq!(documents.scan(None, None, false, None, 10).await.unwrap().len(), 5, "without an admission, all of them");
+    }
+
+    #[tokio::test]
+    async fn lists_what_check_decides() {
+        let (memberships, access_policy) = suite::admitting_policy();
+        let store = Persistence::in_memory_with(Arc::clone(&access_policy), Arc::new(ConfidentialityRules::default()));
+        let folders = store.entity_store::<suite::Folder>().unwrap();
+        suite::lists_admit_what_check_decides(&store.entity_stores().unwrap(), folders.as_ref(), &memberships, access_policy.as_ref()).await;
     }
 
     #[tokio::test]

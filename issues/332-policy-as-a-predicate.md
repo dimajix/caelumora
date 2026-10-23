@@ -120,9 +120,11 @@ it -, and a store is told them as such, in a form that says what they mean, not 
     the query: two aspects, not joined into one filter. A scan may hand out more than it admits,
     never less; `CheckedStore::page` asks for the admission through `Access` and still decides
     every candidate as today (`Access::readable`), now only those the storage handed out.
-6.  **Each storage applies it as it can.** In memory and in the JSON files, by the document's
-    attributes - owner, actors, roles, everyone -, an entry for a group counting as admitting,
-    since a storage of one kind does not read the groups; the decision after the scan settles it.
+6.  **Each storage applies it as it can.** In memory, by the document's attributes - owner,
+    actors, roles, everyone -, an entry for a group counting as admitting, since a storage of one
+    kind does not read the groups; the decision after the scan settles it. The JSON files leave it
+    to the store, as they leave the mark of a deletion: they know the attributes only of a body
+    read as its type, which the store does next.
     In Postgres, by a table of the access entries per kind, `entity_<kind>_access` - the owner and
     every entry of the access list as a row `(subject, relation, entity_id)`, written from the
     document's attributes in the transaction that writes it and removed with it -, and the
@@ -177,9 +179,9 @@ their members (`uuid[]`, GIN) took 67 ms, by a table of memberships 41 ms.
     `OwnershipPolicy` gives its admission and decides `check` on entities by it; a deleted group
     admits nobody, but where a deletion is told (`HearDeleted`), which the event bus asks.
 2.  **The stores.** `Document` with its security attributes, `DocumentStorage::scan` with the
-    admission, `CheckedStore::page` asking for it; memory and the JSON files apply it; a policy
-    wrapping another - the recorder of the security suite - gives the admission of the one it
-    wraps.
+    admission, `CheckedStore::page` asking for it; memory applies it, the JSON files leave it to the
+    store; a policy wrapping another - the recorder of the security suite - gives the admission of
+    the one it wraps.
 3.  **Postgres** (after 455). The table of the access entries per kind - a new form of the tables of
     the kinds -, the admission as a semi-join, `Grant::covering` for the grants it names, a test
     that what the database admits is what `check` decides.
@@ -188,8 +190,8 @@ their members (`uuid[]`, GIN) took 67 ms, by a table of memberships 41 ms.
 
 - The policy gives, for the verbs on entities, an admission that a store applies and a database
   translates, and `check` on an entity is decided by it.
-- A list hands the storage the admission, and the stores in memory, in the JSON files and in
-  Postgres apply it; what the storage hands out is still decided entity by entity.
+- A list hands the storage the admission, and the stores in memory and in Postgres apply it; what
+  the storage hands out is still decided entity by entity.
 - A test of the security suite shows that what each store admits is what `check` decides.
 - `docs/SECURITY.md`, `docs/PERMISSION-CHECKS.md` and `docs/STORAGE.md` describe it.
 
@@ -228,3 +230,13 @@ their members (`uuid[]`, GIN) took 67 ms, by a table of memberships 41 ms.
   event bus of a deletion. A deleted team grants nothing until it is restored. What a deleted
   session or channel announces as it stops reaches its owner alone, since it is stopped only once
   its groups are gone - accepted, the order left to issue [458](458-deleted-while-it-runs.md).
+- **2026-10-23** — Step 2: a `Document` carries its `security_attributes`, `DocumentStorage::scan`
+  takes the admission beside the filter, and `CheckedStore::page` asks for it through `Access` - of
+  `Get`, of `ReadDeleted` for the trash -, still deciding every candidate. Memory narrows by
+  `Admission::may_admit`, an entry for a group letting a document through. The JSON files leave the
+  admission to the store, as they leave the mark of a deletion: the attributes are known only of a
+  body read as its type, which the store does next anyway, so narrowing there would read every file
+  as its type once more, the admitted ones twice - point 6 and the steps amended so. Postgres hands
+  out what it did until step 3. The `Recorder` of the security suite gives the admission of the
+  policy it wraps. The store suite holds every backend to what `check` decides
+  (`lists_admit_what_check_decides`).

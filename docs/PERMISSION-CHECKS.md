@@ -47,7 +47,7 @@ a stored entity is decided by the verb, never by the kind (issue
 | `Reclassify` | a channel its owner; a message the channel's owner or its author (the caller); a note or memory entry its author. Whether the new classification may be given there is the flow's | 1 or 3 |
 | `ModifyMessage`, `RevokeMessage` | the author is the caller | 3: authorship, not ownership |
 | `Purge` of every kind | nobody but the system (issue 125) | 3 |
-| `List` of every kind | always; the store filters each item with `Get` | 1 per item |
+| `List` of every kind | always; the storage narrows the list by the admission of `Get` - of `ReadDeleted` for the trash -, the store filters each item it hands out with that verb | 1 per item |
 | `CallTool`, `ReadSecret` | always: hooks for another `AccessPolicy`; a call is decided by the tools offered and the rules of its place, a secret has no owner yet (issue [310](../issues/310-secrets-have-no-owner.md)) | 3, decided elsewhere |
 
 Most variants are decided by the principal; `ModifyMessage`, `RevokeMessage` and `Reclassify` of a
@@ -60,7 +60,7 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 
 | Layer | Asks | Form | Refusal |
 |---|---|---|---|
-| **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then `Get*` per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
+| **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for the trash) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
 | **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ArtifactManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
 | **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the agent carrying out a command, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, `CommandFailed`, a left-out answer |

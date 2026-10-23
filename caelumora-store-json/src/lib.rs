@@ -6,6 +6,7 @@ use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::channel::{ChannelId, ChannelState};
 use caelumora_model::user::{UserChannelState, UserId};
 use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
+use caelumora_model::security::Admission;
 use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::store::history::HistoryStore;
@@ -384,7 +385,8 @@ impl PersistenceBackend for JsonFileStore {
 struct JsonDocuments {
     kind: EntityKind,
     dir: PathBuf,
-    /// What a document read is told by: its id, its name, its mark.
+    /// What a document read is told by: its id, its name, its mark, its
+    /// security attributes.
     document_of: DocumentOf,
     /// Held by the writes that may take a name, so that no two take one:
     /// within this process, which is the only one that writes the files.
@@ -468,9 +470,10 @@ impl DocumentStorage for JsonDocuments {
 
     /// Reads the files in the order of their names, each only when it is its
     /// turn, and judges `filter` on what they hold; whether one is marked
-    /// deleted it leaves to the store, which would read it as its type to
-    /// tell. A file that is not JSON is left out and logged.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    /// deleted, and whether it is admitted, it leaves to the store, which
+    /// would read it as its type to tell. A file that is not JSON is left
+    /// out and logged.
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, _deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         let mut found = Vec::new();
         for (id, path) in ordered_after(documents_in_dir(&self.dir).await?, after) {
             if found.len() >= limit {
@@ -761,6 +764,15 @@ mod tests {
     async fn behaves_as_an_entity_store() {
         let dir = tempdir().unwrap();
         suite::entity_store_behaves(&checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn lists_what_check_decides() {
+        let dir = tempdir().unwrap();
+        let (memberships, access_policy) = suite::admitting_policy();
+        let store = checked(dir.path(), Arc::clone(&access_policy));
+        let folders = store.entity_store::<suite::Folder>().unwrap();
+        suite::lists_admit_what_check_decides(&store.entity_stores().unwrap(), folders.as_ref(), &memberships, access_policy.as_ref()).await;
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@ use crate::connection::{quoted, sql, Connection};
 use crate::filter::Condition;
 use async_trait::async_trait;
 use caelumora_model::store::documents::{Document, DocumentStorage};
+use caelumora_model::security::Admission;
 use caelumora_model::store::query::{FieldPath, Filter};
 use caelumora_model::store::{EntityKind, StoreError, StoreResult};
 use caelumora_model::value::name::ScopedName;
@@ -130,8 +131,8 @@ impl DocumentStorage for PgDocuments {
     }
 
     /// What of `filter` SQL can judge is judged by the database
-    /// (`Condition`), the rest by the store.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    /// (`Condition`), the rest by the store, as is the admission.
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         let pool = self.ready().await?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let condition = filter.map(|filter| Condition::of(filter, "body", 4));

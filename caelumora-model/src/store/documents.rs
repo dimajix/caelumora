@@ -9,7 +9,7 @@
 //! storage of a kind it was never told the type of - a plugin's too.
 
 use crate::removal::{Deletable, Removal};
-use crate::security::{ActionType, SecurityContext};
+use crate::security::{ActionType, Admission, SecurityAttributes, SecurityContext};
 use crate::store::access::Access;
 use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
 use crate::store::{EntityStore, Policies, StoreError, StoreResult, Stored};
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 /// A document as it is handed to a storage: its body, and what the storage
 /// needs to know of it without reading it as its type - its id, its name
-/// unique in its scope, whether it is marked deleted.
+/// unique in its scope, whether it is marked deleted, and who may reach it.
 #[derive(Debug, Clone)]
 pub struct Document {
     pub id: Uuid,
@@ -36,6 +36,9 @@ pub struct Document {
     /// names are.
     pub name: Option<ScopedName>,
     pub deleted: bool,
+    /// Its owner and its access list, which a list is narrowed by
+    /// (`Admission`, issue 332).
+    pub security_attributes: SecurityAttributes,
     pub body: Value,
 }
 
@@ -46,7 +49,7 @@ impl Document {
     /// `StoreError::Backend` if `value` cannot be serialized.
     pub(crate) fn of<T: Stored>(value: &T) -> StoreResult<Self> {
         let body = serde_json::to_value(value).map_err(|e| StoreError::Backend(format!("a {} cannot be serialized: {e}", T::KIND)))?;
-        Ok(Self { id: value.id().into(), name: value.unique_name(), deleted: value.deleted().is_some(), body })
+        Ok(Self { id: value.id().into(), name: value.unique_name(), deleted: value.deleted().is_some(), security_attributes: value.security_attributes().clone(), body })
     }
 
     /// The document of `body`, read as a `T`: what a storage that keeps
@@ -57,7 +60,7 @@ impl Document {
     /// `StoreError::Backend` if `body` is no `T`.
     pub(crate) fn read<T: Stored>(body: Value) -> StoreResult<Self> {
         let value: T = read_as(body.clone())?;
-        Ok(Self { id: value.id().into(), name: value.unique_name(), deleted: value.deleted().is_some(), body })
+        Ok(Self { id: value.id().into(), name: value.unique_name(), deleted: value.deleted().is_some(), security_attributes: value.security_attributes().clone(), body })
     }
 }
 
@@ -76,13 +79,13 @@ pub trait DocumentStorage: Debug + Send + Sync {
     async fn get(&self, id: Uuid) -> StoreResult<Option<Value>>;
 
     /// The documents after the id `after`, in the order of their ids - as `Uuid` orders them,
-    /// bytewise -, at most `limit`, each with its id (issue 447): every one that
-    /// is marked deleted if `deleted`, not marked otherwise, and meets `filter` - and others
-    /// besides, if the storage cannot tell: a scan may hand out more than it is asked for, never
-    /// less, since the store judges every document again. It hands out fewer than `limit` only
-    /// where none follow. A document a storage cannot read as it is kept is left out and logged;
-    /// any other failure fails the scan.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>>;
+    /// bytewise -, at most `limit`, each with its id (issue 447): every one that is marked deleted
+    /// if `deleted`, not marked otherwise, meets `filter` and is admitted by `admission`, if one is
+    /// given (issue 332) - and others besides, if the storage cannot tell: a scan may hand out more
+    /// than it is asked for, never less, since the store judges every document again. It hands out
+    /// fewer than `limit` only where none follow. A document a storage cannot read as it is kept is
+    /// left out and logged; any other failure fails the scan.
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>>;
 
     /// The body of the document of `name` that is not marked deleted, if
     /// there is one - there is at most one (issue 250).
@@ -180,20 +183,25 @@ impl<T: Stored> CheckedStore<T> {
     }
 
     /// The page `query` asks for, among what is deleted if `deleted`: read
-    /// from the storage in batches (issue 447), each document judged against
-    /// the whole filter and asked about, until the limit counts what the
-    /// caller may read (issue 293). A page that stops at its limit hands out
-    /// the cursor after its last entity unless the storage showed that
-    /// nothing follows.
+    /// from the storage in batches (issue 447), narrowed to what the policy
+    /// admits the caller to (issue 332), each document judged against the
+    /// whole filter and asked about, until the limit counts what the caller
+    /// may read (issue 293). A page that stops at its limit hands out the
+    /// cursor after its last entity unless the storage showed that nothing
+    /// follows.
     async fn page(&self, ctx: &SecurityContext, query: &Query<T::Field>, deleted: bool) -> StoreResult<Page<T>> {
         let access = self.access(ctx);
         access.allow(ActionType::List(T::KIND)).await?;
         let filter = query.filter.as_ref();
         let by_path = filter.map(Filter::by_path);
+        let admission = match deleted {
+            true => access.admission_deleted::<T>(),
+            false => access.admission::<T>(),
+        };
         let mut after = query.after.as_ref().map(Cursor::id);
         let mut items = Vec::new();
         loop {
-            let batch = self.storage.scan(by_path.as_ref(), deleted, after, SCAN_BATCH).await?;
+            let batch = self.storage.scan(by_path.as_ref(), admission.as_ref(), deleted, after, SCAN_BATCH).await?;
             let more = batch.len() == SCAN_BATCH;
             let mut rest = batch.into_iter().peekable();
             while let Some((id, body)) = rest.next() {
@@ -317,7 +325,7 @@ mod tests {
             Ok(self.documents.lock().unwrap().iter().find(|(found, _)| *found == id).map(|(_, body)| body.clone()))
         }
 
-        async fn scan(&self, _filter: Option<&Filter<FieldPath>>, _deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+        async fn scan(&self, _filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, _deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
             self.scans.fetch_add(1, Ordering::SeqCst);
             let documents = self.documents.lock().unwrap().clone();
             Ok(ordered_after(documents, after).take(limit).collect())

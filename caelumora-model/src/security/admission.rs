@@ -39,26 +39,55 @@ pub struct Admission {
 }
 
 impl Admission {
-    /// Whether an entity with `attributes` is admitted. The entries are
-    /// matched in their order, and `memberships` is asked only for a group
-    /// an entry names.
-    pub async fn admits(&self, attributes: &SecurityAttributes, memberships: &dyn Memberships) -> bool {
-        if self.actors.contains(&attributes.owner_id) || (self.unowned && attributes.unowned()) {
+    /// Whether an entity with `attributes` is admitted. `memberships` is
+    /// asked only for a group an entry names, once nothing else admits it.
+    pub(crate) async fn admits(&self, attributes: &SecurityAttributes, memberships: &dyn Memberships) -> bool {
+        if self.admits_without_groups(attributes) {
             return true;
         }
-        let Some(needed) = self.grant else { return false };
-        for entry in attributes.acl.iter().filter(|entry| entry.grant.covers(needed)) {
-            let admitted = match entry.subject {
-                Subject::Actor(actor) => self.actors.contains(&actor),
-                Subject::Role(role) => self.roles.contains(&role),
-                Subject::Everyone => self.everyone,
-                Subject::Group(group) => self.admits_members_of(group, memberships).await,
-            };
-            if admitted {
+        for group in self.groups_named(attributes) {
+            if self.admits_members_of(group, memberships).await {
                 return true;
             }
         }
         false
+    }
+
+    /// Whether an entity with `attributes` may be admitted, told without
+    /// the groups: an entry for a group counts as admitting. More than
+    /// `admits`, never less - what a storage that does not keep the groups
+    /// narrows a list by (issue 332).
+    pub(crate) fn may_admit(&self, attributes: &SecurityAttributes) -> bool {
+        self.admits_without_groups(attributes) || self.groups_named(attributes).next().is_some()
+    }
+
+    /// Whether the owner of an entity with `attributes`, or an entry of its
+    /// list naming no group, admits it.
+    fn admits_without_groups(&self, attributes: &SecurityAttributes) -> bool {
+        if self.actors.contains(&attributes.owner_id) || (self.unowned && attributes.unowned()) {
+            return true;
+        }
+        self.covering(attributes).any(|subject| match subject {
+            Subject::Actor(actor) => self.actors.contains(&actor),
+            Subject::Role(role) => self.roles.contains(&role),
+            Subject::Everyone => self.everyone,
+            Subject::Group(_) => false,
+        })
+    }
+
+    /// The groups the entries of `attributes` covering the grant name.
+    fn groups_named<'a>(&'a self, attributes: &'a SecurityAttributes) -> impl Iterator<Item = GroupId> + 'a {
+        self.covering(attributes).filter_map(|subject| match subject {
+            Subject::Group(group) => Some(group),
+            Subject::Actor(_) | Subject::Role(_) | Subject::Everyone => None,
+        })
+    }
+
+    /// Whom the entries of `attributes` covering the grant name - none
+    /// where owning alone admits.
+    fn covering<'a>(&'a self, attributes: &'a SecurityAttributes) -> impl Iterator<Item = Subject> + 'a {
+        let needed = self.grant;
+        attributes.acl.iter().filter(move |entry| needed.is_some_and(|needed| entry.grant.covers(needed))).map(|entry| entry.subject)
     }
 
     /// Whether one of the actors belongs to `group` - to a deleted one only
@@ -112,6 +141,16 @@ mod tests {
         let known = Known { members: vec![(bob, team)], ..Known::default() };
         assert!(reading(vec![bob]).admits(&shared_with, &known).await, "a member of the group named");
         assert!(!reading(vec![user()]).admits(&shared_with, &known).await, "not who is no member");
+    }
+
+    #[test]
+    fn an_entity_may_be_admitted_by_any_group_an_entry_names() {
+        let (alice, bob) = (user(), user());
+        let shared_with = SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::new()), Grant::Read);
+        assert!(reading(vec![bob]).may_admit(&shared_with), "by a group, told without it");
+        assert!(!Admission { grant: Some(Grant::Write), ..reading(vec![bob]) }.may_admit(&shared_with), "but only by an entry covering the grant");
+        assert!(reading(vec![bob]).may_admit(&shared(alice, &[bob])), "and by what admits it");
+        assert!(!reading(vec![bob]).may_admit(&shared(alice, &[])), "not by what does not");
     }
 
     #[tokio::test]

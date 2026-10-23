@@ -1179,7 +1179,9 @@ async fn a_workspace_is_its_owners_alone() {
 
     let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
     assert_eq!(views(&alice).workspaces().await.unwrap().len(), 1, "hers");
-    assert!(views(&bob).workspaces().await.unwrap().is_empty(), "not his");
+    let (listed, asked) = world.asked(views(&bob).workspaces()).await;
+    assert!(listed.unwrap().is_empty(), "not his");
+    assert_eq!(asked, checks(&["bob: List(workspace) yes"]), "nor asked about: the list is narrowed to what he is admitted to (issue 332)");
     let (hidden, asked) = world.asked(views(&bob).workspace(docs.id)).await;
     assert!(matches!(hidden, Err(ViewError::WorkspaceNotFound(_))));
     assert_eq!(asked, checks(&["bob: GetWorkspace(alice's) no"]));

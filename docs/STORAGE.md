@@ -227,24 +227,38 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
     rule lives with `Scope`.
 *   **A limit and a cursor**, in the order of the entities' ids. A page cut short hands out the
     cursor to go on with; the page after it may be empty.
-*   **Who may read what is asked afterwards**, entity by entity; a limit counts what the caller may
-    read.
+*   **Who may read what is narrowed first and asked afterwards**: the storage is handed what the
+    policy admits the caller to by the attributes alone (see below), and the store asks entity by
+    entity of what it hands out; a limit counts what the caller may read.
 
 **A list reads in batches** (issue [447](../issues/447-store-seam-not-fit-for-a-database.md)). The
 store asks the storage for the documents after the cursor, in the order of their ids - as `Uuid`
 orders them, bytewise, as Postgres orders a `uuid` too, so that a cursor goes on alike in every
-store -, among what is deleted or not and meeting the filter, a batch at a time
-(`DocumentStorage::scan`), the filter by the paths of its fields (`Filter::by_path`). A storage may
-hand out more than it is asked for, never less: the store judges every document against the whole
-filter again, reads it as its type and asks the policy, and reads the next batch until the page is
-full. So a database translates what it can of a filter and leaves the rest to the store - a name
-prefix and words in a text, which compare as names are folded -, and the JSON files judge the filter
-on each file and leave the mark of a deletion to the store. What follows a page's limit is read only
-as far as its batch. A page that stops at its limit hands out the cursor unless the storage showed
-that nothing follows. A document a storage cannot read as it is kept - a file that is not JSON, or
-not named by an id - or one that cannot be read as its type is left out of a list and logged; any
-other failure of the storage fails the list. Finding by name asks the storage for the one document
-of the name that is not deleted (`DocumentStorage::named`), and then the policy, as a list asks.
+store -, among what is deleted or not, meeting the filter and admitted to the caller, a batch at a
+time (`DocumentStorage::scan`), the filter by the paths of its fields (`Filter::by_path`). A storage
+may hand out more than it is asked for, never less: the store judges every document against the
+whole filter again, reads it as its type and asks the policy, and reads the next batch until the
+page is full. So a database translates what it can of a filter and leaves the rest to the store - a
+name prefix and words in a text, which compare as names are folded -, and the JSON files judge the
+filter on each file and leave the mark of a deletion and the admission to the store. What follows a
+page's limit is read only as far as its batch. A page that stops at its limit hands out the cursor
+unless the storage showed that nothing follows. A document a storage cannot read as it is kept - a
+file that is not JSON, or not named by an id - or one that cannot be read as its type is left out of
+a list and logged; any other failure of the storage fails the list. Finding by name asks the storage
+for the one document of the name that is not deleted (`DocumentStorage::named`), and then the
+policy, as a list asks.
+
+**A list is narrowed by who may read it** (issue [332](../issues/332-policy-as-a-predicate.md)). Who
+may read is an aspect of its own beside the query, not a condition in it: the store asks the policy
+for its `Admission` of reading - of reading what was deleted, for the trash -
+(`AccessPolicy::admission`) and hands it to the scan beside the filter, `None` where the policy
+narrows nothing up front, as for the system. A `Document` carries its `SecurityAttributes` for it,
+as it carries its name and its mark. Memory narrows by them as far as it can tell without the groups
+(`Admission::may_admit`): an entry for a group lets a document through, for the store to decide,
+since a storage of one kind does not read the groups. The JSON files leave it to the store, as they
+leave the mark: they know the attributes only of a body read as its type, which the store does next.
+Postgres does not narrow by it yet. What a list hands out is what `check` decides of each entity;
+the store suite holds every backend to that (`lists_admit_what_check_decides`).
 
 Without an index - in memory and in the JSON files -, a list without a limit still goes through
 every entity of the kind. Every list that narrows what it read says so in its query; what a query
