@@ -14,8 +14,8 @@ personality or by `AppConfig::component_defaults`. The runtime's `GuardedToolExe
 checks permissions, shapes and classifies the result before and after it delegates.
 
 `DefaultToolExecutor` is its only implementation, and none other is in sight. All five methods -
-`execute`, `describe`, `questions`, `matcher`, `tool_sets` - find the `ToolProvider` of a tool by its
-name and hand the call on.
+`execute`, `describe`, `questions`, `matcher`, `tool_sets` - find the `ToolProvider` of a tool by
+its name and hand the call on.
 
 ## Why it matters
 

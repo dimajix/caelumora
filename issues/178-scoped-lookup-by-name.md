@@ -112,12 +112,13 @@ The definitions are what has a `ScopedName`: `pub trait Definition { fn scoped_n
 &ScopedName; }`, implemented by `Personality`, `Agent` and `SessionTemplate`. Issue 250 will need
 the same of every kind with a name space, and may widen it. Over it, in `scope.rs`:
 
-- `fn visible<'a, D: Definition>(definitions: impl IntoIterator<Item = &'a D>, place: &Scope, user: Option<UserId>) -> impl Iterator<Item = &'a D>`:
-  what is found from a place, as the web UI will one day offer it.
-- `fn find_by_name<'a, D: Definition>(definitions: impl IntoIterator<Item = &'a D>, name: &Name, place: &Scope, user: Option<UserId>) -> Option<&'a D>`:
-  of those of `name` (compared as `Name` compares, issue 248), the one that lies innermost
-  (`max_by_key(depth)`); of two at one depth, the first listed, which issue 250 rules out for one
-  scope.
+- `fn visible<'a, D: Definition>(definitions: impl IntoIterator<Item = &'a D>, place: &Scope, user:
+  Option<UserId>) -> impl Iterator<Item = &'a D>`: what is found from a place, as the web UI will
+  one day offer it.
+- `fn find_by_name<'a, D: Definition>(definitions: impl IntoIterator<Item = &'a D>, name: &Name,
+  place: &Scope, user: Option<UserId>) -> Option<&'a D>`: of those of `name` (compared as `Name`
+  compares, issue 248), the one that lies innermost (`max_by_key(depth)`); of two at one depth, the
+  first listed, which issue 250 rules out for one scope.
 
 The store keeps listing as it does, and lists only what the caller may read; the caller filters.
 A store that can look up by itself (issue [03](03-postgres-entity-store.md)) may get a method

@@ -67,9 +67,9 @@ impl Participation {
 
     /// `participant` of channel `channel_id` of session `session_id` - of
     /// the session alone without one - resolved: with its controller, an
-    /// agent also with its personality's, for its actor to be built from; `None` if its user or agent no longer exists - an agent as
-    /// `agent_exists` says. An agent runs only with a personality it may
-    /// read there (`require_runnable`).
+    /// agent also with its personality's, for its actor to be built from; `None` if its user or
+    /// agent no longer exists - an agent as `agent_exists` says. An agent runs only with a
+    /// personality it may read there (`require_runnable`).
     ///
     /// # Errors
     /// Whatever else the store reports when loading it - also that an

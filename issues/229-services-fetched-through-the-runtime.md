@@ -12,8 +12,8 @@ the runtime (`RuntimeManager`, `ChannelRuntime`, `ActorRuntime`) or something le
 fetch the service at every use, often through a chain:
 
 - `MemberView` asks five times
-  `self.channel.views().runtime().security_manager().may_…(self.channel.views().viewer().context(), …)`;
-  `.views().viewer()` appears ten times in the views.
+  `self.channel.views().runtime().security_manager().may_…(self.channel.views().viewer().context(),
+  …)`; `.views().viewer()` appears ten times in the views.
 - `SessionManager` and `SessionLoop` fetch `self.runtime_manager.entity_store()` 34 times and
   `event_bus()` 25 times in `session.rs`; `ChannelLoop` the `SecurityManager` 14 times.
 - `ApproverActor` reaches `self.actor_runtime.runtime_manager().security_manager()` and

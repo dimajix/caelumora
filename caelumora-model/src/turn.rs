@@ -86,8 +86,8 @@ impl GivenUpReason {
 
 /// The working state of one turn (issue 85): what the turn is - fixed when
 /// it begins - and what it has staged so far, none of it taken over yet;
-/// what it said is in the transcript already (issue 260). Taking the turn over (`Turn::commit`) or giving it up
-/// (`Turn::give_up`, issue 145) ends it as a whole; a branch switch (issue
+/// what it said is in the transcript already (issue 260). Taking the turn over (`Turn::commit`) or
+/// giving it up (`Turn::give_up`, issue 145) ends it as a whole; a branch switch (issue
 /// 08) will give it up the same way.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TurnState {

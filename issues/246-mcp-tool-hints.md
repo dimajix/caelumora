@@ -61,11 +61,11 @@ that every call asks.
 - **2026-10-06** — Opened when issue [13](13-approval-modes.md) was closed: its plan made the hints
   one of its points, but no step took them up.
 - **2026-10-07** — Done with option (a), decided by the maintainer: `requires_approval` of the
-  `mcp_tool` component takes `true` (the default), `false` or `"unless_read_only"` (`Approval`); with
-  the third, a tool the server marks `readOnlyHint` needs no approval, every other one does - one
-  without the mark too, as MCP says. Only `readOnlyHint` counts: `destructiveHint` would matter only
-  for (b), which was left out, since under `false` the configuration keeps the last word and (b)
-  can be added later without changing (a). `discover_tools` sets `Tool::requires_approval` per tool
-  from the setting and the annotations; the rules of a place and of a person apply on top as before.
-  The tools panel shows the result per tool as it did; it does not say that a hint decided it,
-  which would have needed a field of `Tool` for no use beyond the panel.
+  `mcp_tool` component takes `true` (the default), `false` or `"unless_read_only"` (`Approval`);
+  with the third, a tool the server marks `readOnlyHint` needs no approval, every other one does -
+  one without the mark too, as MCP says. Only `readOnlyHint` counts: `destructiveHint` would matter
+  only for (b), which was left out, since under `false` the configuration keeps the last word and
+  (b) can be added later without changing (a). `discover_tools` sets `Tool::requires_approval` per
+  tool from the setting and the annotations; the rules of a place and of a person apply on top as
+  before. The tools panel shows the result per tool as it did; it does not say that a hint decided
+  it, which would have needed a field of `Tool` for no use beyond the panel.

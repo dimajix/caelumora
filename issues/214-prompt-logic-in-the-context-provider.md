@@ -90,7 +90,8 @@ without an alias.
 
 - **2026-10-03** — Issue created after 204, from the maintainer's wish to have the prompt logic in
   one place again, and their proposal that the context provider return its parts instead of setting
-  them. The options and the decision above were discussed with the maintainer before. Step 1 begun: the rename.
+  them. The options and the decision above were discussed with the maintainer before. Step 1 begun:
+  the rename.
 - **2026-10-03** — Step 1: `state_context_provider` is `turn_context_provider`
   (`TurnContextProvider`, `component_impl/turn_context_provider.rs`), in the code, the default of
   the facet, `examples/config.yaml` and the docs; no alias. Older issues keep the old name, as the

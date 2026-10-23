@@ -30,8 +30,9 @@ deletion only to assemble the same call afterwards (`session/manager.rs:437`).
 
 What an event about a channel is announced with - its attributes for who may hear it, its
 classification for who is cleared - is a rule of the channel, decided ten times by its callers. A
-change to it, such as announcing to who reached the channel as it was ([312](312-order-and-reach-not-everywhere.md),
-as `ChannelController::update` does with two classifications), has to be made ten times.
+change to it, such as announcing to who reached the channel as it was
+([312](312-order-and-reach-not-everywhere.md), as `ChannelController::update` does with two
+classifications), has to be made ten times.
 
 ## Considerations
 

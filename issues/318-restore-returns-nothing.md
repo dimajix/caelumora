@@ -33,8 +33,8 @@ The read afterwards is not just one read too many:
 - Between the two calls the entity can be deleted again; the same then happens.
 
 The managers are not alike either. `SessionManager::restore_session` and `restore_agent` return
-what they restored; `WorkspaceManager`, `SkillManager`, `ArtifactManager` and `GroupManager::restore`
-return `()`.
+what they restored; `WorkspaceManager`, `SkillManager`, `ArtifactManager` and
+`GroupManager::restore` return `()`.
 
 ## Why it matters
 

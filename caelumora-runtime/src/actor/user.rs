@@ -325,8 +325,8 @@ impl UserActor {
     /// Asks the agent that said `message` to answer again instead of it
     /// (issue 234). Whether this user may ask it (`RetryMessage`, whoever
     /// may read the channel) is the channel's to decide as it admits the
-    /// request, as for `send_message`; it goes to that agent alone: whether it can answer again is the agent's
-    /// to decide, by its own transcript, and it says so with `RetryAccepted`
+    /// request, as for `send_message`; it goes to that agent alone: whether it can answer again is
+    /// the agent's to decide, by its own transcript, and it says so with `RetryAccepted`
     /// or `RetryRejected` - this returns once the request is on its way. A
     /// `WakeupRequested` goes ahead of it, as of a message, so that a quiet
     /// channel does not swallow it.
@@ -335,8 +335,8 @@ impl UserActor {
     ///
     /// # Errors
     /// `ChannelError::MessageNotFound` if the channel has no such message,
-    /// `MessageRevoked` if it was taken back, `NotAnAgentsMessage` if no agent of the channel said it;
-    /// an error if the channel is gone.
+    /// `MessageRevoked` if it was taken back, `NotAnAgentsMessage` if no agent of the channel said
+    /// it; an error if the channel is gone.
     pub async fn request_retry(&self, message: MessageId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let author = self.message_to_change(&channel_loop, message).await?.sender_id;

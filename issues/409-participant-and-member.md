@@ -73,9 +73,9 @@ names need no compatibility; the REST API and the web UI change together.
 - **2026-10-17** — Issue created, from the naming discussion of issue
   [408](408-membership-changes-in-history.md), which settled joined/left for what happens to
   someone's taking part and added/removed for the acts on a document.
-- **2026-10-17** — Decided with the maintainer: participant for taking part throughout, in the model,
-  the runtime, the REST API, the web UI, the TUI and the documents; member for groups alone - and
-  for the members of a scope (`ScopeMember`), a third meaning left as it is. The session tells a
+- **2026-10-17** — Decided with the maintainer: participant for taking part throughout, in the
+  model, the runtime, the REST API, the web UI, the TUI and the documents; member for groups alone -
+  and for the members of a scope (`ScopeMember`), a third meaning left as it is. The session tells a
   join as the channel does: `SessionUpdateEvent::ParticipantJoined`.
 - **2026-10-17** — Done. Renamed: `ChannelMember` to `ChannelParticipant`, `MemberView` to
   `ParticipantView` (module `view/participant.rs`, with `ParticipantState`, `AgentParticipant`,

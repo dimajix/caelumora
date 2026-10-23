@@ -22,9 +22,9 @@ Since you were last told who is here:
 It compares the roster of now with the one it remembers having told - in memory, for as long as
 the component lives, so that after a restart it tells all of it again and no change.
 
-**The channel's notice** (issue [408](408-membership-changes-in-history.md)). Every join and leave is
-recorded in the channel's history and in each agent's transcript where it happened, and is given to
-the model - or, for an external agent, to its remote agent (`ModelProfile::given_messages`) - as
+**The channel's notice** (issue [408](408-membership-changes-in-history.md)). Every join and leave
+is recorded in the channel's history and in each agent's transcript where it happened, and is given
+to the model - or, for an external agent, to its remote agent (`ModelProfile::given_messages`) - as
 "Channel notice: @alice added @bob to the channel." among what was said.
 
 An external agent with `changes_only` thus gets both with the same call: the roster with its

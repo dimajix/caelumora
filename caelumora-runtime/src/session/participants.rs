@@ -117,10 +117,10 @@ impl SessionLoop {
         Ok(())
     }
 
-    /// `participant` with what its actor is built from, if they may take part in `channel` too, where one is named: it
-    /// lies where it may and is cleared for it, asked in `context`, whoever takes them in. What
-    /// is asked before anyone is taken in, and what says whom one cannot take in
-    /// (`SessionView::candidates`).
+    /// `participant` with what its actor is built from, if they may take part in `channel` too,
+    /// where one is named: it lies where it may and is cleared for it, asked in `context`, whoever
+    /// takes them in. What is asked before anyone is taken in, and what says whom one cannot take
+    /// in (`SessionView::candidates`).
     ///
     /// # Errors
     /// `SessionError::CannotTakeIn` for a user or agent that no longer exists;

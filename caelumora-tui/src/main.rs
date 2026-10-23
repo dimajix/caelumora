@@ -255,7 +255,8 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                         println!("\r{} is carrying out /{}...", sender, command);
                     }
                     Some(ActorEvent::CommandExecuted { command, output, turn_id, .. }) => {
-                        // Carried out by an agent in a turn of its own (issue 269), or run by a user.
+                        // Carried out by an agent in a turn of its own (issue 269), or run by a
+                        // user.
                         let verb = if turn_id.is_some() { "carried out" } else { "ran" };
                         println!("\r{} {} /{}: {}", sender, verb, command, output);
                     }

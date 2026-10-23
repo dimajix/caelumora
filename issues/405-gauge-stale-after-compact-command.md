@@ -12,7 +12,8 @@ The gauge under each agent shows `context_tokens` of its usage (issues
 [209](209-token-usage.md), [390](390-context-gauge-profile-from-history.md)). `ChatView` takes it
 from the snapshot, adds each call as its message arrives (`withCall`) and fetches it again
 (`readUsage`, through `api.getParticipant`) on `TurnFinished`, `TurnGivenUp` and
-`ActivityFinished` - the end of an automatic compaction ([284](284-automatic-context-compaction.md)).
+`ActivityFinished` - the end of an automatic compaction
+([284](284-automatic-context-compaction.md)).
 
 A compaction asked for with `/compact` is a command turn ([269](269-agent-commands.md)): it
 announces no answer's start nor end, so no `TurnFinished` follows it. It ends with

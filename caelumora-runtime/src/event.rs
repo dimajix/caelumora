@@ -324,8 +324,9 @@ impl EventBus {
             }
         }
 
-        // Periodic cleanup of empty topics could be added here, but DashMap doesn't make it as easy as retain on Mutex<HashMap>.
-        // For now, let's keep it simple. Empty Vecs will remain in the DashMap.
+        // Periodic cleanup of empty topics could be added here, but DashMap doesn't make it as easy
+        // as retain on Mutex<HashMap>. For now, let's keep it simple. Empty Vecs will remain in the
+        // DashMap.
     }
 }
 

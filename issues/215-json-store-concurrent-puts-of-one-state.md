@@ -6,7 +6,8 @@
 
 ## The problem
 
-The test `store_impl::json::tests::concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files`
+The test
+`store_impl::json::tests::concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files`
 fails now and then (seen once in a run of the whole workspace on 2026-10-03; 21 runs of it alone or
 of the model crate passed). It puts the same `AgentChannelState` sixteen times at once and expects
 the state's directory to hold nothing but `<agent>.json`.
@@ -30,10 +31,11 @@ temporary file - and that still holds. But the race it now shows is more than th
 
 ## Why it matters
 
-The runtime keeps one writer per state (see [CHANNELS.md](../docs/CHANNELS.md#one-writer-per-document)):
-an agent's channel state is stored by its one actor, under its lock. So the race should not happen
-in production - but nothing in the store says or enforces that, and the test says the opposite: that
-concurrent puts of one state are fine.
+The runtime keeps one writer per state (see
+[CHANNELS.md](../docs/CHANNELS.md#one-writer-per-document)): an agent's channel state is stored by
+its one actor, under its lock. So the race should not happen in production - but nothing in the
+store says or enforces that, and the test says the opposite: that concurrent puts of one state are
+fine.
 
 ## Considerations
 
@@ -59,8 +61,8 @@ concurrent puts of one state are fine.
   rejected as false safety: it would serialize two writers' puts but not make them right, since a
   put appends the changes of the one instance since it was stored, and the other's would be replayed
   onto what the first stored. Every state has one writer today - the `ChannelLoop`, the agent's
-  actor in the channel, the `AgentStateHandle`, each under a lock of its own - so the rule is stated,
-  not enforced: in the doc comment of `StateStore` and in STORAGE.md ("One writer per state"), which
-  now also says that entities have no such rule and why the temporary files are still needed. The
-  test writes one personality sixteen times at once, as two requests may, instead of putting one
-  state concurrently; it passed 30 runs in a row.
+  actor in the channel, the `AgentStateHandle`, each under a lock of its own - so the rule is
+  stated, not enforced: in the doc comment of `StateStore` and in STORAGE.md ("One writer per
+  state"), which now also says that entities have no such rule and why the temporary files are still
+  needed. The test writes one personality sixteen times at once, as two requests may, instead of
+  putting one state concurrently; it passed 30 runs in a row.

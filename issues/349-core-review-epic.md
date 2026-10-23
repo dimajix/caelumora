@@ -11,12 +11,13 @@ A review of the core of `caelumora-runtime` - `channel/`, `session/`, `actor/` w
 agent, `controller/`, `runtime.rs`, `agent/state.rs`, `agent/manager.rs`, `group.rs`, `scoped.rs`
 and `template.rs` - looked for what can be simpler: complexity, patterns and names that differ
 without reason, methods that do the same, and responsibilities that have no owner. The structure
-that [74](74-refactoring-epic.md), [151](151-agent-refactoring-epic.md), [211](211-turn-and-agent-work-structure.md)
-and [229](229-services-fetched-through-the-runtime.md) established holds: one writer per document,
-admission in one place, permissions before anything is stored. What is left is repetition - the same
-five services and fields held or threaded again and again, three types carrying the same half of an
-agent, construction sequences written twice - and a few rules of the model that live in the runtime.
-Each group of findings is its own issue, 350-361. This issue is the bracket.
+that [74](74-refactoring-epic.md), [151](151-agent-refactoring-epic.md),
+[211](211-turn-and-agent-work-structure.md) and [229](229-services-fetched-through-the-runtime.md)
+established holds: one writer per document, admission in one place, permissions before anything is
+stored. What is left is repetition - the same five services and fields held or threaded again and
+again, three types carrying the same half of an agent, construction sequences written twice - and a
+few rules of the model that live in the runtime. Each group of findings is its own issue, 350-361.
+This issue is the bracket.
 
 ## Why it matters
 
@@ -30,13 +31,13 @@ constructors. Doing them in the wrong order means moving code twice.
 - **Fewer types where one bundles only parameters** - but a type that owns a responsibility is
   worth its definition: 355 and 356 each add one and remove more fields and parameters than they
   cost. Both are architecture decisions and are to be discussed before they are built.
-- **Earlier decisions stand:** the delegators of `ChannelRuntime` stay ([89](89-channel-runtime-delegators.md),
-  rejected); a channel holds its session through `attach` ([123](123-session-handle-in-channel-runtime.md));
-  `Turn` is split by files, not types, and `Answering` is the one way to publish
-  ([211](211-turn-and-agent-work-structure.md)); services are held, not fetched
-  ([229](229-services-fetched-through-the-runtime.md)). 357 and 359 are cut so that they do not
-  reopen them; the first two are raised again all the same, in 360 and 361, since the code they
-  were decided on has changed - to be discussed, not assumed.
+- **Earlier decisions stand:** the delegators of `ChannelRuntime` stay
+  ([89](89-channel-runtime-delegators.md), rejected); a channel holds its session through `attach`
+  ([123](123-session-handle-in-channel-runtime.md)); `Turn` is split by files, not types, and
+  `Answering` is the one way to publish ([211](211-turn-and-agent-work-structure.md)); services are
+  held, not fetched ([229](229-services-fetched-through-the-runtime.md)). 357 and 359 are cut so
+  that they do not reopen them; the first two are raised again all the same, in 360 and 361, since
+  the code they were decided on has changed - to be discussed, not assumed.
 - **The model holds data and rules** (ARCHITECTURE.md): 353 and 358 move rules there, at the price
   of the model knowing the update events' application.
 

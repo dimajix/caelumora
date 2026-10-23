@@ -290,6 +290,6 @@ above its `destination`. Publishing changes what is kept, so it is approved wher
 approver reads which file is published as which artifact.
 
 The members of the channel download the version published there, wherever they act; whom the owner
-shares the artifact with read the versions there are as they share it; its owner reads every version,
-shares it and keeps it beyond the session. One that is not kept goes with the session, its content too (see
-[STORAGE.md](STORAGE.md) and [SECURITY.md](SECURITY.md#ownership)).
+shares the artifact with read the versions there are as they share it; its owner reads every
+version, shares it and keeps it beyond the session. One that is not kept goes with the session, its
+content too (see [STORAGE.md](STORAGE.md) and [SECURITY.md](SECURITY.md#ownership)).

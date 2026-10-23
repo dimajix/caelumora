@@ -1,5 +1,5 @@
 #!/bin/sh
-# Two checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Three checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
@@ -7,8 +7,11 @@
 # - Clippy stays silent (docs/CODING-GUIDELINES.md): whenever Rust code or a Cargo manifest is part
 #   of a commit, `cargo clippy --workspace --all-targets -- -D warnings` must pass, or the commit
 #   is refused. It checks the working tree, so changes that are not staged count too.
+# - Prose is wrapped at 100 characters (docs/CODING-GUIDELINES.md): `scripts/line-length.sh` must
+#   find no line too long in the Markdown and Rust files a commit adds or changes, read whole from
+#   the working tree; files the commit leaves out are not checked.
 #
-# `git commit --no-verify` skips both.
+# `git commit --no-verify` skips all three.
 set -eu
 
 if ! git diff --cached --quiet -- issues/; then
@@ -21,4 +24,9 @@ fi
 
 if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock; then
     cargo clippy --workspace --all-targets --quiet -- -D warnings
+fi
+
+committed=$(git diff --cached --name-only --diff-filter=ACMR -- '*.md' '*.rs')
+if [ -n "$committed" ]; then
+    scripts/line-length.sh $committed
 fi

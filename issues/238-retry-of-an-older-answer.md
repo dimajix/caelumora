@@ -8,10 +8,11 @@
 
 ## The problem
 
-An agent answers again only instead of its last answer ([234](234-modify-revoke-and-retry-messages.md)):
-once anything was said or done after it, a request is rejected (`RetryRefused::NotLast`). An answer
-further up the conversation cannot be replaced, and neither can the alternatives of one be kept and
-compared - each retry takes the previous answer back.
+An agent answers again only instead of its last answer
+([234](234-modify-revoke-and-retry-messages.md)): once anything was said or done after it, a request
+is rejected (`RetryRefused::NotLast`). An answer further up the conversation cannot be replaced, and
+neither can the alternatives of one be kept and compared - each retry takes the previous answer
+back.
 
 ## Why it matters
 

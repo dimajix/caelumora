@@ -451,8 +451,8 @@ pub enum ToolCallStatus {
     /// A person decides whether it may run (issue 13). They are shown
     /// `description` - a decision of their own if `explicit`, which no rule
     /// of a person answers - and offered a rule for the calls `suggested`
-    /// matches, if one can be derived from the call (issue 400). `id` is the approval's, from the agent's request to the
-    /// decision (issue 81). Approved, it asks its `questions`, if it has
+    /// matches, if one can be derived from the call (issue 400). `id` is the approval's, from the
+    /// agent's request to the decision (issue 81). Approved, it asks its `questions`, if it has
     /// any (issue 165).
     WaitingApproval {
         id: ApprovalId,

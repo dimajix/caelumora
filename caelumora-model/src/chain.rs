@@ -129,8 +129,8 @@ impl<E> Node<E> {
 }
 
 /// A chain as it is stored: its nodes, in the order they were added - the
-/// order of their positions - and its head. Also what a chain tells a store since it was last stored
-/// (issue 193) - the nodes new or changed in their place, and the head -
+/// order of their positions - and its head. Also what a chain tells a store since it was last
+/// stored (issue 193) - the nodes new or changed in their place, and the head -
 /// and what [`Chain::apply`] merges into it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Stored<E> {

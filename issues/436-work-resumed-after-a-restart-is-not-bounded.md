@@ -13,8 +13,8 @@ Since [388](388-resume-interrupted-work-after-a-restart.md) the server starts ag
 every session in which an agent's work was under way when it last ended
 (`SessionManager::resume_interrupted`). It starts them one after another, but starting a session
 costs little: it spawns its loop and its actors and returns. What costs is what then runs - every
-resumed turn asks its model again, runs its tools, follows its remote tasks - and all of that runs at
-once. A server that went down in the middle of a busy hour comes back with every interrupted turn
+resumed turn asks its model again, runs its tools, follows its remote tasks - and all of that runs
+at once. A server that went down in the middle of a busy hour comes back with every interrupted turn
 calling its model in the same second, beside the first requests of the users who come back.
 
 ## Why it matters

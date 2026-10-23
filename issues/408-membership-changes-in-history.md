@@ -58,9 +58,9 @@ So the conversation itself has no trace of it:
 *   **(a) An entry of its own** - `HistoryEntry::Joined { participant, by, at }` and
     `HistoryEntry::Left { participant, by, at }` (or one `MembershipChanged` with a kind), written
     into the channel's history by its one writer, and into each agent's history and transcript as it
-    hears it. The transcript gets a matching `TranscriptEntry`, which the `ContextResolver` turns into
-    what the model is given, as it applies the sender marking: the wording is not stored, and can
-    follow `sender_format`/`sender_style` and the channel's language. The web UI renders it as a
+    hears it. The transcript gets a matching `TranscriptEntry`, which the `ContextResolver` turns
+    into what the model is given, as it applies the sender marking: the wording is not stored, and
+    can follow `sender_format`/`sender_style` and the channel's language. The web UI renders it as a
     notice, as it renders a turn given up or a finished activity.
 *   **(b) A message of `System`** with the text in it, stored as `Said`. Nothing new in the history,
     the UI shows it as a message. But the wording is frozen in English into the store, the UI cannot
@@ -95,9 +95,9 @@ Recommended: (a). It follows how the history already records what is not a messa
     channel at once records only the channel's join; joining the session alone records nothing in
     any channel.
 *   **A removal** is recorded where `ParticipantRemoved` is sent today: once the actor's task has
-    ended, after what it still sent. Whether `ParticipantRemoved` is then still needed as a transient
-    event, or the stored entry takes its place for the frontends, is to be decided with the
-    implementation.
+    ended, after what it still sent. Whether `ParticipantRemoved` is then still needed as a
+    transient event, or the stored entry takes its place for the frontends, is to be decided with
+    the implementation.
 *   **An agent deleted and restored** (issue 164) leaves and rejoins its channels in the runtime's
     name; both are recorded as such. A resting agent removed from a channel changes the document
     alone and is not running - whether that is recorded, and by whom, if the channel does not run,

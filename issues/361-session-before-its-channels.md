@@ -53,9 +53,9 @@ with the session first, the attach step is not needed at all.
   goes. If a stopped session must still
   serve a running actor's tool guard - it does not: the session's channels stop with it -, the
   controller stays beside the loop.
-- **Not again:** the session handle on `ActorRuntime` for actors to read; [123](123-session-handle-in-channel-runtime.md)
-  removed it and the views read the session through the channel since. The runtime carries the
-  handle for the channel, not for the actors.
+- **Not again:** the session handle on `ActorRuntime` for actors to read;
+  [123](123-session-handle-in-channel-runtime.md) removed it and the views read the session through
+  the channel since. The runtime carries the handle for the channel, not for the actors.
 
 An architecture decision, to be discussed with the maintainer before
 [357](357-actor-start-and-channel-construction-written-twice.md), which it decides the shape of.
@@ -70,8 +70,8 @@ An architecture decision, to be discussed with the maintainer before
 ## History
 
 - **2026-10-14** — Raised again by the maintainer after the review of agents, sessions and
-  channels (epic [349](349-core-review-epic.md)): the option [123](123-session-handle-in-channel-runtime.md)
-  rejected, on code that has changed since.
+  channels (epic [349](349-core-review-epic.md)): the option
+  [123](123-session-handle-in-channel-runtime.md) rejected, on code that has changed since.
 - **2026-10-14** — Decided with the maintainer: the session first, the channel given it through its
   runtime; the controller stays beside the loop, since the guard of the tool calls must not depend
   on a `Weak` and the tests outside a session have a controller only. Not taken: the loop as a

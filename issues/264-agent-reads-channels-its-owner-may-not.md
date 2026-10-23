@@ -277,10 +277,11 @@ then the two questions. Then the close.
 8.  **Step 1:** the existing ones, renamed; the suite answers alike.
 9.  **Step 2, model:** the read rule - an agent reads what its owner may read or it takes part
     in, and changes only what its owner may; `CopyInformation` by the rules alone.
-10. **Step 2, views:** `an_agent_reads_of_a_channel_its_owner_may_not_read_only_what_it_wrote_there_itself`
-    reads its own notes through `own_private_notes`, and the channel `hers` is not found at all;
-    the released test (`an_agent_reads_another_channel_as_a_whole_by_their_classifications_...`)
-    keeps its answers, the agent being its owner's.
+10. **Step 2, views:**
+    `an_agent_reads_of_a_channel_its_owner_may_not_read_only_what_it_wrote_there_itself` reads its
+    own notes through `own_private_notes`, and the channel `hers` is not found at all; the released
+    test (`an_agent_reads_another_channel_as_a_whole_by_their_classifications_...`) keeps its
+    answers, the agent being its owner's.
 11. **Step 2, suite:** the three reader tests keep their answers, with `GetChannel` before
     `CopyInformation` in their lines - and for bob's reader outside "side" a `GetChannel no` and
     no `CopyInformation` at all, the actor's own permission first; a test of an agent reaching
@@ -390,5 +391,6 @@ then the two questions. Then the close.
   caller, `CopyInformation` by the rules), and the suite pins an agent whose owner may not read a
   channel (`an_agent_does_not_read_a_channel_its_owner_may_not_read`), one that takes part in it
   (`an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not`) and one whose owner does not
-  take part in its session (`an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_part_in`).
-  Left as decided: `Publish` stays an action of its own beside `CopyInformation`.
+  take part in its session
+  (`an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_part_in`). Left as decided:
+  `Publish` stays an action of its own beside `CopyInformation`.

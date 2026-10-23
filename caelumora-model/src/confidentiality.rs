@@ -192,8 +192,8 @@ impl Classification {
     /// the destination's, and the destination's compartments added to its
     /// audience - none if it is general already, or the destination is
     /// general, or it becomes public. What flows already stays as it is, up
-    /// to the audiences added, which may read it anyway. What a channel's messages become when the channel is
-    /// released to `destination` (issue 133).
+    /// to the audiences added, which may read it anyway. What a channel's messages become when the
+    /// channel is released to `destination` (issue 133).
     pub fn fitted_into(&self, destination: &Classification) -> Classification {
         let level = self.level.min(destination.level);
         let general = self.compartments.is_empty() || destination.compartments.is_empty() || level == Confidentiality::Public;

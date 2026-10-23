@@ -32,12 +32,13 @@ the ten on `ChannelRuntime` guard nothing, since `ChannelLoop` is the crate's ow
 ## Considerations
 
 - **`ChannelLoop::new` takes the services it keeps, and `ChannelRuntime` keeps what the actors
-  need.** `ChannelLoop::new(channel, runtime, services)` with the services as what [356](356-member-questions-threaded-with-their-services.md)
-  makes of them, or read from the `RuntimeManager` the session holds, which builds the loop
-  anyway (`SessionLoop::add_channel_loop`, [357](357-actor-start-and-channel-construction-written-twice.md));
-  `ChannelRuntime` loses the ten forwarders and keeps `new_actor_runtime`, `attach`,
-  `session_controller`. The `RuntimeManager` does not travel into the channel: the session reads
-  it, as it does today for `new_command_executor`.
+  need.** `ChannelLoop::new(channel, runtime, services)` with the services as what
+  [356](356-member-questions-threaded-with-their-services.md) makes of them, or read from the
+  `RuntimeManager` the session holds, which builds the loop anyway (`SessionLoop::add_channel_loop`,
+  [357](357-actor-start-and-channel-construction-written-twice.md)); `ChannelRuntime` loses the ten
+  forwarders and keeps `new_actor_runtime`, `attach`, `session_controller`. The `RuntimeManager`
+  does not travel into the channel: the session reads it, as it does today for
+  `new_command_executor`.
 - **`ChannelRuntime` offers the `RuntimeManager` to the channel alone** (`pub(super)`-like, or a
   method the channel module alone calls): the one reading in `new` goes through it. This is the
   option 89 rejected; it is cheaper now, with one caller, but it hands out the manager that
@@ -46,8 +47,9 @@ the ten on `ChannelRuntime` guard nothing, since `ChannelLoop` is the crate's ow
   ([357](357-actor-start-and-channel-construction-written-twice.md)) ends with `ChannelRuntime` as
   the one argument of `ChannelLoop::new`, the forwarders are its interface.
 
-To be discussed with the maintainer before [357](357-actor-start-and-channel-construction-written-twice.md)
-settles what builds a channel's loop.
+To be discussed with the maintainer before
+[357](357-actor-start-and-channel-construction-written-twice.md) settles what builds a channel's
+loop.
 
 ## Done when
 

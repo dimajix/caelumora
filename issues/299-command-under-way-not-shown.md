@@ -94,10 +94,10 @@ This was left open on purpose: 269 decided that a command turn is no answer - it
   - Beside it, in the web UI: the pulsing dots of an answer under way - "generating…" (blue) and
     "Thinking" (grey) - pulse as the members panel's dot of a working agent does, in green.
 - **2026-10-10** — Implemented as decided; not yet seen in the browser.
-  `ActorState::CarryingOutCommand` is neither `in_turn` nor `interruptible`: it is entered and left while the actor waits, so a
-  `/nudge` is not refused as "already responding" and nothing resumes it as a turn
-  (`prepare_resume` starts such a state idle). The `AgentActor` moves an awake agent there around
-  `AgentCommands::carry_out` and back to `Idle`, the `ExternalAgentActor` with its `go_to`. A
+  `ActorState::CarryingOutCommand` is neither `in_turn` nor `interruptible`: it is entered and left
+  while the actor waits, so a `/nudge` is not refused as "already responding" and nothing resumes it
+  as a turn (`prepare_resume` starts such a state idle). The `AgentActor` moves an awake agent there
+  around `AgentCommands::carry_out` and back to `Idle`, the `ExternalAgentActor` with its `go_to`. A
   shared intake of both actors, as 269's history suggested, was looked at and is not worth it: what
   is the same - taking a batch in, ending it at a command - is `take_in` already; what is around it
   differs for a reason - the agent run here judges requests to answer again, sleeps and is woken,

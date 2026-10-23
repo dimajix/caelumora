@@ -1,8 +1,8 @@
 //! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that
 //! runs an agent's tool calls with the tools of its providers and with the
 //! checks the runtime keeps to itself (issues 127, 280), and the built-in
-//! tool components, one file per component kind. A component that offers tools along with another facet - a prompt
-//! part, say - stays in `components`.
+//! tool components, one file per component kind. A component that offers tools along with another
+//! facet - a prompt part, say - stays in `components`.
 
 pub mod ask_user_tool;
 pub mod calculator_tool;

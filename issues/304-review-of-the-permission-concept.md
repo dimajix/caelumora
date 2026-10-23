@@ -15,10 +15,11 @@ issues, its own rules and its own places in the code:
     `OwnershipSecurityManager`, asked by the stores (`store::access`) and by operations that check
     themselves.
 2.  **Flow rules** between classifications (`ConfidentialityRules`: the flow rule, clearances,
-    compartments; issues [133](133-classification-model.md), [64](64-confidentiality-compartments.md),
-    [142](142-roles.md)). They decide `Publish`, `CopyInformation`, `Classify`, `Reclassify` and the
-    clearance at a channel's door (`JoinChannel`), and are applied by the same policy, as a building
-    block it may use or not (issue [138](138-confidentiality-policy-in-ownership.md)).
+    compartments; issues [133](133-classification-model.md),
+    [64](64-confidentiality-compartments.md), [142](142-roles.md)). They decide `Publish`,
+    `CopyInformation`, `Classify`, `Reclassify` and the clearance at a channel's door
+    (`JoinChannel`), and are applied by the same policy, as a building block it may use or not
+    (issue [138](138-confidentiality-policy-in-ownership.md)).
 3.  **Permissions for particular actions** - `ActionType`, 83 variants as of today. Most carry the
     attributes of an entity and are decided by concept 1; some carry none or two
     (`ApproveToolCall`, `ReadAgentTools`, `ShowAgentCommand`, `CallTool`, `ReadSecret`,
@@ -80,8 +81,9 @@ What makes it hard to see today, as of 2026-10-11:
 - **What a refusal tells** depends on the order: asked in a different order in two places, the same
   action leaks in one what it hides in the other.
 - **Every later feature** - the administrator (issue [125](125-invisible-admin.md)), groups as
-  subjects ([286](286-groups-as-subjects.md)), changing classified content ([169](169-changing-classified-content.md)) -
-  adds to whichever concept is nearest, and the picture gets harder to review each time.
+  subjects ([286](286-groups-as-subjects.md)), changing classified content
+  ([169](169-changing-classified-content.md)) - adds to whichever concept is nearest, and the
+  picture gets harder to review each time.
 
 ## Considerations
 
@@ -146,8 +148,9 @@ one it needs says yes.
     `Publish`, `CopyInformation` and the clearance at a channel's door are flow decisions;
     `Classify` is validation of the model and leaves the policy altogether; `Reclassify` splits
     into security (may the actor change this - its owner, its author) and flow (is the new
-    classification admissible). This reverses issue [138](138-confidentiality-policy-in-ownership.md):
-    a superuser who may act against both needs a hook in both, which is accepted.
+    classification admissible). This reverses issue
+    [138](138-confidentiality-policy-in-ownership.md): a superuser who may act against both needs a
+    hook in both, which is accepted.
 3.  **Visibility** - what a client or an agent is shown: the views navigate and ask `Read` of each
     thing they reach, lists are filtered by `Read`, and what may not be read is not found. There is
     no rule of visibility beyond that: no `channel_reading`, no clearance asked by the views on

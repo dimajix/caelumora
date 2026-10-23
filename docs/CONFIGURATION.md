@@ -119,8 +119,8 @@ by the variant, the namespace and the key.
 The language model an agent talks to is a component: the `LLMClient` facet, of which an agent has
 exactly one. A personality may configure its own; every other agent gets the one
 `component_defaults` names, or else the default model of the program: `ollama_client` with its
-defaults in `caelumora-app` and `caelumora-tui`, which list its plugin `caelumora-ollama` and name it
-(issue 329) - the core names no model. There is no separate section for it, and no environment
+defaults in `caelumora-app` and `caelumora-tui`, which list its plugin `caelumora-ollama` and name
+it (issue 329) - the core names no model. There is no separate section for it, and no environment
 variable.
 
 A personality's own model replaces the default whole. One that is to differ in a few parameters

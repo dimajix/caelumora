@@ -1,6 +1,6 @@
 # 452 — Rules of the guidelines that a lint could check are only written down
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -107,3 +107,11 @@ checks.
   something comes from - a function or macro by its crate or module (`tokio::spawn`,
   `serde_json::json!`), a type by a module that names its kind (`fmt::Formatter`) -, as the
   Imports section of CODING-GUIDELINES.md now says.
+- **2026-10-23** — Step 5: the pre-commit hook gives `scripts/line-length.sh` the Markdown and
+  Rust files a commit adds or changes. The script checks only what the wrapping rule covers - the
+  documents in `docs/`, `issues/` and `.claude/agents/`, `AGENTS.md`, and comments -, not the
+  READMEs of the root and of the crates, nor `work/`, which are not wrapped; and it takes a link
+  for one word, which the rule does not break. The 73 lines too long there today - 55 in
+  Markdown, 18 in Rust comments - are rewrapped, with the paragraphs they run into; no line of
+  them changed what it says. Issue done: the lints are on, clippy and the script are silent, and
+  CODING-GUIDELINES.md says which rules a lint checks.

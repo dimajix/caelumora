@@ -66,16 +66,16 @@ that cannot become the default without the deployment configuring it.
 - **2026-10-12** — Opened from the discussion of which subjects besides skills could move into
   crates of their own (issue 323).
 - **2026-10-13** — Done, as recommended: the composition root names the default. `ollama_client`
-  (with its tests) moved into the plugin crate `caelumora-ollama` (`client`, `plugin::OllamaPlugin`);
-  `llm::register_all` declares `LLMClient` a single without a default kind. The program names it
-  through the new `ComponentRegistry::set_default_kind::<T>(kind)` - refused if `T` is no single or
-  `kind` is not registered as providing it, so that a program naming a kind whose plugin it does not
-  list does not start; `component_defaults` still replaces it. Decided over a flag on the plugin
-  (`OllamaPlugin::as_default()`), which every model plugin would have repeated, and over defaults of
-  the program as a second `ComponentConfig`. `caelumora-app` and `caelumora-tui` list
-  `OllamaPlugin` and name `ollama_client` in `default_kinds`; a test of `caelumora-app` checks that
-  a configuration without `component_defaults` gets it. `control_tokens` stays in the core, as the
-  issue left it for the second model kind. The core's tests build with
+  (with its tests) moved into the plugin crate `caelumora-ollama` (`client`,
+  `plugin::OllamaPlugin`); `llm::register_all` declares `LLMClient` a single without a default kind.
+  The program names it through the new `ComponentRegistry::set_default_kind::<T>(kind)` - refused if
+  `T` is no single or `kind` is not registered as providing it, so that a program naming a kind
+  whose plugin it does not list does not start; `component_defaults` still replaces it. Decided over
+  a flag on the plugin (`OllamaPlugin::as_default()`), which every model plugin would have repeated,
+  and over defaults of the program as a second `ComponentConfig`. `caelumora-app` and
+  `caelumora-tui` list `OllamaPlugin` and name `ollama_client` in `default_kinds`; a test of
+  `caelumora-app` checks that a configuration without `component_defaults` gets it. `control_tokens`
+  stays in the core, as the issue left it for the second model kind. The core's tests build with
   `testing::test_registry`, which names a model that is not to be asked (`unasked_model`, a call
   fails) as their default - one place for every fixture, rather than a model named in each of
   their personalities. The runtime no longer depends on `async-stream`, nor on `tokio-util`'s

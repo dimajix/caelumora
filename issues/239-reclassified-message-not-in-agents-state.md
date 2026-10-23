@@ -6,13 +6,13 @@
 
 ## The problem
 
-Reclassifying a message (`ChannelLoop::reclassify_message`, issue [133](133-classification-model.md))
-changes it in the channel's history and announces `GlobalEvent::MessageReclassified` to the user
-interfaces. No agent learns of it: every agent's history and transcript keep the message as it was
-classified when it was heard. A turn's label is the join of what its transcript holds
-(`AgentChannelState::begin_turn`, issue [168](168-turn-label-as-high-water-mark.md)), so a message
-released to a wider audience keeps raising the label of every later answer of the agents that heard
-it, as if it had not been released.
+Reclassifying a message (`ChannelLoop::reclassify_message`, issue
+[133](133-classification-model.md)) changes it in the channel's history and announces
+`GlobalEvent::MessageReclassified` to the user interfaces. No agent learns of it: every agent's
+history and transcript keep the message as it was classified when it was heard. A turn's label is
+the join of what its transcript holds (`AgentChannelState::begin_turn`, issue
+[168](168-turn-label-as-high-water-mark.md)), so a message released to a wider audience keeps
+raising the label of every later answer of the agents that heard it, as if it had not been released.
 
 ## Why it matters
 
