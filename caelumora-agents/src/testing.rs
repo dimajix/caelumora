@@ -3,6 +3,7 @@
 //! agents' plugin and the models of a test, and what those tests share - a
 //! turn to work in, the models, a call an agent makes in a workspace.
 //! Behind the feature `test-support`, as the runtime's `testing` is.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::prompt::ModelProfileProvider;
 use caelumora_runtime::agent::state::AgentStateHandle;

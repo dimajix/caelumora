@@ -32,9 +32,6 @@ pub mod testing;
 
 /// What happened in a `History`; its node carries the digest of the
 /// history up to and including it.
-// Nearly every entry is a message said: boxing it would cost an allocation
-// per message and save nothing.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryEntry {

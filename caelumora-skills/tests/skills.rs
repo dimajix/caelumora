@@ -3,6 +3,7 @@
 //! it is asked, and alice, bob and carol (`caelumora_runtime::testing`).
 //! The tests of an action that acts in someone's name assert what it asks,
 //! as the suite does for the core's.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::history::testing::{items_of, messages_of};

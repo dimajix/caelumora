@@ -1,6 +1,7 @@
 //! What tests of the runtime need to build it as a binary does, and the fixtures the tests of
 //! sessions, channels and the views share: one of each, for building a runtime, a user, a session
 //! and its main channel, and the views an actor of a running session navigates (issue 315).
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityRules};
 use crate::testing::TestRuntime;

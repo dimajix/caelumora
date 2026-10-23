@@ -3,6 +3,7 @@
 //! those of the agents' logic, which run real ones - a channel of alice
 //! and her agent, started, and what is waited for in it. Behind the
 //! feature `test-support`, as `crate::testing` is.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use caelumora_model::chain::Position;
 use caelumora_model::history::testing::{items_of, messages_of};

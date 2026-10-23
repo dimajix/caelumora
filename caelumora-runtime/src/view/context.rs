@@ -57,6 +57,7 @@ impl AgentContextView {
     ///
     /// # Panics
     /// If `actor` is no agent.
+    #[expect(clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
     pub async fn of_state(actor: ActorId, mut state: AgentChannelState, history: History) -> Self {
         use caelumora_model::channel::ChannelState;
         use caelumora_model::history::{Audience, HistoryEntry, Recorded};

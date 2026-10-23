@@ -1,6 +1,6 @@
 # 452 — Rules of the guidelines that a lint could check are only written down
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -57,6 +57,8 @@ Counted on `main` at 2529d3b9, with `allow-unwrap-in-tests`, `allow-expect-in-te
 3. **Complexity.** `cognitive_complexity` and `too_many_lines`, the functions found today marked
    with `expect`.
 4. **`absolute_paths`.** With `absolute-paths-max-segments = 2`; every longer path imported.
+5. **Line lengths.** `scripts/line-length.sh` in the pre-commit hook, on the lines a commit
+   changes; the lines too long today - 75 in Markdown, 18 in Rust comments - wrapped once.
 
 Done when the lints are on, clippy is silent, and CODING-GUIDELINES.md says which rules a lint
 checks.
@@ -65,3 +67,13 @@ checks.
 
 - **2026-10-23** — Issue created while reworking `AGENTS.md`, after counting what these lints find
   in the code today.
+- **2026-10-23** — Step 5 added: the line lengths are counted by `scripts/line-length.sh` since
+  the reviewer agent came, and the hook can run it on what a commit changes.
+- **2026-10-23** — Step 1: the cheap lints are on. Test code outside `#[cfg(test)]` - the store
+  suite, the `testing` modules, `AgentContextView::of_state`, the helpers of four integration
+  tests - says so with a module-wide `expect`; the TUI's three printing functions and the build
+  script's `fail` with one of their own. In production code, `digest::to_json` keeps its
+  `expect`, marked: the model types hashed always serialise, and the digest must not go on with
+  `Null` - an exception the maintainer accepted. Turned into `expect`, three `allow`s turned out
+  to suppress nothing any more and were removed (`ArtifactManager::new`, `HistoryEntry`,
+  `TranscriptEntry`).

@@ -13,6 +13,7 @@
 //! an action asserts the questions asked in a user's name, in order - which
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_model::store::query::Query;

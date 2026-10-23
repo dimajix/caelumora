@@ -1,3 +1,6 @@
+//! The terminal frontend: a user talks, line by line, in a channel of a session started from a
+//! template.
+
 use caelumora_model::store::query::Query;
 use caelumora_model::store::StoreResultExt;
 use caelumora_model::actor::{ActorEvent, ActorId};
@@ -70,6 +73,7 @@ fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, S
 
 /// Prints the questions of `request` (issue 165), and - if they are put to
 /// `me` - how to answer them.
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 fn print_questions(request: &QuestionRequest, me: ActorId) {
     println!("\r--- Questions of {} (id: {}) ---", request.tool_call.function_name, request.id.0);
     for (index, question) in request.questions.questions.iter().enumerate() {
@@ -133,6 +137,7 @@ fn questions_named(open: &[QuestionRequest], arg: &str, me: ActorId) -> Option<Q
     }
 }
 
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
     let user_actor = channel.user_actor(user)
         .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the channel"))?;
@@ -508,6 +513,7 @@ fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentErro
     components.set_default_kind::<dyn ModelProfileProvider>(OLLAMA_CLIENT_KIND)
 }
 
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();

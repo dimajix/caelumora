@@ -19,7 +19,7 @@ against this list, rule by rule, before it is reported (the self-review of
     path is written out only where an import cannot serve ([Imports](#imports)).
 *   Every module begins with `//!` whose first sentence names its responsibility
     ([Comments and documentation](#comments-and-documentation)).
-*   No `unwrap()` or `expect()` in production code ([Types](#types)).
+*   No `unwrap()` or `expect()` in production code ([Types](#types); clippy checks it).
 *   A method of a trait answers a specific error type, never `anyhow` - except the few named in
     [Types](#types).
 *   Errors in a turn end the turn, not the agent: don't let a turn-time error escape
@@ -27,7 +27,7 @@ against this list, rule by rule, before it is reported (the self-review of
 *   Error messages name what failed and never contain secret values or file paths
     ([Messages name what failed](#messages-name-what-failed)).
 *   Log through `tracing`, never through `log` or `println!`; message content only at `trace!`,
-    credentials never ([Logging](#logging)).
+    credentials never ([Logging](#logging); clippy checks `println!`).
 *   REST handlers return `Result<_, crate::error::ApiError>`; never map an error to a bare status
     code ([REST errors](#rest-errors)). Keep the REST API compatible with `caelumora-web-ui`
     ([Crates and interfaces](#crates-and-interfaces)).
@@ -83,6 +83,14 @@ against this list, rule by rule, before it is reported (the self-review of
     (`git config core.hooksPath .githooks`). Where a lint is wrong for a case, say why with
     `#[expect(clippy::…, reason = "…")]` on the item - `expect` rather than `allow`, so that it is
     noticed once the lint no longer fires.
+*   **Rules a lint checks.** `[workspace.lints]` in `Cargo.toml` turns on the lints that check
+    rules of these guidelines (issue 452): `unwrap_used` and `expect_used` ([Types](#types)),
+    `print_stdout` and `print_stderr` ([Logging](#logging)), `allow_attributes` and
+    `allow_attributes_without_reason` (the rule above); and `dbg_macro` and `todo`, so that no
+    debugging output and no unfinished code is committed. `clippy.toml`
+    allows unwrapping and printing in tests; test code outside `#[cfg(test)]` - a `testing`
+    module, a suite, the helpers of an integration test - says so at its top with
+    `#![expect(clippy::unwrap_used, …, reason = "test code: …")]`.
 
 ### What goes where
 

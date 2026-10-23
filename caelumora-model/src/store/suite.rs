@@ -3,6 +3,7 @@
 //! `caelumora-store-json` (issue 446), with the feature `test-support` -, so
 //! that they can't drift apart. What is specific to one store - files on
 //! disk, concurrent writers - stays in that store's own tests.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::history::testing::items_of;
 use crate::store::query::{Field, Filter, Query};

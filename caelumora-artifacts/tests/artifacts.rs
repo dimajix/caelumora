@@ -4,6 +4,7 @@
 //! (`caelumora_runtime::testing`), with a storage of artifacts beside the
 //! workspaces' files. The tests of an action that acts in someone's name
 //! assert what it asks, as the suite does for the core's.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use axum::body::{to_bytes, Body};
 use axum::http::header::{COOKIE, SET_COOKIE};

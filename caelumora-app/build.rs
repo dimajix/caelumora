@@ -38,6 +38,7 @@ fn main() {
     }
 }
 
+#[expect(clippy::print_stderr, reason = "a build script reports its failure on stderr")]
 fn fail(message: &str) -> ! {
     eprintln!("error: {message}");
     exit(1);

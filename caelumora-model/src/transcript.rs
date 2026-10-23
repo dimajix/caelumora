@@ -20,9 +20,6 @@ use crate::digest;
 
 /// What happened in a `Transcript`; its node carries the digest of the
 /// transcript up to and including it (issue 06).
-// Nearly every entry is a message: boxing it would cost an allocation per
-// message and save nothing.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptEntry {

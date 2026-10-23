@@ -73,7 +73,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [449](449-runtime-given-the-policies-twice.md) | open | medium | refactoring | `RuntimeBuilder::new` and `RuntimeManager::new` take the `AccessPolicy` and the `ConfidentialityPolicy` beside a `Persistence` that was made with them, and nothing but a doc comment says that they have to be the same instances - tests already run with stores that permit everything under a runtime that checks. |
-| [452](452-guideline-rules-not-checked-by-lints.md) | open | medium | refactoring | Most rules of CODING-GUIDELINES.md that clippy could check - imports, no `unwrap`, `pub(crate)` by default, `expect` instead of `allow`, no `println!` - are only written down, and are missed; nothing notices when a function grows too complex. |
+| [452](452-guideline-rules-not-checked-by-lints.md) | in progress | medium | refactoring | Most rules of CODING-GUIDELINES.md that clippy could check - imports, no `unwrap`, `pub(crate)` by default, `expect` instead of `allow`, no `println!` - are only written down, and are missed; nothing notices when a function grows too complex. |
 
 ## Low priority
 

@@ -7,6 +7,7 @@
 //! everything a user does goes through the public API, in that user's name.
 //! A test of an action asserts the questions asked in a user's name, in
 //! order (`World::asked`): which permissions the action needs.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 mod scripted_agent;
 #[cfg(test)]

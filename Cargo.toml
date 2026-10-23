@@ -106,3 +106,13 @@ codegen-units = 1
 [workspace.lints.clippy]
 # Cloning an Arc or Rc says so: Arc::clone(&value) (CODING-GUIDELINES.md, issue 229).
 clone_on_ref_ptr = "warn"
+# Rules of CODING-GUIDELINES.md a lint checks, and no debugging output or unfinished code
+# (issue 452); clippy.toml allows unwrapping and printing in tests.
+unwrap_used = "warn"
+expect_used = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "warn"
+todo = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"

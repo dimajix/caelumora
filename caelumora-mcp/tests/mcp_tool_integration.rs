@@ -1,3 +1,6 @@
+//! The `mcp_tool` component against an MCP server of the test's own, over streamable HTTP.
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
+
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

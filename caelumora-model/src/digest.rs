@@ -184,6 +184,7 @@ fn write_canonical(value: &Value, out: &mut String) {
 /// and have no maps with non-string keys, so conversion cannot fail; were it
 /// to, hashing `Null` instead would give different contents the same digest,
 /// which an integrity check must not do silently.
+#[expect(clippy::expect_used, reason = "the model types hashed always serialise; a digest of `Null` instead would be wrong silently")]
 fn to_json<T: Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("hashed model types serialise to JSON")
 }

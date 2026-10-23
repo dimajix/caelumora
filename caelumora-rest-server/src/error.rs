@@ -513,7 +513,7 @@ mod tests {
         use tower::ServiceExt;
 
         #[derive(Deserialize)]
-        struct Payload { #[allow(dead_code)] name: String }
+        struct Payload { #[expect(dead_code, reason = "only its deserializing is tested")] name: String }
         async fn handler(Path(_id): Path<Uuid>, Json(_p): Json<Payload>) -> StatusCode { StatusCode::OK }
         let app = Router::new().route("/items/{id}", post(handler));
 
