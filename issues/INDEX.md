@@ -500,6 +500,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [453](453-artifact-publish-takes-eight-parameters.md) | open | `ArtifactManager::publish` takes the caller, the content, its classification, the name, the description, the session and the channel one by one, and carries an `expect(clippy::too_many_arguments)`. |
 | [454](454-rustdoc-warnings-unchecked.md) | open | `cargo doc --workspace` warns 31 times that public documentation links to a private item, and neither clippy nor the pre-commit hook runs rustdoc, so such warnings only grow. |
 | [455](455-components-configuration-kept-as-entities.md) | done | The preconfigured components are copied once from the seed into a store of their own, read only to resolve a `ref` and written by nothing else, and theirs is the one kind whose id is not a UUID - so no store can key every kind by one. |
+| [461](461-scope-members-repeat-their-loops.md) | open | The managers of agents, workspaces, skills and artifacts, and `Unowned` for the kinds without one, each implement `ScopeMember` with the same three loops - list what lies in the scope, delete, restore or purge each, count or skip what was refused -, differing only in what they announce and what they remove besides. |
 
 ## Integrations
 
