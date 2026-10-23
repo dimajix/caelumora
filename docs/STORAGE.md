@@ -318,7 +318,9 @@ sections of the plugins - `skills` among them -, each seeded by the plugin that 
 (`SeedSection`); a section no plugin claims is an error before anything is stored. At startup both
 binaries put into the stores whatever they do not have yet, by id, as the system
 (`RuntimeManager::seed`): restarting changes nothing, and a document changed in the store stays as
-it is.
+it is. So does one that was deleted, whose id stays taken: every seeder creates through
+`seed::create_unless_taken`, which asks the store's `create` alone and takes a taken id for "there"
+(issue 457). Only a purge frees the id, and the next start seeds the document again.
 
 ## The state store
 

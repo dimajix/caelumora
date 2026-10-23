@@ -9,7 +9,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
-| [457](457-store-answers-misread-by-seed-and-ref.md) | in progress | low | bug | The seed asks whether a document is there with `get`, which does not find one marked deleted, and then fails to create it again, so deleting a seeded personality makes every later start fail; and a store failure while a `ref` is resolved is reported as an invalid configuration that names no bundle. |
 | [458](458-deleted-while-it-runs.md) | open | low | bug | Deleting a session or a channel marks it, deletes what lies in its scope and the groups of its participants while it still runs, and stops it only afterwards, so what its agents write into its scope meanwhile is left behind, and what it announces as it stops reaches its owner alone. |
 
 ## Persistence
