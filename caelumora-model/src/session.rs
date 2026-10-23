@@ -6,7 +6,7 @@ use crate::actor::ActorId;
 use crate::group::GroupId;
 use crate::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
-use crate::store::query::Field;
+use crate::store::query::{Field, Filter};
 use chrono::{DateTime, Utc};
 use crate::value::language::Language;
 use crate::value::name::Name;
@@ -188,9 +188,14 @@ impl Session {
     pub fn take_in(&mut self, participant: Participant) {
         let actor = participant.actor_id();
         self.security_attributes.acl.retain(|entry| !(entry.grant == Grant::Join && entry.subject == Subject::Actor(actor)));
-        if !self.participants.iter().any(|p| p.actor_id() == actor) {
+        if !self.takes_part(actor) {
             self.participants.push(participant);
         }
+    }
+
+    /// Whether `actor` is one of its participants.
+    pub fn takes_part(&self, actor: ActorId) -> bool {
+        self.participants.iter().any(|participant| participant.actor_id() == actor)
     }
 }
 
@@ -210,6 +215,14 @@ impl Field for SessionField {
             SessionField::Participants => &["participants"],
             SessionField::Participant => &[],
         }
+    }
+}
+
+/// The conditions a list of sessions is asked by.
+impl Filter<SessionField> {
+    /// The sessions `actor` takes part in (`Session::takes_part`).
+    pub fn with_participant(actor: ActorId) -> Self {
+        Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, actor))
     }
 }
 
@@ -247,6 +260,25 @@ mod tests {
         let joins: Vec<Subject> = session.security_attributes.acl.iter().filter(|e| e.grant == Grant::Join).map(|e| e.subject).collect();
         assert_eq!(joins, [Subject::Actor(ActorId::User(carol)), Subject::Everyone], "bob's invitation is used up, carol's and the rule stay");
         assert!(session.security_attributes.acl.contains(&AclEntry { subject: Subject::Group(GroupId::of_session(id)), grant: Grant::Read }), "read by its members");
+    }
+
+    /// The condition of the sessions an actor takes part in meets exactly
+    /// those it is a participant of.
+    #[test]
+    fn the_sessions_with_a_participant_are_those_it_takes_part_in() {
+        let (alice, agent) = (UserId::new(), AgentId::new());
+        let id = SessionId::new();
+        let now = Utc::now();
+        let session = Session {
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None,
+            participants: vec![Participant::User(alice), Participant::Agent(agent)], channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
+        };
+        let document = serde_json::to_value(&session).unwrap();
+        for actor in [ActorId::User(alice), ActorId::Agent(agent), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new())] {
+            assert_eq!(Filter::with_participant(actor).matches(&document), session.takes_part(actor), "{actor}");
+        }
     }
 
     #[test]

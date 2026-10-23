@@ -13,7 +13,7 @@ use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::security::AccessQuestions;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::DeletedSnapshot;
-use caelumora_model::store::query::Query;
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{StoreResultExt, Stored};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::Description;
@@ -112,7 +112,7 @@ impl SkillViews for Views {
         let here = Scope::ChannelScope { session_id: place.session.id, channel_id: place.channel };
         let owner = context.principal_id.as_user_id();
         // Those seen from here, which the store is asked for alone (issue 293).
-        let seen = Query::filtered(Scope::seen_from(&here, owner));
+        let seen = Query::filtered(Filter::seen_from(&here, owner));
         let skills = self.skill_manager()?.store().list(context, &seen).await?.items;
         let mut usable = Vec::with_capacity(skills.len());
         for skill in skills {

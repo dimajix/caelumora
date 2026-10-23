@@ -50,7 +50,7 @@ use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Reading, Place};
-use caelumora_model::group::{Group, GroupField, GroupId};
+use caelumora_model::group::{Group, GroupId};
 use caelumora_model::message::MessageId;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
@@ -565,12 +565,7 @@ impl Views {
     /// is asked for alone, in their name: the teams of `groups`, and those
     /// `subjects` names them by.
     async fn teams(&self) -> StoreResult<Vec<Group>> {
-        let principal = self.viewer.context().principal_id;
-        let theirs = Filter::Or(vec![
-            Filter::eq(GroupField::Owner, principal),
-            Group::with_member(principal),
-        ]);
-        let query = Query::filtered(Filter::And(vec![Group::teams(), theirs]));
+        let query = Query::filtered(Filter::teams_of(self.viewer.context().principal_id));
         Ok(self.stores.groups.list(self.viewer.context(), &query).await?.items)
     }
 
@@ -594,7 +589,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn deleted_groups(&self) -> ViewResult<Vec<DeletedSnapshot<GroupId>>> {
-        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::filtered(Group::teams())).await.map(|page| page.items)
+        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::filtered(Filter::teams())).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
         let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(groups.len());

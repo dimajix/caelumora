@@ -251,3 +251,13 @@ their members (`uuid[]`, GIN) took 67 ms, by a table of memberships 41 ms.
   [460](460-kinds-kept-in-one-form-in-postgres.md). `Grant::covering` gives the relations an entry
   must have. Done: what each store hands out is what `check` decides, held by the store suite for
   memory, the JSON files and Postgres.
+- **2026-10-23** — Afterwards, at the maintainer's word: `Group::with_member`, which step 3 added,
+  and `Group::teams` read as questions to a group but make a condition of a list; they became
+  constructors of the filter, `Filter::with_member` and `Filter::teams` beside `GroupField`, as a
+  history's conditions are (`Filter::said_by`); the scope's `Scope::within` and `Scope::seen_from`
+  became `Filter::lying_within` and `Filter::seen_from` alike, `Filter::within` being the range of a
+  number already. `docs/CODING-GUIDELINES.md` says so as a rule.
+- **2026-10-23** — With it, conditions composed twice became constructors too: `Filter::teams_of`,
+  the teams an actor owns or belongs to, and `Filter::with_participant`, the sessions it takes part
+  in, beside `Session::takes_part`. `Filter::lying_within` holds everything for the global scope
+  rather than being none, so `scoped::within`, which only wrapped it in a query, went.

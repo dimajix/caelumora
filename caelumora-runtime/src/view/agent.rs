@@ -6,7 +6,6 @@ use super::{ChannelView, ViewError, ViewResult, Views};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::security::{AccessQuestions, SecurityContext};
-use caelumora_model::session::SessionField;
 use caelumora_model::snapshot::AgentSnapshot;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::StoreResultExt;
@@ -47,9 +46,8 @@ impl AgentView {
     /// `Failed` if the store cannot list the sessions.
     pub async fn channels(&self) -> ViewResult<Vec<ChannelView>> {
         let actor = ActorId::Agent(self.agent.id);
-        let taking_part = Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, actor));
         let mut channels = Vec::new();
-        for session in self.views.sessions_of(&Query::filtered(taking_part)).await? {
+        for session in self.views.sessions_of(&Query::filtered(Filter::with_participant(actor))).await? {
             channels.extend(session.channels().await.into_iter().filter(|channel| channel.lists(actor)));
         }
         Ok(channels)

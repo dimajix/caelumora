@@ -4,12 +4,13 @@
 
 use super::{store_error, GroupError, GroupResult};
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, within};
+use crate::scoped::deleted_since;
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, AccessPolicy, Subject};
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
@@ -207,7 +208,7 @@ impl GroupManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut deleted: Vec<Group> = Vec::new();
-        for group in self.groups.list(&system, &within(holder)).await?.items {
+        for group in self.groups.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             if let Err(e) = self.groups.delete(&system, group.id).await {
                 for group in &deleted {
                     if let Err(undo) = self.groups.restore(&system, group.id).await {
@@ -237,7 +238,7 @@ impl GroupManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut restored = Vec::new();
-        for group in deleted_since(self.groups.list_deleted(&system, &within(holder)).await?.items, since) {
+        for group in deleted_since(self.groups.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
             match self.groups.restore(&system, group.id).await {
                 Ok(group) => restored.push(group),
                 Err(e) => {

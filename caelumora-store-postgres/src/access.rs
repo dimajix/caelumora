@@ -3,7 +3,7 @@
 
 use crate::filter::Condition;
 use caelumora_model::actor::ActorId;
-use caelumora_model::group::Group;
+use caelumora_model::store::query::Filter;
 use caelumora_model::security::{Admission, Grant, SecurityAttributes, Subject};
 use sqlx::postgres::PgArguments;
 use sqlx::query::QueryAs;
@@ -54,7 +54,7 @@ fn relation(grant: Grant) -> &'static str {
 /// An admission as a condition of SQL on the id of a document: that one of
 /// its access entries admits it - the owner's, an entry for an actor, a
 /// role or everyone, or one for a group an actor belongs to, found in the
-/// table of the groups by the members its documents list (`Group::with_member`).
+/// table of the groups by the members its documents list (`Filter::with_member`).
 /// It holds for every document `Admission::admits` admits, and for more only
 /// where ids of different subjects met by chance.
 #[derive(Debug)]
@@ -90,7 +90,7 @@ impl Admitted {
         if admission.grant.is_some() {
             let present = if admission.deleted_groups { "true" } else { "NOT g.deleted" };
             for member in &admission.actors {
-                let belonging = Condition::of(&Group::with_member(*member).by_path(), "g.body", next);
+                let belonging = Condition::of(&Filter::with_member(*member).by_path(), "g.body", next);
                 next = belonging.next();
                 sql.push_str(&format!(" UNION ALL SELECT a.entity_id FROM {groups} g JOIN {access} a ON a.subject = g.id AND a.relation = ANY({related}) \
                     WHERE {present} AND {}", belonging.sql));

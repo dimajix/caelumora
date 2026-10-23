@@ -51,6 +51,9 @@ against this list, rule by rule, before it is reported (the self-review of
 *   Comments and Markdown documents wrap prose at 100 characters; `scripts/line-length.sh` finds
     the lines of a change that are longer
     ([Comments and documentation](#comments-and-documentation)).
+*   A condition a kind offers for lists is a constructor of `Filter` beside its fields, never a
+    function of the entity's type
+    ([Conditions are made by `Filter`](#conditions-are-made-by-filter)).
 *   `cargo clippy --workspace --all-targets` stays silent
     ([Comments and documentation](#comments-and-documentation)).
 
@@ -204,6 +207,21 @@ whose variants hold what belongs to them. A state that cannot be represented nee
 callers, and a `match` over it is checked by the compiler. The same holds for parameters: a `bool`
 that switches a function between two behaviours becomes two functions, or an `enum` that names the
 behaviours.
+
+### Conditions are made by `Filter`
+
+A condition that a kind offers its callers for their lists is a constructor of `Filter`, in an
+`impl Filter<KindField>` beside the fields of its kind - or `impl<F: SharedField> Filter<F>` over
+the field trait several kinds share, as `ScopedField` -, named after what meets it:
+`Filter::teams()`, `Filter::with_member(actor)`, `Filter::said_by(sender)`. It is never a function
+of the entity's type or of a value's: there it reads as a question to the entity or the value, and
+hides that a condition is made. A plugin, which cannot add to `Filter` for its own kind, offers its
+conditions by an extension trait of its own on `Filter<KindField>`, as it adds its questions to
+`AccessQuestions` (see [PLUGINS.md](PLUGINS.md)). A condition composed for one caller stays at the
+caller. Since the conditions of every kind share the names of `Filter`, a name says what it is
+about (`lying_within`, beside the range of a number, `within`). A predicate that judges one entity
+the same way stays with the entity and returns `bool` (`Group::has_member`, `Scope::contains`); the
+condition's doc comment names it, and a test holds both together.
 
 ### Runtimes and their entities
 

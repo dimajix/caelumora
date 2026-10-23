@@ -38,7 +38,7 @@ use async_trait::async_trait;
 use caelumora_model::removal::Deletable;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::query::Query;
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, Stored};
 use chrono::{DateTime, Utc};
 use std::fmt;
@@ -181,14 +181,14 @@ where
 
     async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let mut left = 0;
-        for entity in self.0.list(&SecurityContext::system(), &within(holder)).await?.items {
+        for entity in self.0.list(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder))).await?.items {
             left += usize::from(!deleted_unless_refused(self.0.delete(ctx, entity.id()).await)?);
         }
         Ok(left)
     }
 
     async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
-        for entity in deleted_since(self.0.list_deleted(&SecurityContext::system(), &within(holder)).await?.items, since) {
+        for entity in deleted_since(self.0.list_deleted(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
             restored_unless_refused(self.0.restore(ctx, entity.id()).await, &entity)?;
         }
         Ok(())
@@ -196,7 +196,7 @@ where
 
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for entity in self.0.list_deleted(&system, &within(holder)).await?.items {
+        for entity in self.0.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             self.0.purge(&system, entity.id()).await?;
         }
         Ok(())
@@ -228,12 +228,6 @@ pub fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: 
         }
         Err(e) => Err(e),
     }
-}
-
-/// The query of what lies in `holder` or within it (issue 293), which the
-/// store answers by the scope.
-pub fn within<F: ScopedField>(holder: &Scope) -> Query<F> {
-    Query { filter: holder.within(), ..Query::all() }
 }
 
 /// Those of `deleted` that were deleted at `since` or later - a comparison
