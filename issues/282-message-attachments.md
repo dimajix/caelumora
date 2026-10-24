@@ -274,6 +274,104 @@ reasoning, classification and mentions, and leaves tool calls and results as the
 - An agent's transcript keeps which rendition its model was given of an attachment since removed:
   what it saw stays recorded; its next turns are given what stands.
 
+**Revised: each attachment has a classification of its own.** The decision above that a sent
+attachment has none argued from its readers alone - who reads the message reads it. But a label
+also decides the flows, and there it matters: a turn's label grows only with what its model is
+actually given, so an agent that reads an `internal` message without looking at the `confidential`
+contract attached to it stays `internal` and may go on writing into an `internal` workspace;
+copying an attachment into a workspace, keeping it as an artifact or reading it from another channel
+asks for that attachment's label, not the message's. A `ToolCallResult` has a classification of
+its own within its message for the same reason.
+
+- **When a message is sent**, each attachment is given a label - the message's unless the user
+  says otherwise -, and each is checked on its own: that it may flow into the channel, and into the
+  `destination` of the storage. Before it is sent an upload still has none.
+- **An attachment is reclassified on its own**, by the rule a message is; a channel lowered fits
+  each attachment as it fits each message.
+- **An artifact's version attached** takes the artifact's classification, which only has to flow
+  into the channel; the rule above that refuses one whose label may not flow into the message's
+  is void.
+- **The note** at the message - number, name, type, size - is the message's and carries its label;
+  a turn's label joins an attachment's when its model is given the content.
+
+### What is said and what is seen
+
+**Decided: an attachment is what was said; what a tool gave its model is seen, not attached.** To
+the channel an agent is to feel like a person: a message has a list of attachments, each with its
+own label, whether a user or an agent sends it, and the channel enters them by one rule. The line
+drawn is not between users and agents, but between what is said and what is seen. A person who
+looks at an image on their screen has said nothing; a tool's result is that for an agent - what its
+model was given, which the other agents do not hear (`Message::as_heard` drops tool results). A
+person who wants to show it attaches it to what they say; an agent does the same, deciding which
+image it shows the others and when, at the price of a step of its own.
+
+- **What a tool gave is kept as seen:** `ToolCallResult::media`, of the same type of reference as
+  `Message::attachments` - storage, key, id, name, type, size, digest, label -, but no attachment.
+  It has to be stored all the same, since every model call gives it again and the transcript
+  refers to it. It follows its result: its label (the result's unless the tool says otherwise) and
+  its visibility - a result withheld from the channel withholds its media (`published`); the card
+  of the call shows an image as it shows the result's text.
+- **A tool hands over bytes, the `ToolExecutor` stores them.** `ToolOutput` gains, beside its value
+  and classification, the media as bytes with a name and a media type; the executor, which already
+  makes the `ToolCallResult` of the output, puts them into the storage and sets the references.
+  Limits, sniffing the media type and the allow-list are applied there, once for every tool; no
+  tool reaches the storage, as no client does.
+- **`attach` shows something.** A tool of the same component as `view_attachment` and
+  `read_attachment`: `attach("a5")` resolves the number through the transcript, copies the content
+  within the storage under a new `AttachmentId`, and puts it aside in the turn, with the label of
+  where it came from - as `create_plan` keeps its plan in the turn (`ToolProvider::execute` is given
+  `turn: &mut Turn`). The next message of the turn that others hear - as a rule its answer -
+  carries what was put aside, text and image arriving together as a person's do. What has a number
+  can be attached: an image a tool gave, the main case, and an attachment heard from someone else,
+  to pass it on. A turn that ends without such a message - `silence`, given up - claims nothing,
+  and what it put aside expires. Not `publish_…`: those offer a workspace file or an artifact in a
+  card, which is something else.
+- **An artifact is not the way to show something.** An artifact is kept - named uniquely in its
+  scope, versioned, managed among its owner's -, not said; published, it is a tool's result,
+  which no other agent hears; it is copied from a workspace, where a tool's image does not lie; and
+  it is a plugin's, without which no agent could show anything. Showing and keeping stay two acts;
+  `publish_artifact` may put the version aside as an attachment of the answer besides, through the
+  same method of the turn - whether by default is the plugin's to decide.
+
+**Decided: whoever puts the content gives the id; the channel enters it.**
+
+- **`put`** stores bytes under `<channel>/<attachment id>` and gives the id - a UUID, which needs
+  nobody to hand it out. The owner of attachments records it as *not yet claimed*: by whom, when,
+  in which channel. The content has to lie there before the message passes the channel, since bytes
+  do not go through the transport; so the id exists from then on, and an agent has it from the
+  moment its tool's content is stored. Who puts: the REST handler for a user's upload, through the
+  views - as a workspace upload streams to the terminal the views hand it, the runtime asking
+  whether the user may write in the channel -, not through the user's actor, which queues what its
+  user says and would carry megabytes through its transport and start a channel that does not run;
+  the `ToolExecutor` for a tool's media; `attach` by copying; the actor of an external agent for
+  its file parts (208).
+- **The channel enters it when it admits a message**, where every message passes and is already
+  checked: each new attachment of the message, and the media of its tool results, put by its sender
+  in this channel and not yet claimed - claimed exactly once, so that no two messages ever share a
+  key. One place rather than the three producers each. A message being modified may name the
+  attachments it has besides.
+- **What nothing claims expires**: an upload never sent, what a turn put aside without saying it,
+  and a tool's media whose turn broke off before its result was recorded - no key is left behind
+  that nothing refers to. The records of what is not yet claimed lie with the owner of attachments,
+  not in the channel's state, since an upload must not start the channel.
+- **No entity of its own.** What is known of an attachment stands in its message; a document of its
+  own in the `EntityStore` would hold it twice. Only what is not yet claimed needs a record.
+
+**Decided (proposed first, confirmed by the maintainer the same day):**
+
+- **`view_attachment` shows, it brings nothing.** Its result names the attachments it shows
+  (`ToolCallResult::shown`, their ids) instead of storing their content again under a new key; the
+  turn puts the content on the copy the model is given, as for a message's attachments. If the
+  message it came from is erased, the transcript keeps the digest, and the result reads as no
+  longer available.
+- **The cut with [208](208-generated-artifacts.md).** 282 brings the type, `ToolCallResult::media`
+  and `shown`, the way through `ToolOutput` and the `ToolExecutor`, and `attach`. 208 keeps taking
+  in what comes from outside: an MCP result's `image` and `resource` contents as media - which also
+  ends `mcp_tool` putting a result without text, base64 and all, as JSON into the context
+  (`call_tool_result_to_value`) -, an A2A answer's file parts as attachments of the external
+  agent's message, and the question of files given by URL. Its panel of a channel's artifacts would
+  become a list of a channel's attachments, if it is still wanted.
+
 ### Giving it to the model
 
 - **Who fetches the content.** The context is resolved without I/O (`ContextResolver`,
@@ -497,3 +595,16 @@ size and a download.
   attachments are a view translating between `AttachmentId` and that number, the number recorded
   in the transcript's entry, the translation in the agent's state. A workspace of each agent's own
   was asked about and is not pursued.
+- **2026-10-24** — Decided with the maintainer (*Classification, changes, taking back*, *What is
+  said and what is seen*): each attachment has a classification of its own after all - a label
+  decides flows, not only readers -, the message's unless the user says otherwise; an artifact's
+  version attached takes the artifact's. What a tool gives its model is seen, not attached
+  (`ToolCallResult::media`, the result's label and visibility, shown in the call's card as its
+  text is); an agent shows something by `attach`, which puts a copy aside in the turn for its next
+  message heard - not by publishing an artifact, which keeps rather than says. Whoever puts the
+  content gives its id; the channel enters a message's new attachments and its results' media when
+  it admits the message, claiming each once; what nothing claims expires. A user's upload goes
+  through the views, not through the user's actor. Proposed, not yet confirmed: `shown` for
+  `view_attachment`, and the cut with 208.
+- **2026-10-24** — Confirmed by the maintainer: `shown` for `view_attachment`, and the cut with 208
+  (*What is said and what is seen*); 208's history says so.

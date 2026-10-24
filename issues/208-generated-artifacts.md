@@ -133,3 +133,14 @@ A2A is the first producer, not the shape of the design.
   its content in an `ArtifactStorage`, in a scope of its own -, published there as fixed copies.
   That also answers what becomes of an artifact in a channel without a workspace. What remains here
   is taking in the file and data parts of A2A answers and MCP results as such artifacts.
+- **2026-10-24** — Cut with issue [282](282-message-attachments.md), decided there (*What is said
+  and what is seen*): what an agent generates is not an artifact any more, but an attachment or
+  what a model was given. 282 brings the type of reference, `ToolCallResult::media` - what a tool
+  gave its model, the result's label and visibility, not heard by other agents - and `shown`, the
+  way through `ToolOutput` and the `ToolExecutor`, which stores what a tool hands over as bytes,
+  and `attach`, by which an agent shows the channel what it chooses. What remains here is taking in
+  what comes from outside: an MCP result's `image` and `resource` contents as media - which also
+  ends `mcp_tool` putting a result without text, base64 and all, as JSON into the context
+  (`call_tool_result_to_value`) -, an A2A answer's file parts as attachments of the external
+  agent's message, and the question of files given by URL. The panel of a channel's artifacts
+  wanted above would become a list of a channel's attachments, if it is still wanted.
