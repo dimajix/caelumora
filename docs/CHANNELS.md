@@ -369,6 +369,18 @@ User commands (`/help`, `/wakeup`, `/nudge`) are run by the user's actor in the 
 an agent carries out itself is sent to that agent, which carries it out in a turn of its own. See
 [COMMANDS.md](COMMANDS.md).
 
+## What a message carries
+
+A message says what it says in text, and may carry attachments besides - or alone (issue 282):
+content a person or an agent attached, each classified on its own. An attachment is a reference to
+content (`ContentRef`) in the message's `attachments`: its bytes lie in a storage of content (see
+[STORAGE.md](STORAGE.md#content)), and the reference names them by the storage, their key there and
+the digest of the bytes, which is what they are checked against, never how they are found. An
+attachment is part of what was said: heard, published, modified and taken back with its message, and
+covered by its digest. What a tool gave its model besides its text is a reference of the same kind,
+but no attachment: it stays with the tool's result (`ToolCallResult::media`), seen rather than said,
+and is withheld with it.
+
 ## Changing what was said
 
 What was said can be changed by its author, but never rewritten: a message is *modified* - it reads

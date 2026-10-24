@@ -19,14 +19,14 @@ behind it in the inbox - queued, or in the history behind the queue -, in order,
 the agent stands into its state with it (`AgentBody::take_in`, issue 223):
 
 *   **Perceive.** A complete message of another participant - all that was offered to it, live or
-    read from the history, which records it as gone to it (issue 417) -
-    is heard as the sender's words (`Message::as_heard`): a `user` or `assistant` message with
-    text, as a `user` message without its tool calls and results, which were the sender's; nothing
-    of a tool message, an empty one or a `system` one. That is offered to the agent's
-    `PerceiveInProcessor`s, which may drop, change or add messages; what passes is appended to the
-    transcript. A failing stage is logged; what was heard stays in the channel's history and is not
-    offered again. Perceiving begins no turn and asks nothing of the policy. An external agent
-    perceives by the same rule.
+    read from the history, which records it as gone to it (issue 417) - is heard as the sender's
+    words (`Message::as_heard`): a `user` or `assistant` message with text or attachments, as a
+    `user` message without its tool calls and results, which were the sender's; nothing of a tool
+    message, an empty one or a `system` one. That is offered to the agent's `PerceiveInProcessor`s,
+    which may drop, change or add messages; what passes is appended to the transcript. A failing
+    stage is logged; what was heard stays in the channel's history and is not offered again.
+    Perceiving begins no turn and asks nothing of the policy. An external agent perceives by the
+    same rule.
 *   **Take note.** That someone joined or left the channel (`ParticipantJoined`, `ParticipantLeft`,
     issue 408) is recorded into the transcript (`AgentChannelState::note_announced`), where it
     happened among what was heard - also what
@@ -368,8 +368,8 @@ nothing. What stands is read by one rule, kept with the message (`Message::modif
 `reclassify`):
 
 *   a modified message keeps its place, id and time, and takes over content, reasoning,
-    classification and mentions. Its tool calls and results stay, so that a call and its result
-    cannot come apart;
+    attachments, classification and mentions. Its tool calls and results stay, so that a call and
+    its result cannot come apart;
 *   a message taken back keeps its place and loses what it said. The history keeps it so, for
     whatever names it by id; the model is no longer given it;
 *   a reclassified message takes over the classification alone; one taken back is not reclassified.

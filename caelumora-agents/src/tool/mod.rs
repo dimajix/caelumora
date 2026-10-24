@@ -469,8 +469,9 @@ pub enum Admission {
     Await(Questions),
     /// It runs as it is.
     Run,
-    /// It cannot succeed and is answered at once, without asking anyone.
-    Answered(ToolCallResult),
+    /// It cannot succeed and is answered at once, without asking anyone -
+    /// boxed, since a result is much larger than the other variants.
+    Answered(Box<ToolCallResult>),
 }
 
 impl Admission {
@@ -480,7 +481,7 @@ impl Admission {
             Admission::Ask { description, explicit, suggested, questions } => ToolCallState::pending(call, description, explicit, suggested, questions),
             Admission::Await(questions) => ToolCallState::asking(call, questions),
             Admission::Run => ToolCallState::approved(call),
-            Admission::Answered(result) => ToolCallState::answered(call, result),
+            Admission::Answered(result) => ToolCallState::answered(call, *result),
         }
     }
 }
@@ -705,24 +706,24 @@ impl ToolExecutor {
         let agent = turn.situation().agent_id();
         if !offered(call, turn) {
             info!("Tool call '{}' by agent {} names a tool it was not offered", call.function_name, agent);
-            return Admission::Answered(self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn));
+            return Admission::Answered(Box::new(self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn)));
         }
         // The one question of the call's permission (issue 304, rule 4):
         // asked as it is admitted, not again when it runs.
         if self.access_policy.require(turn.situation().security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
             info!("Tool call '{}' by agent {} forbidden by the access policy", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(&turn.situation().texts()), turn.situation().label()));
+            return Admission::Answered(Box::new(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(&turn.situation().texts()), turn.situation().label())));
         }
         let rule = self.place_rule(call);
         if let Some((rule_id, RuleDecision::Deny)) = rule {
             info!(rule = %rule_id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(&turn.situation().texts()), turn.situation().label()));
+            return Admission::Answered(Box::new(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(&turn.situation().texts()), turn.situation().label())));
         }
         let description = match self.providers.describe(call) {
             Ok(description) => description,
             Err(e @ (ToolError::InvalidParameter(_) | ToolError::UnknownTool(_))) => {
                 info!("Tool call '{}' by agent {} cannot run: {}", call.function_name, agent, e);
-                return Admission::Answered(self.failed(call, e, turn));
+                return Admission::Answered(Box::new(self.failed(call, e, turn)));
             }
             Err(e) => {
                 warn!("Cannot describe tool call '{}' for approval: {}", call.function_name, e);
@@ -733,7 +734,7 @@ impl ToolExecutor {
             Ok(questions) => questions,
             Err(e) => {
                 info!("Tool call '{}' by agent {} cannot ask its questions: {}", call.function_name, agent, e);
-                return Admission::Answered(self.failed(call, e, turn));
+                return Admission::Answered(Box::new(self.failed(call, e, turn)));
             }
         };
         let explicit = rule.is_some_and(|(_, decision)| decision == RuleDecision::Ask);

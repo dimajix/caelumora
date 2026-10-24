@@ -4,7 +4,7 @@
 //! wherever it comes from. One file per subject: `name` (`Name`,
 //! `ScopedName`), `language` (`Language`), `time_zone` (`TimeZone`), `text`
 //! (`Text<R>`, free text with a rule: `Summary`, `Briefing`,
-//! `Introduction`, `Description`).
+//! `Introduction`, `Description`, `FileName`).
 //!
 //! What they share is here: one error, `ValueError`, naming the field, and
 //! `impl_value!`, which gives every such type the same API next to its own

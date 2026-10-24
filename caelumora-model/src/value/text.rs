@@ -7,7 +7,7 @@
 //! are kept here together, since several owners share them: a session's,
 //! a channel's and their templates' `Summary` and `Briefing`, a user's and
 //! a personality's `Introduction`, a personality's and a session template's
-//! `Description`.
+//! `Description`, an attachment's `FileName`.
 
 use super::ValueError;
 use std::hash::{Hash, Hasher};
@@ -21,6 +21,9 @@ pub trait TextRule {
     const MAX_CHARS: usize;
     /// Whether it is one line.
     const ONE_LINE: bool;
+    /// Whether it is the name of one file, not a path: without `/` or `\\`, and neither `.` nor
+    /// `..`.
+    const FILE_NAME: bool = false;
 }
 
 /// A text that fits the rule `R`, as written. Never empty: a field that may
@@ -40,7 +43,8 @@ impl<R: TextRule> Text<R> {
     /// # Errors
     /// `ValueError` if it is empty or of whitespace alone, if it is longer
     /// than `MAX_CHARS`, contains a control character that is no whitespace,
-    /// or - where it is one line - a line break.
+    /// or - where it is one line - a line break, or - where it names a file -
+    /// a path.
     pub fn new(text: impl AsRef<str>) -> Result<Self, ValueError> {
         let text = text.as_ref();
         if text.is_empty() {
@@ -57,6 +61,9 @@ impl<R: TextRule> Text<R> {
         }
         if text.chars().any(|c| c.is_control() && !c.is_whitespace()) {
             return Err(ValueError::ControlCharacter { field: R::FIELD });
+        }
+        if R::FILE_NAME && (text.contains(['/', '\\']) || matches!(text, "." | "..")) {
+            return Err(ValueError::Malformed { field: R::FIELD, expected: "the name of a file, without a path" });
         }
         Ok(Self { text: text.to_string(), rule: PhantomData })
     }
@@ -143,6 +150,20 @@ impl TextRule for DescriptionRule {
 
 pub type Description = Text<DescriptionRule>;
 
+/// The name of a file as whoever handed it over gave it - an attachment's
+/// (issue 282): shown with it and offered as its name when it is
+/// downloaded or copied.
+pub enum FileNameRule {}
+
+impl TextRule for FileNameRule {
+    const FIELD: &'static str = "file name";
+    const MAX_CHARS: usize = 255;
+    const ONE_LINE: bool = true;
+    const FILE_NAME: bool = true;
+}
+
+pub type FileName = Text<FileNameRule>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +180,15 @@ mod tests {
         const FIELD: &'static str = "briefing";
         const MAX_CHARS: usize = 10;
         const ONE_LINE: bool = false;
+    }
+
+    #[test]
+    fn a_file_name_names_one_file_without_a_path() {
+        assert_eq!(FileName::new("report 2026.pdf").unwrap().as_str(), "report 2026.pdf");
+        for path in ["a/b.png", "..\\up.png", ".", "..", "/etc/passwd"] {
+            assert!(matches!(FileName::new(path), Err(ValueError::Malformed { field: "file name", .. })), "{path:?}");
+        }
+        assert!(FileName::new("..dots.png").is_ok(), "dots in a name are no path");
     }
 
     #[test]

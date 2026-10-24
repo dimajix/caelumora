@@ -94,6 +94,15 @@ Every message carries a classification. It is not optional, and a `Message` has 
     agent that was given it. Taking a message back changes what the conversation says from now on,
     not what was disclosed; a secret written by mistake is not removed by it.
 
+### Attachments
+
+What a message carries besides its text has a classification of its own (issue 282): the message's
+unless its sender says otherwise, and never above the channel, as the message's. A label decides
+where what was read of something may flow, so a turn that reads a message but is never given its
+confidential attachment stays below it. A channel lowered fits every attachment as it fits every
+message (`Message::fit_into`). What a tool gave its model besides its text (`ToolCallResult::media`)
+goes with the result: classified with it, withheld with it.
+
 ### Reclassification
 
 The classification of a channel or a message can be changed afterwards (`ActionType::Reclassify`).
@@ -387,7 +396,8 @@ it whole (issue 417). What anyone else is given of it is redacted by one rule
 
 *   a call whose `call` is the owner's is left out;
 *   a call whose `arguments` are the owner's has them set to `null`;
-*   a result that is the owner's is emptied, the record of the answers to its questions included;
+*   a result that is the owner's is emptied, the record of the answers to its questions and what
+    the tool gave and showed its model included;
 *   reasoning that is the owner's is dropped;
 *   of a message with nothing left, nothing is given: it is recorded as gone to nobody.
 

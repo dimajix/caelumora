@@ -1,4 +1,9 @@
+//! Tools as a model is offered them and their calls as they are recorded: a `Tool` with its
+//! parameters, who sees its calls and how they are shown, the `ToolSet` of a provider, a `ToolCall`
+//! and how it ended (`ToolCallResult`), and where a call stands while its turn runs
+//! (`ToolCallState`).
 use crate::approval::{ApprovalDecision, ApprovalId, ToolMatcher};
+use crate::content::ContentRef;
 use crate::question::{Answers, QuestionId, Questions};
 use crate::confidentiality::{Classification, Visibility};
 use crate::intern::intern;
@@ -402,6 +407,14 @@ pub struct ToolCallResult {
     /// its result is withheld, since every user was told the decision.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval: Vec<ApprovalDecision>,
+    /// What the tool gave its model besides `content` (issue 282): seen, not said - no attachment
+    /// of the message, heard by no other agent, published as `content` is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<ContentRef>,
+    /// The attachments the call showed its model again, heard before - their references, not their
+    /// content kept again (issue 282); published as `content` is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shown: Vec<ContentRef>,
 }
 
 impl ToolCallResult {
@@ -420,14 +433,16 @@ impl ToolCallResult {
             finished_at: None,
             answers: None,
             approval: Vec::new(),
+            media: Vec::new(),
+            shown: Vec::new(),
         }
     }
 
-    /// The result as a model is given it: without the record of the
-    /// answers to the call's questions and of who approved it, which are
-    /// not the model's.
+    /// The result as a model is given it in words: without the record of the answers to the call's
+    /// questions and of who approved it, which are not the model's, and without what it gave and
+    /// showed, which a model is given as what it is, not as text.
     pub fn for_the_model(&self) -> ToolCallResult {
-        ToolCallResult { answers: None, approval: Vec::new(), ..self.clone() }
+        ToolCallResult { answers: None, approval: Vec::new(), media: Vec::new(), shown: Vec::new(), ..self.clone() }
     }
 }
 

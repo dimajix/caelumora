@@ -17,6 +17,7 @@ pub mod prompt_catalogue;
 pub mod digest;
 pub mod tool;
 pub mod message;
+pub mod content;
 pub mod history;
 pub mod transcript;
 pub mod mention;

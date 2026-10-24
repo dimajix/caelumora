@@ -7,6 +7,7 @@
 //! change without old and new digests ever being mistaken for each other.
 
 use crate::actor::ActorId;
+use crate::content::ContentRef;
 use crate::confidentiality::Classification;
 use crate::context::FrameRef;
 use crate::history::{HistoryEntry, Recorded};
@@ -21,7 +22,7 @@ use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
 use crate::ledger::{Change, LedgerKind};
-use crate::tool::ToolSet;
+use crate::tool::{ToolCallResult, ToolSet};
 use serde::de::Error;
 
 /// A SHA-256 digest.
@@ -189,41 +190,63 @@ fn to_json<T: Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("hashed model types serialise to JSON")
 }
 
-/// The digest of a chain of messages ending in `message`, whose predecessor
-/// chain has the digest `previous` (`None` for the first message).
+/// The digest of a chain of messages ending in `message`, whose predecessor chain has the digest
+/// `previous` (`None` for the first message).
 ///
-/// It covers what the model sees of a message - id, role, sender, content,
-/// reasoning, tool calls and results, whether it is internal - and not what
-/// only describes it afterwards: timestamps, usage statistics, resolved
-/// mentions and metadata. Its predecessor is covered as `previous`.
+/// It covers what the model sees of a message - id, role, sender, content, reasoning, what each
+/// attachment is (`content_seen`), tool calls and results, whether it is internal - and not
+/// what only describes it afterwards: timestamps, usage statistics, resolved mentions and metadata.
+/// Its predecessor is covered as `previous`.
 pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
-    let mut e = Encoder::new("caelumora.message-chain.v1");
+    let mut e = Encoder::new("caelumora.message-chain.v2");
     e.opt_digest(previous);
     e.bytes(message.id.0.as_bytes());
     e.json(&to_json(&message.role));
     e.json(&to_json(&message.sender_id));
     e.opt_str(message.content.as_deref());
     e.opt_str(message.reasoning.as_deref());
+    e.json(&content_seen(&message.attachments));
     e.json(&to_json(&message.tool_calls));
-    e.json(&to_json(&message.tool_results));
+    e.json(&results_seen(&message.tool_results));
     e.bytes(&[message.internal as u8]);
     e.finish()
 }
 
-/// The digest of a chain of messages ending in the modification of one of
-/// them to `modified` (issue 234) - the same in a history and a transcript -
-/// whose predecessor chain has the digest `previous`. It covers the message
-/// and what the modification takes over that a model sees or that decides
-/// where it may go - content, reasoning, classification - not when it was
-/// made.
+/// The digest of a chain of messages ending in the modification of one of them to `modified` (issue
+/// 234) - the same in a history and a transcript - whose predecessor chain has the digest
+/// `previous`. It covers the message and what the modification takes over that a model sees or that
+/// decides where it may go - content, reasoning, what each attachment is and how it is classified,
+/// the classification - not when it was made.
 pub fn message_modified(previous: Option<&Digest>, modified: &Message) -> Digest {
-    let mut e = Encoder::new("caelumora.message-modified.v1");
+    let mut e = Encoder::new("caelumora.message-modified.v2");
     e.opt_digest(previous);
     e.bytes(modified.id.0.as_bytes());
     e.opt_str(modified.content.as_deref());
     e.opt_str(modified.reasoning.as_deref());
+    e.json(&content_seen(&modified.attachments));
+    e.json(&to_json(&modified.attachments.iter().map(|a| &a.classification).collect::<Vec<_>>()));
     e.json(&to_json(&modified.classification));
     e.finish()
+}
+
+/// What a model is told of the content `refs` name (issue 282): what each is - its id, name, media
+/// type, size and the digest of its bytes -, not where the bytes lie.
+fn content_seen(refs: &[ContentRef]) -> Value {
+    to_json(&refs.iter().map(|r| (r.id, &r.name, &r.media_type, r.size, r.digest)).collect::<Vec<_>>())
+}
+
+/// The tool results `results` as a digest covers them: whole, as they are stored, but for what each
+/// gave and showed its model, which counts as attachments count (`content_seen`).
+fn results_seen(results: &[ToolCallResult]) -> Value {
+    Value::Array(results.iter().map(|result| {
+        let mut seen = to_json(result);
+        for (field, refs) in [("media", &result.media), ("shown", &result.shown)] {
+            if !refs.is_empty() {
+                seen[field] = content_seen(refs);
+            }
+        }
+        seen
+    }).collect())
 }
 
 /// The digest of a chain of messages ending in `message` taken back (issue
@@ -580,8 +603,10 @@ pub fn frame(frame: &FrameRef) -> Digest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::testing::make_content_ref;
     use crate::message::MessageId;
-    use crate::tool::ToolCall;
+    use crate::message::MessageRole;
+    use crate::tool::{ToolCall, ToolResultStatus};
     use serde_json::json;
     use chrono::{Duration, Utc};
 
@@ -622,6 +647,37 @@ mod tests {
         described.prompt_tokens = Some(42);
         described.turn_id = Some(TurnId::new());
         assert_eq!(message_chain(None, &original), message_chain(None, &described), "only what the model sees counts");
+    }
+
+    /// Issue 282: what each attachment is, a model is told and the digest covers; where its bytes
+    /// lie it does not. What a modification takes over of them, how each is classified included, is
+    /// covered too.
+    #[test]
+    fn what_is_attached_is_part_of_the_digest() {
+        let attached = Message { attachments: vec![make_content_ref("a.png", b"a")], ..message("look") };
+        let plain = Message { attachments: Vec::new(), ..attached.clone() };
+        assert_ne!(message_chain(None, &attached), message_chain(None, &plain), "with and without");
+        let mut other_bytes = attached.clone();
+        other_bytes.attachments[0].digest = content(b"b");
+        assert_ne!(message_chain(None, &attached), message_chain(None, &other_bytes), "other bytes");
+        let mut moved = attached.clone();
+        moved.attachments[0].storage = "elsewhere".to_string();
+        moved.attachments[0].key = "attachments/elsewhere".to_string();
+        assert_eq!(message_chain(None, &attached), message_chain(None, &moved), "where the bytes lie is no part of what was said");
+
+        let mut released = attached.clone();
+        released.attachments[0].classification = Classification::PUBLIC;
+        assert_ne!(message_modified(None, &attached), message_modified(None, &released), "a modification covers how each is classified");
+        assert_ne!(message_modified(None, &attached), message_modified(None, &plain), "and what is attached");
+
+        let result = |media: ContentRef| Message { role: MessageRole::Tool, tool_results: vec![ToolCallResult { media: vec![media], ..ToolCallResult::of(&ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments: Value::Null, visibility: Default::default(), presentation: Default::default() }, ToolResultStatus::Ok, String::new(), Classification::CHANNEL_DEFAULT) }], ..message("") };
+        let given = result(attached.attachments[0].clone());
+        let mut elsewhere = given.clone();
+        elsewhere.tool_results[0].media[0].key = "attachments/elsewhere".to_string();
+        assert_eq!(message_chain(None, &given), message_chain(None, &elsewhere), "what a tool gave counts as an attachment does");
+        let mut other = given.clone();
+        other.tool_results[0].media[0].digest = content(b"b");
+        assert_ne!(message_chain(None, &given), message_chain(None, &other));
     }
 
     #[test]
