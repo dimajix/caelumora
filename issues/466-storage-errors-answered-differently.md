@@ -1,0 +1,64 @@
+# 466 — The same failure of a storage is answered differently over REST
+
+**Status:** open
+**Type:** refactoring
+**Priority:** low
+**Area:** User interaction
+**Summary:** A file too large, content that changed while it was kept, or a storage that broke is answered with another status and code by the artifacts than by attachments and workspaces, since each kind maps the storage's errors to its own and the REST layer maps each kind's on its own.
+
+## The problem
+
+Three kinds keep files in a storage: the files of a workspace (`TerminalProvider`), the versions of
+an artifact and the attachments of a message (both `ContentStorage`, issue
+[282](282-message-attachments.md)). The storage fails the same way under each - the file is larger
+than allowed, its bytes are not what was announced, the storage broke -, but the client is told
+differently:
+
+| Failure | Workspace (`TerminalError`) | Attachment (`AttachmentError`) | Artifact (`ArtifactError`) |
+|---|---|---|---|
+| too large | `413 file_too_large` | `413 file_too_large` | `400 too_large` |
+| changed while kept | - | `400 changed` | `409 changed` |
+| storage broke | `503 storage_unavailable` | `503 storage_unavailable` | `500 internal_error` |
+| storage not configured | `400 unknown_storage` (named by the client) | `503 storage_unavailable` (named by what is kept) | `400 unknown_storage` |
+
+The cause is the cut of the errors: `ArtifactError` and `AttachmentError` each copy the variants of
+`ContentError` (`TooLarge`, `Changed`, `Unavailable`, ...) into their own, and
+`caelumora-artifacts/src/routes.rs` and `caelumora-rest-server/src/error.rs` each map their copy to
+HTTP. `WorkspaceError` instead carries the `TerminalError` of its storage
+(`WorkspaceError::Terminal`), which is mapped once.
+
+## Why it matters
+
+- **A client handles one failure twice.** The web UI uploads a file to a workspace, to an artifact
+  and to a message, and has to know three answers for "too large".
+- **The answer of a broken storage hides it.** `500 internal_error` logs the cause but tells the
+  client nothing about whether to try again, where `503 storage_unavailable` does.
+- **One more copy with every kind.** A further kind of content repeats the copy of the variants and
+  their mapping, and can differ again.
+
+## Considerations
+
+- **Carry the storage's error, as the workspace does.** `ArtifactError::Content(ContentError)` and
+  `AttachmentError::Content(ContentError)`, transparent, and one `From<ContentError> for ApiError`
+  beside the one for `TerminalError`. The variants the kinds copy today go away; what each kind
+  adds - not configured, not found, classified otherwise - stays its own.
+- **Or align only the mapping.** Keep the copies and change the artifacts' answers to those of the
+  workspace: smaller, but the copy and the chance to differ again stay.
+- **`Changed`: `400` or `409`.** That the bytes are not what was announced is the request's fault
+  (`400`); `409` says that the state of the resource conflicts with the request, which it does not.
+- **A storage not configured.** Where the client names the storage (a workspace made in it), it is
+  the request's fault (`400`); where what is kept names it (an artifact's or attachment's content
+  in a storage since removed from the configuration), it is the server's (`503`). The distinction
+  is real and stays, but it belongs to where the name comes from, not to the kind.
+
+## Done when
+
+- The same failure of a storage is answered with the same status and code whatever kind it is kept
+  for, and the mapping of each failure exists once.
+- REST-SERVER.md says how storage failures are answered.
+
+## History
+
+- **2026-10-24** — Opened at the maintainer's request, from the review of step 3 of issue 282,
+  where the answers of attachments were made to follow the workspace's and the artifacts' were
+  found to differ.
