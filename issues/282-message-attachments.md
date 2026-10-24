@@ -543,6 +543,363 @@ size and a download.
 - CHANNELS.md, AGENT-TURN.md, STORAGE.md, REST-SERVER.md, WEB-UI.md and CONFIGURATION.md describe
   it; which stored data has to be deleted is said.
 
+## Plan
+
+Proposed 2026-10-24 from the decisions above, checked against the code as it stands. Six steps,
+each a change of its own, reviewed and committed on its own; the first is a refactoring without a
+change of behaviour. What the checking found that the decisions above do not say yet is under
+*Checked against the code*; what has to be decided before the steps are built is under *Open*.
+
+### Checked against the code
+
+- **A download is never shown inline.** REST-SERVER.md: every download is
+  `application/octet-stream`, `Content-Disposition: attachment`, `nosniff`, `no-store`, so that
+  HTML or SVG never runs in the web UI's origin (`attachment_response`). *Upload and the REST API*
+  above says images of the allow-list are shown inline. Open 1.
+- **A message without text is heard by nobody.** `Message::is_heard` requires non-empty
+  `content`; `Recipients::members(message.is_heard())` sends it to the agents only then, and
+  `Message::published` gives nothing of a message whose content, reasoning, calls and results are
+  all empty. A message of an image alone would reach no agent. Both take attachments into account
+  (step 2).
+- **The digest.** `digest::message_chain` covers `tool_results` as JSON, so `media` and `shown`
+  are covered as they are added; `attachments` are added to the scheme as a version of its own,
+  `caelumora.message-chain.v2`. `message_modified` covers content, reasoning and classification
+  alone and takes the attachments over as well. Stored histories and transcripts have to be
+  deleted.
+- **The numbers cannot be found over the chain.** A note's next number is the highest on any
+  branch plus one (`Ledger::next_id`); but an agent holds only a window of its transcript
+  (`keep_window`), and the store alone has the rest. The translation and the next number are a part
+  of `AgentChannelState`, as `last_message` and `used` are (step 4).
+- **Not only the turn calls the model.** Compaction asks the agent's model itself, with
+  `Turn::context_until` (`summary_compaction`), and an external agent gives its remote agent the
+  transcript through `ModelProfile::given_messages`. Loading content goes where the messages for a
+  model are built from the transcript - `Turn::full_context` and `context_until` -, not into
+  `handle_planning`; the external agent is told of an attachment in text alone (step 4).
+- **The profile is fixed as the agent is built.** `ModelProfile` comes from the
+  `ModelProfileProvider`, read once as the components are built; `/api/show` is read only for the
+  control tokens, at the first call. Whether a model sees images cannot be learnt lazily. Open 3.
+- **`ContentDigest` hashes the length first**, so an upload is digested as it streams only with
+  its `Content-Length`; one without is refused (`411`).
+- **Nothing sniffs media types, nothing caches by a byte budget**, and no crate for either is a
+  dependency. Both are written in the core: the magic bytes of png, jpeg and webp (`media::sniff`,
+  a dozen lines), and a cache of `Bytes` by key within a budget (`ContentCache`). The Ollama client
+  needs `base64` (added to the workspace dependencies) to send images.
+- **`validate_users_own` forbids a channel's scope** for workspaces and artifacts. An attachment
+  is no entity and lies in no store, so the rule does not touch it; its key names the channel.
+- **The key names the session too.** A session is purged by one `purge_lying_in(SessionScope)`
+  after its channels' documents are gone, so a member cannot list the channels then. The key is
+  `attachments/<session>/<channel>/<id>`: a session purges `attachments/<session>/`, a channel
+  `attachments/<session>/<channel>/` - the same removal by prefix. Artifacts' keys become
+  `artifacts/<id>/<n>` beside them in the same storage.
+- **`attach` is a word taken**: `attach_workspace`, `PUT /sessions/{id}/workspace` attach a
+  workspace to a session. The tool keeps the name - it attaches to a message, which the model
+  reads as plain English -, the code says `Turn::put_aside` and `attachments`, never `attach`.
+- **`view_attachment` needs more than ids.** To be given to the model again, a shown attachment
+  needs its storage, key and media type; resolving ids through the transcript at every call is
+  work for nothing. `shown` holds the references themselves - copies of the `Attachment`, the same
+  id and key, no new content - which keeps what the model saw covered by the digest.
+
+### Step 1: the content storages in the core
+
+A refactoring: the storages of artifacts become storages of content, of the core, in the shape
+they have (`ArtifactStorage` → `ContentStorage`), keyed by opaque strings. Pattern: the workspace
+storages - a trait with a `local` backend registered in `Backends::built_in`, made by
+`RuntimeBuilder::new` from a section of `AppConfig`, held by whoever uses them.
+
+`caelumora-runtime/src/content/mod.rs`, `local.rs`:
+
+```rust
+/// Where binary content lies (issue 282): keys and bytes, nothing of permissions, which are
+/// the owner's of what the key names - an artifact's version, a message's attachment -, each in
+/// a key space of its own. The service a storage of content is a backend of (issue 324): the
+/// core brings `local`, a plugin may register another (S3, issue 272).
+#[async_trait]
+pub trait ContentStorage: Send + Sync + fmt::Debug {
+    /// Keeps `content` under `key`, at most `limit` bytes, or nothing; answers the bytes kept.
+    async fn put(&self, key: &str, content: ByteStream, limit: u64) -> ContentResult<u64>;
+    /// The content under `key`, with its size.
+    async fn get(&self, key: &str) -> ContentResult<(u64, ByteStream)>;
+    /// Keeps a copy of what lies under `from` under `to`, as cheaply as the backend can - a hard
+    /// link or reflink, `CopyObject` -: two keys, each removed on its own.
+    async fn copy(&self, from: &str, to: &str) -> ContentResult<()>;
+    /// Removes what lies under `key`; nothing there is no error.
+    async fn delete(&self, key: &str) -> ContentResult<()>;
+    /// Removes everything whose key begins with `prefix`; nothing there is no error.
+    async fn remove_prefix(&self, prefix: &str) -> ContentResult<()>;
+    /// What may be put into it: the classification content in it may have at most; `None` for
+    /// no bound.
+    fn destination(&self) -> Option<&Classification>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ContentError { NotFound(String), TooLarge { limit: u64 }, Unavailable(String) }
+pub type ContentResult<T> = Result<T, ContentError>;
+```
+
+- A key is a path of segments without `..`, checked by `local` before it touches the file system
+  (`ContentKey::parse`, as `WorkspacePath::parse`); `<root>/<key>`, written through
+  `write_whole`. `copy` tries a hard link and falls back to copying the file.
+- `caelumora-model/src/config.rs`: `ContentConfig { storage: BTreeMap<String, BackendConfig> }`,
+  section `content`; `RuntimeBuilder::new` makes them (`"storage of content"`) and offers them,
+  `pub fn content_storages(&self) -> &Arc<BTreeMap<String, Arc<dyn ContentStorage>>>`.
+- `caelumora-artifacts`: `ArtifactsConfig` loses `storage` and keeps `max_bytes` and
+  `publish_to`, now naming a storage of content; the manager takes the storages from the builder
+  and keys `artifacts/<id>/<n>`; `local.rs` goes; `remove` becomes `remove_prefix`.
+- Docs: CONFIGURATION.md (section `content`, `artifacts` row), STORAGE.md (*Artifact content* →
+  *Content*), ARCHITECTURE.md (backends), `examples/config.yaml`; the tests of `local` move to the
+  core, those of the plugin configure `content`.
+- Stored data to delete: the content of artifacts (`local/artifacts`), which lies under other keys
+  now.
+
+### Step 2: the attachment in the model
+
+`caelumora-model/src/attachment.rs`:
+
+```rust
+define_id!(AttachmentId);
+
+/// What a message carries besides its text (issue 282): what is known of the content - its name,
+/// type, size and digest -, how it is classified, and where its bytes lie. Part of the message
+/// it is attached to: classified with it, taken back with it, covered by its digest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attachment {
+    pub id: AttachmentId,
+    /// A file name, as uploaded, at most 255 characters, without a path.
+    pub name: String,
+    /// Sniffed from the bytes, never taken from the client (`media::sniff`).
+    pub media_type: String,
+    pub size: u64,
+    /// `digest::content` of the bytes: what they are checked against, never a key.
+    pub digest: Digest,
+    /// Its own (issue 282): the message's unless its sender said otherwise; never above the
+    /// channel.
+    pub classification: Classification,
+    /// The storage of content its bytes lie in, as configured, and its key there.
+    pub storage: String,
+    pub key: String,
+    /// The number the agent whose transcript holds this copy knows it by (`a3`); `None` in the
+    /// channel's record and in every other copy. Given by `AgentChannelState` alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u32>,
+    /// The bytes, on the copies a model is given and nowhere else: never stored, not covered by
+    /// the digest; a clone counts a reference.
+    #[serde(skip)]
+    pub content: Option<Bytes>,
+}
+
+impl Attachment {
+    /// Whether a model of `profile` is given the bytes with the message, or told of them alone.
+    pub fn given_along(&self, profile: &ModelProfile) -> bool;
+    /// `a3`: how the model names it; `None` while it has no number.
+    pub fn reference(&self) -> Option<String>;
+}
+
+/// The media types an attachment may have (issue 282): png, jpeg and webp, told from the first
+/// bytes, and plain text; `None` for anything else.
+pub mod media { pub fn sniff(head: &[u8]) -> Option<&'static str>; pub fn is_image(media_type: &str) -> bool; }
+```
+
+- `Message::attachments: Vec<Attachment>`, absent where empty, as `tool_calls` is;
+  `ToolCallResult::media: Vec<Attachment>` - what the tool gave its model, seen - and
+  `shown: Vec<Attachment>` - what `view_attachment` showed again, references of attachments heard.
+- `Message::new`, `ToolCallResult::of` list the fields. `is_heard`: text or attachments.
+  `as_heard` keeps them. `published`: a result withheld from the channel loses `media` and `shown`
+  as it loses its content; a message with attachments alone is published. `names_only` drops both.
+  `modify` takes the attachments over; `revoke` clears them. `estimated_tokens` counts an image as
+  768 tokens (Ollama's estimate; 465 refines it).
+- `digest::message_chain` v2 adds `attachments` (id, name, media type, size, digest, number);
+  `message_modified` v2 adds them with their classifications.
+- `HistoryField::Attachments` for a filter, so that a channel's attachments can be listed later
+  (208) - only if cheap; else left out.
+- Tests: the rules of `is_heard`, `published`, `modify`, `revoke` with attachments; the digests;
+  `media::sniff` on the magic bytes.
+- Stored data to delete: every history and transcript (the digest scheme changed).
+
+### Step 3: the owner of attachments and what enters the channel
+
+`caelumora-runtime/src/attachment/{mod.rs, manager.rs, cache.rs}`. Pattern: a module's manager -
+the one owner of a lifecycle -, held by the `RuntimeManager`, a `ScopeMember`, offered as a
+service, reached by an actor through its `ActorRuntime`.
+
+```rust
+/// The one owner of the content of attachments (issue 282): it keeps what is put - by a user's
+/// upload, a tool's media, a copy to attach -, records it as not yet claimed, hands it to the
+/// message that claims it as the channel admits it, lets what nothing claims expire, reads
+/// content for a model or a download through a cache per process, and removes a channel's or a
+/// session's attachments with it.
+pub struct AttachmentManager { /* storages, keep_in, config, pending: Mutex<HashMap<AttachmentId, Pending>>, cache: ContentCache, sweeper */ }
+
+impl AttachmentManager {
+    pub(crate) fn new(storages: Arc<BTreeMap<String, Arc<dyn ContentStorage>>>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &AttachmentsConfig) -> ComponentResult<Arc<Self>>;
+    /// Keeps `content` as an attachment put by `by` into `channel`, not yet claimed: sniffs the
+    /// type, refuses one not allowed, bounds the size, digests as it streams; the channel's
+    /// classification has to flow into the storage's `destination`. In a user's name: the caller
+    /// takes part in the channel. Answers the reference, without a classification yet (`None`).
+    pub async fn put(&self, ctx: &SecurityContext, channel: &Channel, by: ActorId, name: &str, size: u64, content: ByteStream) -> AttachmentResult<Attachment>;
+    /// Keeps a copy of `source`'s content as a new attachment put by `by`, not yet claimed,
+    /// classified as the source: `attach` of an agent, a version of an artifact (the plugin).
+    pub async fn copy(&self, by: ActorId, channel: &Channel, source: &Attachment) -> AttachmentResult<Attachment>;
+    /// Whether every one of `ids` is not yet claimed, put by `by` into `channel` - what the
+    /// channel asks before it admits a message.
+    pub fn claimable(&self, by: ActorId, channel: ChannelId, ids: impl Iterator<Item = AttachmentId>) -> bool;
+    /// Claims them for the message that entered: taken out of what is pending, exactly once.
+    pub fn claim(&self, ids: impl Iterator<Item = AttachmentId>);
+    /// The bytes of `attachment`, from the cache or the storage, checked against its digest.
+    pub async fn content(&self, attachment: &Attachment) -> AttachmentResult<Bytes>;
+    /// The bytes as a stream, for a download; the cache is not filled.
+    pub async fn stream(&self, attachment: &Attachment) -> AttachmentResult<(u64, ByteStream)>;
+    /// Puts the bytes on every attachment and medium of `messages` that `given_along` says,
+    /// loading what the cache does not hold; one that cannot be had stays without, logged.
+    pub async fn load(&self, messages: &mut [Message], profile: &ModelProfile) -> AttachmentResult<()>;
+}
+impl ScopeMember for AttachmentManager { /* delete and restore do nothing; purge removes the prefix of the scope */ }
+```
+
+- `AttachmentsConfig`, section `attachments`: `max_bytes` (50 MiB), `max_per_message` (10),
+  `keep_in` (the storage, as `artifacts.publish_to`), `cache_bytes` (256 MiB),
+  `unclaimed_expire_secs` (3600). Without a storage, an upload fails
+  saying so (`NotConfigured`).
+- **Pending** is a record in memory: who put it, into which channel, when. A sweeper, built as
+  `CommandReaper` is (an interval task aborted on drop), deletes what expired. What a crash
+  leaves unclaimed is removed with its channel (`remove_prefix`), not before - accepted. Open 2.
+- **`ContentCache`**: `Bytes` by key within `cache_bytes`, least recently used first; `forget(key)`
+  for erasing (237) and purging.
+- **The channel** (`ChannelLoop::admission`): for every message of the event, each attachment's
+  classification and each result's media's flows into the channel (as the parts do today); the
+  new attachments of the message - all of a new one, those the original lacks of a modification -
+  and the media of its results are `claimable` by the sender, else `Rejection::Invalid`; every
+  `shown` lies in this channel (its key's prefix). In `enter`, after `record`, `claim`. A
+  modification keeps the attachments of the original only by their ids: `Message::modify` takes
+  the list of the new version over as it stands.
+- **`UserActor::send_message(content: Option<String>, classification, attachments: Vec<Claimed>)`**
+  where `Claimed { id: AttachmentId, classification: Option<Classification> }` names an upload
+  and, if the user says so, its label; the actor reads the reference of each from the manager
+  (`pending(id)`), gives it the message's label where none is named and puts it on the message;
+  `modify_message` the same, the ids of the message's own attachments kept as they stand. A
+  message needs text or an attachment (`ChannelError::Invalid` otherwise).
+- **REST** (`caelumora-rest-server/src/routes/attachments.rs`):
+  `POST …/channels/{cid}/attachments?name=` - the raw body with `Content-Length` (`411`
+  without), through `channel_of` (reach) and the
+  manager's `put` -, answering the `Attachment`;
+  `GET …/messages/{mid}/attachments/{aid}` through
+  `channel_of` and `ChannelView::message` (the reader's view, the published form), served by
+  `attachment_response` - or inline, open 1. `MessageRequest` gains `attachments:
+  Vec<AttachmentRequest>`, each `{ id, classification: Option<Classification> }`, and its
+  `content` becomes optional. The TUI sends no
+  attachments (`Vec::new()`).
+- **Runtime**: `RuntimeBuilder::new` makes the manager with the content storages, offers it
+  (`services`, `scope_members`); `RuntimeManager::attachment_manager()`;
+  `ActorRuntime::attachments() -> &Arc<AttachmentManager>`.
+- Tests: the manager (put, sniffing, limit, claim once, expiry, purge by prefix, the cache's
+  budget); the channel's admission (a message naming an upload of someone else, one claimed
+  before, one of another channel, a label that may not flow); the security suite: uploading asks
+  the reach of the channel and the flow into the storage, downloading asks what reading the
+  message asks, a stranger gets `404`; the modification cases.
+- Docs: CHANNELS.md (*What enters a channel*), REST-SERVER.md (endpoints, the download rule),
+  STORAGE.md (*Content*: attachments beside artifacts), SECURITY.md and PERMISSION-CHECKS.md
+  (upload, download, admission rows), CONFIGURATION.md (`attachments`), `examples/config.yaml`.
+
+### Step 4: numbers, the note, and the images a model is given
+
+- **`AgentChannelState::attachments: AttachmentIndex`** - `numbers: BTreeMap<AttachmentId, u32>`,
+  `next: u32` -, with `AgentChannelStateChange::Attachments`; `number(&mut self, id) -> u32`
+  gives the next number once and the same again. `perceive` and `said` number every attachment,
+  medium and shown of what enters the transcript, on the transcript's copy
+  (`Attachment::number`); a modification taken in numbers what is new. `Situation::attachments()`
+  answers the index, by which a tool resolves `a3` and `offered` sees whether there are any.
+- **`ModelProfile::images: bool`** (`#[serde(default)]`): whether the model is given images. Set
+  by `ollama_client` from its parameter `vision` - open 3 -, `false` for `a2a_agent`.
+- **The note**: `ContextResolver::given_path` appends to the content of a message with
+  attachments, before the sender is marked, the text `core.attachments` rendered with the
+  profile's `sender_format` and the attachments (`reference`, `name`, `media_type`, `size`,
+  `given_along`): with `xml` one `<attachment ref="a3" name=".." type=".." size=".." shown="no"/>`
+  a line, else `[attachment a3: report.pdf, application/pdf, 2.3 MB, not shown]`. The agent's own
+  messages are marked alike, so that it knows what it attached. A medium of a tool result is
+  described by the tool's own content, not by a note.
+- **Loading**: `Turn::full_context` and `context_until` become `async` and, after resolving,
+  call `attachments.load(&mut messages, &profile)`; the messages hold the `Bytes` for the call.
+  An external agent loads nothing.
+- **`ollama_client`**: `OllamaChatMessage::images: Option<Vec<String>>`, base64 of every
+  attachment of a `user` message and every medium and shown of a `tool` message that carries
+  content; `vision: bool` in `OllamaClientConfig`; LLM-MODELS.md says which models see.
+- Tests: the index gives a number once; the note in both formats; `full_context` puts content
+  where the profile says and nowhere else; the client sends `images`.
+- Docs: AGENT-TURN.md (*Who said what*, *The turn's context and the resolver*, what is held),
+  CONFIGURATION.md (`vision`), COMPONENTS.md (`ollama_client` row), LLM-MODELS.md.
+
+### Step 5: the tools
+
+`caelumora-agents/src/tool/attachment_tool.rs`, kind `attachment_tool`, `ToolProvider`,
+`uses::<AttachmentManager>()`, texts under `agents.tools.attachment_tool`; registered in
+`tool::register_all`. Offered where `Situation::attachments()` is not empty.
+
+| Tool | Parameters | Does | Approval, visibility, classification |
+|---|---|---|---|
+| `view_attachment` | `ref` | Gives the model an image again: the attachment as `shown` of its result, loaded with the message. Refuses one that is no image, with its type. | none; `SHOWN`; the attachment's label |
+| `read_attachment` | `ref`, `start_line?`, `line_count?` | Text of an attachment of a text type, bounded as `read_file` bounds it, saying where to read on. | none; `SHOWN`; the attachment's label |
+| `copy_attachment` | `ref`, `path?` (default `attachments/<name>`) | Writes the attachment's bytes into the workspace the turn may use (`Turn::workspace_terminal(Grant::Write)`), where its label may flow into the workspace's (`may_publish`); answers the path. | where changes are (`requires_approval`, as `terminal_tool`); `SHOWN`; the workspace's |
+| `attach` | `ref` | Puts a copy aside for the turn's next message that others hear (`Turn::put_aside`); answers that it will be attached. | none; `SHOWN`; the attachment's label |
+
+- `ref` is resolved through `Situation::attachments()`; an unknown one is the model's to correct.
+  Reading one records knowledge (`KnowledgeSource::Attachment { id, digest }`) and the turn sees
+  its label (`Turn::see`).
+- **`TurnState::attachments: Vec<Attachment>`** - put aside, pending -, `Turn::put_aside`,
+  `Turn::take_aside`; `AgentActor::stamp` of a complete message that is heard (`!internal`) moves
+  them onto it. A turn given up leaves them pending; they expire.
+- **`ToolOutput::media: Vec<Media>`**, each a `name`, a `media_type` if the tool says, `bytes`;
+  `ToolExecutor::admitted` puts each through `AttachmentManager::put` as the agent, classified as
+  the result, into `ToolCallResult::media`; a put that fails fails the result. No built-in tool
+  gives media yet; 208 brings the first (MCP).
+- Tests: each tool (the number resolved, the refusals, what is recorded), `attach` to the answer
+  and nothing to a plan step, the executor keeping media, the agents' security suite
+  (`copy_attachment` asks the workspace's questions, nothing else asks).
+- Docs: TOOLS.md (*Attachments*), COMPONENTS.md (the row), AGENT-TURN.md (*What leaves the
+  agent*), APPROVALS.md (*What needs approval*).
+
+### Step 6: the web UI
+
+`caelumora-web-ui`: a paper clip at the message field, drag and drop onto the chat, paste from the
+clipboard (`onPaste` with files); each file uploaded at once (`api.uploadAttachment`), shown
+before sending with its name, size, an image as a preview and a remove; sent with the message
+(`attachments` in the request), a message of attachments alone allowed; at a message, images as
+previews and everything else with name, type, size and a download; the tool card of a call with
+`media` or `shown` shows them alike; `MessageModified` takes the attachments over; the types in
+`src/types` mirror the API. Docs: WEB-UI.md (*Input*, *A channel*).
+
+### Later, not in these steps
+
+- Reclassifying one attachment after it was sent (*Revised* above): an act of its own
+  (`AttachmentReclassified`), through every chain and the REST API; until then an attachment's
+  label is set as the message is sent or modified, and fitted with the channel.
+- A bound on what is given along (465); erasing (237); media of MCP results, A2A file parts, a
+  list of a channel's attachments (208); central conversion (*Converting* above); S3 (272).
+
+### Open
+
+1. **Inline images.** The rule "a download is never shown inline" exists so that HTML or SVG
+   never run in the UI's origin; png, jpeg and webp run nothing. Either the download of an
+   attachment of the allow-list is served with its media type and `inline` (still `nosniff`,
+   `no-store`), and REST-SERVER.md names the exception - the UI shows it with a plain `<img>` -;
+   or the rule stays and the UI fetches the bytes and shows a blob URL. Recommended: the
+   exception, named.
+2. **What is pending lives in memory.** Lost with a restart: an upload made before it has to be
+   made again (the UI answers a `404` at sending so), and its bytes stay until the channel is
+   purged. The alternative is to keep the records in the `UserChannelState` - a user in one
+   channel - which the `UserController` writes alone, while claiming is the channel's act: two
+   writers, or a round trip. Recommended: memory.
+3. **Whether a model sees.** `vision` of `ollama_client`: `true`, `false`, or `auto` - asked of
+   `/api/show`'s `capabilities` as the component is built (an async factory); a server that
+   cannot be asked gives `false` and a warning, since the first call fails anyway while it is
+   down. Today nothing of a model is read as it is built. Recommended: `auto` by default, so that
+   the example configuration needs nothing.
+4. **The number on the transcript's copy** of an attachment (`Attachment::number`, `None`
+   everywhere else) rather than a field of the transcript's entry: the copy a transcript holds is
+   already the agent's own (`as_heard`), and the digest covers the number so. The alternative
+   changes `TranscriptEntry::Message` and everything that reads it.
+5. **A message without text**, an image alone: allowed, heard, published and shown. The
+   moderator's policies and the decision model are given messages with text today; one without
+   is given its note (`core.attachments`) as its text where a model reads it.
+
 ## History
 
 - **2026-10-09** — Opened at the maintainer's request: Gemma 4 understands images, but there is no
