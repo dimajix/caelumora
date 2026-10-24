@@ -38,6 +38,8 @@ argon2 = { version = "0.6", default-features = false, features = ["alloc", "pass
 async-stream = "0.3.6"
 async-trait = "0.1"
 axum = "0.8.9"
+# The images an Ollama model is given along (issue 282).
+base64 = "0.22"
 bitflags = "2"
 bollard = "0.21"
 bytes = "1"

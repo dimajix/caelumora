@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use caelumora_model::channel::ChannelState;
 use caelumora_model::store::StoreResult;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
-use caelumora_model::confidentiality::ConfidentialityQuestions;
+use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
 use caelumora_model::message::Message;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use caelumora_model::value::name::Name;
@@ -357,10 +357,11 @@ impl ChannelLoop {
     /// before the flow of what it carries. Decided:
     ///
     /// - a message, by the actor that is acting - only who acts puts
-    ///   something into the channel -, each part of it, the message and its
-    ///   tool results, as it is classified (`ConfidentialityPolicy::
-    ///   may_publish`, issue 133): its sender misclassified what does not
-    ///   flow in;
+    ///   something into the channel -, each part of it, the message, its
+    ///   attachments and its tool results, as it is classified
+    ///   (`ConfidentialityPolicy::may_publish`, issue 133): its sender
+    ///   misclassified what does not flow in; a tool's result carries no
+    ///   media yet (issue 282, step 5);
     /// - a change of a message (issue 234): the message is in its history,
     ///   its author - the sender the history names - may change it, and it
     ///   can be changed so as it stands (`Message::modify`,
@@ -385,7 +386,13 @@ impl ChannelLoop {
     ///   agent was given to read and a compaction of its context (issue
     ///   417), what it was given classified so that it may flow in;
     /// - who joined or left is the channel's own word (`announce`, issue
-    ///   408), never an actor's.
+    ///   408), never an actor's;
+    /// - last, once everything else is admitted, a message said or changed
+    ///   claims its attachments (`AttachmentManager::claim`, issue 282): it
+    ///   carries what it carried before or what the actor acting uploaded
+    ///   for the channel, never what lies elsewhere nor another's upload. A
+    ///   message streamed, or repeated as its turn ends, claims nothing - it
+    ///   is not what the history keeps.
     async fn admission(&self, event: &Envelope) -> Result<(), Rejection> {
         let context = &event.security;
         let messages = event.event.messages();
@@ -395,11 +402,20 @@ impl ChannelLoop {
         let classification = self.classification();
         let channel = self.security_attributes();
         let forbidden = |_| Rejection::Forbidden;
+        // The message said or changed, with what it carried before: what claims attachments.
+        let mut said = None;
         match &event.event {
+            ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => {
+                said = Some((message, Vec::new()));
+                Ok(())
+            }
             ActorEvent::MessageModified(modified) => {
                 let mut message = self.message(modified.id).await.ok_or(Rejection::MessageNotFound)?;
                 self.access_policy.require(context, ActionType::ModifyMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
-                message.modify(modified).then_some(()).ok_or(Rejection::MessageUnchangeable)
+                let kept = message.attachments.clone();
+                message.modify(modified).then_some(()).ok_or(Rejection::MessageUnchangeable)?;
+                said = Some((modified, kept));
+                Ok(())
             }
             ActorEvent::MessageRevoked { message, at } => {
                 let mut message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
@@ -471,10 +487,25 @@ impl ChannelLoop {
             _ => Ok(()),
         }?;
         for message in messages {
-            let parts = iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
-            for part in parts {
-                self.confidentiality.require_publish(context, part, &classification, || Rejection::ClassificationRefused)?;
-            }
+            self.require_parts(context, message, &classification)?;
+        }
+        match said {
+            Some((message, kept)) => self.attachments.claim(context.caller_id, self.id, &message.attachments, &kept).then_some(()).ok_or(Rejection::Invalid),
+            None => Ok(()),
+        }
+    }
+
+    /// Nothing if every part of `message` - the message, its attachments and its tool results - may
+    /// enter the channel, classified `classification`, in `context` (issue 133); why not otherwise.
+    /// What a tool gave or showed its model is admitted from step 5 of issue 282 on.
+    fn require_parts(&self, context: &SecurityContext, message: &Message, classification: &Classification) -> Result<(), Rejection> {
+        if message.tool_results.iter().any(|result| !result.media.is_empty() || !result.shown.is_empty()) {
+            return Err(Rejection::Invalid);
+        }
+        let attachments = message.attachments.iter().map(|content| &content.classification);
+        let parts = iter::once(&message.classification).chain(attachments).chain(message.tool_results.iter().map(|r| &r.classification));
+        for part in parts {
+            self.confidentiality.require_publish(context, part, classification, || Rejection::ClassificationRefused)?;
         }
         Ok(())
     }
@@ -739,6 +770,11 @@ mod tests {
     use uuid::Uuid;
     use std::mem;
     use tokio::time;
+    use crate::testing::{file, shown, World};
+    use caelumora_model::content::ContentRef;
+    use std::slice;
+    use crate::view::Viewer;
+    use caelumora_model::session::ChannelId;
 
     /// An inbox the test reads what the channel delivers from, with nothing
     /// behind it.
@@ -761,7 +797,7 @@ mod tests {
         let mut following = actor.watch();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
-        actor.send_message("@bob, look".to_string(), None).await.expect("sent");
+        actor.send_message(Some("@bob, look".to_string()), None, Vec::new()).await.expect("sent");
 
         let shown = time::timeout(Duration::from_secs(5), following.recv()).await
             .expect("shown by its actor, as it forwards it to the channel").unwrap();
@@ -1208,7 +1244,7 @@ mod tests {
         let error = |result: Result<Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
         his.reclassify_message(MessageId::new(), Classification::PUBLIC).await.expect_err("never said");
         assert!(matches!(error(hers.revoke_message(MessageId::new()).await), ChannelError::MessageNotFound { .. }), "never said");
-        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), None).await), ChannelError::MessageRevoked { .. }), "taken back");
+        assert!(matches!(error(hers.modify_message(said.id, Some("hello".to_string()), None, Vec::new()).await), ChannelError::MessageRevoked { .. }), "taken back");
         assert!(matches!(error(hers.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::MessageRevoked { .. }), "with nothing left to release");
         assert!(matches!(error(his.request_retry(said.id).await), ChannelError::MessageRevoked { .. }));
         assert!(matches!(error(his.request_retry(MessageId::new()).await), ChannelError::MessageNotFound { .. }));
@@ -1593,5 +1629,56 @@ mod tests {
             .collect();
         assert_eq!(announced, [heard.id], "the words others hear, with the message");
         assert_eq!(channel.history().await.len(), 3, "though every one is kept");
+    }
+
+    #[tokio::test]
+    async fn a_message_carries_only_what_its_sender_uploaded_for_the_channel() {
+        let world = World::new().await;
+        let session = world.shared_session(&[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let view = world.manager.views(Viewer::new(World::as_user(world.alice))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+        let attachments = world.runtime.attachment_manager();
+        let upload = || attachments.create(&view, "a.txt", None, (1, file("a")));
+        let (alice, bob) = (ActorId::User(world.alice), ActorId::User(world.bob));
+        let sent = |sender: ActorId, event: ActorEvent| Envelope::new(
+            SecurityContext::new(sender, session.id(), main.id()),
+            EventContext { sender_id: sender, ..EventContext::default() },
+            event,
+        );
+        let said = |sender: ActorId, attachments: Vec<ContentRef>| sent(sender, ActorEvent::CompleteMessageGenerated(
+            Message { sender_id: sender, role: MessageRole::User, attachments, ..Message::new(main.classification()) },
+        ));
+
+        let hers = upload().await.unwrap();
+        assert_eq!(main.admission(&said(bob, vec![hers.clone()])).await, Err(Rejection::Invalid), "not his");
+        let in_her_name = sent(bob, ActorEvent::CompleteMessageGenerated(Message { sender_id: alice, role: MessageRole::User, attachments: vec![hers.clone()], ..Message::new(main.classification()) }));
+        assert_eq!(main.admission(&in_her_name).await, Err(Rejection::Invalid), "not his for a message naming her");
+        let call = ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
+        let result = ToolCallResult { media: vec![hers.clone()], ..ToolCallResult::of(&call, Default::default(), "done".to_string(), main.classification()) };
+        let with_media = sent(alice, ActorEvent::CompleteMessageGenerated(Message { sender_id: alice, role: MessageRole::Assistant, tool_results: vec![result], ..Message::new(main.classification()) }));
+        assert_eq!(main.admission(&with_media).await, Err(Rejection::Invalid), "what a tool gave, not yet (step 5)");
+        let elsewhere = ContentRef { key: format!("attachments/{}/{}/{}", session.id(), ChannelId::new(), hers.id), ..hers.clone() };
+        assert_eq!(main.admission(&said(alice, vec![elsewhere])).await, Err(Rejection::Invalid), "only as it was uploaded");
+        let mut many = Vec::new();
+        for _ in 0..11 {
+            many.push(upload().await.unwrap());
+        }
+        assert_eq!(main.admission(&said(alice, many.clone())).await, Err(Rejection::Invalid), "more than a message carries");
+        assert_eq!(main.admission(&said(alice, many[..10].to_vec())).await, Ok(()), "and claimed so");
+        assert_eq!(main.admission(&said(alice, many[..1].to_vec())).await, Err(Rejection::Invalid), "by one message only");
+
+        let actor = main.user_actor(world.alice).unwrap();
+        let mut watch = actor.watch();
+        actor.send_message(None, None, vec![hers.id]).await.expect("an attachment alone is a message");
+        let ActorEvent::CompleteMessageGenerated(message) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+        assert_eq!(message.attachments, slice::from_ref(&hers));
+        assert_eq!(main.admission(&said(alice, vec![hers.clone()])).await, Err(Rejection::Invalid), "claimed by the message said");
+
+        let modified = |attachments: Vec<ContentRef>| sent(alice, ActorEvent::MessageModified(Message { attachments, ..message.clone() }));
+        let added = upload().await.unwrap();
+        assert_eq!(main.admission(&modified(vec![hers.clone(), added.clone()])).await, Ok(()), "what it carries, and what she uploaded");
+        let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+        let his = attachments.create(&his, "b.txt", None, (1, file("b"))).await.unwrap();
+        assert_eq!(main.admission(&modified(vec![hers, his])).await, Err(Rejection::Invalid), "never another's upload");
     }
 }

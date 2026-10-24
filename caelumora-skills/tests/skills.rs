@@ -384,7 +384,7 @@ async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
     let (world, session, main) = with_a_writing_agent("create_skill", arguments).await;
 
     let (_, asked) = world.asked(async {
-        main.user_actor(world.bob).unwrap().send_message("@helper write it down".to_string(), None).await.expect("sent");
+        main.user_actor(world.bob).unwrap().send_message(Some("@helper write it down".to_string()), None, Vec::new()).await.expect("sent");
         asked_for(&world, "alice as helper, asked by bob: CreateSkill(alice's) yes").await;
     }).await;
     assert!(asked.iter().any(|line| line == "alice as helper, asked by bob: CreateSkill(alice's) yes"), "{asked:?}");
@@ -403,7 +403,7 @@ async fn an_agent_changes_only_skills_of_its_owners() {
     let arguments = serde_json::json!({ "name": "review", "body": "Skip it." });
     let (world, session, main) = with_a_writing_agent("update_skill", arguments).await;
 
-    main.user_actor(world.bob).unwrap().send_message("@helper change it".to_string(), None).await.expect("sent");
+    main.user_actor(world.bob).unwrap().send_message(Some("@helper change it".to_string()), None, Vec::new()).await.expect("sent");
     asked_for(&world, "alice as helper, asked by bob: UpdateSkill(bob's) no").await;
     let review = store(&world).find_by_name(&World::system(), &ScopedName::new("review", Scope::GlobalScope).unwrap()).await.unwrap();
     assert_eq!(review.body.as_str(), "Read it twice.", "unchanged");

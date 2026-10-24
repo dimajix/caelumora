@@ -153,7 +153,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
 
     world.manager.open(&bob, session.id()).await.expect("he opens it");
     assert!(world.participants(world.bob, session.id(), main.id()).await.contains(&ActorId::User(world.alice)), "and sees who is in it");
-    main.user_actor(world.bob).expect("he takes part").send_message("hello".to_string(), None).await.expect("and writes into it");
+    main.user_actor(world.bob).expect("he takes part").send_message(Some("hello".to_string()), None, Vec::new()).await.expect("and writes into it");
     main.cancel(&bob).await.expect("and may cancel what runs in it");
 
     assert!(denied(&session.update_name(&bob, "his").await.expect_err("not his to rename")));
@@ -218,7 +218,7 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     let hers = side.user_actor(world.alice).unwrap();
     let mut watch = hers.watch();
     let mut say = async |text: &str| {
-        hers.send_message(text.to_string(), None).await.expect("sent");
+        hers.send_message(Some(text.to_string()), None, Vec::new()).await.expect("sent");
         let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
         // Shown as it is let in, recorded right after.
         time::timeout(Duration::from_secs(5), async {
@@ -281,7 +281,7 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
     let hers = side.user_actor(world.alice).unwrap();
     let mut watch = hers.watch();
     let mut say = async |text: &str| {
-        hers.send_message(text.to_string(), None).await.expect("sent");
+        hers.send_message(Some(text.to_string()), None, Vec::new()).await.expect("sent");
         let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
         time::timeout(Duration::from_secs(5), async {
             while !side.visible_messages(ActorId::User(world.alice)).await.iter().any(|m| m.id == said.id) {
@@ -335,7 +335,7 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     let (watch, asked) = world.asked(async { reach(world.bob).await.expect("he takes part").user_follow() }).await;
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel; following asks nothing more");
     let mut his = watch.expect("his actor's");
-    main.user_actor(world.alice).unwrap().send_message("hello bob".to_string(), None).await.unwrap();
+    main.user_actor(world.alice).unwrap().send_message(Some("hello bob".to_string()), None, Vec::new()).await.unwrap();
     let ActorEvent::CompleteMessageGenerated(said) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
     assert_eq!(said.content.as_deref(), Some("hello bob"), "what alice said, routed to him - not to her own actor");
     assert!(matches!(reach(world.carol).await, Err(ViewError::SessionNotFound(_))), "carol finds nothing of it");
@@ -486,7 +486,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
     let (mut hers, mut his) = (alice.watch(), bob.watch());
 
     let (refused, asked) = world.asked(async {
-        alice.send_message("secret".to_string(), Some(Classification::general(Confidentiality::Confidential))).await.expect("sent: the channel decides");
+        alice.send_message(Some("secret".to_string()), Some(Classification::general(Confidentiality::Confidential)), Vec::new()).await.expect("sent: the channel decides");
         shown(&mut hers, "MessageRejected").await
     }).await;
     let ActorEvent::MessageRejected { rejected, message, reason } = refused else { unreachable!() };
@@ -494,7 +494,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
     assert!(message.is_some(), "naming the message");
     assert_eq!(asked, checks(&["alice: Publish no"]), "asked by the channel alone");
 
-    alice.send_message("hello".to_string(), None).await.expect("sent");
+    alice.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
     assert_eq!((said.content.as_deref(), Some(said.id) != message), (Some("hello"), true), "he hears what was let in, and nothing of what was not");
     while let Ok(envelope) = his.try_recv() {
@@ -519,11 +519,11 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
-    alice.send_message("helo".to_string(), None).await.expect("sent");
+    alice.send_message(Some("helo".to_string()), None, Vec::new()).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
     let said = said.id;
 
-    let (refused, asked) = world.asked(bob.modify_message(said, "bob's".to_string(), None)).await;
+    let (refused, asked) = world.asked(bob.modify_message(said, Some("bob's".to_string()), None, Vec::new())).await;
     assert!(denied(&refused.expect_err("not his")));
     assert!(asked.is_empty(), "it cannot be sent in his name: {asked:?}");
     let (refused, asked) = world.asked(async {
@@ -534,7 +534,7 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
     assert_eq!(asked, checks(&["bob: RevokeMessage(alice's) no"]), "asked by the channel alone");
 
     let (_, asked) = world.asked(async {
-        alice.modify_message(said, "hello".to_string(), None).await.expect("hers");
+        alice.modify_message(said, Some("hello".to_string()), None, Vec::new()).await.expect("hers");
         shown(&mut watch, "MessageModified").await;
     }).await;
     assert_eq!(asked, checks(&["alice: ModifyMessage(alice's) yes", "alice: Publish yes"]), "the channel, as it admits it: her permission, then the flow");
@@ -561,10 +561,10 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let (mut hers, mut his) = (alice.watch(), bob.watch());
-    alice.send_message("from alice".to_string(), None).await.expect("sent");
+    alice.send_message(Some("from alice".to_string()), None, Vec::new()).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
     let alices = said.id;
-    bob.send_message("from bob".to_string(), None).await.expect("sent");
+    bob.send_message(Some("from bob".to_string()), None, Vec::new()).await.expect("sent");
     // Her actor shows her what she says, too; his message is what the
     // channel routes to her.
     let bobs = loop {
@@ -595,6 +595,53 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
         while !matches!(shown(&mut his, "MessageReclassified").await, ActorEvent::MessageReclassified { classification, .. } if classification == internal) {}
     }).await;
     assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Publish yes"]), "the owner, another's");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// M4: a file is attached (issue 282) by a participant of the channel: uploaded as it may flow into
+/// the channel and the storage it is kept in, asked of the flow alone, and named by the message
+/// that carries it - the channel asks the flow of each again as it lets the message in. Another
+/// participant's message cannot carry it. Its content is read through the message by whoever reads
+/// it, asked what reading the message asks; a stranger reaches neither.
+#[tokio::test]
+async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
+    use caelumora_model::actor::ActorEvent;
+    use caelumora_runtime::attachment::AttachmentError;
+    use futures::StreamExt;
+    use std::slice;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let attachments = world.runtime.attachment_manager();
+    let (manager, session_id, channel_id) = (&world.manager, session.id(), main.id());
+    let channel_of = |user: UserId| async move { manager.views(Viewer::new(World::as_user(user))).session(session_id).await?.channel(channel_id).await };
+    let hers = channel_of(world.alice).await.unwrap();
+
+    let (uploaded, asked) = world.asked(attachments.create(&hers, "notes.txt", None, (5, file("notes")))).await;
+    let uploaded = uploaded.expect("hers to upload");
+    assert_eq!(asked, checks(&["alice: Publish yes"]), "the flow into the channel, the storage bounding nothing");
+    assert!(channel_of(world.carol).await.is_err(), "a stranger reaches no channel to upload into");
+
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+    let (refused, asked) = world.asked(bob.send_message(None, None, vec![uploaded.id])).await;
+    assert!(matches!(refused.expect_err("not his").downcast::<AttachmentError>(), Ok(AttachmentError::NotFound(_))), "not one of his uploads");
+    assert!(asked.is_empty(), "asking nothing: {asked:?}");
+    let mut watch = bob.watch();
+    let (said, asked) = world.asked(async {
+        alice.send_message(Some("my notes".to_string()), None, vec![uploaded.id]).await.expect("sent");
+        shown(&mut watch, "CompleteMessageGenerated").await
+    }).await;
+    let ActorEvent::CompleteMessageGenerated(said) = said else { unreachable!() };
+    assert_eq!(said.attachments, slice::from_ref(&uploaded), "he hears it with the message");
+    assert_eq!(asked, checks(&["alice: Publish yes", "alice: Publish yes"]), "the channel, as it admits it: the message, then its attachment");
+
+    let (read, asked) = world.asked(async {
+        let (_, _, content) = channel_of(world.bob).await.unwrap().attachment(said.id, uploaded.id).await.expect("he reads it with the message");
+        content.collect::<Vec<_>>().await.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect::<Vec<u8>>()
+    }).await;
+    assert_eq!(read, b"notes");
+    assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel, as reading the message asks; its attachment asks nothing more");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

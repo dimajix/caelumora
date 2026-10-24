@@ -2,6 +2,7 @@
 
 use caelumora_model::chain::Position;
 use caelumora_model::value::name::Name;
+use crate::attachment::AttachmentManager;
 use crate::actor::Actor;
 use crate::actor::AgentKinds;
 use crate::actor::approval::ApproverActor;
@@ -222,6 +223,8 @@ pub struct ChannelLoop {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     controllers: Arc<ControllerManager>,
     participation: Arc<Participation>,
+    /// What the attachments of a message are claimed from (issue 282).
+    attachments: Arc<AttachmentManager>,
     /// What builds the actors of its agents, as their kind says (issue 370).
     agent_kinds: Arc<AgentKinds>,
     /// The actors of the participants and of the channel's internal actors
@@ -310,6 +313,7 @@ impl ChannelLoop {
             confidentiality: Arc::clone(runtime.confidentiality()),
             controllers: Arc::clone(runtime.controller_manager()),
             participation: Arc::clone(runtime.participation()),
+            attachments: Arc::clone(runtime.attachment_manager()),
             agent_kinds: Arc::clone(runtime.agent_kinds()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),

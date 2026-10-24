@@ -187,7 +187,7 @@ impl SummaryCompaction {
     /// the agent's model: its text, and the message its model answered with,
     /// for the tokens of the call.
     async fn summarise(&self, turn: &mut Turn<'_>, last: Digest) -> Result<(String, Message), CompactionError> {
-        let mut input = turn.context_until(last).map_err(|e| {
+        let mut input = turn.context_until(last).await.map_err(|e| {
             tracing::warn!("Agent {}: a compaction cannot read its transcript: {:#}", turn.situation().agent_id(), e);
             CompactionError::TranscriptUnreadable
         })?;

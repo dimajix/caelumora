@@ -15,6 +15,7 @@
 //! axis, `Visibility`: ownership, not sensitivity.
 
 use crate::actor::ActorId;
+use crate::context::ModelProfile;
 use crate::message::Message;
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
@@ -101,6 +102,8 @@ pub enum ClassificationError {
     UnnamedCompartment,
     #[error("Compartment '{0}' is configured twice")]
     DuplicateCompartment(Compartment),
+    #[error("Compartments are given with a level")]
+    CompartmentsWithoutLevel,
 }
 
 /// A level and an audience of compartments (issue 133).
@@ -149,6 +152,20 @@ impl Classification {
             return Err(ClassificationError::PublicWithCompartments);
         }
         Ok(Self { level, compartments })
+    }
+
+    /// `level` with the audience `compartments`, or `None` - whatever it is given to decides
+    /// then - if no level is given, as for a file uploaded for a message (issue 282).
+    ///
+    /// # Errors
+    /// `CompartmentsWithoutLevel` for compartments without a level, `PublicWithCompartments`.
+    pub fn given(level: Option<Confidentiality>, compartments: impl IntoIterator<Item = Compartment>) -> Result<Option<Self>, ClassificationError> {
+        let mut compartments = compartments.into_iter().peekable();
+        match level {
+            Some(level) => Self::new(level, compartments).map(Some),
+            None if compartments.peek().is_none() => Ok(None),
+            None => Err(ClassificationError::CompartmentsWithoutLevel),
+        }
     }
 
     /// `level` without compartments.
@@ -304,10 +321,11 @@ impl LabelCauses {
         }
     }
 
-    /// Whether `message` set the label, by its own classification or that
-    /// of a tool result in it.
-    pub fn set_by_message(&self, message: &Message) -> bool {
-        self.set_by(Some(&message.classification)) || message.tool_results.iter().any(|r| self.set_by(Some(&r.classification)))
+    /// Whether `message`, as the model of `profile` was given it, set the
+    /// label: by its own classification, that of a tool result in it, or that
+    /// of an attachment it was given along (issue 282).
+    pub fn set_by_message(&self, message: &Message, profile: &ModelProfile) -> bool {
+        profile.classifications_given(message).any(|classification| self.set_by(Some(classification)))
     }
 }
 
@@ -555,6 +573,15 @@ pub trait ConfidentialityQuestions {
     /// `refusal()` if it may not.
     fn require_publish<E>(&self, context: &SecurityContext, classification: &Classification, into: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E>;
 
+    /// Nothing if what is so classified may be put into a storage bounded
+    /// by `destination` - a storage of workspaces or of content, which says
+    /// how much what lies there may be classified at most -, as publishing
+    /// it there (`require_publish`); a storage without one takes anything.
+    ///
+    /// # Errors
+    /// `refusal()` if it may not.
+    fn require_storable<E>(&self, context: &SecurityContext, classification: &Classification, destination: Option<&Classification>, refusal: impl FnOnce() -> E) -> Result<(), E>;
+
     /// Nothing if `participant`, by `roles`, is cleared for `classification`;
     /// `refusal` otherwise.
     ///
@@ -601,6 +628,10 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
 
     fn require_publish<E>(&self, context: &SecurityContext, classification: &Classification, into: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
         refused(self.may_publish(context, classification, into), context, || format!("publishing {classification} into {into}"), refusal)
+    }
+
+    fn require_storable<E>(&self, context: &SecurityContext, classification: &Classification, destination: Option<&Classification>, refusal: impl FnOnce() -> E) -> Result<(), E> {
+        destination.map_or(Ok(()), |destination| self.require_publish(context, classification, destination, refusal))
     }
 
     fn require_cleared<E>(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
@@ -734,6 +765,9 @@ mod tests {
     use crate::agent::AgentId;
     use crate::user::UserId;
     use crate::tool::{ToolCall, ToolCallResult};
+    use crate::content::ContentRef;
+    use crate::content::testing::make_content_ref;
+    use crate::context::ModelProfile;
     use Confidentiality::*;
     use crate::session::SessionId;
 
@@ -783,6 +817,14 @@ mod tests {
         assert_eq!(Classification::new(Public, [compartment("hr")]), Err(ClassificationError::PublicWithCompartments));
         let written = serde_json::json!({"level": "public", "compartments": ["hr"]});
         assert!(serde_json::from_value::<Classification>(written).is_err(), "not even when it is read");
+    }
+
+    #[test]
+    fn a_classification_given_without_a_level_is_left_to_its_destination() {
+        assert_eq!(Classification::given(None, []), Ok(None));
+        assert_eq!(Classification::given(Some(Confidential), [compartment("hr")]), Ok(Some(classified(Confidential, &["hr"]))));
+        assert_eq!(Classification::given(None, [compartment("hr")]), Err(ClassificationError::CompartmentsWithoutLevel));
+        assert_eq!(Classification::given(Some(Public), [compartment("hr")]), Err(ClassificationError::PublicWithCompartments));
     }
 
     #[test]
@@ -1099,7 +1141,11 @@ mod tests {
             &ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
             Default::default(), "secret".to_string(), confidential.clone());
         let message = Message { tool_results: vec![result], ..Message::new(internal.clone()) };
-        assert!(causes.set_by_message(&message), "a tool result in a message sets the label as the message");
-        assert!(!causes.set_by_message(&Message::new(internal)));
+        let profile = ModelProfile::default();
+        assert!(causes.set_by_message(&message, &profile), "a tool result in a message sets the label as the message");
+        let attached = Message { attachments: vec![ContentRef { classification: confidential.clone(), ..make_content_ref("a.png", b"a") }], ..Message::new(internal.clone()) };
+        assert!(causes.set_by_message(&attached, &ModelProfile { images: true, ..profile }), "and an attachment given along (issue 282)");
+        assert!(!causes.set_by_message(&attached, &profile), "not one only noted");
+        assert!(!causes.set_by_message(&Message::new(internal), &profile));
     }
 }

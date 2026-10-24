@@ -428,7 +428,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                                 }
                             }
                             UserInput::Message(text) => {
-                                let span_id = user_actor.send_message(text, None).await?;
+                                let span_id = user_actor.send_message(Some(text), None, Vec::new()).await?;
                                 tracing::debug!(span_id = %span_id, "Message sent");
                             }
                         }

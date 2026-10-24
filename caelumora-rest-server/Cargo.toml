@@ -26,6 +26,7 @@ percent-encoding.workspace = true
 [dev-dependencies]
 caelumora-runtime = { workspace = true, features = ["test-support"] }
 tower.workspace = true
+tempfile.workspace = true
 # `start_paused`: tests that wait for a token to expire without waiting.
 tokio = { workspace = true, features = ["test-util"] }
 

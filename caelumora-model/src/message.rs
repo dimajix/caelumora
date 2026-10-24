@@ -1,4 +1,9 @@
+//! Messages: what an actor says in a channel - its text, its reasoning, its attachments, its tool
+//! calls and results -, with the rules by which a message is heard, published, modified,
+//! reclassified, fitted into its channel and taken back, and what a model's calls used
+//! (`TokenUsage`).
 use crate::actor::ActorId;
+use crate::content::ContentRef;
 use crate::confidentiality::{Classification, Visibility};
 use crate::digest::Digest;
 use crate::store::query::FieldValue;
@@ -8,6 +13,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::iter;
 use serde_json::Value;
 
 define_id!(MessageId);
@@ -51,6 +57,10 @@ pub struct Message {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// What was said together with `content` (issue 282), each classified on its own; a message may
+    /// carry attachments alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ContentRef>,
     /// Who sees `reasoning` (issues 61, 133): the model's reasoning may
     /// weigh what the answer would not disclose, so the agent keeps it to
     /// its owner once its turn saw what only they may see.
@@ -151,6 +161,7 @@ impl Message {
             classification,
             content: None,
             reasoning: None,
+            attachments: Vec::new(),
             reasoning_visibility: Visibility::Channel,
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
@@ -206,8 +217,9 @@ impl Message {
     /// withheld - a tool call or result whose call is the owner's is left
     /// out, a call whose arguments are has them set to `null`, a result
     /// that is is emptied - with the record of the answers to its
-    /// questions - and such reasoning is dropped, and so is what it was
-    /// produced from. `None` if nothing is left to show.
+    /// questions and what it gave and showed its model - and such reasoning
+    /// is dropped, and so is what it was produced from. `None` if nothing is
+    /// left to show.
     pub fn published(&self) -> Option<Message> {
         let mut message = Message { context_transcript: None, context_frame: None, ..self.clone() };
         if !message.reasoning_visibility.is_channel() {
@@ -224,69 +236,71 @@ impl Message {
             if !result.visibility.result.is_channel() {
                 result.content.clear();
                 result.answers = None;
+                result.media.clear();
+                result.shown.clear();
             }
         }
         let empty = message.content.as_deref().is_none_or(str::is_empty)
             && message.reasoning.as_deref().is_none_or(str::is_empty)
+            && message.attachments.is_empty()
             && message.tool_calls.is_empty()
             && message.tool_results.is_empty();
         (!empty).then_some(message)
     }
 
-    /// What a model is given of the message where what it said may not be
-    /// given (issue 258): which tools it called and how they ended, without
-    /// its content, reasoning, arguments or what the calls returned,
-    /// classified `classification`. For a turn given up because its channel
-    /// was lowered below it (issue 141), whose content its owner never
-    /// released. `None` if nothing is left: no call, no result.
+    /// What a model is given of the message where what it said may not be given (issue 258): which
+    /// tools it called and how they ended, without its content, reasoning, attachments, arguments
+    /// or what the calls returned, classified `classification`. For a turn given up because its
+    /// channel was lowered below it (issue 141), whose content its owner never released. `None` if
+    /// nothing is left: no call, no result.
     pub fn names_only(&self, classification: &Classification) -> Option<Message> {
         if self.tool_calls.is_empty() && self.tool_results.is_empty() {
             return None;
         }
-        let mut message = Message { content: None, reasoning: None, context_transcript: None, context_frame: None, classification: classification.clone(), ..self.clone() };
+        let mut message = Message { content: None, reasoning: None, attachments: Vec::new(), context_transcript: None, context_frame: None, classification: classification.clone(), ..self.clone() };
         for call in &mut message.tool_calls {
             call.arguments = Value::Null;
         }
         for result in &mut message.tool_results {
             result.content.clear();
             result.answers = None;
+            result.media.clear();
+            result.shown.clear();
             result.classification = classification.clone();
         }
         Some(message)
     }
 
-    /// Whether a participant hears anything of the message when someone
-    /// else said it (issue 224): whether it was said or answered in words -
-    /// not a tool message, not an inner step of a plan, not a message
-    /// without text. That nobody hears their own message is the channel's
-    /// to see to: it delivers nothing back to its sender.
+    /// Whether a participant hears anything of the message when someone else said it (issue 224):
+    /// whether it was said or answered in words or attachments (issue 282) - not a tool message,
+    /// not an inner step of a plan, not a message without either. That nobody hears their own
+    /// message is the channel's to see to: it delivers nothing back to its sender.
     pub fn is_heard(&self) -> bool {
         matches!(self.role, MessageRole::User | MessageRole::Assistant)
             && !self.internal
-            && self.content.as_deref().is_some_and(|c| !c.is_empty())
+            && (self.content.as_deref().is_some_and(|c| !c.is_empty()) || !self.attachments.is_empty())
     }
 
-    /// What a participant hears of the message when someone else said it
-    /// (`is_heard`), the same live and on catching up, for every kind of
-    /// agent: its words, as a `user` message without its tool calls and
-    /// results, which were the sender's. `None` if there is nothing to
-    /// hear.
+    /// What a participant hears of the message when someone else said it (`is_heard`), the same
+    /// live and on catching up, for every kind of agent: its words and attachments, as a `user`
+    /// message without its tool calls and results, which were the sender's. `None` if there is
+    /// nothing to hear.
     pub fn as_heard(&self) -> Option<Message> {
         self.is_heard().then(|| Message { role: MessageRole::User, tool_calls: Vec::new(), tool_results: Vec::new(), ..self.clone() })
     }
-    /// Modifies the message as it stands by `modified`, the same message
-    /// as it reads from now on (issue 234), and returns whether it did: only
-    /// one not taken back, by the same sender in the same role. It keeps its
-    /// place, its id and the time it was said, and takes over what
-    /// `modified` says - content and reasoning - how it is classified, whom
-    /// it mentions, and when it was modified (`modified`, its `timestamp`).
-    /// Its tool calls and results stay those it was said with: a call and
-    /// its result would come apart.
+    /// Modifies the message as it stands by `modified`, the same message as it reads from now on
+    /// (issue 234), and returns whether it did: only one not taken back, by the same sender in the
+    /// same role. It keeps its place, its id and the time it was said, and takes over what
+    /// `modified` says - content, reasoning and attachments, which it may remove and add (issue
+    /// 282) - how it is classified, whom it mentions, and when it was modified (`modified`, its
+    /// `timestamp`). Its tool calls and results stay those it was said with: a call and its result
+    /// would come apart.
     pub fn modify(&mut self, modified: &Message) -> bool {
         let applies = modified.id == self.id && self.revoked.is_none() && modified.sender_id == self.sender_id && modified.role == self.role;
         if applies {
             self.content = modified.content.clone();
             self.reasoning = modified.reasoning.clone();
+            self.attachments = modified.attachments.clone();
             self.reasoning_visibility = modified.reasoning_visibility;
             self.classification = modified.classification.clone();
             self.mentions = modified.mentions.clone();
@@ -306,15 +320,28 @@ impl Message {
         applies
     }
 
-    /// Takes the message as it stands back, as of `at` (issue 234), and
-    /// returns whether it did: only one not taken back already. It keeps its
-    /// place and its id, and loses what it said - content, reasoning, tool
-    /// calls and results, mentions.
+    /// Fits the message as it stands into a channel lowered to `channel`
+    /// (`Classification::fitted_into`), and returns whether that changed it: its classification and
+    /// that of each of its attachments, which its channel bounds alike (issue 282).
+    pub fn fit_into(&mut self, channel: &Classification) -> bool {
+        let mut changed = false;
+        for classification in iter::once(&mut self.classification).chain(self.attachments.iter_mut().map(|a| &mut a.classification)) {
+            let fitted = classification.fitted_into(channel);
+            changed |= fitted != *classification;
+            *classification = fitted;
+        }
+        changed
+    }
+
+    /// Takes the message as it stands back, as of `at` (issue 234), and returns whether it did:
+    /// only one not taken back already. It keeps its place and its id, and loses what it said -
+    /// content, reasoning, attachments, tool calls and results, mentions.
     pub fn revoke(&mut self, at: DateTime<Utc>) -> bool {
         let applies = self.revoked.is_none();
         if applies {
             self.content = None;
             self.reasoning = None;
+            self.attachments.clear();
             self.tool_calls.clear();
             self.tool_results.clear();
             self.mentions.clear();
@@ -426,6 +453,7 @@ pub mod testing {
 pub(crate) mod tests {
     use super::*;
     use super::testing::{id, make_message};
+    use crate::content::testing::make_content_ref;
     use crate::tool::ToolVisibility;
     use chrono::Duration;
     use crate::confidentiality::Confidentiality;
@@ -444,8 +472,45 @@ pub(crate) mod tests {
         let started_at = Utc::now();
         ToolCallResult {
             id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility, classification: Classification::CHANNEL_DEFAULT,
-            started_at: Some(started_at), finished_at: Some(started_at + Duration::milliseconds(250)), answers: None, approval: Vec::new(),
+            started_at: Some(started_at), finished_at: Some(started_at + Duration::milliseconds(250)), answers: None, approval: Vec::new(), media: Vec::new(), shown: Vec::new(),
         }
+    }
+
+    /// Issue 282: what is attached is said with the text, and heard,
+    /// published, changed and taken back with it - a message may carry it
+    /// alone; what a tool gave or showed its model is the result's, withheld
+    /// with it.
+    #[test]
+    fn what_is_attached_goes_with_what_was_said() {
+        let screenshot = make_content_ref("screen.png", b"png");
+        let alone = Message { content: None, attachments: vec![screenshot.clone()], ..make_message(id(1)) };
+        assert!(alone.is_heard(), "an attachment alone is something to hear");
+        assert_eq!(alone.as_heard().expect("heard").attachments, alone.attachments, "heard with what was attached");
+        assert_eq!(alone.published().expect("an attachment alone is something to show").attachments, alone.attachments);
+        assert!(alone.names_only(&Classification::PUBLIC).is_none(), "nothing of it where what was said may not be given");
+
+        let other = make_content_ref("better.png", b"better");
+        let mut message = alone.clone();
+        assert!(message.modify(&Message { attachments: vec![other.clone()], ..alone.clone() }));
+        assert_eq!(message.attachments, [other], "removed and added as the new version says");
+        let lowered = Classification::PUBLIC;
+        let mut fitted = message.clone();
+        assert!(fitted.fit_into(&lowered), "a lowered channel fits it");
+        assert_eq!((&fitted.classification, &fitted.attachments[0].classification), (&lowered, &lowered), "and what is attached to it, which the channel bounds alike");
+        assert!(!fitted.fit_into(&lowered), "fitted once");
+
+        assert!(message.revoke(Utc::now()));
+        assert!(message.attachments.is_empty() && !message.is_heard(), "taken back with what was said");
+
+        let seen = |visibility| ToolCallResult { media: vec![make_content_ref("chart.png", b"chart")], shown: vec![screenshot.clone()], ..result("1", visibility) };
+        let results = Message { role: MessageRole::Tool, content: None, tool_results: vec![seen(ToolVisibility::SHOWN), seen(ToolVisibility::WITHOUT_RESULT)], ..make_message(id(2)) };
+        let published = results.published().expect("both calls are public");
+        assert_eq!((published.tool_results[0].media.len(), published.tool_results[0].shown.len()), (1, 1), "a public result with what it gave and showed");
+        assert!(published.tool_results[1].media.is_empty() && published.tool_results[1].shown.is_empty(), "withheld with the result");
+        let given = results.names_only(&Classification::PUBLIC).expect("results");
+        assert!(given.tool_results.iter().all(|r| r.media.is_empty() && r.shown.is_empty()), "how the calls ended, not what they gave");
+        let for_the_model = results.tool_results[0].for_the_model();
+        assert!(for_the_model.media.is_empty() && for_the_model.shown.is_empty(), "a model is given them as what they are, not as text");
     }
 
     #[test]
@@ -561,6 +626,7 @@ pub(crate) mod tests {
         let plain = serde_json::to_value(make_message(MessageId::new())).unwrap();
         assert!(plain.get("reasoning_visibility").is_none());
         assert!(plain.get("turn_id").is_none(), "a message of no turn says nothing of one");
+        assert!(plain.get("attachments").is_none(), "nor of attachments, where it has none");
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use crate::actor::AgentKinds;
+use crate::attachment::AttachmentManager;
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
@@ -123,6 +124,8 @@ impl ChannelRuntime {
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
     pub(crate) fn participation(&self) -> &Arc<Participation> { self.runtime_manager.participation() }
+
+    pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> { self.runtime_manager.attachment_manager() }
 }
 
 #[cfg(any(test, feature = "test-support"))]

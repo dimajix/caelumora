@@ -181,6 +181,11 @@ impl<F: Field> Filter<F> {
         Filter::And(conditions.into_iter().collect())
     }
 
+    /// At least one of `conditions`; no document if there is none.
+    pub fn any_of(conditions: impl IntoIterator<Item = Filter<F>>) -> Self {
+        Filter::Or(conditions.into_iter().collect())
+    }
+
     /// No document.
     pub fn nothing() -> Self {
         Filter::Or(Vec::new())

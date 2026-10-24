@@ -68,9 +68,9 @@ async fn napping_with(listed: Vec<ComponentDescriptor>, afterwards: Vec<Message>
     let (session, main, helper) = helper_with(&world, [vec![sleep], listed].concat()).await;
     let mut events = main.observe();
     let alice = main.user_actor(world.alice).unwrap();
-    alice.send_message("@helper hello".to_string(), None).await.unwrap();
+    alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
-    alice.send_message("@helper take a nap".to_string(), None).await.unwrap();
+    alice.send_message(Some("@helper take a nap".to_string()), None, Vec::new()).await.unwrap();
     let napped = activities_until_the_turn_ends(&mut events, helper).await;
     (world, session, main, helper, napped)
 }

@@ -39,6 +39,9 @@ argon2.workspace = true
 # The time zone a session is held in (issue 424): the IANA names and their
 # rules, compiled in, so that a time is given the same on every machine.
 chrono-tz.workspace = true
+# The content of an attachment, on the copy of a message a model is given
+# (issue 282).
+bytes.workspace = true
 
 [features]
 # What the tests of other crates read of a model value held in memory

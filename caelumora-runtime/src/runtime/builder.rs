@@ -1,7 +1,9 @@
 use crate::actor::AgentKinds;
 use crate::actor::ActorManager;
+use crate::attachment::AttachmentManager;
 use crate::channel::Participation;
-use crate::component::{ComponentRegistry, ComponentResult};
+use crate::component::ComponentRegistry;
+use crate::content::ContentStorage;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use anyhow::{bail, Context, Result};
@@ -13,7 +15,7 @@ use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS, DEF
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
-use crate::backend::Backends;
+use crate::backend::{Backends, NamedBackends};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, PersistenceBackend, Persistence, StoreResult, Stored};
 use crate::plugin::Plugin;
@@ -57,6 +59,10 @@ pub struct RuntimeBuilder {
     agent_states: Arc<AgentStates>,
     workspaces: Arc<WorkspaceManager>,
     command_reaper: Arc<CommandReaper>,
+    /// The storages of content (issue 282), which their owners - a
+    /// plugin's manager - are made with.
+    content_storages: Arc<NamedBackends<dyn ContentStorage>>,
+    attachments: Arc<AttachmentManager>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopeMember>>,
@@ -67,10 +73,6 @@ pub struct RuntimeBuilder {
     /// The variants of the texts the configuration names, read once every
     /// plugin added its texts.
     prompt_variants: BTreeMap<String, PathBuf>,
-    /// The backends of the core and of the plugins, and what a backend may
-    /// ask for - which a plugin's service is made of, too (issue 328).
-    backends: Backends,
-    backend_services: Services,
     /// The sections of the configuration that no plugin claimed yet.
     sections: BTreeMap<String, Value>,
     /// The names of the sections of the configuration that were claimed.
@@ -97,18 +99,19 @@ impl RuntimeBuilder {
     /// commands (`commands`), the components that replace built-in defaults
     /// of facets of which an agent has one (`component_defaults`, issue 99),
     /// what the system restricts of tool calls (`approvals`, issue 13), the
-    /// storages workspaces are made in (`workspaces`, issue 253), the user
-    /// providers (`users`) and the sections of the plugins.
+    /// storages workspaces are made in (`workspaces`, issue 253), the
+    /// storages of content (`content`, issue 282), what a message may carry
+    /// (`attachments`, issue 282), the user providers
+    /// (`users`) and the sections of the plugins.
     /// `component_registry` holds the component kinds agents and sessions are
     /// built from - `ComponentRegistry::built_in`, to which a test may add
     /// stand-ins, such as a model of its own (issue 130). `backends` makes
-    /// the storages and the user providers `config` names (issue 324), and
-    /// later the backends of a plugin's service (`make_named`):
+    /// the storages and the user providers `config` names (issue 324):
     /// `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
     /// If a store of the core's kinds cannot be opened, or a storage of
-    /// workspaces or a user provider cannot be made.
+    /// workspaces or of content or a user provider cannot be made.
     pub fn new(
         persistence: Persistence,
         secret_manager: Arc<SecretManager>,
@@ -133,6 +136,8 @@ impl RuntimeBuilder {
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let command_reaper = CommandReaper::new(&entity_stores, &event_bus, Arc::clone(&controller_manager), Arc::clone(&storages))?;
         let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), storages, &config.workspaces));
+        let content_storages = Arc::new(backends.make_named::<dyn ContentStorage>("storage of content", &config.content.storage, &backend_services)?);
+        let attachments = Arc::new(AttachmentManager::new(Arc::clone(&confidentiality), Arc::clone(&content_storages), &config.attachments)?);
         // Users are recorded and their changes announced on the event bus
         // (issue 306).
         let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
@@ -171,14 +176,14 @@ impl RuntimeBuilder {
             agent_states,
             workspaces,
             command_reaper,
+            content_storages,
+            attachments,
             groups,
             agents,
             scope_members,
             services,
             prompts,
             prompt_variants: config.prompts.clone(),
-            backends,
-            backend_services,
             sections: config.plugins.clone(),
             claimed: BTreeSet::new(),
             seed_sections: BTreeMap::new(),
@@ -270,6 +275,12 @@ impl RuntimeBuilder {
         &self.controller_manager
     }
 
+    /// The storages of content the configuration names (issue 282), to
+    /// make the owner of what is kept there with.
+    pub fn content_storages(&self) -> &Arc<NamedBackends<dyn ContentStorage>> {
+        &self.content_storages
+    }
+
     /// The component kinds, to register a plugin's own with.
     pub fn components(&mut self) -> &mut ComponentRegistry {
         &mut self.component_registry
@@ -298,18 +309,6 @@ impl RuntimeBuilder {
     /// it.
     pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
         self.services.get::<T>()
-    }
-
-    /// The backends of `T` - a service of the plugin's own - that `configs`
-    /// names, by their names, made as the core's are: by the factories the
-    /// core and the plugins registered (`Plugin::backends`), given what a
-    /// backend may ask for. `what` names one of them in messages - "storage
-    /// of artifacts".
-    ///
-    /// # Errors
-    /// `ComponentError::Backend` naming the first that cannot be made.
-    pub fn make_named<T: ?Sized + 'static>(&self, what: &str, configs: &BTreeMap<String, BackendConfig>) -> ComponentResult<BTreeMap<String, Arc<T>>> {
-        self.backends.make_named(what, configs, &self.backend_services)
     }
 
     /// Makes `member` go with what holds the scope it lies in: deleted,
@@ -385,6 +384,7 @@ impl RuntimeBuilder {
             agent_states: self.agent_states,
             workspaces: self.workspaces,
             command_reaper: self.command_reaper,
+            attachments: self.attachments,
             groups: self.groups,
             agents: self.agents,
             actors: Arc::new(ActorManager::new()),
@@ -406,8 +406,10 @@ mod tests {
     #[tokio::test]
     async fn the_backends_the_configuration_names_are_made_when_the_runtime_is_built() {
         let dir = tempfile::tempdir().unwrap();
-        let yaml = format!("secrets:\n  providers: []\nworkspaces:\n  storage:\n    main:\n      type: local\n      root: \"{}\"\nusers:\n  providers:\n    - type: accept_any\n", dir.path().display());
-        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).await.unwrap().build().unwrap();
+        let yaml = format!("secrets:\n  providers: []\nworkspaces:\n  storage:\n    main:\n      type: local\n      root: \"{0}\"\ncontent:\n  storage:\n    kept:\n      type: local\n      root: \"{0}\"\nusers:\n  providers:\n    - type: accept_any\n", dir.path().display());
+        let builder = RuntimeBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).await.unwrap();
+        assert!(builder.content_storages().get("kept").is_some(), "for their owners to be made with");
+        let runtime = builder.build().unwrap();
         assert_eq!(runtime.workspace_manager().storages().collect::<Vec<_>>(), [("main", false)]);
         let alice = runtime.user_manager().authenticate("alice", &Credential::Password("x")).await.expect("accepted by accept_any");
         assert_eq!(alice.username, "alice");
@@ -415,6 +417,8 @@ mod tests {
         for (yaml, names) in [
             ("workspaces:\n  storage:\n    main:\n      type: nfs\n", ["the storage of workspaces 'main' (nfs)", "known are: local"]),
             ("workspaces:\n  storage:\n    dev:\n      type: local\n      root: x\n      max_run_secs: 0\n", ["'dev'", "max_run_secs"]),
+            ("content:\n  storage:\n    kept:\n      type: s3\n", ["the storage of content 'kept' (s3)", "known are: local"]),
+            ("content:\n  storage:\n    kept:\n      type: local\n", ["the storage of content 'kept' (local)", "root"]),
             ("users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n", ["the user provider 1 (accept_any)", "staff"]),
             ("secrets:\n  providers:\n    - type: env\n    - type: vault\n", ["the secret provider 2 (vault)", "known are: env, file"]),
         ] {

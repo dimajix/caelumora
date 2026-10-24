@@ -221,7 +221,7 @@ mod tests {
         let actor = channel.user_actor(alice.id).unwrap();
         let mut said = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
-        actor.send_message("hello".to_string(), None).await.expect("a running channel takes it");
+        actor.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("a running channel takes it");
         // Taken out of the inbox: `run` holds it now.
         time::timeout(Duration::from_secs(5), said.recv()).await.expect("the message went through").unwrap();
 
@@ -229,7 +229,7 @@ mod tests {
         // with it, so a sender learns so instead of waiting for ever.
         running.abort();
         let _ = running.await;
-        let refused = time::timeout(Duration::from_secs(5), actor.send_message("anyone?".to_string(), None)).await
+        let refused = time::timeout(Duration::from_secs(5), actor.send_message(Some("anyone?".to_string()), None, Vec::new())).await
             .expect("an answer, not a wait");
         assert!(refused.is_err(), "a stopped channel takes nothing");
     }

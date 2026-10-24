@@ -2,15 +2,10 @@
 //! versions - their content kept first, then the document, then announced -,
 //! keeps artifacts in another scope, deletes, restores and purges them -
 //! also with what holds their scope (`…_lying_in`, called by `scoped`) -,
-//! and is the only code that holds the `ArtifactStorage`s, one per
-//! configured storage.
-//!
-//! A version is read in one of two ways:
-//!
-//! - *by its owner* (`content`): `GetArtifact`, wherever it lies;
-//! - *in the channel it was published in* (`published_content`): by
-//!   whoever may read that channel - asked by the channel's view before it
-//!   asks here -, and only a version published there.
+//! and is the only code that keeps content in the key space `artifacts` of
+//! the storages of content (issue 282): a version under
+//! `artifacts/<artifact>/<number>`, an artifact's versions under
+//! `artifacts/<artifact>`.
 //!
 //! An artifact is published into its session's scope, made with the first
 //! version of its name there and gone with the session, until its owner
@@ -21,9 +16,8 @@
 use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::config::{BackendConfig, DEFAULT_MAX_FILE_BYTES};
+use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
@@ -35,16 +29,16 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::component::{ComponentError, ComponentResult};
+use caelumora_runtime::backend::NamedBackends;
+use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
 use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
 use caelumora_runtime::terminal::ByteStream;
 use chrono::{DateTime, Utc};
-use futures::StreamExt;
 use serde::Deserialize;
-use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use std::slice;
@@ -55,14 +49,14 @@ pub enum ArtifactError {
     NotFound(ArtifactId),
     #[error("no version {version} of artifact {artifact}")]
     VersionNotFound { artifact: ArtifactId, version: u32 },
-    #[error("no storage of artifacts is configured")]
+    #[error("no storage of content is configured for artifacts")]
     NotConfigured,
-    #[error("the storage '{0}' of artifacts is not configured")]
+    #[error("the storage of content '{0}' is not configured")]
     UnknownStorage(String),
     #[error("an artifact is published by a user, or for one")]
     OwnerNotAUser,
     /// What is so classified may not be put into the storage.
-    #[error("the storage '{0}' of artifacts may not hold what is so classified")]
+    #[error("the storage of content '{0}' may not hold what is so classified")]
     StorageNotCleared(String),
     /// A later version from a workspace classified otherwise than the first.
     #[error("the artifact '{0}' is classified otherwise than the workspace; publish it under another name")]
@@ -77,7 +71,7 @@ pub enum ArtifactError {
     #[error(transparent)]
     Invalid(#[from] ValueError),
     /// The storage failed: what happened, never where.
-    #[error("the storage of artifacts failed: {0}")]
+    #[error("the storage of content failed: {0}")]
     Unavailable(String),
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -89,50 +83,46 @@ pub enum ArtifactError {
 
 pub type ArtifactResult<T> = Result<T, ArtifactError>;
 
-/// The section `artifacts` of the configuration: the storages artifacts
-/// are kept in (issue 271), each by the name an artifact refers to it with
-/// and a backend (`dyn ArtifactStorage`), which of them new artifacts go
-/// to, and how large a version may be. No storage unless configured: then
-/// no artifact can be published.
+/// What a storage of content says, as an artifact's error: a version too
+/// large as such, anything else as the storage's failure.
+impl From<ContentError> for ArtifactError {
+    fn from(error: ContentError) -> Self {
+        match error {
+            ContentError::TooLarge { limit } => Self::TooLarge { limit },
+            ContentError::Changed => Self::Changed,
+            ContentError::Unavailable(what) => Self::Unavailable(what),
+            error @ (ContentError::InvalidKey(_) | ContentError::NotFound(_)) => Self::Unavailable(error.to_string()),
+        }
+    }
+}
+
+/// The section `artifacts` of the configuration (issue 271): which of the
+/// storages of content (`content.storage`, issue 282) new artifacts are
+/// kept in, and how large a version may be. Without a storage of content no
+/// artifact can be published.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct ArtifactsConfig {
     pub max_bytes: u64,
     /// The storage new artifacts are made in; needed where there are
     /// several, the one there is where there is one.
-    pub publish_to: Option<String>,
-    pub storage: BTreeMap<String, BackendConfig>,
+    pub keep_in: Option<String>,
 }
 
 impl Default for ArtifactsConfig {
     fn default() -> Self {
-        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, publish_to: None, storage: BTreeMap::new() }
+        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, keep_in: None }
     }
 }
 
-impl ArtifactsConfig {
-    /// The storage new artifacts are made in: `publish_to`, or the one
-    /// configured; `None` where there is none.
-    pub fn publish_to(&self) -> Option<&str> {
-        match (&self.publish_to, self.storage.len()) {
-            (Some(name), _) => Some(name.as_str()),
-            (None, 1) => self.storage.keys().next().map(String::as_str),
-            (None, _) => None,
-        }
-    }
+/// The key the content of version `number` of artifact `id` lies under.
+fn version_key(id: ArtifactId, number: u32) -> String {
+    format!("{}/{number}", versions_key(id))
+}
 
-    /// Whether it fits together: `publish_to` names a configured storage,
-    /// and is given where there are several.
-    ///
-    /// # Errors
-    /// What does not fit.
-    pub fn check(&self) -> Result<(), String> {
-        match &self.publish_to {
-            Some(name) if !self.storage.contains_key(name) => Err(format!("publish_to names '{name}', which is no storage of artifacts")),
-            None if self.storage.len() > 1 => Err("publish_to is needed where there are several storages of artifacts".to_string()),
-            _ => Ok(()),
-        }
-    }
+/// The key every version of artifact `id` lies under.
+fn versions_key(id: ArtifactId) -> String {
+    format!("artifacts/{id}")
 }
 
 /// `NotFound` for artifact `id` where the store found nothing.
@@ -143,27 +133,6 @@ fn store_error(id: ArtifactId) -> impl FnOnce(StoreError) -> ArtifactError {
     }
 }
 
-/// Where the content of artifacts lies (issue 271): one piece per version,
-/// by artifact and number, without permissions - which are the manager's.
-/// The service a storage of artifacts is a backend of (issues 324, 328):
-/// the plugin brings `local`, another crate may register one of its own
-/// (`Plugin::backends`).
-#[async_trait]
-pub trait ArtifactStorage: Send + Sync + fmt::Debug {
-    /// Keeps `content` as version `version` of `artifact`, at most `limit`
-    /// bytes, or nothing; answers how many bytes were kept.
-    async fn put(&self, artifact: ArtifactId, version: u32, content: ByteStream, limit: u64) -> ArtifactResult<u64>;
-    /// The content of version `version` of `artifact`, with its size.
-    async fn get(&self, artifact: ArtifactId, version: u32) -> ArtifactResult<(u64, ByteStream)>;
-    /// Removes version `version` of `artifact`; nothing there is no error.
-    async fn delete(&self, artifact: ArtifactId, version: u32) -> ArtifactResult<()>;
-    /// Removes every version of `artifact`; nothing there is no error.
-    async fn remove(&self, artifact: ArtifactId) -> ArtifactResult<()>;
-    /// What may be put into it: the classification an artifact in it may
-    /// have at most; `None` for no bound.
-    fn destination(&self) -> Option<&Classification>;
-}
-
 pub struct ArtifactManager {
     artifacts: Arc<dyn EntityStore<Artifact>>,
     groups: Arc<dyn EntityStore<Group>>,
@@ -171,9 +140,9 @@ pub struct ArtifactManager {
     access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where (issue 304): into a storage that keeps it.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    storages: BTreeMap<String, Arc<dyn ArtifactStorage>>,
+    storages: Arc<NamedBackends<dyn ContentStorage>>,
     /// The storage new artifacts are made in.
-    publish_to: Option<String>,
+    keep_in: Option<String>,
     max_bytes: u64,
     /// Held while a document and its content are changed together, so that
     /// two versions of one artifact are not numbered alike.
@@ -182,22 +151,21 @@ pub struct ArtifactManager {
 
 impl fmt::Debug for ArtifactManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ArtifactManager").field("storages", &self.storages.keys().collect::<Vec<_>>()).field("publish_to", &self.publish_to).finish()
+        f.debug_struct("ArtifactManager").field("keep_in", &self.keep_in).finish_non_exhaustive()
     }
 }
 
 impl ArtifactManager {
     /// The manager of the artifacts of `artifacts`, naming the groups of
-    /// `groups` in their lists, whose content lies in `storages`, by their
-    /// names - the storages `config` names, made as backends (issue 324) -,
-    /// new ones in the storage `config` says.
+    /// `groups` in their lists, whose content lies in `storages` by their
+    /// names, new ones in the storage `config` says.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` where `config` does not fit
-    /// together.
-    pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: BTreeMap<String, Arc<dyn ArtifactStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
-        config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
-        Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
+    /// `ComponentError::InvalidConfig` where `config` names no storage of
+    /// `storages`, or none among several.
+    pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn ContentStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+        let keep_in = storages.chosen(config.keep_in.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?.map(String::from);
+        Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, keep_in, max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
     /// The store of artifacts, which the views read in the viewer's name.
@@ -207,10 +175,14 @@ impl ArtifactManager {
 
     /// Whether artifacts can be published: a storage is configured.
     pub fn is_configured(&self) -> bool {
-        self.publish_to.is_some()
+        self.keep_in.is_some()
     }
 
-    fn storage(&self, name: &str) -> ArtifactResult<&Arc<dyn ArtifactStorage>> {
+    /// The storage of content `name`.
+    ///
+    /// # Errors
+    /// `UnknownStorage` if none of that name is configured.
+    fn storage(&self, name: &str) -> ArtifactResult<&Arc<dyn ContentStorage>> {
         self.storages.get(name).ok_or_else(|| ArtifactError::UnknownStorage(name.to_string()))
     }
 
@@ -256,32 +228,13 @@ impl ArtifactManager {
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
                 self.access_policy.require(ctx, ActionType::create(Artifact::KIND, &attributes), StoreError::PermissionDenied).await?;
-                (ArtifactId::new(), 1, self.publish_to.clone().ok_or(ArtifactError::NotConfigured)?)
+                (ArtifactId::new(), 1, self.keep_in.clone().ok_or(ArtifactError::NotConfigured)?)
             }
         };
         let storage = self.storage(&storage_name)?;
-        if let Some(destination) = storage.destination() {
-            self.confidentiality.require_publish(ctx, classification, destination, || ArtifactError::StorageNotCleared(storage_name.clone()))?;
-        }
+        self.confidentiality.require_storable(ctx, classification, storage.destination(), || ArtifactError::StorageNotCleared(storage_name.clone()))?;
 
-        if size > self.max_bytes {
-            return Err(ArtifactError::TooLarge { limit: self.max_bytes });
-        }
-        let digest = Arc::new(SyncMutex::new(ContentDigest::new(size)));
-        let digesting = Arc::clone(&digest);
-        let content: ByteStream = Box::pin(content.inspect(move |chunk| {
-            if let Ok(chunk) = chunk {
-                digesting.lock().unwrap_or_else(PoisonError::into_inner).update(chunk);
-            }
-        }));
-        let kept = storage.put(id, number, content, self.max_bytes).await?;
-        let digest = match Arc::try_unwrap(digest) {
-            Ok(digest) if kept == size => digest.into_inner().unwrap_or_else(PoisonError::into_inner).finish(),
-            _ => {
-                self.forget(storage, id, number, existing.is_none()).await;
-                return Err(ArtifactError::Changed);
-            }
-        };
+        let digest = keep_digested(storage.as_ref(), &version_key(id, number), size, content, self.max_bytes).await?;
 
         // Read by the participants of the channel it is published in (issues 23,
         // 316) - the group of its participants (issue 286) -, who read the
@@ -336,8 +289,8 @@ impl ArtifactManager {
     /// publication that failed after - all of it for an artifact that was
     /// to be made by it. Logged where it fails: the failure that led here
     /// is what the caller is told.
-    async fn forget(&self, storage: &Arc<dyn ArtifactStorage>, id: ArtifactId, number: u32, made: bool) {
-        let removed = if made { storage.remove(id).await } else { storage.delete(id, number).await };
+    async fn forget(&self, storage: &Arc<dyn ContentStorage>, id: ArtifactId, number: u32, made: bool) {
+        let removed = if made { storage.remove_under(&versions_key(id)).await } else { storage.delete(&version_key(id, number)).await };
         if let Err(e) = removed {
             warn!(artifact = %id, version = number, "What was kept of a publication that failed stays: {e}");
         }
@@ -353,7 +306,10 @@ impl ArtifactManager {
         if artifact.version(number).is_none() {
             return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
         }
-        self.storage(&artifact.storage)?.get(artifact.id, number).await
+        self.storage(&artifact.storage)?.get(&version_key(artifact.id, number)).await.map_err(|e| match e {
+            ContentError::NotFound(_) => ArtifactError::VersionNotFound { artifact: artifact.id, version: number },
+            e => e.into(),
+        })
     }
 
     /// Gives artifact `id` the access list `acl` (issues 23, 316) on behalf
@@ -474,7 +430,7 @@ impl ArtifactManager {
         let _writing = self.writing.lock().await;
         let Some(artifact) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.access_policy.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), StoreError::PermissionDenied).await?;
-        self.storage(&artifact.storage)?.remove(id).await?;
+        self.storage(&artifact.storage)?.remove_under(&versions_key(id)).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
         Ok(purged)
@@ -539,30 +495,9 @@ impl ScopeMember for ArtifactManager {
         for artifact in self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             // Its content is its storage too.
             let unremoved = |e: ArtifactError| StoreError::Backend(format!("the content of artifact {} cannot be removed: {e}", artifact.id));
-            self.storage(&artifact.storage).map_err(unremoved)?.remove(artifact.id).await.map_err(unremoved)?;
+            self.storage(&artifact.storage).map_err(unremoved)?.remove_under(&versions_key(artifact.id)).await.map_err(|e| unremoved(e.into()))?;
             self.artifacts.purge(&system, artifact.id).await?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use caelumora_model::config::parse_yaml;
-
-    #[test]
-    fn artifacts_are_kept_in_the_storage_publish_to_names_or_the_one_there_is() {
-        let read = |yaml: &str| parse_yaml::<ArtifactsConfig>(yaml).expect("a section of artifacts");
-        let one = read("storage:\n  files:\n    type: local\n    root: local/artifacts\n");
-        assert_eq!(one.publish_to(), Some("files"));
-        assert_eq!(one.max_bytes, DEFAULT_MAX_FILE_BYTES);
-        assert_eq!(read("{}").publish_to(), None, "none configured");
-        let several = "storage:\n  a:\n    type: local\n    root: a\n  b:\n    type: local\n    root: b\n";
-        assert!(read(several).check().is_err(), "which one, among several, must be said");
-        let chosen = read(&format!("{several}publish_to: b\n"));
-        assert!(chosen.check().is_ok());
-        assert_eq!(chosen.publish_to(), Some("b"));
-        assert!(read(&format!("{several}publish_to: c\n")).check().is_err(), "not one that is not there");
     }
 }

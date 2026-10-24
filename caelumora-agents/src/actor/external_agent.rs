@@ -764,7 +764,7 @@ fn give_notice(state: &mut AgentChannelState, change: TranscriptEntry, was: Opti
     match state.transcript.messages().into_iter().find(|m| m.notice_of == Some(id)) {
         Some(pending) => {
             told.id = pending.id;
-            state.transcript.modify(told);
+            state.modify(told);
         }
         None => {
             state.transcript.push(told);

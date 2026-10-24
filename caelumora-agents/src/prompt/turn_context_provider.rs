@@ -100,6 +100,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::executor;
     use crate::turn::Turn;
     use caelumora_model::component::ComponentFailPolicy;
     use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
@@ -150,7 +151,7 @@ mod tests {
 
         let open = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
         assemble(&open, &mut turn).await.expect("a part that fails open is left out");
-        assert_eq!(turn.full_context().unwrap().0[0].content.as_deref(), Some("Be brief."), "the others are given");
+        assert_eq!(turn.full_context().await.unwrap().0[0].content.as_deref(), Some("Be brief."), "the others are given");
 
         let closed = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
         let error = assemble(&closed, &mut turn).await.expect_err("a part that fails closed fails the turn");
@@ -167,7 +168,7 @@ mod tests {
                 part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed),
             ],
         };
-        let contents = |turn: &Turn| turn.full_context().unwrap().0.iter()
+        let contents = |turn: &mut Turn| executor::block_on(turn.full_context()).unwrap().0.iter()
             .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
             .collect::<Vec<_>>();
 
@@ -178,7 +179,7 @@ mod tests {
         agent_channel_state.perceive(vec![earlier, question]);
         let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
         assemble(&provider, &mut turn).await.unwrap();
-        assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
+        assert_eq!(contents(&mut turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
             "the system prompt first, the notes before the turn's input");
         assert_eq!(turn.situation().agent_channel_state().transcript.messages().len(), 2, "prompt parts are never stored in the context");
 
@@ -188,6 +189,6 @@ mod tests {
         agent_channel_state.perceive(vec![own]);
         let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
         assemble(&provider, &mut turn).await.unwrap();
-        assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
+        assert_eq!(contents(&mut turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
     }
 }

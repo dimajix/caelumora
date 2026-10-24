@@ -5,6 +5,7 @@
 use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
 use crate::event::EventBus;
 use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused};
+use crate::backend::NamedBackends;
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -20,7 +21,6 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use chrono::{DateTime, Utc};
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -37,7 +37,7 @@ pub struct WorkspaceManager {
     /// The storages, by name, in which it makes and removes places; shared
     /// with the `ControllerManager`, which gives a workspace's controller
     /// its own, and the `CommandReaper`.
-    storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>,
+    storages: Arc<NamedBackends<dyn TerminalProvider>>,
     max_file_bytes: u64,
     /// Held by every write of a document, so that none is lost to another.
     writing: Mutex<()>,
@@ -45,7 +45,7 @@ pub struct WorkspaceManager {
 
 impl fmt::Debug for WorkspaceManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WorkspaceManager").field("storages", &self.storages.keys().collect::<Vec<_>>()).finish_non_exhaustive()
+        f.debug_struct("WorkspaceManager").field("storages", &self.storages).finish_non_exhaustive()
     }
 }
 
@@ -54,7 +54,7 @@ impl WorkspaceManager {
     /// `storages`, by their names - the storages its configuration names,
     /// made as backends (issue 324) -, and of which a person may put files
     /// as large as `config` says.
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>, config: &WorkspacesConfig) -> Self {
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn TerminalProvider>>, config: &WorkspacesConfig) -> Self {
         Self { workspaces: Arc::clone(&stores.workspaces), sessions: Arc::clone(&stores.sessions), events, access_policy, confidentiality, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) }
     }
 
@@ -66,11 +66,15 @@ impl WorkspaceManager {
     /// The configured storages, by name, each with whether its workspaces
     /// have a shell - the kind of workspace it makes (issue 266).
     pub fn storages(&self) -> impl Iterator<Item = (&str, bool)> {
-        self.storages.iter().map(|(name, provider)| (name.as_str(), provider.has_shell()))
+        self.storages.iter().map(|(name, provider)| (name, provider.has_shell()))
     }
 
-    fn provider(&self, workspace: &Workspace) -> WorkspaceResult<&Arc<dyn TerminalProvider>> {
-        self.storages.get(&workspace.storage).ok_or_else(|| WorkspaceError::UnknownStorage(workspace.storage.clone()))
+    /// The storage `name`.
+    ///
+    /// # Errors
+    /// `UnknownStorage` if none of that name is configured.
+    fn provider(&self, name: &str) -> WorkspaceResult<&Arc<dyn TerminalProvider>> {
+        self.storages.get(name).ok_or_else(|| WorkspaceError::UnknownStorage(name.to_string()))
     }
 
     /// Makes a workspace of the user `ctx` acts for, of `name` in `scope`,
@@ -96,7 +100,7 @@ impl WorkspaceManager {
     /// `TerminalError` of making the place.
     pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, storage: &str, description: Option<&str>, classification: Classification) -> WorkspaceResult<Workspace> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(WorkspaceError::OwnerNotAUser) };
-        let provider = self.storages.get(storage).ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
+        let provider = self.provider(storage)?;
         let mut workspace = Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
         require_classification(self.confidentiality.as_ref(), ctx, storage, provider.as_ref(), &workspace.classification)?;
@@ -172,7 +176,7 @@ impl WorkspaceManager {
         let _writing = self.writing.lock().await;
         let Some(workspace) = self.workspaces.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.access_policy.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
-        self.provider(&workspace)?.remove(id).await?;
+        self.provider(&workspace.storage)?.remove(id).await?;
         let purged = self.workspaces.purge(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
         Ok(purged)
@@ -259,7 +263,7 @@ impl ScopeMember for WorkspaceManager {
         for workspace in self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             // Its place is its storage too.
             let unremoved = |e: &dyn fmt::Display| StoreError::Backend(format!("the place of workspace {} cannot be removed: {e}", workspace.id));
-            self.provider(&workspace).map_err(|e| unremoved(&e))?.remove(workspace.id).await.map_err(|e| unremoved(&e))?;
+            self.provider(&workspace.storage).map_err(|e| unremoved(&e))?.remove(workspace.id).await.map_err(|e| unremoved(&e))?;
             self.workspaces.purge(&system, workspace.id).await?;
         }
         Ok(())

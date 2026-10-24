@@ -17,7 +17,7 @@ than taken for a switch.
 
 ### Backends
 
-Where a service is served by one of a choice of backends - a storage of workspaces or of artifacts,
+Where a service is served by one of a choice of backends - a storage of workspaces or of content,
 a secret provider, a user provider, a store - the backend is named by its `type`, with its
 parameters beside it (`BackendConfig`, issues 324, 446):
 
@@ -51,7 +51,9 @@ position, `the secret provider 2 (vault)`. An unknown type is answered with the 
 | `commands` | The user commands every session has, as a list of components; a session template can add its own. An empty list switches them off. See [COMMANDS.md](COMMANDS.md). | `help_command`, `wakeup_command` and `nudge_command` |
 | `approvals` | What the system restricts of tool calls everywhere: `rules`, each with a `matcher` (`tool`, `*` for every one, and optionally `arguments`, per argument a regular expression, `{ "shell": [words] }` for a command line, or `{ "equals": value }` for the whole value), a `decision` (`ask` or `deny` - the system never allows) and optionally `expires_at`. See [APPROVALS.md](APPROVALS.md#rules-of-a-place). | none |
 | `workspaces` | Where the files of workspaces lie: `max_file_bytes`, the largest file a person may put into one, and `storage`, the storages by name, each a [backend](#backends) - see [Workspace storages](#workspace-storages). A workspace names its storage when it is made. | 50 MiB; no storage - no workspace can be made |
-| `artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): where the content of published artifacts lies: `max_bytes`, the largest version; `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a directory per artifact under `root`, with `destination` (the most an artifact there may be classified; no bound unless given); and `publish_to`, the storage new artifacts are made in, needed where there are several. An artifact's later versions go where it was made. See [STORAGE.md](STORAGE.md). | 50 MiB; no storage - nothing can be published |
+| `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
+| `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment; `max_per_message`; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
+| `artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
 | `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
 
@@ -158,6 +160,7 @@ component_defaults:
 | `message_times` | Whether the marker says when the message was written, in the session's time zone (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `true` |
 | `prompt_texts` | Which variant of the texts the model is given (see [The texts given to models](#the-texts-given-to-models)); one not configured keeps the agent from being built | the default |
 | `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx`; left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
+| `vision` | Whether the model sees images, which it is then given along with their messages (see [AGENT-TURN.md](AGENT-TURN.md#attachments)); left out, it is asked of the server's `/api/show` as the agent is built - one that cannot say gives none, with a warning | left out |
 
 An unknown parameter is refused, and the agent does not start. Which values suit which model, as
 far as measured, is in [LLM-MODELS.md](LLM-MODELS.md).

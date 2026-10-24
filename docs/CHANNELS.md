@@ -369,6 +369,32 @@ User commands (`/help`, `/wakeup`, `/nudge`) are run by the user's actor in the 
 an agent carries out itself is sent to that agent, which carries it out in a turn of its own. See
 [COMMANDS.md](COMMANDS.md).
 
+## What a message carries
+
+A message says what it says in text, and may carry attachments besides - or alone (issue 282):
+content a person or an agent attached, each classified on its own. An attachment is a reference to
+content (`ContentRef`) in the message's `attachments`: its bytes lie in a storage of content (see
+[STORAGE.md](STORAGE.md#content)), and the reference names them by the storage, their key there and
+the digest of the bytes, which is what they are checked against, never how they are found. An
+attachment is part of what was said: heard, published, modified and taken back with its message, and
+covered by its digest. What a tool gave its model besides its text is a reference of the same kind,
+but no attachment: it stays with the tool's result (`ToolCallResult::media`), seen rather than said,
+and is withheld with it.
+
+A person attaches a file in two steps. First they upload it for the channel
+(`AttachmentManager::create`): as a participant of the channel, classified as they say - the
+channel's classification unless they say otherwise - so that it may flow into the channel and into
+the storage it is kept in. What it is is told by its first bytes, never by its name or by what
+the client claims; any file may be uploaded. It is kept at once, under `attachments/<channel>/<id>`,
+and waits for the message that names it, in memory, as long as `attachments.unclaimed_expire_secs`
+says; one that waited longer is removed as the next upload is kept. Then their message names it by
+its id: their actor puts the reference into the message (`AttachmentManager::named`), and the
+channel admits it only as it was uploaded - by the sender, for this channel, not yet claimed, at
+most `attachments.max_per_message`, none twice, each flowing into the channel - and claims it as it
+lets the message in: no other message can carry it then. A modified message keeps what it carried
+and may add what its author uploaded. What a removed attachment was stays in the storage, as what
+was said stays in the history; every attachment of a session goes when the session is purged.
+
 ## Changing what was said
 
 What was said can be changed by its author, but never rewritten: a message is *modified* - it reads

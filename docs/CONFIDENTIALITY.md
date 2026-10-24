@@ -94,6 +94,15 @@ Every message carries a classification. It is not optional, and a `Message` has 
     agent that was given it. Taking a message back changes what the conversation says from now on,
     not what was disclosed; a secret written by mistake is not removed by it.
 
+### Attachments
+
+What a message carries besides its text has a classification of its own (issue 282): the message's
+unless its sender says otherwise, and never above the channel, as the message's. A label decides
+where what was read of something may flow, so a turn that reads a message but is never given its
+confidential attachment stays below it. A channel lowered fits every attachment as it fits every
+message (`Message::fit_into`). What a tool gave its model besides its text (`ToolCallResult::media`)
+goes with the result: classified with it, withheld with it.
+
 ### Reclassification
 
 The classification of a channel or a message can be changed afterwards (`ActionType::Reclassify`).
@@ -243,10 +252,12 @@ is cleared as a reader of a channel so classified would be:
     besides the access list. With compartments and a read relation that is not symmetric this is
     stricter than equality. A participant is cleared for L, so nothing else is asked.
 
-A storage bounds what may be put into it by its `destination`: making or raising a workspace there
-asks `may_publish` of its classification into the destination, before the clearance. A
-classification says who may read a workspace; it does not keep a command in it - how far a storage
-keeps its workspaces apart is in [WORKSPACE.md](WORKSPACE.md#storages).
+A storage - of workspaces or of content - bounds what may be put into it by its `destination`:
+making or raising a workspace there, before the clearance, and keeping an artifact's version there
+ask one question, whether its classification may be published into the destination
+(`require_storable`); a storage without one takes anything. A classification says who may read a
+workspace; it does not keep a command in it - how far a storage keeps its workspaces apart is in
+[WORKSPACE.md](WORKSPACE.md#storages).
 
 Reclassifying a workspace is its owner's: lowering releases every file in it; which channels may use
 it follows at their next use. Nothing in it is fitted - there is nothing inside to fit.
@@ -254,7 +265,8 @@ it follows at their next use. Nothing in it is fitted - there is nothing inside 
 ## Reading another channel
 
 Reading from another channel is decided per entry: per message of its history, per note, per memory
-entry. The policy is asked once what of the other channel may be copied into the reading one,
+entry - and per attachment of a message, by its own label, also where its message is released (issue
+282). The policy is asked once what of the other channel may be copied into the reading one,
 `ConfidentialityPolicy::copyable`: the source channel and its session as privacy sees it
 (`SessionPrivacy`), and the reading `Place` - its channel, its classification, its session. It
 answers data, not a decision per entry: how far the reader reads the channel, the whole, what was
@@ -385,7 +397,8 @@ it whole (issue 417). What anyone else is given of it is redacted by one rule
 
 *   a call whose `call` is the owner's is left out;
 *   a call whose `arguments` are the owner's has them set to `null`;
-*   a result that is the owner's is emptied, the record of the answers to its questions included;
+*   a result that is the owner's is emptied, the record of the answers to its questions and what
+    the tool gave and showed its model included;
 *   reasoning that is the owner's is dropped;
 *   of a message with nothing left, nothing is given: it is recorded as gone to nobody.
 
@@ -426,7 +439,9 @@ it starts at `public` and rises with
     another channel's history by the join of the messages given,
 *   every tool result, once the model is given it. A built-in tool whose answer is derived only from
     what the model asked - `calculate`, `echo`, `write_note`, `remember`, ... - classifies it as the
-    turn.
+    turn,
+*   every attachment the model is given along, by its own label, as it is given (issue 282): one it
+    is only told of counts as its message does, whose note tells what the message says.
 
 The join (`Classification::join`) is the higher level and the audience in common. It is never above
 the channel the turn began in: everything the turn sees flows into the channel, and where the join

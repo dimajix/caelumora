@@ -521,7 +521,7 @@ mod tests {
         let owner = match ctx.initiator_id { ActorId::User(id) => id, _ => unreachable!() };
         let writer = channel.user_actor(owner).expect("the creator takes part");
         for text in ["one", "two", "three"] {
-            writer.send_message(text.to_string(), None).await.unwrap();
+            writer.send_message(Some(text.to_string()), None, Vec::new()).await.unwrap();
         }
         let before = history_of(&channel, 3).await;
         let mut rx = runtime.event_bus().subscribe_all();
@@ -561,7 +561,7 @@ mod tests {
                 "the join is announced: {events:?}");
 
         // What is written after joining is visible.
-        writer.send_message("four".to_string(), None).await.unwrap();
+        writer.send_message(Some("four".to_string()), None, Vec::new()).await.unwrap();
         history_of(&channel, 4).await;
         assert_eq!(channel.visible_messages(other).await.len(), 2);
 
@@ -583,7 +583,7 @@ mod tests {
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let writer = channel.user_actor(ctx.initiator_id.as_user_id().unwrap()).expect("the creator takes part");
         let mut mine = writer.watch();
-        writer.send_message("before".to_string(), None).await.unwrap();
+        writer.send_message(Some("before".to_string()), None, Vec::new()).await.unwrap();
         history_of(&channel, 1).await;
         async fn recorded(channel: &ChannelLoop, wanted: fn(&HistoryEntry) -> bool) -> Vec<HistoryEntry> {
             time::timeout(Duration::from_secs(5), async {

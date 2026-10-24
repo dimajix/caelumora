@@ -1,8 +1,8 @@
 //! Artifacts through the whole runtime (issues 271, 23, 316, 328): the
 //! plugin joined to the world of the security suite - the ownership
 //! policy, recording what it is asked, and alice, bob and carol
-//! (`caelumora_runtime::testing`), with a storage of artifacts beside the
-//! workspaces' files. The tests of an action that acts in someone's name
+//! (`caelumora_runtime::testing`), whose storage of content "kept" lies
+//! beside the workspaces' files. The tests of an action that acts in someone's name
 //! assert what it asks, as the suite does for the core's.
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
@@ -26,10 +26,11 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, Grant, Refused, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::config::{AppConfig, AuthConfig};
+use caelumora_model::config::{AppConfig, AttachmentsConfig, AuthConfig, BackendConfig, ContentConfig};
 use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError, Stored};
 use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
 use caelumora_model::user_provider::UserManager;
+use caelumora_model::user::UserId;
 use caelumora_model::workspace::Workspace;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::ApiError;
@@ -37,11 +38,11 @@ use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes::api;
 use caelumora_rest_server::state::AppState;
 use caelumora_runtime::event::{EventBus, EventSubscription};
-use caelumora_runtime::runtime::RuntimeBuilder;
+use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
 use caelumora_agents::testing::{self as agent_testing, asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_scripted, TestAgents, ONCE_MODEL_KIND};
-use caelumora_runtime::testing::{quiet, World, STAFF};
+use caelumora_runtime::testing::{quiet, TestRuntime, World, STAFF};
 use caelumora_agents::tool::{ToolError, ToolProvider};
 use caelumora_runtime::view::Viewer;
 use futures::StreamExt;
@@ -56,15 +57,9 @@ use futures::stream;
 use std::fs;
 use tokio::time;
 
-/// The section `artifacts` of the world: a storage "kept" in `artifacts`
-/// beside where the workspaces' files lie.
-fn kept_beside(files: &Path) -> BTreeMap<String, Value> {
-    [("artifacts".to_string(), json!({ "storage": { "kept": { "type": "local", "root": files.join("artifacts") } } }))].into()
-}
-
 /// The world with artifacts.
 async fn world() -> World {
-    World::configured(&[&TestAgents, &ArtifactsPlugin], kept_beside, |_| {}).await
+    World::with(&[&TestAgents, &ArtifactsPlugin], |_| {}).await
 }
 
 /// The one owner of artifacts of `world`.
@@ -134,7 +129,7 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     fs::write(dir.join("out/report.csv"), "a,b\n1,2").unwrap();
     let second = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv", "name": "report.csv" }), None, &mut turn).await.unwrap().value;
     assert_eq!((second["artifact"].clone(), second["version"].as_u64()), (first["artifact"].clone(), Some(2)), "a version of the same artifact");
-    let kept = world.files.path().join("artifacts").join(first["artifact"].as_str().unwrap());
+    let kept = world.files.path().join("content").join("artifacts").join(first["artifact"].as_str().unwrap());
     assert_eq!(fs::read_to_string(kept.join("1")).unwrap(), "a,b", "the first as it was");
     assert_eq!(fs::read_to_string(kept.join("2")).unwrap(), "a,b\n1,2");
     fs::remove_file(dir.join("out/report.csv")).unwrap();
@@ -187,27 +182,47 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
 
 // --- The plugin -----------------------------------------------------------
 
-/// The storages are the section's, made by the backends registered for
-/// them - `local` the plugin's own (issue 328) -, and what does not fit is
-/// said naming the storage.
+/// A storage of content takes no version classified above its
+/// `destination` (`require_storable`, issue 282): refused before anything
+/// is kept.
 #[tokio::test]
-async fn the_storages_of_the_section_are_made_when_the_plugin_registers() {
+async fn a_storage_of_content_takes_nothing_above_its_destination() {
+    let files = tempfile::tempdir().unwrap();
+    let storage = [("kept".to_string(), BackendConfig::new("local", json!({ "root": files.path(), "destination": { "level": "public" } })))].into();
+    let config = AppConfig { content: ContentConfig { storage }, ..Default::default() };
+    let runtime = TestRuntime { config, plugins: vec![&TestAgents, &ArtifactsPlugin], ..Default::default() }.build();
+    let manager = Arc::clone(runtime.services().get::<ArtifactManager>().unwrap());
+    let alice = SecurityContext::new(ActorId::User(UserId::new()), SessionId::new(), ChannelId::new());
+    let internal = Classification::general(Confidentiality::Internal);
+    let refused = manager.publish(&alice, (3, file("a,b")), &internal, "r.csv", None, SessionId::new(), ChannelId::new()).await;
+    assert!(matches!(refused, Err(ArtifactError::StorageNotCleared(ref name)) if name == "kept"), "{refused:?}");
+    assert!(fs::read_dir(files.path()).unwrap().next().is_none(), "nothing kept");
+    let public = manager.publish(&alice, (3, file("a,b")), &Classification::PUBLIC, "r.csv", None, SessionId::new(), ChannelId::new()).await;
+    assert!(public.is_ok(), "what it may hold it takes: {public:?}");
+}
+
+/// New artifacts are kept in the storage of content the section names, or
+/// the one there is (issue 282); one it cannot have is said naming
+/// `artifacts.keep_in`.
+#[tokio::test]
+async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is() {
     let world = world().await;
     assert!(manager(&world).is_configured(), "kept, the one there is");
-    let without = World::with(&[&TestAgents, &ArtifactsPlugin], |_| {}).await;
-    assert!(!manager(&without).is_configured(), "no storage unless configured");
 
-    async fn refused(section: Value) -> String {
-        let config = AppConfig { plugins: [("artifacts".to_string(), section)].into(), ..Default::default() };
-        let built = RuntimeBuilder::from_config(&config, &[&ArtifactsPlugin]).await.map(|_| ());
-        format!("{:#}", built.expect_err("refused"))
+    fn built(names: &[&str], section: Value) -> Result<RuntimeManager, String> {
+        let storage = names.iter().map(|name| (name.to_string(), BackendConfig::new("local", json!({ "root": name })))).collect();
+        // Attachments kept in the first, so that only the artifacts' choice is asked.
+        let attachments = AttachmentsConfig { keep_in: names.first().map(|name| name.to_string()), ..Default::default() };
+        let config = AppConfig { content: ContentConfig { storage }, attachments, plugins: [("artifacts".to_string(), section)].into(), ..Default::default() };
+        TestRuntime { config, plugins: vec![&TestAgents, &ArtifactsPlugin], ..Default::default() }.try_build().map_err(|e| format!("{e:#}"))
     }
-    let message = refused(json!({ "storage": { "kept": { "type": "local" } } })).await;
-    assert!(message.contains("the storage of artifacts 'kept' (local)") && message.contains("root"), "{message}");
-    let message = refused(json!({ "storage": { "kept": { "type": "s3" } } })).await;
-    assert!(message.contains("known are: local"), "{message}");
-    let message = refused(json!({ "storage": { "a": { "type": "local", "root": "a" }, "b": { "type": "local", "root": "b" } } })).await;
-    assert!(message.contains("publish_to"), "which one, among several, must be said: {message}");
+    let configured = |runtime: RuntimeManager| runtime.services().get::<ArtifactManager>().is_some_and(|manager| manager.is_configured());
+    assert!(!configured(built(&[], json!({})).unwrap()), "no storage unless configured");
+    let message = built(&["a", "b"], json!({})).map(|_| ()).expect_err("which one");
+    assert!(message.contains("artifacts.keep_in"), "which one, among several, must be said: {message}");
+    let message = built(&["a", "b"], json!({ "keep_in": "c" })).map(|_| ()).expect_err("none such");
+    assert!(message.contains("artifacts.keep_in") && message.contains("'c'"), "not one that is not there: {message}");
+    assert!(configured(built(&["a", "b"], json!({ "keep_in": "b" })).unwrap()));
 }
 
 /// What the API answers for what went wrong with an artifact: its status
@@ -467,9 +482,9 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     world.manager.delete(&alice, session_id).await.unwrap();
     world.manager.purge(&World::system(), session_id).await.unwrap();
     assert!(store(&world).get(&alice, artifact.id).await.is_ok(), "what was kept stays");
-    assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
+    assert!(world.files.path().join("content").join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
     assert!(store(&world).get_deleted(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
-    assert!(!world.files.path().join("artifacts").join(left.id.to_string()).exists(), "its content too");
+    assert!(!world.files.path().join("content").join("artifacts").join(left.id.to_string()).exists(), "its content too");
 }
 
 /// A session of alice's with her workspace attached for writing and a file
@@ -671,8 +686,8 @@ async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purg
 #[tokio::test]
 async fn an_agents_artifact_is_published_for_its_owner() {
     let call = calling(PUBLISH_ARTIFACT, json!({ "path": "notes/a.md" }));
-    let world = World::configured(&[&TestAgents, &ArtifactsPlugin], kept_beside, |registry| register_scripted(registry, ONCE_MODEL_KIND, vec![call])).await;
-    let kept = |files: &Path, _: &Path| fs::read_dir(files.join("artifacts")).is_ok_and(|mut entries| entries.next().is_some());
+    let world = World::with(&[&TestAgents, &ArtifactsPlugin], |registry| register_scripted(registry, ONCE_MODEL_KIND, vec![call])).await;
+    let kept = |files: &Path, _: &Path| fs::read_dir(files.join("content").join("artifacts")).is_ok_and(|mut entries| entries.next().is_some());
     let asked = asked_for_a_call(&world, ARTIFACT_TOOL_KIND, &["notes/a.md"], kept, world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
     assert!(asked.contains(&"alice as helper, asked by bob: CreateArtifact(alice's) yes".to_string()), "its owner's: {asked:?}");

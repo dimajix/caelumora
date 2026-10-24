@@ -61,7 +61,7 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 | Layer | Asks | Form | Refusal |
 |---|---|---|---|
 | **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for the trash) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
-| **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ArtifactManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
+| **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ArtifactManager`, `AttachmentManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
 | **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the agent carrying out a command, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, `CommandFailed`, a left-out answer |
 | **Views** (`caelumora-runtime/src/view`), rule 5 and reach | reaching (concept 4) and the flags of a snapshot | `may_*`; `require` for reading a participant's tools, components and context | `*NotFound`, a flag false, `Forbidden` |
@@ -133,8 +133,10 @@ permission first, then the flow of what it carries.
 | Event | Questions in order | `Rejection` |
 |---|---|---|
 | any event carrying messages | the sender is the caller (structural) | `Invalid` |
-| a message, a turn's messages | per part - the message and each tool result - `require_publish` (E,2) | `ClassificationRefused` |
-| `MessageModified` | the message is there; `ModifyMessage` (E,3); it can be changed so; the flow per part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `ClassificationRefused` |
+| a message, a turn's messages | per part - the message, each attachment and each tool result - `require_publish` (E,2) | `ClassificationRefused` |
+| a message, a turn's messages | no tool result carries `media` or `shown` yet (structural, issue 282) | `Invalid` |
+| a message said (`CompleteMessageGenerated`, `IntermediateMessageGenerated`), last | its attachments uploaded by the caller for the channel, as uploaded and not claimed, at most as many as configured, none twice - checked and claimed at once (`AttachmentManager::claim`, structural) | `Invalid` |
+| `MessageModified` | the message is there; `ModifyMessage` (E,3); it can be changed so; the flow per part; last, its attachments those it carried or as for a message said | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `ClassificationRefused`, `Invalid` |
 | `MessageRevoked` | there; `RevokeMessage` (E,3); changeable | as above |
 | `MessageReclassified` | there; `Reclassify` of the message (E,1 or 3); `require_publish` of the new classification (E,2); changeable | as above |
 | `RetryRequested` | `RetryMessage` (E,1); a message, not taken back, or a turn, of an agent taking part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `Invalid` |
@@ -146,7 +148,7 @@ permission first, then the flow of what it carries.
 
 Before sending, the `UserActor` refuses only what it can see at once: a message not there or taken
 back, another's message to modify - a modification speaks as its author, which only the author's
-actor can send (issue 228).
+actor can send (issue 228) -, an attachment that is none of the user's uploads for the channel.
 
 ### Tool calls, approvals, commands, secrets
 
@@ -197,7 +199,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | In a channel (`WorkspaceController::usable_in_channel`, behind `ChannelLoop::workspace_terminal`, the terminal and artifact tools, the workspace prompt) | session and channel as the running session holds them, as stored for the `CommandReaper`; `may_read_session` (1); `channel_reading`; `usable_in`: the channel uses it, the caller takes part, scope, `may_read_workspace` (1), `may_publish` both ways (2); for a change `WriteWorkspace` (1) | reach, then R4 | - | `NotUsableInChannel`, `ReadOnly` |
 | A running command goes on (`may_run`, as the channel's participants or the workspace change) | the chain of *In a channel* per current participant | an act that lasts, asked again as what permitted it changes | per participant and event | the command ended |
 | The channel's workspace offered (`ChannelView::workspace`) | `usable_in` (V) | R5 | - | none |
-| Create (`WorkspaceManager::create`, behind a template) | `require_classifiable`; `require_publish` into the storage's destination (U,2); `require_cleared_for` (U,2); in a session's scope `CreateWorkspace` (U,1) and store `GetSession` (U,1) - what lies there keeps the session from being deleted; store `CreateWorkspace` (U,1) | R4 (flow) + R1 | `CreateWorkspace` (pair, in a session's scope) | `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied`, `NotFound`, `NameTaken` |
+| Create (`WorkspaceManager::create`, behind a template) | `require_classifiable`; `require_storable` into the storage's destination (U,2); `require_cleared_for` (U,2); in a session's scope `CreateWorkspace` (U,1) and store `GetSession` (U,1) - what lies there keeps the session from being deleted; store `CreateWorkspace` (U,1) | R4 (flow) + R1 | `CreateWorkspace` (pair, in a session's scope) | `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied`, `NotFound`, `NameTaken` |
 | Change, reclassify (`WorkspaceController::update_*`) | reached (store `GetWorkspace` U,1, `cleared_for` U,2); a classification as creating; store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 (+ flow) | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
 | Share (`update_access`, `share`) | reached; `require_nameable`: store `GetGroup` per newly named group - the caller's own question (issue 312); store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
 | Delete, restore (`WorkspaceManager`) | delete: reached, else `false`; restore: the store alone - `ReadDeleted`, `cleared_for`, then the verb | R1 + reach (store) | `GetWorkspace`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
@@ -209,12 +211,21 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 |---|---|---|---|---|
 | List, reach (`ArtifactViews::artifacts`, `artifact`, `ArtifactChannelViews::artifacts` of the plugin `caelumora-artifacts`) | listing: the teams the viewer belongs to, found as `Views::groups` finds them (V,1), named besides them and their roles (`Views::subjects`); store `GetArtifact` (V,1), `cleared_for` (V,2); the versions cut: per version `may_read_artifact` (`ArtifactAccess`) with the version's list (V,1) | R1 + reach (store) | - | left out; `ArtifactError::NotFound` |
 | Where a version was published (`ArtifactView::publication`) | `Views::channel_of`: the session, then `channel_reading`; gone, as a live one would be reached | reach | - | not named |
-| Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_publish` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
+| Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_storable` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
 | Share (`set_access`) | store `GetArtifact` (U,1), `cleared_for` (U,2); `require_nameable`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
 | Keep in a scope (`keep`) | store `GetArtifact`, `cleared_for`; the scope compared with the owner (structural); store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `InvalidScope`, `PermissionDenied` |
 | Describe (`describe`) | store `GetArtifact`, `cleared_for`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Invalid` |
 | Delete, restore (`ArtifactManager`) | the store: `GetArtifact` or `ReadDeleted`, `cleared_for`, then the verb; a deletion reads first to announce it | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); content removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
+
+### Attachments
+
+| Operation | Questions in order | Rule | Again | Refusal |
+|---|---|---|---|---|
+| Upload (`AttachmentManager::create`) | the channel reached as a view (V, reach); the viewer listed among its participants (structural); `require_classifiable`; `require_publish` into the channel (V,2); `require_storable` into the storage's destination (V,2); content kept | reach + R2 | the channel's admission of the message that claims it | `NotAParticipant`, `ClassificationRefused`, `StorageNotCleared` |
+| Download (`ChannelView::attachment`) | the message read as the viewer sees it in the history (V, reach); the attachment one it carries, which a channel read entry by entry releases by its own label (`may_read_entry`); content read asking nothing (`AttachmentManager::content_of`) | reach | - | `MessageNotFound` (`NoChannelNamed` entry by entry), `AttachmentError::NotFound` |
+| Given a model along (`ActorRuntime::load_attachments`, `AttachmentManager::load`) | nothing: what lies in the actor's transcript, it heard; the turn sees each attachment's label as it is given (`Work::see`) | - | - | `Altered`, `NotFound`, `Unavailable`: the call fails |
+| Purge with a channel's state (`purge`, behind `SessionManager::purge`) | in S, after the session's purge was permitted | - | - | - |
 
 ### Groups
 

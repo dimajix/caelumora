@@ -10,7 +10,7 @@
 //! reading; the file read is handed to the `ArtifactManager` (issue 296),
 //! the service its kind uses. Its tool is offered where a file can be
 //! published (issue 290): where the turn may use a workspace in its
-//! channel, and an artifact storage is configured; a call is checked again
+//! channel, and a storage of content is configured; a call is checked again
 //! all the same, and fails and says so. The result is classified as the
 //! artifact, which is classified as the workspace.
 
@@ -125,11 +125,11 @@ impl ToolProvider for ArtifactTool {
     }
 
     /// Its tool where a file can be published: where the work may use a
-    /// workspace in its channel, and a storage of artifacts is configured
-    /// (issue 290).
+    /// workspace in its channel, and a storage of content is configured
+    /// (issues 290, 282).
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
         if !self.artifacts.is_configured() {
-            return Err("no storage of artifacts is configured".to_string());
+            return Err("no storage of content is configured".to_string());
         }
         usable_workspace(situation).await?;
         Ok(self.tools())

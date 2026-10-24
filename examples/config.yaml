@@ -82,17 +82,32 @@ workspaces:
 #      idle_stop_secs: 900
 #      destination: { level: confidential }
 
-# Where the content of published artifacts lies (issue 271): storages by
-# name, each with its type, and the one new artifacts go to where there
-# are several (`publish_to`). `local` keeps a directory per artifact under
-# `root`, a file per version. A storage takes no artifact classified above
-# its `destination`, if it has one.
-artifacts:
-  max_bytes: 52428800
+# Where binary content lies (issue 282) - the versions of published
+# artifacts, the attachments of messages: storages by name, each with its
+# type. `local` keeps a file per key under `root`. A storage takes nothing
+# classified above its `destination`, if it has one.
+content:
   storage:
     kept:
       type: local
-      root: "local/artifacts"
+      root: "local/content"
+
+# What a message may carry besides its text (issue 282): how large one
+# attachment may be, how many a message carries, which storage of content
+# they are kept in where there are several (`keep_in`), how long an
+# upload waits for the message that names it, and how much of them is held
+# in memory for the models given them along.
+attachments:
+  max_bytes: 52428800
+  max_per_message: 10
+  unclaimed_expire_secs: 3600
+  cache_bytes: 268435456
+
+# Published artifacts (issue 271): how large a version may be, and which
+# storage of content new artifacts go to where there are several
+# (`keep_in`).
+artifacts:
+  max_bytes: 52428800
 
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY

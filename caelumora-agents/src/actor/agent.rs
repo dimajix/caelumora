@@ -535,7 +535,7 @@ impl AgentActor {
         // The turn's context - prompt parts, a planning nudge among them if
         // `create_plan_tool` is wired in, and the tools the turn began with
         // (issue 137); it fails if it cannot be resolved.
-        let (messages, tools) = turn.full_context()?;
+        let (messages, tools) = turn.full_context().await?;
         let mut response = self.llm_client.chat_completion(&messages, &tools).await;
         use futures::stream::TryStreamExt;
         loop {

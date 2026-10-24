@@ -716,12 +716,7 @@ impl HistoryEntry {
             HistoryEntry::Modified { message } if message.id == standing.id => standing.modify(message),
             HistoryEntry::Revoked { message, at } if *message == standing.id => standing.revoke(*at),
             HistoryEntry::Reclassified { message, classification } if *message == standing.id => standing.reclassify(classification),
-            HistoryEntry::Fitted { channel } => {
-                let fitted = standing.classification.fitted_into(channel);
-                let changed = fitted != standing.classification;
-                standing.classification = fitted;
-                changed
-            }
+            HistoryEntry::Fitted { channel } => standing.fit_into(channel),
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }

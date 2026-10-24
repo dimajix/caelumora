@@ -25,8 +25,8 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
 *   **Skills**: procedures written down for agents, a kind of the plugin `caelumora-skills` (see
     [SKILLS.md](SKILLS.md)).
 *   **Artifacts**: results an agent published, each a user's, with its versions, a kind of the
-    plugin `caelumora-artifacts`. Their content lies in a configured artifact storage, not in the
-    document.
+    plugin `caelumora-artifacts`. Their content lies in a storage of content (see
+    [Content](#content)), not in the document.
 *   **Groups**: lists of actors an access list names as one subject - a user's teams, and the
     participants of every session and channel (see [SECURITY.md](SECURITY.md#groups)).
 *   **The kinds of the plugins** (see [PLUGINS.md](PLUGINS.md)), kept like the
@@ -149,18 +149,31 @@ Its tests run against a database: `test/docker-compose.yml` starts one, and the 
 `CAELUMORA_TEST_POSTGRES_URL` names it, read as a secret; each test keeps its tables in a schema of
 its own. Without the variable they are skipped.
 
-### Artifact content
+### Content
 
-The content of artifacts lies in the storages configured under `artifacts`, each an
-`ArtifactStorage` that puts, reads and deletes a version without asking permissions - a backend of
-the plugin `caelumora-artifacts`, made by the factory registered for its `type` while the plugin
-registers (see [ARCHITECTURE.md](ARCHITECTURE.md#backends), issue 328). The `ArtifactManager` is the
-one writer of artifact documents and the only code that holds the storages: a version's content is
-kept before the document says it exists, and removed again if the document cannot be stored; an
-artifact is purged with its content, the content first. It knows no workspace: where the content
-comes from is its caller's. Artifacts are entities, not state: each has its own owner, permissions,
-a name unique in its scope and a trash, and one that is kept outlives the session it was published
-in.
+Binary content - the versions of artifacts, the attachments of messages - lies in the storages
+configured under `content`, each a `ContentStorage` (issue 282): bytes under keys, put, read and
+removed without asking anything - a backend made by the factory registered for its `type`, `local`
+the core's (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)). What lies under a key is kept whole or
+not at all. Each owner of content keeps it in a key space of its own, the first segment of its keys,
+and is the only code that writes there; who may read what a key names is that owner's to decide, by
+what the key belongs to. What one owner keeps of one thing lies under one prefix, removed with it at
+once.
+
+The `ArtifactManager` keeps a version under `artifacts/<artifact>/<number>` and is the one writer
+of artifact documents: a version's content is kept before the document says it exists, and removed
+again if the document cannot be stored; an artifact is purged with its content, the content first.
+It knows no workspace: where the content comes from is its caller's. Artifacts are entities, not
+state: each has its own owner, permissions, a name unique in its scope and a trash, and one that is
+kept outlives the session it was published in.
+
+The `AttachmentManager` keeps an attachment under `attachments/<channel>/<id>`, in the
+storage `attachments.keep_in` names. An attachment is no entity: it is part of the message that
+carries it, read through the message (`ChannelView::attachment`) - where a channel is read entry by
+entry, as its own label is released -, and its reference (`ContentRef`) is kept with the
+message in the channel's history. What waits for its message is held in memory alone; what a
+restart loses lies under its channel's prefix until the channel's state is purged with its session,
+which removes the whole prefix from every storage of content.
 
 ### Component bundles
 

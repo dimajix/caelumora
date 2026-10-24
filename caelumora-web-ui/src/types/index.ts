@@ -273,6 +273,26 @@ export interface ToolResult {
    * Shown with the call even where its result is not.
    */
   approval?: ApprovalDecision[];
+  /** What the tool gave its model besides `content` (issue 282); absent where its result is not shown. */
+  media?: ContentRef[];
+  /** The attachments the call showed its model again (issue 282); absent where its result is not shown. */
+  shown?: ContentRef[];
+}
+
+/** Content attached to a message, or given to a model with a tool's result (issue 282). */
+export interface ContentRef {
+  id: string;
+  /** The name of the file, as whoever handed it over gave it. */
+  name: string;
+  /** What it is, as its bytes say. */
+  media_type: string;
+  size: number;
+  digest: string;
+  /** Its own, never above the channel's. */
+  classification: Classification;
+  /** The storage of content its bytes lie in, and their key there. */
+  storage: string;
+  key: string;
 }
 
 /** The state of a channel when an event stream connects (issue 34). */
@@ -626,6 +646,8 @@ export interface Message {
   content: string | null;
   /** The model's reasoning (issue 216), if it may be seen here. */
   reasoning?: string;
+  /** What was said together with `content` (issue 282); a message may carry attachments alone. */
+  attachments?: ContentRef[];
   /** Who sees `reasoning` (issue 61); absent if the channel does. */
   reasoning_visibility?: Visibility;
   sender_name?: string;

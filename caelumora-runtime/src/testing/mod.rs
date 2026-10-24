@@ -30,8 +30,8 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::channel::{moderation_components, Channel, InternalActor, Participant};
-use caelumora_model::config::{BackendConfig, WorkspacesConfig};
-use serde_json::{json, Value};
+use caelumora_model::config::{BackendConfig, ContentConfig, WorkspacesConfig};
+use serde_json::json;
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Reading, Place};
 use caelumora_model::role::{RoleId, Roles};
 use caelumora_model::store::memberships::StoreMemberships;
@@ -53,8 +53,6 @@ use crate::agent::AgentError;
 use crate::channel::ChannelLoop;
 use crate::actor::user::ChannelWatch;
 use caelumora_model::actor::ActorEvent;
-use std::collections::BTreeMap;
-use std::path::Path;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use crate::session::{SessionError, SessionLoop, SessionManager};
@@ -255,8 +253,8 @@ pub struct World {
     pub bob: UserId,
     pub carol: UserId,
     /// Where the storage "main" keeps the workspaces' files, the storage
-    /// "shell" in `shell` below it - and a plugin's storage what its section
-    /// puts there (`configured`).
+    /// "shell" in `shell` below it, and the storage of content "kept" what
+    /// it keeps in `content` below it (issue 282).
     pub files: TempDir,
 }
 
@@ -266,18 +264,10 @@ impl World {
     }
 
     /// The world with `plugins` (issue 323), and the component kinds
-    /// `register` adds besides the built-in ones.
-    pub async fn with(plugins: &[&dyn Plugin], register: impl FnOnce(&mut ComponentRegistry)) -> Self {
-        Self::configured(plugins, |_| BTreeMap::new(), register).await
-    }
-
-    /// The world with `plugins`, the sections of the configuration they
-    /// claim, as `sections` writes them given `files` - where a plugin's
-    /// storage may lie beside the workspaces' (issue 328) -, and the
-    /// component kinds `register` adds besides the built-in ones. It runs
-    /// no agent unless a plugin brings them: in the agents' tests,
+    /// `register` adds besides the built-in ones. It runs no agent unless a
+    /// plugin brings them: in the agents' tests,
     /// `caelumora_agents::testing::TestAgents` does (issues 370, 373).
-    pub async fn configured(plugins: &[&dyn Plugin], sections: impl FnOnce(&Path) -> BTreeMap<String, Value>, register: impl FnOnce(&mut ComponentRegistry)) -> Self {
+    pub async fn with(plugins: &[&dyn Plugin], register: impl FnOnce(&mut ComponentRegistry)) -> Self {
         let roles = Roles::new([(*STAFF, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
         // The policy learns who takes part where from the store it guards
@@ -292,7 +282,8 @@ impl World {
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new("local", json!({ "root": files.path().join("shell"), "shell": true, "destination": { "level": "internal" } }));
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), BackendConfig::new("local", json!({ "root": files.path() }))), ("shell".to_string(), shell)].into(), ..Default::default() };
-        let config = AppConfig { workspaces, plugins: sections(files.path()), ..Default::default() };
+        let content = ContentConfig { storage: [("kept".to_string(), BackendConfig::new("local", json!({ "root": files.path().join("content") })))].into() };
+        let config = AppConfig { workspaces, content, ..Default::default() };
         let runtime = TestRuntime { store: store.clone(), access_policy, confidentiality: Arc::<Recorder>::clone(&recorder), config, registry: Some(registry), plugins: plugins.to_vec() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { access_policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };

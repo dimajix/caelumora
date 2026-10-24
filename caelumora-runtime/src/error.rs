@@ -8,6 +8,7 @@
 //! in the log only.
 
 use crate::agent::AgentError;
+use crate::attachment::AttachmentError;
 use crate::command::CommandError;
 use crate::component::ComponentError;
 use crate::session::SessionError;
@@ -74,6 +75,8 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
             AgentError::Store(e) => store_message(e),
             _ => Some(e.to_string()),
         }
+    } else if let Some(e) = e.downcast_ref::<AttachmentError>() {
+        attachment_message(e)
     } else if let Some(e) = e.downcast_ref::<TerminalError>() {
         Some(e.to_string())
     } else if let Some(e) = e.downcast_ref::<TemplateError>() {
@@ -92,6 +95,16 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
 pub fn view_message(error: &ViewError) -> Option<String> {
     match error {
         ViewError::Failed(_) => None,
+        ViewError::Attachment(e) => attachment_message(e),
+        _ => Some(error.to_string()),
+    }
+}
+
+/// Attachment errors: what failed in a storage, or one no longer configured, is for the log; the
+/// rest names the attachment, its classification or a limit.
+fn attachment_message(error: &AttachmentError) -> Option<String> {
+    match error {
+        AttachmentError::Unavailable(_) | AttachmentError::UnknownStorage(_) => None,
         _ => Some(error.to_string()),
     }
 }
@@ -135,6 +148,7 @@ mod tests {
     use super::*;
     use caelumora_model::actor::ActorId;
     use caelumora_model::channel::ChannelId;
+    use caelumora_model::content::ContentId;
 
     /// An error of a type of another crate's, holding one of the runtime's.
     #[derive(Debug, thiserror::Error)]
@@ -185,6 +199,15 @@ mod tests {
         assert_eq!(user_message(&anyhow::Error::new(SessionError::InvalidComponents(failed()))), None, "nor by the session that repeats it");
         let gone = built(StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() });
         assert!(user_message(&anyhow::Error::new(gone)).is_some_and(|message| message.contains("'tools'")));
+    }
+
+    #[test]
+    fn a_failed_storage_of_attachments_is_not_disclosed() {
+        let failed = || AttachmentError::Unavailable("/srv/content/attachments: permission denied".to_string());
+        assert_eq!(user_message(&anyhow::Error::new(failed())), None);
+        assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(failed()))), None, "nor read through a view, which repeats its text");
+        assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(AttachmentError::UnknownStorage("old".to_string())))), None);
+        assert!(user_message(&anyhow::Error::new(ViewError::Attachment(AttachmentError::NotFound(ContentId::new())))).is_some(), "what it names is safe");
     }
 
     #[test]

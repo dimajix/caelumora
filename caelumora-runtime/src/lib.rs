@@ -17,6 +17,8 @@ pub mod plugin;
 pub mod seed;
 pub mod view;
 pub mod terminal;
+pub mod content;
+pub mod attachment;
 pub mod workspace;
 pub mod group;
 mod template;

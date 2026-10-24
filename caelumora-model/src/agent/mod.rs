@@ -5,10 +5,12 @@
 //!   and how it hears during a turn, read through the agent so that a change
 //!   of the personality reaches it (issue 176).
 //! - An `AgentChannelState` (`channel_state`) is the agent in one channel:
-//!   its transcript, its notes, the turn under way.
+//!   its transcript, its notes, the turn under way, and the numbers its
+//!   transcript gives attachments (`AttachmentIndex`, issue 282).
 //! - An `AgentState` (`state`) is the agent itself across its channels: its
 //!   memory (issue 62).
 
+mod attachments;
 mod channel_state;
 mod personality;
 mod state;
@@ -26,6 +28,7 @@ use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use attachments::AttachmentIndex;
 pub use channel_state::{AgentChannelState, AgentChannelStateChange, RetryRefused};
 pub use personality::{HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind};
 pub use state::{AgentState, AgentStateChange, STATE_CHANGED};

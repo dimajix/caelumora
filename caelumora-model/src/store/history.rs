@@ -40,6 +40,9 @@ pub enum HistoryField {
     Role,
     Internal,
     Content,
+    /// What the message carries besides its words (issue 282); absent
+    /// where it carries nothing.
+    Attachments,
     Mentions,
     Level,
     Compartments,
@@ -70,6 +73,7 @@ impl Field for HistoryField {
             HistoryField::Role => &["entry", "said", "message", "role"],
             HistoryField::Internal => &["entry", "said", "message", "internal"],
             HistoryField::Content => &["entry", "said", "message", "content"],
+            HistoryField::Attachments => &["entry", "said", "message", "attachments"],
             HistoryField::Mentions => &["entry", "said", "message", "mentions"],
             HistoryField::Level => &["entry", "said", "message", "classification", "level"],
             HistoryField::Compartments => &["entry", "said", "message", "classification", "compartments"],
@@ -102,18 +106,24 @@ impl Filter<HistoryField> {
         Filter::all_of([Filter::negated(Filter::IsNull(HistoryField::Content)), Filter::negated(Filter::eq(HistoryField::Content, ""))])
     }
 
+    /// A message that says something: words, or attachments (issue 282).
+    pub fn saying() -> Self {
+        Filter::any_of([Filter::written(), Filter::negated(Filter::IsNull(HistoryField::Attachments))])
+    }
+
     /// A message containing `words` (`Filter::Contains`).
     pub fn containing(words: &str) -> Self {
         Filter::contains(HistoryField::Content, words)
     }
 
     /// A message the other participants hear (`Message::is_heard`): words
-    /// of a person or an agent, not a step of a plan under way.
+    /// or attachments of a person or an agent, not a step of a plan under
+    /// way.
     pub fn heard() -> Self {
         Filter::all_of([
             Filter::is_in(HistoryField::Role, [MessageRole::User, MessageRole::Assistant]),
             Filter::eq(HistoryField::Internal, false),
-            Filter::written(),
+            Filter::saying(),
         ])
     }
 
@@ -502,6 +512,7 @@ mod tests {
     use crate::history::{Audience, History};
     use crate::message::Message;
     use crate::message::testing::{id, make_message};
+    use crate::content::testing::make_content_ref;
     use chrono::Utc;
 
     fn label(item: &HistoryEntry) -> String {
@@ -587,7 +598,9 @@ mod tests {
         for message in [Message { content: None, ..by_alice.clone() }, Message { content: Some(String::new()), ..by_alice.clone() }] {
             assert!(!keeps(&Filter::written(), said(message.clone())) && !keeps(&Filter::heard(), said(message)), "without words");
         }
-        for message in [by_alice.clone(), Message { role: MessageRole::Assistant, ..by_alice.clone() }, Message { role: MessageRole::Tool, ..by_alice.clone() }, Message { internal: true, ..by_alice.clone() }] {
+        let attached = Message { content: None, attachments: vec![make_content_ref("screen.png", b"png")], ..by_alice.clone() };
+        assert!(!keeps(&Filter::written(), said(attached.clone())) && keeps(&Filter::heard(), said(attached.clone())), "an attachment alone is heard, though nothing is written");
+        for message in [by_alice.clone(), attached, Message { role: MessageRole::Assistant, ..by_alice.clone() }, Message { role: MessageRole::Tool, ..by_alice.clone() }, Message { internal: true, ..by_alice.clone() }] {
             assert_eq!(keeps(&Filter::heard(), said(message.clone())), message.is_heard(), "heard as {:?}, internal {}", message.role, message.internal);
         }
     }

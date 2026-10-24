@@ -1,6 +1,7 @@
 //! The `channel_history` component (issue 17): an agent reads the history of
 //! another channel of its session - the latest messages, or those that
-//! contain a text. Only channels the agent's channel may read by their
+//! contain a text -, each with what it says and the attachments it carries
+//! (issue 282). Only channels the agent's channel may read by their
 //! classifications can be read - as the turn's views answer
 //! (`Situation::session`, issues 133, 163); every read is recorded as a
 //! `KnowledgeRef` with the turn's messages. When a message was said is
@@ -120,21 +121,31 @@ impl ToolProvider for ChannelHistoryComponent {
         let time_zone = turn.situation().time_zone();
         let value = serde_json::json!({
             "channel": channel.name(),
-            "messages": messages.iter().map(|m| serde_json::json!({
-                "from": m.sender_name,
-                "at": time_zone.format(m.timestamp),
-                "text": m.content.clone().unwrap_or_default(),
-            })).collect::<Vec<_>>(),
+            "messages": messages.iter().map(|m| {
+                let mut said = serde_json::json!({
+                    "from": m.sender_name,
+                    "at": time_zone.format(m.timestamp),
+                    "text": m.content.clone().unwrap_or_default(),
+                });
+                if !m.attachments.is_empty() {
+                    said["attachments"] = m.attachments.iter().map(|a| serde_json::json!({ "name": a.name.as_str(), "type": a.media_type, "size": a.size_shown() })).collect();
+                }
+                said
+            }).collect::<Vec<_>>(),
             "more": more,
         });
         Ok(ToolOutput { value, classification })
     }
 }
 
-/// Which messages the tool returns: those with words, containing `query`
-/// if given - as names are compared (`Filter::Contains`).
+/// Which messages the tool returns: those that say something - words or
+/// attachments (issue 282) -, or those whose words contain `query` if given -
+/// as names are compared (`Filter::Contains`).
 fn wanted(query: Option<&str>) -> Filter<HistoryField> {
-    Filter::all_of([Filter::written()].into_iter().chain(query.map(Filter::containing)))
+    match query {
+        Some(query) => Filter::all_of([Filter::written(), Filter::containing(query)]),
+        None => Filter::saying(),
+    }
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
@@ -154,6 +165,7 @@ mod tests {
     use super::*;
     use caelumora_model::actor::ActorId;
     use caelumora_model::history::{Audience, Recorded};
+    use caelumora_model::content::testing::make_content_ref;
     use caelumora_model::message::MessageId;
 
     /// A message saying `content`, recorded as the store keeps it.
@@ -168,5 +180,9 @@ mod tests {
         assert!(!wanted(Some("tea")).matches(&said("coffee")));
         assert!(wanted(None).matches(&said("coffee")), "any text without a query");
         assert!(!wanted(None).matches(&said("")), "a message without text does not count");
+        let attached = Message { id: MessageId::new(), attachments: vec![make_content_ref("a.png", b"a")], ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let attached = serde_json::to_value(Recorded::new(HistoryEntry::Said { message: attached }, ActorId::System, Audience::Everybody)).unwrap();
+        assert!(wanted(None).matches(&attached), "unless it has attachments (issue 282)");
+        assert!(!wanted(Some("tea")).matches(&attached), "which no query finds");
     }
 }

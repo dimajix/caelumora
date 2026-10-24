@@ -225,8 +225,8 @@ pub enum WriteFailure {
 /// Writes `content` to `target` whole, at most `limit` bytes, or not at
 /// all: into a file beside it, renamed over it once complete. The directory
 /// it lies in must exist. Answers how many bytes were written. Shared by
-/// the files of a local workspace and the content of local artifacts
-/// (issue 271).
+/// the files of a local workspace and the local storage of content (issue
+/// 282).
 pub async fn write_whole(target: &Path, mut content: ByteStream, limit: u64) -> Result<u64, WriteFailure> {
     let part = partial(target);
     let written = async {
@@ -494,9 +494,9 @@ mod tests {
             Backends::built_in().make_named::<dyn TerminalProvider>("storage of workspaces", &storages, &Services::empty())
         };
         let plain = make(json!({ "root": "x" })).expect("a root alone");
-        assert!(!plain["dev"].has_shell() && plain["dev"].destination().is_none(), "no shell, no bound");
+        assert!(!plain.get("dev").unwrap().has_shell() && plain.get("dev").unwrap().destination().is_none(), "no shell, no bound");
         let shell = make(json!({ "root": "x", "shell": true })).expect("with a shell");
-        assert_eq!(shell["dev"].destination(), Some(&Classification::PUBLIC), "public, where it has a shell");
+        assert_eq!(shell.get("dev").unwrap().destination(), Some(&Classification::PUBLIC), "public, where it has a shell");
         for (params, why) in [(json!({ "root": "x", "max_run_secs": 0 }), "max_run_secs"), (json!({ "root": "x", "rot": "y" }), "rot"), (json!({}), "root")] {
             let refused = make(params).map(|_| ()).unwrap_err().to_string();
             assert!(refused.contains("the storage of workspaces 'dev' (local)") && refused.contains(why), "{refused}");
