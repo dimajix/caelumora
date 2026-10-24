@@ -169,6 +169,29 @@ artifact's version. Under a key a message refers to, only its message removes th
   or its session purged - and those of uploads never sent, after a while; the artifacts plugin
   those of artifacts, when one is purged. The storage knows nothing of it.
 
+**Decided: an attachment lies in its channel's scope.** A message is said in one channel, and its
+attachment is part of what was said there; a channel is deleted, restored and purged on its own
+within its session (`SessionLoop::delete_channel`), and the agents' transcripts lie in it as well
+(`AgentChannelState`). So attachments go as the rule for scopes says - what lies in a channel's
+scope is used only within it and goes with it (STORAGE.md) -, not with the session, which would
+leave those of a purged channel behind with nothing referring to them. "Owner" here means the
+lifetime, not `SecurityAttributes::owner_id`: who reads an attachment is still its message's to
+say.
+
+- **The global name is the `AttachmentId`**, given when the content is uploaded and kept when the
+  message is sent; every copy of the message, the REST API and the web UI name the attachment by
+  it. Its key in the storage is `<channel>/<attachment id>`: the id makes it unique, the channel
+  before it lets a purge remove a channel's attachments by the prefix, as `ArtifactStorage::remove`
+  removes an artifact's versions - no message has to be enumerated. Erasing a message (237)
+  removes single keys.
+- **Not yet sent is a record, not a place.** The key is fixed at the upload, so sending moves
+  nothing; what marks an upload as not yet sent is a record of who uploaded it and when, which no
+  message names yet - by which only that user reads it, and it expires after a while, at the
+  latest with its channel. Where that record is kept is for the plan.
+- **Deleting and restoring a channel** hides its attachments and brings them back, with nothing
+  marked at them: without its channel an attachment is not reached. Purging it - also through its
+  session - removes them, joined as artifacts and workspaces are (`…_lying_in`).
+
 ### Upload and the REST API
 
 - **Two steps:** the content is uploaded first (`POST …/channels/{cid}/attachments`, the raw body
@@ -235,7 +258,8 @@ reasoning, classification and mentions, and leaves tool calls and results as the
   removed is not found, by an old link neither.
 - **An attachment has an id of its own** (`AttachmentId`), stable within its message: a download
   is `GET …/messages/{mid}/attachments/{aid}`, not by the attachment's place, which a removal
-  shifts; and the owner of attachments makes their keys from the session and that id.
+  shifts; and the owner of attachments makes their keys from the channel and that id (see *How
+  attachments are managed*).
 - **`MessageRequest::attachments` names the attachments as they are to stand,** read alike for a
   new message and a modification: the id of an attachment it has keeps it, the reference to an
   upload not yet sent adds it, one not named is removed. `Message::modify` takes the attachments
@@ -313,6 +337,11 @@ reasoning, classification and mentions, and leaves tool calls and results as the
   The transcript does not hold a rendition, only which one the model was given - its target
   format, the converter and its version, the rendition's digest -, so that what a model saw can be
   checked, and a model changed in between is given the rendition it takes at its next turn.
+
+  **Deferred: no central conversion in the first step.** The decision above stands, but is built
+  only once something needs it - a channel without a workspace, a model that cannot handle the
+  tools. Until then a model works on what needs converting itself, on a copy in a workspace (see
+  *What a model is given in the first step*).
 - **The context window.** Images fill the context fast and are sent with every call; compaction
   ([16](16-context-compression.md)) has to be able to leave old ones out, replaced by a note.
 
@@ -329,6 +358,73 @@ reasoning, classification and mentions, and leaves tool calls and results as the
   and vLLM, but not with OpenAI's Chat Completions. The type should be one that a `ToolCallResult`
   can carry later (208, MCP image content); a client for an API without it puts the image into a
   message of its own after the result.
+
+**Tried with Ollama 0.40.6 on 2026-10-24**: an image showing "KIWI 7319" in black on orange, given
+once in a user message, once in a `tool` message's `images` after a call of `view_attachment`, and
+once as the same tool message without the image.
+
+| Model | In a user message | In a tool result | Tool result without the image |
+|---|---|---|---|
+| gemma4:e4b | read | read | made up: "NO PARKING ANY TIME" |
+| gemma4:26b | read | read | made up: "Hello World" |
+| qwen3.6:27b | read (and asked for it by the tool besides) | read | made up: "Hello World" |
+| gemma4:cloud | read | read with `think: true`, twice; with `think: false` once garbled before the answer, once no answer within 600 s | made up: "Hello World" |
+
+So an image can be given as a tool's result. And every model makes up an image it was told of
+but not given - where an attachment cannot be shown, the text has to say so, and a tool never
+reports success without the image.
+
+### What a model is given in the first step
+
+**Decided:**
+
+- **Images are given along to a model that can see**, in the message they are attached to.
+  `view_attachment` gives one as a tool's result - one that is not given along: older, above the
+  threshold, left out by a compaction.
+- **Text** - plain text, markdown, CSV - is read through `read_attachment`, with a range, straight
+  from the storage, nothing converted.
+- **Everything else is worked on in a workspace.** A tool copies an attachment into the workspace
+  the turn may use - "attachment `a3` to `docs/report.pdf`", by default under `attachments/` -,
+  and the model works on it there with what it has (`read_file`, the terminal). The mirror image of
+  `publish_artifact`: the workspace is where a copy is worked on, never where an attachment lies.
+  Copied, it is a file of the workspace like any other - its lifetime, its label, shared as the
+  workspace is -, and copying is a flow of the message's classification into the workspace's
+  (`may_publish`), checked as writing what the channel showed into the workspace is. In a channel
+  without a workspace such a document cannot be worked on until central conversion comes, and the
+  model is told so in the note. Whether an agent needs a workspace of its own beside the shared one
+  was asked and is not pursued: it would concern everything an agent writes, not attachments.
+- **The tools are offered where the agent's transcript holds attachments** (`offered`, issue 290):
+  offering is a convenience, the call checks for itself. Today `offered` is given the turn's
+  `Situation` before the context is built; whether there are attachments is an input it does not
+  have yet.
+- **Every message with attachments carries a note** in the context, in the format of its sender's
+  marking (`sender_format`), one per attachment: its number, name, type, size and whether it is
+  given along - with `xml` such as `<attachment ref="a3" name="report.pdf" type="application/pdf"
+  size="2.3 MB" shown="no"/>`.
+
+**Decided: a model names an attachment by a number of its transcript.** A UUID costs tokens and is
+copied wrong. Each agent numbers the attachments as they enter its transcript - `a1`, `a2`, ... -,
+so that the same image may be `a3` to one agent of a channel and `a1` to another; each model sees
+its own numbers only. The agent's attachments in its channel are thus a view, translating between
+the `AttachmentId` and its number - no storage of their own:
+
+- **id to number** when the context is built, for the note; **number to id** when a tool is
+  called. A number that exists is what the agent heard: a tool reaches the attachments numbered in
+  the agent's transcript that still stand, nothing else - no message of another channel, none it
+  did not hear, no older version. Reading one joins the turn's label with its message's, as any
+  reading does. Since it is the transcript and not the context, an attachment of messages a
+  compaction summarised stays reachable.
+- **The number is recorded in the transcript's entry** the attachment entered with - what the model
+  saw, covered by the digest chain, without changing the message all agents share - and **the
+  translation is kept in the agent's state** (`AgentChannelState`) with the next number, as its
+  sums are: an agent holds only a window of its chain, and a compaction starts a new branch, while
+  a number has to resolve beyond both. The index can be rebuilt from the chain.
+- **A number is never given again.** An attachment a modification keeps keeps its number - the
+  translation goes by `AttachmentId` -, one added gets the next, one removed is no longer found.
+- **An external agent's** transcript starts anew with every call, and so do its numbers.
+- **Not the owner.** The transcript owns how its model names an attachment and what the model was
+  given of it; the content, its lifetime and who reads it stay with the message and its channel.
+  An attachment lies in many transcripts, users have none, and erasing needs one place to find it.
 
 ### Web UI
 
@@ -390,3 +486,14 @@ size and a download.
   and downloaded. An attachment has an id of its own within its message (`AttachmentId`), by which
   it is downloaded and its key is made. Taking a message back empties its attachments; a tool
   result's attachments stay with their result.
+- **2026-10-24** — Decided with the maintainer (*How attachments are managed*, *Converting*, *What
+  a model is given in the first step*): an attachment lies in its channel's scope and goes with its
+  purge; its key is `<channel>/<attachment id>`, fixed at the upload - not "the session and the id"
+  as written earlier today -, and "not yet sent" is a record, not a place. Central conversion is
+  deferred: images are given along to a model that can see and through `view_attachment`, text is
+  read through `read_attachment`, everything else is copied into a workspace and worked on there.
+  Tried with Ollama first: images in a tool's result are seen; an image a model is told of but not
+  given is made up. A model names an attachment by a number of its agent's transcript; the agent's
+  attachments are a view translating between `AttachmentId` and that number, the number recorded
+  in the transcript's entry, the translation in the agent's state. A workspace of each agent's own
+  was asked about and is not pursued.
