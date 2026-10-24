@@ -51,7 +51,8 @@ component_bundles:
   - id: channel-mentions
     kind: channel_mentions_prompt_provider
     fail_policy: FailClosed
-# What every agent run here needs to take part in a channel.
+# What every agent run here needs to take part in a channel - `compaction` among it: an agent
+# compacts its context only if it lists that.
 - id: 8d4c2a91-0e57-4b3f-a6d8-17f9c3e5b204
   name: agent-basics
   components:

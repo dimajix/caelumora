@@ -54,7 +54,7 @@ use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_model::workspace::WorkspaceChoice;
 use anyhow::Error;
 use caelumora_agents::command::AgentCommandProvider;
-use caelumora_agents::compaction::command::COMPACTION_KIND;
+use caelumora_agents::compaction::component::COMPACTION_KIND;
 use caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND;
 use caelumora_agents::llm::{LLMClient, LLMResult};
 use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};

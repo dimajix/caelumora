@@ -16,6 +16,7 @@ use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::tool::{Tool, ToolResultStatus};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::TurnId;
+use crate::compaction::component::COMPACTION_KIND;
 use crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND;
 use crate::llm::{LLMClient, LLMError, LLMResult};
 use crate::message::testing::given_up_turns;
@@ -1941,28 +1942,34 @@ async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its
     running.abort();
 }
 
-/// A channel whose agent answered alice's "hello" with "Hi." and then
-/// heard "take a nap", which it answers by calling the sleep tool, its
-/// context full once that call is in - 910 of 1000 -, and then by
-/// `afterwards`, one answer a call.
-async fn with_a_full_context(afterwards: Vec<Message>) -> Stuck {
+/// A channel whose agent, with the components `listed` besides the sleep
+/// tool, answered alice's "hello" with "Hi." and then heard "take a nap",
+/// which it answers by calling the sleep tool, its context full once that
+/// call is in - 910 of 1000 -, and then by `afterwards`, one answer a call.
+async fn with_a_full_context(listed: Vec<ComponentDescriptor>, afterwards: Vec<Message>) -> Stuck {
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let nap = ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
     let mut script = vec![measured(100, model_says("Hi.")), measured(900, Message { tool_calls: vec![nap], ..model_says("") })];
     script.extend(afterwards);
-    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+    let mut components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "sleep".to_string(),
         kind: SLEEP_TOOL_KIND.to_string(),
         params: serde_json::json!({ "requires_approval": false }),
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
+    components.component_nodes.extend(listed);
     let mut stuck = with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
     answered(&mut stuck.events, stuck.agent).await;
     settled(&stuck.helper, ActorState::Idle).await;
     stuck.channel.user_actor(alice_of(&stuck.context)).unwrap().send_message("take a nap".to_string(), None).await.unwrap();
     stuck
+}
+
+/// The `compaction` component, as a personality lists it.
+fn compaction() -> ComponentDescriptor {
+    ComponentDescriptor::new("compaction", COMPACTION_KIND)
 }
 
 /// `message` as a call of a model whose context holds 1000 tokens
@@ -1978,7 +1985,8 @@ fn model_says(text: &str) -> Message {
 
 /// What the agent `agent` told of its activities - its state `Busy`, an
 /// activity begun, one ended with what it said - until its turn ended,
-/// and how it ended: its answer, or why it was given up.
+/// and how it ended: its answer, or why it was given up - failed, what its
+/// users were told.
 async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelope>, agent: AgentId) -> (Vec<String>, Result<Vec<Message>, String>) {
     let mut told = Vec::new();
     let ended = time::timeout(Duration::from_secs(5), async {
@@ -1990,6 +1998,7 @@ async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelop
                 ActorEvent::ActivityStarted { activity, .. } => told.push(format!("started {activity}")),
                 ActorEvent::ActivityFinished { output, .. } => told.push(format!("finished: {output}")),
                 ActorEvent::TurnFinished { messages, .. } => break Ok(messages),
+                ActorEvent::TurnGivenUp { reason: GivenUpReason::Failed { message }, .. } => break Err(message),
                 ActorEvent::TurnGivenUp { reason, .. } => break Err(reason.cause().to_string()),
                 _ => {}
             }
@@ -2002,7 +2011,7 @@ async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelop
 async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_call() {
 
     let Stuck { channel, agent, mut events, running, .. } =
-        with_a_full_context(vec![measured(800, model_says("They greeted each other.")), measured(300, model_says("Done."))]).await;
+        with_a_full_context(vec![compaction()], vec![measured(800, model_says("They greeted each other.")), measured(300, model_says("Done."))]).await;
     let (told, answer) = activities_until_the_turn_ends(&mut events, agent).await;
 
     assert_eq!(told, [
@@ -2022,13 +2031,65 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
 }
 
 #[tokio::test]
+async fn an_agent_whose_personality_does_not_list_compaction_does_not_compact() {
+    let Stuck { channel, agent, mut events, running, .. } = with_a_full_context(Vec::new(), vec![measured(300, model_says("Done."))]).await;
+    let (told, answer) = activities_until_the_turn_ends(&mut events, agent).await;
+
+    assert!(told.is_empty(), "nothing done of its own accord: {told:?}");
+    assert!(answer.is_ok(), "the call made with the context as it is");
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")), "nothing replaced");
+    running.abort();
+}
+
+#[tokio::test]
+async fn an_agent_carries_out_each_activity_due_once_before_each_call_one_after_the_other() {
+    let tidying = |id: &str| ComponentDescriptor::new(id, "test_tidying");
+    let Stuck { agent, mut events, running, .. } =
+        with_a_full_context(vec![tidying("dusting"), tidying("sweeping")], vec![model_says("Done.")]).await;
+    let (told, answer) = activities_until_the_turn_ends(&mut events, agent).await;
+
+    let before_a_call = ["busy", "started dusting", "finished: dusting done", "busy", "started sweeping", "finished: sweeping done"];
+    let expected: Vec<String> = before_a_call.iter().chain(before_a_call.iter()).map(|told| told.to_string()).collect();
+    assert_eq!(told, expected, "both, in their order, before the call of the sleep tool and the one after it");
+    assert!(answer.is_ok(), "the turn goes on after them");
+    running.abort();
+}
+
+#[tokio::test]
+async fn an_activity_cut_short_by_a_stop_is_carried_out_again_as_the_turn_resumes() {
+    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("hanging", "test_hanging")] };
+    let Stuck { channel, agent, mut events, running, .. } = with_an_agent(Arc::new(NeverAnswers), components).await;
+    activity_started(&mut events, agent).await;
+
+    stop_and_wait(&channel, running).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert_eq!(stored.processing_state, ActorState::Busy, "stored at the step it stood at");
+    assert!(stored.turn.as_ref().is_some_and(|turn| turn.activities_tried.is_empty()), "not tried, since it was not done");
+
+    let (_restarted, mut events, running) = run_again(&channel).await;
+    activity_started(&mut events, agent).await;
+    running.abort();
+}
+
+/// Waits until the agent `agent` began an activity.
+async fn activity_started(events: &mut broadcast::Receiver<Envelope>, agent: AgentId) {
+    time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::ActivityStarted { .. }) { break }
+        }
+    }).await.expect("it begins an activity");
+}
+
+#[tokio::test]
 async fn a_compaction_that_fails_ends_the_turn() {
     // The model writes no summary.
-    let Stuck { channel, agent, mut events, running, .. } = with_a_full_context(vec![model_says("")]).await;
+    let Stuck { channel, agent, mut events, running, .. } = with_a_full_context(vec![compaction()], vec![model_says("")]).await;
     let (told, ended) = activities_until_the_turn_ends(&mut events, agent).await;
 
     assert_eq!(told, ["busy".to_string(), "started compacting its context".to_string()]);
-    assert!(ended.is_err(), "given up: the call it was to make room for would not fit");
+    assert_eq!(ended.err().as_deref(), Some("helper could not compact its context: its model wrote no summary"), "given up: the call it was to make room for would not fit");
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")), "the transcript as it was");
     running.abort();

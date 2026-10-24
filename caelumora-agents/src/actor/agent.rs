@@ -6,7 +6,7 @@ use caelumora_runtime::actor::{Actor, Answering};
 use super::run_control::Interrupt;
 use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::command::AgentCommandProvider;
-use crate::compaction::{CompactionPolicy, CompactionStrategy};
+use crate::activity::ActivityProvider;
 use caelumora_runtime::component::ComponentImpl;
 use crate::prompt::{ContextProvider, ModelProfileProvider};
 use crate::llm::LLMClient;
@@ -48,10 +48,9 @@ pub(crate) struct AgentActor {
     // Components
     /// The model it talks to: exactly one (issue 130).
     llm_client: ComponentImpl<dyn LLMClient>,
-    /// When it compacts its context on its own: exactly one (issue 284).
-    compaction_policy: ComponentImpl<dyn CompactionPolicy>,
-    /// How its context is compacted: exactly one (issues 16, 284).
-    compaction: ComponentImpl<dyn CompactionStrategy>,
+    /// What it does of its own accord before a model call - compacting its
+    /// context -, in the order of its components (issue 464).
+    activities: Vec<ComponentImpl<dyn ActivityProvider>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
     /// Runs the agent's tool calls with the tools of its components, behind
     /// the runtime's permission checks (issues 127, 280).
@@ -65,8 +64,7 @@ impl AgentActor {
         TypeKey::of::<dyn ContextProvider>(),
         TypeKey::of::<dyn LLMClient>(),
         TypeKey::of::<dyn ModelProfileProvider>(),
-        TypeKey::of::<dyn CompactionPolicy>(),
-        TypeKey::of::<dyn CompactionStrategy>(),
+        TypeKey::of::<dyn ActivityProvider>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
         TypeKey::of::<dyn EmitOutProcessor>(),
         TypeKey::of::<dyn ToolProvider>(),
@@ -93,16 +91,14 @@ impl AgentActor {
         };
         let (body, components) = AgentBody::build(agent_controller, personality, Self::COMPONENT_FACETS, &ComponentConfig::default(), actor_runtime, resume).await?;
         let llm_client = components.one::<dyn LLMClient>().await?;
-        let compaction_policy = components.one::<dyn CompactionPolicy>().await?;
-        let compaction = components.one::<dyn CompactionStrategy>().await?;
+        let activities = components.get_all::<dyn ActivityProvider>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let tool_executor = ToolExecutor::new(components.get_all::<dyn ToolProvider>(None)?, body.runtime.clone())?;
 
         Ok(AgentActor {
             body,
             llm_client,
-            compaction_policy,
-            compaction,
+            activities,
             emit_out_processors,
             tool_executor,
         })
@@ -530,7 +526,7 @@ impl AgentActor {
             self.body.store(state).await;
         }
         let turn = &mut self.turn_under_way(state)?;
-        if self.compaction_due(turn) {
+        if self.due_activity(turn).is_some() {
             return Ok(ActorState::Busy);
         }
         turn.count_model_call();
@@ -594,46 +590,51 @@ impl AgentActor {
         Ok(ActorState::Reflecting)
     }
 
-    /// Whether the context of `turn` is to be compacted before its next model
-    /// call (issue 284), as its policy says - asked once before each call.
-    fn compaction_due(&self, turn: &Turn<'_>) -> bool {
-        turn.may_compact() && self.compaction_policy.is_due(&turn.situation())
+    /// The first of its activities due before the next model call of `turn`
+    /// that the turn did not try since its last call (issue 464).
+    fn due_activity(&self, turn: &Turn<'_>) -> Option<&ComponentImpl<dyn ActivityProvider>> {
+        let situation = turn.situation();
+        self.activities.iter().find(|activity| !turn.tried_activity(&activity.id) && activity.is_due(&situation))
     }
 
-    /// Compacts the context of `turn` before its next model call (issue
-    /// 284), as its strategy does, telling the users that it does so
-    /// (`ActivityStarted`) and what came of it (`ActivityFinished`). Tried
-    /// once before the call; the call follows whatever came of it. A cancel
-    /// ends it, as it ends a call; a failure ends the turn - the call it
-    /// was to make room for would not fit -, the transcript as it was.
+    /// Carries out the activity due before the next model call of the turn
+    /// under way (`due_activity`, issue 284), telling the users that it does
+    /// so (`ActivityStarted`) and what came of it (`ActivityFinished`). Done
+    /// once before the call; the call follows whatever came of it, after any
+    /// other activity due. A cancel ends it, as it ends a call, and a stop
+    /// leaves it to be carried out again as the turn resumes; a failure ends
+    /// the turn - of a compaction, the call it was to make room for would not
+    /// fit.
     ///
-    /// Compacted, the actor goes on to `Planning` and stores its state
+    /// Carried out, the actor goes on to `Planning` and stores its state
     /// before `ActivityFinished` announces it, as `end_turn` does before
     /// `TurnFinished` (issue 405): whoever reacts to it - a user interface
     /// reading what the agent uses - reads the context as it is now.
     async fn handle_busy(&self, state: &mut AgentChannelState, output: &dyn EventSender) -> Result<ActorState> {
-        const ACTIVITY: &str = "compacting its context";
         let mut turn = self.turn_under_way(state)?;
-        turn.try_compaction();
+        // Asked again as `handle_planning` asked; should none be due any more, the call is made.
+        let Some(activity) = self.due_activity(&turn) else {
+            return Ok(ActorState::Planning);
+        };
+        let name = activity.activity().to_string();
         let turn_id = turn.turn_id();
-        turn.send_event(ActorEvent::ActivityStarted { turn_id, activity: ACTIVITY.to_string() }, output).await?;
+        turn.send_event(ActorEvent::ActivityStarted { turn_id, activity: name.clone() }, output).await?;
         let cancelled = self.body.control.token();
         // Interrupted, the step stands where it began, as a model call does.
-        let compacted = tokio::select! {
+        let carried_out = tokio::select! {
             biased;
             _ = cancelled.cancelled() => {
-                info!("Interrupting the compaction of agent {} {}", self.id(), turn.agent_name());
+                info!("Interrupting agent {} {}, {}", self.id(), turn.agent_name(), name);
                 return Ok(ActorState::Busy);
             }
-            compacted = self.compaction.compact(&mut turn) => compacted,
+            carried_out = activity.carry_out(&mut turn) => carried_out,
         };
-        let compaction = compacted.with_context(|| format!("component '{}' could not compact the context", self.compaction.id))?;
-        let said = match compaction {
-            Some(compaction) => compaction.describe(turn.agent_name()),
-            None => format!("{} found nothing to compact: it keeps the newest part of its context as it is.", turn.agent_name()),
-        };
+        let said = carried_out.with_context(|| format!("component '{}' failed at {}", activity.id, name))?;
+        // Tried once it is done, not as it begins: one cut short by a stop is
+        // carried out again as the turn resumes in `Busy`.
+        turn.try_activity(&activity.id);
         self.settle(state, ActorState::Planning).await;
-        self.turn_under_way(state)?.send_event(ActorEvent::ActivityFinished { turn_id, activity: ACTIVITY.to_string(), output: said }, output).await?;
+        self.turn_under_way(state)?.send_event(ActorEvent::ActivityFinished { turn_id, activity: name, output: said }, output).await?;
         Ok(ActorState::Planning)
     }
 

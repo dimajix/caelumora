@@ -296,11 +296,11 @@ mod tests {
         turn.advance_plan(0).unwrap();
         assert!(turn.may_call_model(), "the first step begins with calls of its own");
         use_up(&mut turn);
-        turn.try_compaction();
+        turn.try_activity("compaction");
         turn.plan_converged().unwrap();
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
         assert!(turn.may_call_model(), "so does the second");
-        assert!(turn.may_compact(), "and may be compacted for");
+        assert!(!turn.tried_activity("compaction"), "and its activities may be tried again");
         use_up(&mut turn);
         turn.plan_converged().unwrap();
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);

@@ -132,7 +132,8 @@ So the trait names its error type, and the plugin translates its own error into 
 answers - deciding there what may be shown, what is a refusal and what is a failure:
 
 *   a tool provider answers `ToolError`, an agent's command `CommandError`, a knowledge restorer
-    `CompactionError`, an external agent `ExternalAgentError`;
+    `CompactionError`, an external agent `ExternalAgentError`, an agent's activity
+    `ActivityError`;
 *   a prompt provider and a context provider answer `prompt::ContextError`, a message processor
     `message::ProcessingError` - each with `Failed`, a failure in words that may be shown, and the
     view's and the store's errors, judged as those are;

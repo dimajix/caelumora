@@ -1,6 +1,6 @@
 # 464 — Compaction is wired into the agent
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Context and knowledge
@@ -100,6 +100,12 @@ Agreed with the maintainer on 2026-10-24:
   compacts automatically.
 - `TurnState::compaction_tried_at` is replaced by the activities tried since the last call; a turn
   stored under way with the old field is not converted.
+- **In two steps.** Step 1 is the above, in `caelumora-agents`. Step 2 moves the `compaction`
+  module into a plugin crate of its own, `caelumora-compaction` (agreed on 2026-10-24, after step 1
+  had left nothing in the agents naming it but their plugin): the component, the strategies,
+  `CompactionStrategy`, `Compaction`, `CompactionError` and `KnowledgeRestorer`, which
+  `caelumora-skills` then implements from there; its texts in a namespace of their own. The
+  mechanism - `Turn::compact`, `AgentChannelState::compact` - stays where it is.
 
 ## Done when
 
@@ -117,3 +123,14 @@ Agreed with the maintainer on 2026-10-24:
 ## History
 
 - **2026-10-24** — Opened, from a discussion with the maintainer; the design above agreed.
+- **2026-10-24** — Implemented on `issue-464-activities`: `ActivityProvider` and `ActivityError` in
+  `crate::activity`, the latter judged by `error::user_message`, so that a failed compaction is
+  now told to the users; the actor carries out any activity in `Busy`; `TurnState` keeps
+  `activities_tried` by component id. The `compaction` component, now in
+  `compaction/component.rs`, provides the command and the activity; `CompactionPolicy` and
+  `threshold_compaction_policy` are gone, and the agent no longer asks for the
+  `CompactionStrategy` itself - `compaction` needs it. The shipped personalities list
+  `compaction` through the bundle `agent-basics` already.
+- **2026-10-24** — Step 1 reviewed: a try is recorded once the activity is done, so that one cut
+  short by a stop is carried out again as the turn resumes in `Busy`. Step 2, the crate of its
+  own, agreed.

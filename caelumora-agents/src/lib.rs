@@ -5,13 +5,15 @@
 //! of an agent run here (`turn`, `work`, `memory`, `notes`), and the facets
 //! their components serve: tools (`tool`), prompt parts and contexts
 //! (`prompt`), the model (`llm`), message stages (`message`), compaction
-//! (`compaction`), an agent that runs elsewhere (`external`) and an agent's
-//! commands (`command`), with the built-in kinds (`components`). It runs
+//! (`compaction`), an agent that runs elsewhere (`external`), an agent's
+//! commands (`command`) and what it does of its own accord (`activity`),
+//! with the built-in kinds (`components`). It runs
 //! on the runtime (`caelumora-runtime`), which knows agents only as a kind
 //! of participant, and joins it as a plugin (`plugin::AgentsPlugin`) - an
 //! essential one: without it, the program is a chat between users.
 
 pub(crate) mod actor;
+pub mod activity;
 pub mod command;
 pub mod compaction;
 pub mod components;

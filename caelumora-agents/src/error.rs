@@ -1,12 +1,14 @@
 //! What a person is told of an error of the agents' logic (issue 370): the
 //! error types of its facets - the model's (`LLMError`), an external
 //! agent's (`ExternalAgentError`), a tool's (`ToolError`), a context's
-//! (`ContextError`) and a message stage's (`ProcessingError`) - which the
+//! (`ContextError`), a message stage's (`ProcessingError`) and an
+//! activity's (`ActivityError`) - which the
 //! plugins that serve those facets answer in (PLUGINS.md), judged here, by
 //! whoever defines them; everything else as the runtime judges it
 //! (`caelumora_runtime::error::user_message_with`).
 
 use caelumora_runtime::error::{store_message, user_message_with, view_message};
+use crate::activity::ActivityError;
 use crate::external::ExternalAgentError;
 use crate::llm::LLMError;
 use crate::message::ProcessingError;
@@ -45,6 +47,10 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
             ProcessingError::Failed(_) => Some(e.to_string()),
             ProcessingError::View(e) => view_message(e),
             ProcessingError::Store(e) => store_message(e),
+        }
+    } else if let Some(e) = e.downcast_ref::<ActivityError>() {
+        match e {
+            ActivityError::Failed(_) => Some(e.to_string()),
         }
     } else {
         None

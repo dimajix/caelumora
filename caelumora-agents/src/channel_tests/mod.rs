@@ -16,6 +16,7 @@ use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::security::{ActionType, SecurityContext, AccessPolicy};
 use caelumora_model::user::UserId;
 use std::sync::{Arc, Mutex};
+use std::future;
 use std::time::Duration;
 use caelumora_runtime::command::help_command::HelpCommandProvider;
 use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
@@ -32,6 +33,7 @@ use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::{Message, MessageId, MessageEvent};
 use caelumora_model::work::TurnId;
 use tokio::sync::broadcast;
+use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommandProvider;
 use crate::plugin::AgentsPlugin;
 use crate::situation::Situation;
@@ -176,6 +178,7 @@ async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn Ac
     register_no_secrets(&mut registry);
     register_asking_tool(&mut registry);
     register_marking_command(&mut registry);
+    register_activities(&mut registry);
     let defaults = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "model".to_string(),
@@ -345,6 +348,67 @@ fn register_marking_command(registry: &mut ComponentRegistry) {
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn AgentCommandProvider>(Arc::new(Marking));
+            Ok(facets)
+        },
+    );
+}
+
+/// An activity that is always due and changes nothing (issue 464), done
+/// as `test_tidying`, named by its component's id.
+#[derive(Debug)]
+struct Tidying(String);
+
+#[async_trait::async_trait]
+impl ActivityProvider for Tidying {
+    fn activity(&self) -> &str {
+        &self.0
+    }
+
+    fn is_due(&self, _: &Situation<'_>) -> bool {
+        true
+    }
+
+    async fn carry_out(&self, _: &mut Turn<'_>) -> Result<String, ActivityError> {
+        Ok(format!("{} done", self.0))
+    }
+}
+
+/// An activity that is always due and never done (issue 464), done as
+/// `test_hanging`: what a stop has to interrupt.
+#[derive(Debug)]
+struct Hanging;
+
+#[async_trait::async_trait]
+impl ActivityProvider for Hanging {
+    fn activity(&self) -> &str {
+        "hanging"
+    }
+
+    fn is_due(&self, _: &Situation<'_>) -> bool {
+        true
+    }
+
+    async fn carry_out(&self, _: &mut Turn<'_>) -> Result<String, ActivityError> {
+        future::pending().await
+    }
+}
+
+/// Registers `Tidying` as the kind `test_tidying` and `Hanging` as
+/// `test_hanging`.
+fn register_activities(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_tidying").provides::<dyn ActivityProvider>(),
+        |descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ActivityProvider>(Arc::new(Tidying(descriptor.id.clone())));
+            Ok(facets)
+        },
+    );
+    registry.register(
+        ComponentKind::new("test_hanging").provides::<dyn ActivityProvider>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ActivityProvider>(Arc::new(Hanging));
             Ok(facets)
         },
     );

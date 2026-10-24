@@ -671,6 +671,6 @@ mod tests {
         let config = |params| config_of_params::<SummaryCompactionConfig>(&params).map(|c| c.keep);
         assert_eq!(config(Value::Null).ok(), Some(DEFAULT_KEEP));
         assert!(config(serde_json::json!({ "keep_last": 10 })).is_err(), "what it no longer takes is refused");
-        assert!(config(serde_json::json!({ "threshold": 0.8 })).is_err(), "when is its policy's");
+        assert!(config(serde_json::json!({ "threshold": 0.8 })).is_err(), "when is its `compaction` component's");
     }
 }

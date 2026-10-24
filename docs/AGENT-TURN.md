@@ -57,14 +57,19 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
     told, and the agent may be asked to answer anew. The limit is a safety net against a model that
     does not come to an end; reaching it is no answer. Before the call it takes in what was said
     since the last one, as far as its personality hears during a turn (see [Hearing during a
-    turn](#hearing-during-a-turn)). Before a call whose context is too full by its
-    `CompactionPolicy`, it goes to `Busy` instead (see [Compaction](#compaction)) - not at the
-    limit, where the call would not be made.
+    turn](#hearing-during-a-turn)). Before a call for which one of its activities is due, it goes
+    to `Busy` instead - not at the limit, where the call would not be made.
 *   **`Busy`** does something of the agent's own accord, besides answering - the counterpart of
-    `CarryingOutCommand`, which it does when asked. So far that is compacting its context; it
-    tells the users what it does (`ActivityStarted`) and what came of it (`ActivityFinished`), and
-    returns to `Planning` - stored before `ActivityFinished` is sent, so that whoever reacts to it
-    reads the compacted context. A cancel ends it as it ends a call; a failure ends the turn.
+    `CarryingOutCommand`, which it does when asked: an *activity*, which a component provides
+    (`ActivityProvider`), such as compacting its context (see [Compaction](#compaction)). Before
+    every call the actor asks its activities, in the order of its components, whether one is due,
+    and carries out the first one due that it did not try since its last call - each at most once
+    before a call (`TurnState::activities_tried`). It tells the users what it does
+    (`ActivityStarted`) and what came of it (`ActivityFinished`), and returns to `Planning`, which
+    asks for the next one due - stored before `ActivityFinished` is sent, so that whoever reacts to
+    it reads the context as the activity left it. A cancel ends it as it ends a call; a failure
+    ends the turn. The actor knows no activity by name: what one does and when it is due is its
+    component's.
 *   **`ExecutingTools`** runs the calls that are ready. Once every call of the step has finished,
     the tool message goes into the turn and the agent returns to `Planning` - or to `Reflecting` if
     a tool asked for the turn to end. Calls that wait for a person take it to `WaitingForUser`. A
@@ -272,6 +277,8 @@ in the store is the step still to do. What a step writes is what changed (see
 resumed:
 
 *   `Planning` asks the model again with the turn so far.
+*   `Busy` asks again which activity is due, and carries it out: one cut short is tried only once
+    it is done.
 *   `Reflecting` takes the finished turn over.
 *   `WaitingForUser` keeps waiting.
 *   `Cancelling` ends the turn.
@@ -549,16 +556,15 @@ old one but does not continue it:
 *   **Counted once.** The tokens used count a message kept where it was first recorded.
 
 The mechanism takes the replacement and the first entry kept, and whose the replacement is;
-components decide the rest. When the agent compacts on its own is its one `CompactionPolicy`'s
-(issue 284), how its one `CompactionStrategy`'s - asked by two triggers with the same code: the
-agent itself before a model call, and `/compact`, which the `compaction` component carries out.
-Before every call of a turn - the first of the next turn as well, with what was heard since - the
-actor asks the policy whether the context is to be compacted (`CompactionPolicy::is_due`), at most
-once before each call. The default, `threshold_compaction_policy`, says so once the context fills
-`threshold` of the model's context size, as soon as a call made on the active branch measured it;
-a model that reports no context size gives nothing to measure against, which it says once. The
-agent then compacts in the state `Busy`, telling the users as an activity
-(`ActivityStarted`, `ActivityFinished`); the summary's call does not count against
+components decide the rest. When the agent compacts is its `compaction` component's, how its one
+`CompactionStrategy`'s - asked by two triggers with the same code: the agent itself before a model
+call, as an activity of the component (issues 284, 464), and `/compact`, which the component
+carries out as a command. An agent whose personality does not list `compaction` does not compact
+at all. Before every call of a turn - the first of the next turn as well, with what was heard
+since - the activity is due once the context fills `threshold` of the model's context size, as
+soon as a call made on the active branch measured it; a model that reports no context size gives
+nothing to measure against, which the component says once. The agent then compacts in the state
+`Busy` (see [In a turn](#in-a-turn)); the summary's call does not count against
 `MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call it was to make room for
 would not fit. `/compact` tells of itself as a command does.
 

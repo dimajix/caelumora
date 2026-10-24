@@ -249,34 +249,35 @@ impl<'a> Turn<'a> {
         self.current().model_calls < MAX_MODEL_CALLS
     }
 
-    /// Counts a call of the model, made once `may_call_model` allowed it.
+    /// Counts a call of the model, made once `may_call_model` allowed it. The
+    /// activities may be tried again before the next one.
     pub(crate) fn count_model_call(&mut self) {
-        self.current_mut().model_calls += 1;
+        let turn = self.current_mut();
+        turn.model_calls += 1;
+        turn.activities_tried.clear();
     }
 
     /// Counts the model calls anew, as a step of the plan or its final
     /// answer begins (issue 412): each may make as many as a turn without a
-    /// plan. A model call came since any compaction tried - the one that
-    /// made or ended the plan's step -, so the next call may be compacted
-    /// for again.
+    /// plan. A model call came since any activity tried - the one that made
+    /// or ended the plan's step -, so they may be tried again.
     pub(super) fn count_model_calls_anew(&mut self) {
         let turn = self.current_mut();
         turn.model_calls = 0;
-        turn.compaction_tried_at = None;
+        turn.activities_tried.clear();
     }
 
-    /// Whether the turn may still try to compact its context before its next
-    /// model call: it has not since its last (issue 284).
-    pub(crate) fn may_compact(&self) -> bool {
-        let turn = self.current();
-        turn.compaction_tried_at != Some(turn.model_calls)
+    /// Whether the turn tried the activity of the component `component`
+    /// since its last model call (issue 464): it tries each once before a
+    /// call.
+    pub(crate) fn tried_activity(&self, component: &str) -> bool {
+        self.current().activities_tried.iter().any(|tried| tried == component)
     }
 
-    /// Records that the turn tries to compact its context before its next
-    /// model call (`may_compact`).
-    pub(crate) fn try_compaction(&mut self) {
-        let turn = self.current_mut();
-        turn.compaction_tried_at = Some(turn.model_calls);
+    /// Records that the turn tries the activity of the component `component`
+    /// before its next model call (`tried_activity`).
+    pub(crate) fn try_activity(&mut self, component: &str) {
+        self.current_mut().activities_tried.push(component.to_string());
     }
 
     /// The tool calls of the current step (issue 83): a view that keeps
