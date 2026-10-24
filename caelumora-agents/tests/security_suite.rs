@@ -44,7 +44,7 @@ use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
 use caelumora_agents::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use caelumora_agents::testing::{calling, register_once, Once, TestAgents};
+use caelumora_agents::testing::{about_agent_commands, calling, register_scripted, TestAgents, ONCE_MODEL_KIND};
 use caelumora_agents::testing as agent_testing;
 use caelumora_runtime::testing::{asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
@@ -54,7 +54,6 @@ use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_model::workspace::WorkspaceChoice;
 use anyhow::Error;
 use caelumora_agents::command::AgentCommandProvider;
-use caelumora_agents::compaction::component::COMPACTION_KIND;
 use caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND;
 use caelumora_agents::llm::{LLMClient, LLMResult};
 use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
@@ -142,7 +141,7 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
 async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_taken_in() {
     use caelumora_model::message::MessageRole;
     let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), ..Message::new(Classification::PUBLIC) };
-    let world = World::with(&[&TestAgents], |registry| register_once(registry, "answering", answer)).await;
+    let world = World::with(&[&TestAgents], |registry| register_scripted(registry, "answering", vec![answer])).await;
     let answering = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
         reasoning_visibility: Visibility::Channel,
@@ -179,7 +178,7 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     use caelumora_model::history::{HistoryEntry, Reader};
     use caelumora_model::message::MessageRole;
     let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), reasoning: Some("weighing".to_string()), ..Message::new(Classification::PUBLIC) };
-    let world = World::with(&[&TestAgents], |registry| register_once(registry, "answering", answer)).await;
+    let world = World::with(&[&TestAgents], |registry| register_scripted(registry, "answering", vec![answer])).await;
     let owners = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
         reasoning_visibility: Visibility::Owner,
@@ -420,7 +419,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_model::actor::ActorEvent;
     use caelumora_model::message::{Message, MessageRole};
     let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), ..Message::new(Classification::PUBLIC) };
-    let world = World::with(&[&TestAgents], |registry| register_once(registry, "answering", answer)).await;
+    let world = World::with(&[&TestAgents], |registry| register_scripted(registry, "answering", vec![answer])).await;
     let answering = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
         ..world.personality("answering", None, &[]).await
@@ -470,7 +469,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
 /// owner, on the word of whoever nudged it.
 #[tokio::test]
 async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_word() {
-    let world = World::with(&[&TestAgents], |registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
+    let world = World::with(&[&TestAgents], |registry| register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])).await;
     let silent = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
         ..world.personality("silent", None, &[]).await
@@ -644,14 +643,8 @@ async fn with_a_command_to_approve(command: &str) -> (World, Arc<SessionLoop>, A
 /// `with_a_call_to_approve`, with an agent that answers `call` with its tool
 /// `tool`.
 async fn with_a_call_of(call: Message, tool: ComponentDescriptor) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
-    let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = World::with(&[&TestAgents], |registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
-            facets.insert::<dyn ModelProfileProvider>(Arc::<Once>::clone(&model));
-            Ok(facets)
-        });
+        register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
         registry.register(ComponentKind::new("commands").provides::<dyn ToolProvider>(), |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(Commands));
@@ -659,7 +652,7 @@ async fn with_a_call_of(call: Message, tool: ComponentDescriptor) -> (World, Arc
         });
     }).await;
     let asking = Personality {
-        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "once"), tool] },
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", ONCE_MODEL_KIND), tool] },
         ..world.personality("asking", None, &[]).await
     };
     world.runtime.entity_stores().personalities.update(&World::system(), &asking).await.unwrap();
@@ -726,14 +719,8 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "asking".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = World::with(&[&TestAgents], |registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
-            facets.insert::<dyn ModelProfileProvider>(Arc::<Once>::clone(&model));
-            Ok(facets)
-        });
+        register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
         registry.register(ComponentKind::new("asking").provides::<dyn ToolProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(Asking { ask: ask.clone(), sensitive }));
@@ -742,7 +729,7 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
     }).await;
     let asking = Personality {
         components: ComponentConfig { component_nodes: vec![
-            ComponentDescriptor::new("model", "once"),
+            ComponentDescriptor::new("model", ONCE_MODEL_KIND),
             ComponentDescriptor::new("asking", "asking"),
         ] },
         ..world.personality("asking", None, &[]).await
@@ -1181,14 +1168,8 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "send_out".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = World::with(&[&TestAgents], |registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
-            facets.insert::<dyn ModelProfileProvider>(Arc::<Once>::clone(&model));
-            Ok(facets)
-        });
+        register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
         registry.register(ComponentKind::new("outward").provides::<dyn ToolProvider>(), |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(Outward));
@@ -1196,7 +1177,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         });
     }).await;
     let sending = Personality {
-        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "once"), ComponentDescriptor::new("outward", "outward")] },
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", ONCE_MODEL_KIND), ComponentDescriptor::new("outward", "outward")] },
         ..world.personality("sending", None, &[]).await
     };
     world.runtime.entity_stores().personalities.update(&World::system(), &sending).await.unwrap();
@@ -1252,8 +1233,8 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
         ..Message::new(internal)
     };
     let world = World::with(&[&TestAgents], |registry| {
-        register_once(registry, "relaying", relayed);
-        register_once(registry, "calling", call);
+        register_scripted(registry, "relaying", vec![relayed]);
+        register_scripted(registry, "calling", vec![call]);
     }).await;
     let with = |name: &'static str, components: Vec<ComponentDescriptor>| {
         let world = &world;
@@ -1299,7 +1280,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "read_history".to_string(), arguments: serde_json::json!({ "channel": "side" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(Classification::PUBLIC)
     };
-    let world = World::with(&[&TestAgents], |registry| register_once(registry, "reading", call)).await;
+    let world = World::with(&[&TestAgents], |registry| register_scripted(registry, "reading", vec![call])).await;
     let reading = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "reading"),
@@ -2203,7 +2184,7 @@ impl AgentCommandProvider for Commanded {
 async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, Arc<Mutex<Vec<SecurityContext>>>, ChannelWatch) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let world = World::with(&[&TestAgents], |registry| {
-        register_once(registry, "silent", Message::new(Classification::PUBLIC));
+        register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)]);
         let seen = Arc::clone(&seen);
         registry.register(ComponentKind::new("commanded").provides::<dyn AgentCommandProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
@@ -2225,11 +2206,6 @@ async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>,
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = main.user_actor(world.bob).expect("he takes part").watch();
     (world, session, main, seen, his)
-}
-
-/// What was asked about the commands of agents, of `asked`.
-fn about_agent_commands(asked: &[String]) -> Vec<&str> {
-    asked.iter().filter(|line| line.contains("AgentCommand")).map(String::as_str).collect()
 }
 
 /// A command of an agent (issue 269) is seen and asked for by whoever may
@@ -2311,39 +2287,5 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
     shown(&mut his, "CommandExecuted").await;
     let turn = seen.lock().unwrap().pop().expect("carried out");
     assert_eq!((turn.caller_id, turn.principal_id, turn.initiator_id), (helper, ActorId::User(world.alice), ActorId::User(world.bob)));
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
-}
-
-// --- Compaction (issue 16) --------------------------------------------------------
-
-/// Compacting a shared agent's context is its owners' (issue 16, `owners_only`
-/// as for approving its calls): bob, who may write in the channel, neither
-/// sees nor asks for `/compact` of alice's `helper`; alice does, and the
-/// agent carries it out for her - here refusing, since it heard nothing yet.
-#[tokio::test]
-async fn only_an_agents_owner_compacts_its_context() {
-    let world = World::with(&[&TestAgents], |registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
-    let compacting = Personality {
-        components: ComponentConfig { component_nodes: vec![
-            ComponentDescriptor::new("model", "silent"),
-            ComponentDescriptor::new("compaction", COMPACTION_KIND),
-        ] },
-        ..world.personality("compacting", None, &[]).await
-    };
-    world.runtime.entity_stores().personalities.update(&World::system(), &compacting).await.unwrap();
-    let helper = world.agent("helper", world.alice, &compacting).await;
-    let session = world.shared_session(&[helper], &[]).await;
-    let main = Arc::clone(&session.channels()[0]);
-    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
-
-    let (refused, asked) = world.asked(main.user_actor(world.bob).unwrap().execute_command("compact", "@helper")).await;
-    let refused = refused.expect_err("not his");
-    assert!(matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "compact"), "unknown to him: {refused}");
-    assert!(about_agent_commands(&asked).iter().all(|line| line.ends_with(" no")), "never granted to him: {asked:?}");
-
-    let mut hers = main.user_actor(world.alice).unwrap().watch();
-    main.user_actor(world.alice).unwrap().execute_command("compact", "@helper").await.expect("hers, as its owner");
-    assert!(matches!(shown(&mut hers, "CommandFailed").await, ActorEvent::CommandFailed { ref reason, .. } if reason.contains("nothing to compact")),
-        "carried out for her by the agent, which has nothing to compact yet");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

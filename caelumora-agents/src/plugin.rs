@@ -9,15 +9,15 @@ use crate::actor::external_agent::ExternalAgentActor;
 use caelumora_runtime::actor::Actor;
 use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::plugin::Plugin;
-use crate::{compaction, components, external, llm, prompt, tool};
+use crate::{components, external, llm, prompt, tool};
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_model::agent::PersonalityKind;
 use anyhow::Result;
 
 /// Registers the kinds of an agent's components with `registry` (issue
 /// 370): its context (`prompt`), its model (`llm`), its tools (`tool`), its
-/// memory and notes (`components`), its compaction (`compaction`) and
-/// the facet an agent that runs elsewhere is reached through (`external`).
+/// memory and notes (`components`) and the facet an agent that runs
+/// elsewhere is reached through (`external`).
 /// What `AgentsPlugin` registers, and a test that builds components without
 /// a runtime.
 pub fn register_components(registry: &mut ComponentRegistry) {
@@ -26,7 +26,6 @@ pub fn register_components(registry: &mut ComponentRegistry) {
     tool::register_all(registry);
     llm::register_all(registry);
     external::register_all(registry);
-    compaction::register_all(registry);
 }
 
 /// The agents, as a plugin.

@@ -16,10 +16,10 @@ use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::tool::{Tool, ToolResultStatus};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::TurnId;
-use crate::compaction::component::COMPACTION_KIND;
 use crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND;
 use crate::llm::{LLMClient, LLMError, LLMResult};
 use crate::message::testing::given_up_turns;
+use crate::testing::{activities_until_the_turn_ends, saying};
 use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
 use crate::tool::sleep_tool::SLEEP_TOOL_KIND;
 use crate::prompt::request_reason_prompt_provider::REQUEST_REASON_PROMPT_PROVIDER_KIND;
@@ -289,7 +289,7 @@ impl Gated {
 
     /// A gated model that says `answers`, the first `permits` of them at once.
     fn saying(answers: &[&str], permits: usize) -> Self {
-        Self::new(answers.iter().map(|answer| model_says(answer)), permits)
+        Self::new(answers.iter().map(|answer| saying(answer)), permits)
     }
 }
 
@@ -425,7 +425,7 @@ async fn what_an_agent_was_delivered_and_did_not_store_before_a_restart_is_deliv
 /// about "hello", the call held back, and alice saying "and this too" meanwhile.
 async fn told_while_calculating(hears: HearsDuringTurn) -> (Stuck, Arc<Gated>) {
     let (calculate, components) = calculator();
-    let model = Arc::new(Gated::new([calculate, model_says("done"), model_says("again")], 0));
+    let model = Arc::new(Gated::new([calculate, saying("done"), saying("again")], 0));
     let mut stuck = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
     asked(&model, 1).await;
     let alice = alice_of(&stuck.context);
@@ -532,7 +532,7 @@ fn given_once_in_order(call: &[String], texts: &[String]) {
 async fn an_agent_hearing_during_a_turn_hears_what_its_inbox_reads_from_the_history() {
     const SAID: usize = 200;
     let (calculate, components) = calculator();
-    let model = Arc::new(Gated::new([calculate, model_says("done"), model_says("again")], 0));
+    let model = Arc::new(Gated::new([calculate, saying("done"), saying("again")], 0));
     let hears = HearsDuringTurn { from: HearsFrom::Users, ..Default::default() };
     // What the channel takes in is not watched: more than a watcher holds.
     let Stuck { channel, context, agent, running, .. } = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
@@ -569,7 +569,7 @@ async fn behind_a_barrier_an_agent_hearing_during_a_turn_waits_for_what_the_hist
     const AFTER: usize = 150;
     let (calculate, mut components) = calculator();
     components.component_nodes.push(ComponentDescriptor::new("marking", "test_marking"));
-    let model = Arc::new(Gated::new([calculate, model_says("done"), model_says("again")], 0));
+    let model = Arc::new(Gated::new([calculate, saying("done"), saying("again")], 0));
     let hears = HearsDuringTurn { from: HearsFrom::Users, ..Default::default() };
     let Stuck { channel, context, agent, running, .. } = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
     asked(&model, 1).await;
@@ -604,7 +604,7 @@ async fn behind_a_barrier_an_agent_hearing_during_a_turn_waits_for_what_the_hist
 #[tokio::test]
 async fn what_a_turn_heard_before_a_restart_is_neither_delivered_nor_answered_again() {
     let (calculate, components) = calculator();
-    let model = Arc::new(Gated::new([calculate, model_says("never given"), model_says("done"), model_says("again")], 0));
+    let model = Arc::new(Gated::new([calculate, saying("never given"), saying("done"), saying("again")], 0));
     let hears = HearsDuringTurn { from: HearsFrom::Users, ..Default::default() };
     let Stuck { channel, context, agent, running, .. } = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
     asked(&model, 1).await;
@@ -1701,7 +1701,7 @@ async fn an_agent_stopped_while_a_tool_runs_records_the_call_as_stopped_and_goes
 
 #[tokio::test]
 async fn an_idle_agent_stopped_ends_at_once_where_it_stands() {
-    let model = Arc::new(Scripted(Mutex::new([model_says("Hello.")].into())));
+    let model = Arc::new(Scripted(Mutex::new([saying("Hello.")].into())));
     let Stuck { channel, agent, helper, mut events, running, .. } = with_an_agent(model, Default::default()).await;
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
@@ -1944,13 +1944,13 @@ async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its
 
 /// A channel whose agent, with the components `listed` besides the sleep
 /// tool, answered alice's "hello" with "Hi." and then heard "take a nap",
-/// which it answers by calling the sleep tool, its context full once that
-/// call is in - 910 of 1000 -, and then by `afterwards`, one answer a call.
-async fn with_a_full_context(listed: Vec<ComponentDescriptor>, afterwards: Vec<Message>) -> Stuck {
+/// which it answers by calling the sleep tool, and then by `afterwards`,
+/// one answer a call.
+async fn asked_to_nap(listed: Vec<ComponentDescriptor>, afterwards: Vec<Message>) -> Stuck {
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let nap = ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
-    let mut script = vec![measured(100, model_says("Hi.")), measured(900, Message { tool_calls: vec![nap], ..model_says("") })];
+    let mut script = vec![saying("Hi."), Message { tool_calls: vec![nap], ..saying("") }];
     script.extend(afterwards);
     let mut components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "sleep".to_string(),
@@ -1967,86 +1967,11 @@ async fn with_a_full_context(listed: Vec<ComponentDescriptor>, afterwards: Vec<M
     stuck
 }
 
-/// The `compaction` component, as a personality lists it.
-fn compaction() -> ComponentDescriptor {
-    ComponentDescriptor::new("compaction", COMPACTION_KIND)
-}
-
-/// `message` as a call of a model whose context holds 1000 tokens
-/// answered it, given `prompt` tokens.
-fn measured(prompt: u64, message: Message) -> Message {
-    Message { prompt_tokens: Some(prompt), completion_tokens: Some(10), context_size: Some(1000), ..message }
-}
-
-/// An answer of the model, `text`.
-fn model_says(text: &str) -> Message {
-    Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
-}
-
-/// What the agent `agent` told of its activities - its state `Busy`, an
-/// activity begun, one ended with what it said - until its turn ended,
-/// and how it ended: its answer, or why it was given up - failed, what its
-/// users were told.
-async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelope>, agent: AgentId) -> (Vec<String>, Result<Vec<Message>, String>) {
-    let mut told = Vec::new();
-    let ended = time::timeout(Duration::from_secs(5), async {
-        loop {
-            let envelope = events.recv().await.expect("the channel is running");
-            if envelope.context.sender_id != ActorId::Agent(agent) { continue }
-            match envelope.event {
-                ActorEvent::StateChanged(ActorState::Busy) => told.push("busy".to_string()),
-                ActorEvent::ActivityStarted { activity, .. } => told.push(format!("started {activity}")),
-                ActorEvent::ActivityFinished { output, .. } => told.push(format!("finished: {output}")),
-                ActorEvent::TurnFinished { messages, .. } => break Ok(messages),
-                ActorEvent::TurnGivenUp { reason: GivenUpReason::Failed { message }, .. } => break Err(message),
-                ActorEvent::TurnGivenUp { reason, .. } => break Err(reason.cause().to_string()),
-                _ => {}
-            }
-        }
-    }).await.expect("the turn ends");
-    (told, ended)
-}
-
-#[tokio::test]
-async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_call() {
-
-    let Stuck { channel, agent, mut events, running, .. } =
-        with_a_full_context(vec![compaction()], vec![measured(800, model_says("They greeted each other.")), measured(300, model_says("Done."))]).await;
-    let (told, answer) = activities_until_the_turn_ends(&mut events, agent).await;
-
-    assert_eq!(told, [
-        "busy".to_string(),
-        "started compacting its context".to_string(),
-        "finished: helper compacted its context: 2 messages replaced, 3 kept as they were.".to_string(),
-    ], "the users see it compact, and what came of it");
-    let said: Vec<_> = answer.expect("answered").iter().filter_map(|m| m.content.clone()).filter(|c| !c.is_empty()).collect();
-    assert_eq!(said, ["Done."], "the turn goes on, the summary no part of its answer");
-    let recorded = channel.history_entries().await.into_iter().any(|item| matches!(item, HistoryEntry::ActivityFinished { activity, .. } if activity == "compacting its context"));
-    assert!(recorded, "the channel records it where it happened");
-    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let now: Vec<_> = stored.transcript.messages().into_iter().filter_map(|m| m.content).filter(|c| !c.is_empty()).collect();
-    assert!(now[0].contains("They greeted each other.") && !now.iter().any(|c| c == "hello" || c == "Hi."), "the older messages replaced: {now:?}");
-    assert_eq!(stored.used.map(|u| u.calls), Some(4), "the summary's call counts as used");
-    running.abort();
-}
-
-#[tokio::test]
-async fn an_agent_whose_personality_does_not_list_compaction_does_not_compact() {
-    let Stuck { channel, agent, mut events, running, .. } = with_a_full_context(Vec::new(), vec![measured(300, model_says("Done."))]).await;
-    let (told, answer) = activities_until_the_turn_ends(&mut events, agent).await;
-
-    assert!(told.is_empty(), "nothing done of its own accord: {told:?}");
-    assert!(answer.is_ok(), "the call made with the context as it is");
-    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")), "nothing replaced");
-    running.abort();
-}
-
 #[tokio::test]
 async fn an_agent_carries_out_each_activity_due_once_before_each_call_one_after_the_other() {
     let tidying = |id: &str| ComponentDescriptor::new(id, "test_tidying");
     let Stuck { agent, mut events, running, .. } =
-        with_a_full_context(vec![tidying("dusting"), tidying("sweeping")], vec![model_says("Done.")]).await;
+        asked_to_nap(vec![tidying("dusting"), tidying("sweeping")], vec![saying("Done.")]).await;
     let (told, answer) = activities_until_the_turn_ends(&mut events, agent).await;
 
     let before_a_call = ["busy", "started dusting", "finished: dusting done", "busy", "started sweeping", "finished: sweeping done"];
@@ -2082,15 +2007,3 @@ async fn activity_started(events: &mut broadcast::Receiver<Envelope>, agent: Age
     }).await.expect("it begins an activity");
 }
 
-#[tokio::test]
-async fn a_compaction_that_fails_ends_the_turn() {
-    // The model writes no summary.
-    let Stuck { channel, agent, mut events, running, .. } = with_a_full_context(vec![compaction()], vec![model_says("")]).await;
-    let (told, ended) = activities_until_the_turn_ends(&mut events, agent).await;
-
-    assert_eq!(told, ["busy".to_string(), "started compacting its context".to_string()]);
-    assert_eq!(ended.err().as_deref(), Some("helper could not compact its context: its model wrote no summary"), "given up: the call it was to make room for would not fit");
-    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")), "the transcript as it was");
-    running.abort();
-}

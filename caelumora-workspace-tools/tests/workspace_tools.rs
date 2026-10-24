@@ -5,7 +5,7 @@
 //! (`caelumora_agents::testing`). The tests of an action that acts in
 //! someone's name assert what it asks, as the suite does for the core's.
 
-use caelumora_agents::testing::{asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, TestAgents, ONCE_MODEL_KIND};
+use caelumora_agents::testing::{asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_scripted, TestAgents, ONCE_MODEL_KIND};
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::Personality;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -27,7 +27,7 @@ use tokio::time;
 /// session's workspace, where the files `present` lie already - one that
 /// leaves `made`, a file of the workspace.
 async fn asked_for_a_call_on_the_workspace(function: &str, arguments: Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
-    let world = World::with(&[&TestAgents, &WorkspaceToolsPlugin], |registry| register_once(registry, ONCE_MODEL_KIND, calling(function, arguments))).await;
+    let world = World::with(&[&TestAgents, &WorkspaceToolsPlugin], |registry| register_scripted(registry, ONCE_MODEL_KIND, vec![calling(function, arguments)])).await;
     let kind = TERMINAL_TOOL_KIND;
     asked_for_a_call(&world, kind, present, |_, place| place.join(made).is_file(), owner(&world)).await
 }
@@ -76,7 +76,7 @@ async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_par
 #[tokio::test]
 async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_channel() {
     let write = calling("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }));
-    let world = World::with(&[&TestAgents, &WorkspaceToolsPlugin], |registry| register_once(registry, ONCE_MODEL_KIND, write)).await;
+    let world = World::with(&[&TestAgents, &WorkspaceToolsPlugin], |registry| register_scripted(registry, ONCE_MODEL_KIND, vec![write])).await;
     let working = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", ONCE_MODEL_KIND),

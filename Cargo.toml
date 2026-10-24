@@ -10,6 +10,7 @@ members = [
     "caelumora-rest-client",
     "caelumora-rest-server",
     "caelumora-skills",
+    "caelumora-compaction",
     "caelumora-artifacts",
     "caelumora-mcp",
     "caelumora-a2a",
@@ -88,6 +89,7 @@ caelumora-logging = { path = "caelumora-logging" }
 caelumora-rest-api = { path = "caelumora-rest-api" }
 caelumora-rest-server = { path = "caelumora-rest-server" }
 caelumora-skills = { path = "caelumora-skills", default-features = false }
+caelumora-compaction = { path = "caelumora-compaction" }
 caelumora-artifacts = { path = "caelumora-artifacts", default-features = false }
 caelumora-mcp = { path = "caelumora-mcp" }
 caelumora-a2a = { path = "caelumora-a2a" }

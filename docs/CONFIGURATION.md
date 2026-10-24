@@ -89,8 +89,8 @@ What the runtime tells a model in prose - its prompt parts, the descriptions of 
 is told of a tool call - are the texts of the prompt catalogue (issue 57, see
 [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), compiled in, one file per namespace: the
 core's (`caelumora-model/src/prompts.yaml`), the agents' (`caelumora-agents/src/prompts.yaml`), and
-those of the plugins (`skills`, `workspace_tools`, `artifacts`, `decision`, each in its
-`src/prompts.yaml`). `prompts` names variants of them:
+those of the plugins (`skills`, `compaction`, `workspace_tools`, `artifacts`, `decision`, each in
+its `src/prompts.yaml`). `prompts` names variants of them:
 
 ```yaml
 prompts:

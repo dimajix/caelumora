@@ -20,8 +20,8 @@ The project is a Rust workspace, with a web UI next to it:
     implementations. An actor reaches its channel through its `ActorRuntime` alone.
 *   **`caelumora-agents`** - what an agent does in a channel (issue 370): both kinds of agent - a
     model run here, or an agent that runs elsewhere -, the agent's cognitive cycle and its turn, and
-    the facets its components serve (tools, prompt parts, the model, message stages, compaction,
-    its commands, what it does of its own accord) with their built-in kinds. It joins the runtime
+    the facets its components serve (tools, prompt parts, the model, message stages, its commands,
+    what it does of its own accord) with their built-in kinds. It joins the runtime
     as a plugin, `AgentsPlugin`, an essential one: without it, the program is a chat between users.
 *   **`caelumora-rest-api`** - the wire of the REST API: the requests and responses, as `serde`
     reads and writes them, made from the model's entities and snapshots. It depends on the model
@@ -42,6 +42,10 @@ The project is a Rust workspace, with a web UI next to it:
     [TOOLS.md](TOOLS.md#artifacts).
 *   **`caelumora-mcp`** - the tools of MCP servers, a plugin that brings nothing but its component
     kind `mcp_tool`, and with it `rmcp` (issue 325). See [TOOLS.md](TOOLS.md#mcp-servers).
+*   **`caelumora-compaction`** - compaction of an agent's context (issue 464), a plugin that brings
+    the component `compaction` - an activity of the agent and `/compact` -, the strategies, with
+    the facet `CompactionStrategy` and the `KnowledgeRestorer` other plugins serve, and their
+    texts. See [AGENT-TURN.md](AGENT-TURN.md#compaction).
 *   **`caelumora-a2a`** - external agents reached over the Agent2Agent protocol, a plugin that
     brings nothing but its component kind `a2a_agent`, so that the core keeps the facet
     `ExternalAgent` and names no protocol (issue 326). See
@@ -91,13 +95,16 @@ from its section as the core makes its own. Which plugins are in is the program'
 the model; the core knows none. A plugin is one crate, cut into layers by Cargo features rather than
 crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second
 `caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
-([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`, `caelumora-ollama`, `caelumora-decision` and
-`caelumora-workspace-tools` are ones that bring component kinds alone, `caelumora-open-terminal`,
-`caelumora-store-json` and `caelumora-store-postgres` ones that bring backends alone.
+([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`, `caelumora-ollama`, `caelumora-decision`,
+`caelumora-compaction` and `caelumora-workspace-tools` are ones that bring component kinds alone,
+`caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres` ones that bring
+backends alone.
 The agents are a plugin too, an essential one (issue 370): `caelumora-agents` registers the kinds of
 agent, whose actors the channel builds (`AgentKinds`), and the kinds of their components; without
 it, the program is a chat between users. The plugins whose components serve an agent's facets -
-tools, models, external agents - build on it. Where the core calls a plugin, the plugin answers in
+tools, models, external agents - build on it, and a plugin that defines facets of its own for
+others to serve is built on in turn: `caelumora-skills` serves the `KnowledgeRestorer` of
+`caelumora-compaction`. Where the core calls a plugin, the plugin answers in
 the core's error types, not in its own: the core decides by the types it knows what a person is told
 of an error.
 

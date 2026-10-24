@@ -1,5 +1,5 @@
 //! The `compaction` component: an agent's context compacted, on its own and when asked (issues
-//! 269, 284, 464). It lives in `component.rs`, since a module cannot hold a file of its own name.
+//! 269, 284, 464).
 //!
 //! On its own, as an activity, once its context fills `threshold` of its model's context size;
 //! when asked, by `/compact @agent`, a command the agent carries out itself, for its owners alone.
@@ -13,11 +13,11 @@
 //! size gives nothing to measure against: its agent does not compact on its own, which the
 //! component says once.
 
-use crate::activity::{ActivityError, ActivityProvider};
-use crate::command::AgentCommandProvider;
-use crate::compaction::{CompactionError, CompactionStrategy};
-use crate::situation::Situation;
-use crate::turn::Turn;
+use caelumora_agents::activity::{ActivityError, ActivityProvider};
+use caelumora_agents::command::AgentCommandProvider;
+use crate::{CompactionError, CompactionStrategy};
+use caelumora_agents::situation::Situation;
+use caelumora_agents::turn::Turn;
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use async_trait::async_trait;
@@ -27,7 +27,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::info;
 
+/// The kind of the component.
 pub const COMPACTION_KIND: &str = "compaction";
+/// The name of its command, `/compact`.
 pub const COMPACT_COMMAND_NAME: &str = "compact";
 
 /// What the agent is told it does as it compacts on its own.
@@ -137,6 +139,7 @@ impl ActivityProvider for CompactionComponent {
     }
 }
 
+/// Registers the kind `compaction` with `registry`.
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(COMPACTION_KIND).provides::<dyn AgentCommandProvider>().provides::<dyn ActivityProvider>().needs::<dyn CompactionStrategy>(),
@@ -158,8 +161,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::workspace_turn;
-    use crate::compaction::Compaction;
+    use caelumora_agents::testing::workspace_turn;
+    use crate::Compaction;
     use caelumora_runtime::workspace::testing::session_with_workspace;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
@@ -261,11 +264,11 @@ mod tests {
             context_size: size,
             ..Message::new(Classification::PUBLIC)
         };
-        turn.push_message(call(700, Some(1000)));
+        turn.record_said(call(700, Some(1000)));
         assert!(!component.is_due(&turn.situation()), "701 of 1000");
-        turn.push_message(call(800, Some(1000)));
+        turn.record_said(call(800, Some(1000)));
         assert!(component.is_due(&turn.situation()), "801 of 1000");
-        turn.push_message(call(900, None));
+        turn.record_said(call(900, None));
         assert!(!component.is_due(&turn.situation()), "nothing to measure against without a size");
     }
 

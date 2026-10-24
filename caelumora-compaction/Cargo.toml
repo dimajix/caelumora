@@ -1,0 +1,27 @@
+[package]
+name = "caelumora-compaction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caelumora-model.workspace = true
+caelumora-runtime.workspace = true
+caelumora-agents.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+futures.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+caelumora-agents = { workspace = true, features = ["test-support"] }
+caelumora-runtime = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

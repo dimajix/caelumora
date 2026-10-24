@@ -1,6 +1,6 @@
 # 464 — Compaction is wired into the agent
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Context and knowledge
@@ -134,3 +134,11 @@ Agreed with the maintainer on 2026-10-24:
 - **2026-10-24** — Step 1 reviewed: a try is recorded once the activity is done, so that one cut
   short by a stop is carried out again as the turn resumes in `Busy`. Step 2, the crate of its
   own, agreed.
+- **2026-10-24** — Step 2 implemented: the crate `caelumora-compaction` with `CompactionPlugin`,
+  which the program and the terminal join; its texts in the namespace `compaction`
+  (`compaction.instruction`, `compaction.summary`, before `agents.compaction.…`). The tests of
+  compaction through a channel and of `/compact` for its owners moved into its own tests, in the
+  world of the security suite. For them `caelumora_agents::testing` offers `Scripted`, which
+  replaces `Once` and the channel tests' own scripted model, `activities_until_the_turn_ends` and
+  `Turn::record_said`.
+- **2026-10-24** — Done: both steps reviewed and merged into `main`.

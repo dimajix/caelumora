@@ -23,12 +23,12 @@ use caelumora_model::store::Persistence;
 use caelumora_runtime::workspace::testing::WithWorkspace;
 use caelumora_runtime::testing::{actor_runtime_in, test_registry as runtime_registry, World, STAFF};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorId, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::context::ModelProfile;
-use caelumora_model::message::{Message, MessageEvent, MessageRole};
+use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{Grant, SecurityContext};
 use caelumora_model::tool::{Tool, ToolCall, ToolVisibility};
@@ -36,11 +36,14 @@ use caelumora_model::user::UserId;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
+use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::Work;
+use tokio::sync::broadcast;
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
 use crate::prompt::{NAMESPACE, PROMPTS};
 use futures::stream;
@@ -95,7 +98,7 @@ pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<Tool>, 
 
 /// What is asked in `world` when the agent of `owner`, with a component of `kind`,
 /// asked by bob, makes the call its model makes - the kind "once",
-/// registered with the world (`register_once`, `calling`) - in the
+/// registered with the world (`register_scripted`, `calling`) - in the
 /// session's workspace, where the files `present` lie already - until
 /// `done` says the call arrived, given where the storages keep their
 /// files (`files`) and where the workspace's lie.
@@ -217,24 +220,49 @@ fn with_unasked_model(registry: &mut ComponentRegistry) {
     registry.set_default_kind::<dyn ModelProfileProvider>(UNASKED_MODEL_KIND).expect("registered as providing it");
 }
 
-/// A model that answers its first call with `answer`, and no other.
+/// A model that gives the answers it was given, one per call, and then
+/// none: a call after the last is never answered.
 #[derive(Debug)]
-pub struct Once(pub Mutex<Option<Message>>);
+pub struct Scripted(pub Mutex<VecDeque<Message>>);
 
 #[async_trait]
-impl LLMClient for Once {
+impl LLMClient for Scripted {
     async fn chat_completion(&self, _: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
-        match self.0.lock().unwrap().take() {
+        match self.0.lock().unwrap().pop_front() {
             Some(answer) => stream::iter([Ok(MessageEvent::Complete(answer))]).boxed(),
             None => stream::pending().boxed(),
         }
     }
 }
 
-impl ModelProfileProvider for Once {
+impl ModelProfileProvider for Scripted {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
+}
+
+/// What the agent `agent` told of its activities on `events` - its state
+/// `Busy`, an activity begun, one ended with what it said - until its turn
+/// ended, and how it ended: its answer, or why it was given up - failed,
+/// what its users were told.
+pub async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelope>, agent: AgentId) -> (Vec<String>, Result<Vec<Message>, String>) {
+    let mut told = Vec::new();
+    let ended = timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+            match envelope.event {
+                ActorEvent::StateChanged(ActorState::Busy) => told.push("busy".to_string()),
+                ActorEvent::ActivityStarted { activity, .. } => told.push(format!("started {activity}")),
+                ActorEvent::ActivityFinished { output, .. } => told.push(format!("finished: {output}")),
+                ActorEvent::TurnFinished { messages, .. } => break Ok(messages),
+                ActorEvent::TurnGivenUp { reason: GivenUpReason::Failed { message }, .. } => break Err(message),
+                ActorEvent::TurnGivenUp { reason, .. } => break Err(reason.cause().to_string()),
+                _ => {}
+            }
+        }
+    }).await.expect("the turn ends");
+    (told, ended)
 }
 
 /// The kind of the model `asked_for_a_call` gives its agent.
@@ -247,6 +275,17 @@ pub fn calling(function: &str, arguments: Value) -> Message {
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: function.to_string(), arguments, visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     }
+}
+
+/// What a model answers to say `text`.
+pub fn saying(text: &str) -> Message {
+    Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+}
+
+/// What of `asked` - the questions a test recorded - is about the commands
+/// of agents (issue 269).
+pub fn about_agent_commands(asked: &[String]) -> Vec<&str> {
+    asked.iter().filter(|line| line.contains("AgentCommand")).map(String::as_str).collect()
 }
 
 /// That `asked` asked for an agent's call on the workspace: all of it in
@@ -268,16 +307,26 @@ pub fn asked_as_a_call_on_the_workspace(asked: &[String]) {
     assert!(agents.iter().filter(|line| line.contains("Publish")).count() >= 4, "the flow both ways, for the workspace and its terminal: {asked:?}");
 }
 
-/// A model component of the kind `kind` that answers its first call with
-/// `answer`, registered with `registry`.
-pub fn register_once(registry: &mut ComponentRegistry, kind: &str, answer: Message) {
-    let model = Arc::new(Once(Mutex::new(Some(answer))));
+/// A model component of the kind `kind` that gives `answers`, one per call
+/// (`Scripted`), registered with `registry`.
+pub fn register_scripted(registry: &mut ComponentRegistry, kind: &str, answers: Vec<Message>) {
+    let model = Arc::new(Scripted(Mutex::new(answers.into())));
     registry.register(ComponentKind::new(kind).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
-        facets.insert::<dyn ModelProfileProvider>(Arc::<Once>::clone(&model));
+        facets.insert::<dyn LLMClient>(Arc::<Scripted>::clone(&model));
+        facets.insert::<dyn ModelProfileProvider>(Arc::<Scripted>::clone(&model));
         Ok(facets)
     });
+}
+
+/// What tests of other crates do with a turn, under names of their own -
+/// the turn's API is not widened by them.
+impl Turn<'_> {
+    /// Records `message` as said in the turn (`Turn::push_message`), without
+    /// telling the channel: a transcript for a component to work on.
+    pub fn record_said(&mut self, message: Message) -> Message {
+        self.push_message(message)
+    }
 }
 
 /// A turn of the agent of `with` in its channel, begun in `state`: where a

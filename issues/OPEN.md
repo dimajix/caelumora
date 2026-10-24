@@ -63,7 +63,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [338](338-artifacts-go-with-their-session.md) | open | high | feature | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
-| [464](464-compaction-wired-into-the-agent.md) | in progress | medium | refactoring | The agent's actor knows compaction by name - its policy and strategy as fields, when it is due, how it is carried out and what is said when there was nothing to compact -, though what an agent does of its own accord before a model call is meant to be generic, so that every further such activity would be wired into the actor the same way. |
 
 ## Maintenance
 

@@ -9,7 +9,7 @@ license.workspace = true
 [features]
 default = ["runtime", "server"]
 # The manager, the component, the views, the plugin.
-runtime = ["dep:caelumora-runtime", "dep:caelumora-agents", "dep:async-trait", "dep:tokio", "dep:tracing", "dep:anyhow", "dep:thiserror", "dep:serde_json"]
+runtime = ["dep:caelumora-runtime", "dep:caelumora-agents", "dep:caelumora-compaction", "dep:async-trait", "dep:tokio", "dep:tracing", "dep:anyhow", "dep:thiserror", "dep:serde_json"]
 # The routes, and how the plugin's errors are answered.
 server = ["runtime", "dep:caelumora-rest-server", "dep:axum"]
 
@@ -21,6 +21,7 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true, features = ["serde"] }
 caelumora-runtime = { workspace = true, optional = true }
 caelumora-agents = { workspace = true, optional = true }
+caelumora-compaction = { workspace = true, optional = true }
 caelumora-rest-server = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }

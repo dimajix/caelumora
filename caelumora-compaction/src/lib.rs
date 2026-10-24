@@ -1,15 +1,13 @@
-//! Compaction (issue 16): an agent's context replaced by a shorter one when
-//! it grows too long for its model.
+//! Compaction (issues 16, 464): an agent's context replaced by a shorter one when it grows too long
+//! for its model, as a plugin of its own (`plugin::CompactionPlugin`).
 //!
-//! When a context is compacted and how are kept apart. The [`component`] -
-//! `compaction` - compacts the agent's context on its own, as an activity
-//! (`crate::activity`, issues 284, 464), once it fills a share of its
-//! model's size, and carries out `/compact @agent` for the agent's owners;
-//! an agent whose personality does not list it does not compact. How the
-//! context is compacted is left to the agent's [`CompactionStrategy`] in
-//! either case - by default the [`summary_compaction`], which has the
-//! agent's model summarise the older part of its transcript. Of strategies
-//! an agent has exactly one.
+//! When a context is compacted and how are kept apart. The [`component`] - `compaction` -
+//! compacts the agent's context on its own, as an activity (`caelumora_agents::activity`, issue
+//! 284), once it fills a share of its model's size, and carries out `/compact @agent` for the
+//! agent's owners; an agent whose personality does not list it does not compact. How the context
+//! is compacted is left to the agent's [`CompactionStrategy`] in either case - by default the
+//! [`summary_compaction`], which has the agent's model summarise the older part of its
+//! transcript. Of strategies an agent has exactly one.
 //!
 //! Whatever the strategy, the context is replaced, not rewritten: the
 //! transcript begins anew on a branch of its own (`Transcript::compact`),
@@ -22,16 +20,39 @@
 //! kind of knowledge itself.
 
 pub mod component;
+pub mod plugin;
 pub mod summary_compaction;
 
-use crate::turn::Turn;
-use caelumora_runtime::component::ComponentRegistry;
+use caelumora_agents::turn::Turn;
 use async_trait::async_trait;
 use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::context::KnowledgeRef;
 use caelumora_model::store::EntityKind;
 use std::fmt::Debug;
 use uuid::Uuid;
+#[cfg(test)]
+use caelumora_agents::prompt::{NAMESPACE as AGENTS, PROMPTS as AGENTS_PROMPTS};
+#[cfg(test)]
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
+#[cfg(test)]
+use std::sync::Arc;
+
+/// The namespace of the texts of compaction in the prompt catalogue (issue 57).
+pub const NAMESPACE: &str = "compaction";
+
+/// Their texts, added to the catalogue under `NAMESPACE` by the plugin.
+pub const PROMPTS: &str = include_str!("prompts.yaml");
+
+/// The texts of the core, of the agents and of compaction, as the runtime and the plugins add
+/// them, as a model of the default variant is given them - for what a test makes itself.
+#[cfg(test)]
+pub(crate) fn prompts() -> PromptTexts {
+    let mut catalogue = PromptCatalogue::new();
+    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)] {
+        catalogue.add(namespace, texts).unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
+    }
+    PromptTexts::new(Arc::new(catalogue), None)
+}
 
 /// How an agent's context is compacted: where it is cut and what replaces
 /// the part before the cut. An agent has exactly one; when it compacts on
@@ -125,13 +146,4 @@ pub enum CompactionError {
     /// A text it is given, or asks its model with, cannot be had (issue 57).
     #[error("{0}")]
     Prompt(#[from] PromptError),
-}
-
-/// Registers the compaction kinds with `registry`, and the strategy as a
-/// facet of which an agent has exactly one, with its default kind.
-pub fn register_all(registry: &mut ComponentRegistry) {
-    registry.single::<dyn CompactionStrategy>(Some(summary_compaction::SUMMARY_COMPACTION_KIND));
-
-    component::register(registry);
-    summary_compaction::register(registry);
 }

@@ -8,12 +8,13 @@
 //! part summarised - a skill loaded - is given again, as it is now, by the
 //! component that gave it (`KnowledgeRestorer`, issue 323).
 
-use crate::turn::Turn;
-use crate::compaction::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
+use caelumora_agents::turn::Turn;
+use crate::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
 use caelumora_runtime::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, config_of_params};
-use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
+use crate::NAMESPACE;
+use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use crate::llm::LLMClient;
+use caelumora_agents::llm::LLMClient;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
@@ -31,6 +32,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use chrono::Utc;
 
+/// The kind of the strategy, the default one.
 pub const SUMMARY_COMPACTION_KIND: &str = "summary_compaction";
 
 /// How much of the context a compaction keeps as it stands, as a share of
@@ -149,7 +151,7 @@ impl SummaryCompaction {
     /// summary alone -, and to leave out what is given again.
     fn instruction(&self) -> Result<String, PromptError> {
         let kinds: Vec<_> = self.restorers.iter().map(|r| r.kind().to_string()).collect();
-        self.prompts.render(&format!("{NAMESPACE}.compaction.instruction"), context! { kinds })
+        self.prompts.render(&format!("{NAMESPACE}.instruction"), context! { kinds })
     }
 
     /// The summary `text` as the transcript holds it, under its title;
@@ -158,7 +160,7 @@ impl SummaryCompaction {
         if text.is_empty() {
             return Ok(String::new());
         }
-        self.prompts.render(&format!("{NAMESPACE}.compaction.summary"), context! { text })
+        self.prompts.render(&format!("{NAMESPACE}.summary"), context! { text })
     }
 
     /// What `wanted` - given in the part summarised and not in the part
@@ -303,6 +305,7 @@ impl CompactionStrategy for SummaryCompaction {
     }
 }
 
+/// Registers the kind `summary_compaction` with `registry`.
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(ComponentKind::new(SUMMARY_COMPACTION_KIND).provides::<dyn CompactionStrategy>().needs::<dyn LLMClient>().needs::<dyn KnowledgeRestorer>()),
@@ -326,7 +329,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, workspace_turn};
+    use crate::prompts;
+    use caelumora_agents::testing::workspace_turn;
     use caelumora_runtime::component::config_of_params;
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
@@ -342,7 +346,7 @@ mod tests {
     use caelumora_model::workspace::{Workspace, WorkspaceId};
     use std::sync::Mutex;
     use caelumora_model::digest;
-    use crate::llm::{LLMResult, unlabelled_message};
+    use caelumora_agents::llm::{LLMResult, unlabelled_message};
     use futures::stream::BoxStream;
     use serde_json::Value;
     use caelumora_model::work::Work;
@@ -493,7 +497,7 @@ mod tests {
         let skill = an_agent_with_a_skill_given(&world, &mut state).await;
         let before = state.transcript.digest().unwrap();
         let model = Arc::new(Summariser::default());
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: vec![Arc::new(Restorer(Some(skill)))], prompts: testing::prompts() };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: vec![Arc::new(Restorer(Some(skill)))], prompts: prompts() };
 
         let mut turn = workspace_turn(&world, &mut state);
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
@@ -531,7 +535,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         an_agent_with_a_skill_given(&world, &mut state).await;
         // Deleted meanwhile: its restorer gives it no more.
-        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: vec![Arc::new(Restorer(None))], prompts: testing::prompts() };
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: vec![Arc::new(Restorer(None))], prompts: prompts() };
 
         let mut turn = workspace_turn(&world, &mut state);
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
@@ -550,7 +554,7 @@ mod tests {
         state.perceive(vec![u1]);
         let before = state.transcript.digest();
         let model = Arc::new(Summariser::default());
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: DEFAULT_KEEP, restorers: Vec::new(), prompts: testing::prompts() };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: DEFAULT_KEEP, restorers: Vec::new(), prompts: prompts() };
 
         let mut turn = workspace_turn(&world, &mut state);
         let compaction = strategy.compact(&mut turn).await.expect("nothing to do is no failure");
@@ -567,11 +571,11 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
         state.perceive(vec![u1]);
-        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: Vec::new(), prompts: testing::prompts() };
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: Vec::new(), prompts: prompts() };
         let mut turn = workspace_turn(&world, &mut state);
         let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
         for (content, role) in [("a", MessageRole::Assistant), ("r", MessageRole::Tool), ("b", MessageRole::Assistant), ("s", MessageRole::Tool)] {
-            turn.push_message(said(content, role));
+            turn.record_said(said(content, role));
         }
         let under_way = turn.turn_id();
         let label = turn.situation().label();
@@ -598,11 +602,11 @@ mod tests {
         let channel = &world.session.channels()[0];
         state.begin_turn(Work::new(EventContext::new(world.session.id(), channel.id(), ActorId::None, String::new()), None, world.context.clone(), channel.classification(), berlin).given_as(marking));
         let model = Arc::new(Summariser::default());
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: Vec::new(), prompts: testing::prompts() };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: Vec::new(), prompts: prompts() };
         let mut turn = Turn::of(world.agent, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(world.agent))).expect("a turn was begun");
         let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
         for (content, role) in [("a", MessageRole::Assistant), ("r", MessageRole::Tool), ("b", MessageRole::Assistant), ("s", MessageRole::Tool)] {
-            turn.push_message(said(content, role));
+            turn.record_said(said(content, role));
         }
         strategy.compact(&mut turn).await.expect("compacted");
         drop(turn);
@@ -621,15 +625,15 @@ mod tests {
         let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
         state.perceive(vec![u1]);
         let skill = WorkspaceId::new();
-        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: vec![Arc::new(Restorer(Some(skill)))], prompts: testing::prompts() };
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: vec![Arc::new(Restorer(Some(skill)))], prompts: prompts() };
         let mut turn = workspace_turn(&world, &mut state);
         let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
-        turn.push_message(said("a", MessageRole::Assistant));
-        turn.push_message(said("r", MessageRole::Tool));
+        turn.record_said(said("a", MessageRole::Assistant));
+        turn.record_said(said("r", MessageRole::Tool));
         // Loaded by the call of `a`: given after its result.
         turn.give(Message { content: Some(GIVEN.to_string()), ..Message::new(Classification::general(Confidentiality::Internal)) }, Some(knowledge(&world, skill)));
-        turn.push_message(said("b", MessageRole::Assistant));
-        turn.push_message(said("s", MessageRole::Tool));
+        turn.record_said(said("b", MessageRole::Assistant));
+        turn.record_said(said("s", MessageRole::Tool));
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
         drop(turn);
 
@@ -647,14 +651,14 @@ mod tests {
         let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
         state.perceive(vec![u1]);
         let model = Arc::new(Summariser::default());
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: vec![Arc::new(Restorer(None))], prompts: testing::prompts() };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: vec![Arc::new(Restorer(None))], prompts: prompts() };
         let mut turn = workspace_turn(&world, &mut state);
         turn.give(Message { content: Some("read this".repeat(40)), ..Message::new(Classification::PUBLIC) }, None);
         let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
-        turn.push_message(said("a", MessageRole::Assistant));
-        turn.push_message(said("r", MessageRole::Tool));
-        turn.push_message(said("b", MessageRole::Assistant));
-        turn.push_message(said("s", MessageRole::Tool));
+        turn.record_said(said("a", MessageRole::Assistant));
+        turn.record_said(said("r", MessageRole::Tool));
+        turn.record_said(said("b", MessageRole::Assistant));
+        turn.record_said(said("s", MessageRole::Tool));
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
         drop(turn);
 
@@ -665,7 +669,7 @@ mod tests {
 
     #[test]
     fn what_it_keeps_is_a_share_of_the_context_size() {
-        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.25, restorers: Vec::new(), prompts: testing::prompts() };
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.25, restorers: Vec::new(), prompts: prompts() };
         assert_eq!(strategy.keep_of(1000), 250);
 
         let config = |params| config_of_params::<SummaryCompactionConfig>(&params).map(|c| c.keep);

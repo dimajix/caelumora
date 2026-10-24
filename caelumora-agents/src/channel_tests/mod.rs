@@ -15,7 +15,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::security::{ActionType, SecurityContext, AccessPolicy};
 use caelumora_model::user::UserId;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::future;
 use std::time::Duration;
 use caelumora_runtime::command::help_command::HelpCommandProvider;
@@ -36,6 +36,7 @@ use tokio::sync::broadcast;
 use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommandProvider;
 use crate::plugin::AgentsPlugin;
+use crate::testing::Scripted;
 use crate::situation::Situation;
 use crate::prompt::{ContextError, Prompt, PromptProvider};
 use crate::message::{ProcessingError, MessageProcessor, PerceiveInProcessor};
@@ -50,7 +51,6 @@ use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use futures::stream::BoxStream;
 use serde_json::Value;
-use std::collections::VecDeque;
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
 use futures::stream;
@@ -191,29 +191,6 @@ async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn Ac
     let config = AppConfig { component_defaults: defaults, ..Default::default() };
     let runtime = TestRuntime { store, access_policy, config, registry: Some(registry), plugins: vec![&AgentsPlugin], ..Default::default() }.build();
     (channel_of_alice_and(runtime, alice, agent).await, context, agent, alice)
-}
-
-/// A model that gives the answers it was given, one per call, and then
-/// none.
-#[derive(Debug)]
-struct Scripted(Mutex<VecDeque<Message>>);
-
-#[async_trait::async_trait]
-impl LLMClient for Scripted {
-    async fn chat_completion(&self, _: &[Message], _: &[Tool])
-        -> BoxStream<'static, LLMResult<MessageEvent>>
-    {
-        match self.0.lock().unwrap().pop_front() {
-            Some(answer) => Box::pin(stream::iter([Ok(MessageEvent::Complete(answer))])),
-            None => Box::pin(stream::pending()),
-        }
-    }
-}
-
-impl ModelProfileProvider for Scripted {
-    fn profile(&self) -> ModelProfile {
-        Default::default()
-    }
 }
 
 /// The states `agent` told the users of through `shown`, up to `until`.

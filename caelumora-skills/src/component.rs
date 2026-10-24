@@ -47,7 +47,7 @@ use caelumora_agents::turn::Turn;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::command::AgentCommandProvider;
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_agents::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
+use caelumora_compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_agents::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use caelumora_agents::tool::{arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};

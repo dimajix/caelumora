@@ -24,6 +24,7 @@ use caelumora_runtime::component::{ComponentError, ComponentRegistry};
 use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_agents::llm::LLMClient;
 use caelumora_agents::plugin::AgentsPlugin;
+use caelumora_compaction::plugin::CompactionPlugin;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
@@ -190,7 +191,7 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 /// 428), which only its runtime is built with - first the essential one,
 /// the agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(AgentsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin), Box::new(JsonStorePlugin), Box::new(PostgresStorePlugin)]
+    vec![Box::new(AgentsPlugin), Box::new(CompactionPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin), Box::new(JsonStorePlugin), Box::new(PostgresStorePlugin)]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core

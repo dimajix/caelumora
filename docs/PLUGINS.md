@@ -46,10 +46,11 @@ store of the users - with `service_of`. While it registers, a plugin
 *   registers its component kinds (`components()`), as `register_all` does for the core's;
 *   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
     namespace of its own, from a file it compiles in - the agents' `agents`, from
-    `caelumora-agents/src/prompts.yaml`; `skills`, `workspace_tools`, `artifacts` and `decision`
-    from a `src/prompts.yaml` of their own -; its component kinds that write for a model use the
-    catalogue as a service (see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool that
-    names another plugin's tool writes its name as text: it does not know it as a value;
+    `caelumora-agents/src/prompts.yaml`; `skills`, `compaction`, `workspace_tools`, `artifacts`
+    and `decision` from a `src/prompts.yaml` of their own -; its component kinds that write for a
+    model use the catalogue as a service (see
+    [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool that names another plugin's tool
+    writes its name as text: it does not know it as a value;
 *   registers the kinds of agent it brings (`agent_kinds()`, an `AgentKinds`): for a kind of
     personality, what builds its agents' actors and which facets their components are asked for.
     The agents' plugin (`AgentsPlugin`, issue 370) registers both kinds there are; a program
@@ -72,11 +73,13 @@ viewer reads the channel stays the channel's to decide (issue 328).
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
 plugin that brings component kinds alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`
-(issue 326), `caelumora-ollama` (issue 329), `caelumora-decision` (issue 403) or
-`caelumora-workspace-tools` (issue 428), implements `Plugin` only and registers the kinds in
-`register`; whether a kind of a facet of which there is
-one is its default, the program says, not the plugin (`ComponentRegistry::set_default_kind`), so
-that two plugins of a facet cannot both claim it; one that brings
+(issue 326), `caelumora-ollama` (issue 329), `caelumora-decision` (issue 403),
+`caelumora-workspace-tools` (issue 428) or `caelumora-compaction` (issue 464), implements `Plugin`
+only and registers the kinds in `register`; whether a kind of a facet of the core of which there
+is one is its default, the program says, not the plugin (`ComponentRegistry::set_default_kind`),
+so that two plugins of a facet cannot both claim it. A facet a plugin brings itself is its own:
+`caelumora-compaction` registers its `CompactionStrategy` as a single with its default kind, as
+the core's modules do theirs. One that brings
 backends alone, such as `caelumora-open-terminal` (issue 327) or `caelumora-store-json` (issue 446),
 registers them in `backends` and nothing in `register`. A backend of the stores runs the store
 suite of the model in its own tests (`caelumora_model::store::suite`, feature `test-support`). A
@@ -126,7 +129,11 @@ an agent's owner is told when an answer fails is judged by `caelumora_agents::er
 which knows
 the error types of those facets and asks the runtime's judgement for the rest
 (`error::user_message_with`, issue 370). A registry of judgements the plugins add is not needed,
-and would be the registry of downcasts rejected below.
+and would be the registry of downcasts rejected below. A plugin may define a facet in turn that
+other plugins serve - `caelumora-compaction` the `KnowledgeRestorer`, which the `skills` component
+serves (issue 464) -: they depend on it and answer in its error type, `CompactionError`, as they
+answer the agents in theirs; what is shown of it, the defining plugin decides where it answers the
+agents - the `compaction` component carries its text into its `ActivityError` and `CommandError`.
 
 So the trait names its error type, and the plugin translates its own error into it where it
 answers - deciding there what may be shown, what is a refusal and what is a failure:

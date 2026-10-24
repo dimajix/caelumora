@@ -556,17 +556,17 @@ old one but does not continue it:
 *   **Counted once.** The tokens used count a message kept where it was first recorded.
 
 The mechanism takes the replacement and the first entry kept, and whose the replacement is;
-components decide the rest. When the agent compacts is its `compaction` component's, how its one
-`CompactionStrategy`'s - asked by two triggers with the same code: the agent itself before a model
-call, as an activity of the component (issues 284, 464), and `/compact`, which the component
-carries out as a command. An agent whose personality does not list `compaction` does not compact
-at all. Before every call of a turn - the first of the next turn as well, with what was heard
-since - the activity is due once the context fills `threshold` of the model's context size, as
-soon as a call made on the active branch measured it; a model that reports no context size gives
-nothing to measure against, which the component says once. The agent then compacts in the state
-`Busy` (see [In a turn](#in-a-turn)); the summary's call does not count against
-`MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call it was to make room for
-would not fit. `/compact` tells of itself as a command does.
+components decide the rest - those of the plugin `caelumora-compaction`. When the agent compacts is
+its `compaction` component's, how its one `CompactionStrategy`'s - asked by two triggers with the
+same code: the agent itself before a model call, as an activity of the component (issues 284,
+464), and `/compact`, which the component carries out as a command. An agent whose personality
+does not list `compaction` does not compact at all. Before every call of a turn - the first of the
+next turn as well, with what was heard since - the activity is due once the context fills
+`threshold` of the model's context size, as soon as a call made on the active branch measured it;
+a model that reports no context size gives nothing to measure against, which the component says
+once. The agent then compacts in the state `Busy` (see [In a turn](#in-a-turn)); the summary's
+call does not count against `MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call
+it was to make room for would not fit. `/compact` tells of itself as a command does.
 
 The default strategy, `summary_compaction`, keeps `keep` of the model's context size as it stands.
 It cuts only before a message, by the positions the resolver measured (`token_positions`): within
