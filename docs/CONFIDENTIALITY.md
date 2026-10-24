@@ -243,10 +243,12 @@ is cleared as a reader of a channel so classified would be:
     besides the access list. With compartments and a read relation that is not symmetric this is
     stricter than equality. A participant is cleared for L, so nothing else is asked.
 
-A storage bounds what may be put into it by its `destination`: making or raising a workspace there
-asks `may_publish` of its classification into the destination, before the clearance. A
-classification says who may read a workspace; it does not keep a command in it - how far a storage
-keeps its workspaces apart is in [WORKSPACE.md](WORKSPACE.md#storages).
+A storage - of workspaces or of content - bounds what may be put into it by its `destination`:
+making or raising a workspace there, before the clearance, and keeping an artifact's version there
+ask one question, whether its classification may be published into the destination
+(`require_storable`); a storage without one takes anything. A classification says who may read a
+workspace; it does not keep a command in it - how far a storage keeps its workspaces apart is in
+[WORKSPACE.md](WORKSPACE.md#storages).
 
 Reclassifying a workspace is its owner's: lowering releases every file in it; which channels may use
 it follows at their next use. Nothing in it is fitted - there is nothing inside to fit.

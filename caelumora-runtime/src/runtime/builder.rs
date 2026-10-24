@@ -2,7 +2,7 @@ use crate::actor::AgentKinds;
 use crate::actor::ActorManager;
 use crate::channel::Participation;
 use crate::component::ComponentRegistry;
-use crate::content::{ContentStorage, ContentStorages};
+use crate::content::ContentStorage;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use anyhow::{bail, Context, Result};
@@ -14,7 +14,7 @@ use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS, DEF
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
-use crate::backend::Backends;
+use crate::backend::{Backends, NamedBackends};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, PersistenceBackend, Persistence, StoreResult, Stored};
 use crate::plugin::Plugin;
@@ -60,7 +60,7 @@ pub struct RuntimeBuilder {
     command_reaper: Arc<CommandReaper>,
     /// The storages of content (issue 282), which their owners - a
     /// plugin's manager - are made with.
-    content_storages: Arc<ContentStorages>,
+    content_storages: Arc<NamedBackends<dyn ContentStorage>>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopeMember>>,
@@ -133,7 +133,7 @@ impl RuntimeBuilder {
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let command_reaper = CommandReaper::new(&entity_stores, &event_bus, Arc::clone(&controller_manager), Arc::clone(&storages))?;
         let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), storages, &config.workspaces));
-        let content_storages = Arc::new(ContentStorages::new(backends.make_named::<dyn ContentStorage>("storage of content", &config.content.storage, &backend_services)?));
+        let content_storages = Arc::new(backends.make_named::<dyn ContentStorage>("storage of content", &config.content.storage, &backend_services)?);
         // Users are recorded and their changes announced on the event bus
         // (issue 306).
         let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
@@ -272,7 +272,7 @@ impl RuntimeBuilder {
 
     /// The storages of content the configuration names (issue 282), to
     /// make the owner of what is kept there with.
-    pub fn content_storages(&self) -> &Arc<ContentStorages> {
+    pub fn content_storages(&self) -> &Arc<NamedBackends<dyn ContentStorage>> {
         &self.content_storages
     }
 
@@ -402,7 +402,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let yaml = format!("secrets:\n  providers: []\nworkspaces:\n  storage:\n    main:\n      type: local\n      root: \"{0}\"\ncontent:\n  storage:\n    kept:\n      type: local\n      root: \"{0}\"\nusers:\n  providers:\n    - type: accept_any\n", dir.path().display());
         let builder = RuntimeBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).await.unwrap();
-        assert!(builder.content_storages().get("kept").is_ok(), "for their owners to be made with");
+        assert!(builder.content_storages().get("kept").is_some(), "for their owners to be made with");
         let runtime = builder.build().unwrap();
         assert_eq!(runtime.workspace_manager().storages().collect::<Vec<_>>(), [("main", false)]);
         let alice = runtime.user_manager().authenticate("alice", &Credential::Password("x")).await.expect("accepted by accept_any");

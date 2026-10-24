@@ -630,16 +630,17 @@ pub trait ContentStorage: Send + Sync + fmt::Debug {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ContentError { InvalidKey(String), NotFound(String), TooLarge { limit: u64 }, UnknownStorage(String), Unnamed, Unavailable(String) }
+pub enum ContentError { InvalidKey(String), NotFound(String), TooLarge { limit: u64 }, Unavailable(String) }
 pub type ContentResult<T> = Result<T, ContentError>;
 
-/// The storages of content the configuration names, by their names.
-pub struct ContentStorages(BTreeMap<String, Arc<dyn ContentStorage>>);
-impl ContentStorages {
-    /// The storage `name`; `UnknownStorage` if none is.
-    pub fn get(&self, name: &str) -> ContentResult<&Arc<dyn ContentStorage>>;
-    /// The name of the storage an owner keeps new content in: `named`, or the one there is.
-    pub fn chosen(&self, named: Option<&str>) -> ContentResult<Option<&str>>;
+/// The backends a section of the configuration names, by their names (`caelumora_runtime::backend`,
+/// what `Backends::make_named` answers - the storages of workspaces too).
+pub struct NamedBackends<T: ?Sized>(BTreeMap<String, Arc<T>>);
+impl<T: ?Sized> NamedBackends<T> {
+    /// The backend `name`, if one is configured.
+    pub fn get(&self, name: &str) -> Option<&Arc<T>>;
+    /// The name of the one to use: `named`, or the one there is; `None` where none is.
+    pub fn chosen(&self, named: Option<&str>) -> Result<Option<&str>, Unchosen>;
 }
 ```
 
@@ -647,12 +648,12 @@ impl ContentStorages {
   file system; `<root>/<key>`, written through `write_whole`.
 - `caelumora-model/src/config.rs`: `ContentConfig { storage: BTreeMap<String, BackendConfig> }`,
   section `content`; `RuntimeBuilder::new` makes them (`"storage of content"`) and offers them,
-  `pub fn content_storages(&self) -> &Arc<ContentStorages>`. `RuntimeBuilder::make_named`, whose
-  one user the plugin was, goes.
-- `caelumora-artifacts`: `ArtifactsConfig` loses `storage` and keeps `max_bytes` and
-  `publish_to`, now naming a storage of content (`ContentStorages::chosen`, the rule the config
-  held before); the manager takes the storages from the builder and keys `artifacts/<id>/<n>`;
-  `local.rs` goes; `remove` becomes `remove_under`.
+  `pub fn content_storages(&self) -> &Arc<NamedBackends<dyn ContentStorage>>`.
+  `RuntimeBuilder::make_named`, whose one user the plugin was, goes.
+- `caelumora-artifacts`: `ArtifactsConfig` loses `storage` and keeps `max_bytes` and `publish_to`,
+  now naming a storage of content (`NamedBackends::chosen`, the rule the config held before); the
+  manager takes the storages from the builder and keys `artifacts/<id>/<n>`; `local.rs` goes;
+  `remove` becomes `remove_under`.
 - Docs: CONFIGURATION.md (section `content`, `artifacts` row), STORAGE.md (*Artifact content* →
   *Content*), ARCHITECTURE.md (backends), `examples/config.yaml`; the tests of `local` move to the
   core, those of the plugin configure `content`.
@@ -738,11 +739,12 @@ service, reached by an actor through its `ActorRuntime`.
 pub struct AttachmentManager { /* storages, keep_in, config, pending: Mutex<HashMap<AttachmentId, Pending>>, cache: ContentCache, sweeper */ }
 
 impl AttachmentManager {
-    pub(crate) fn new(storages: Arc<BTreeMap<String, Arc<dyn ContentStorage>>>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &AttachmentsConfig) -> ComponentResult<Arc<Self>>;
+    pub(crate) fn new(storages: Arc<NamedBackends<dyn ContentStorage>>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &AttachmentsConfig) -> ComponentResult<Arc<Self>>;
     /// Keeps `content` as an attachment put by `by` into `channel`, not yet claimed: sniffs the
     /// type, refuses one not allowed, bounds the size, digests as it streams; the channel's
-    /// classification has to flow into the storage's `destination`. In a user's name: the caller
-    /// takes part in the channel. Answers the reference, without a classification yet (`None`).
+    /// classification has to flow into the storage's `destination` (`require_storable`). In a
+    /// user's name: the caller takes part in the channel. Answers the reference, without a
+    /// classification yet (`None`).
     pub async fn put(&self, ctx: &SecurityContext, channel: &Channel, by: ActorId, name: &str, size: u64, content: ByteStream) -> AttachmentResult<Attachment>;
     /// Keeps a copy of `source`'s content as a new attachment put by `by`, not yet claimed,
     /// classified as the source: `attach` of an agent, a version of an artifact (the plugin).
@@ -764,9 +766,9 @@ impl ScopeMember for AttachmentManager { /* delete and restore do nothing; purge
 ```
 
 - `AttachmentsConfig`, section `attachments`: `max_bytes` (50 MiB), `max_per_message` (10),
-  `keep_in` (the storage, as `artifacts.publish_to`), `cache_bytes` (256 MiB),
-  `unclaimed_expire_secs` (3600). Without a storage, an upload fails
-  saying so (`NotConfigured`).
+  `keep_in` (the storage, chosen as `artifacts.publish_to` is: `NamedBackends::chosen`),
+  `cache_bytes` (256 MiB), `unclaimed_expire_secs` (3600). Without a storage, an upload fails saying
+  so (`NotConfigured`).
 - **`ContentStorage::copy(from, to)`** comes with its first caller, here: keeps a copy of what
   lies under `from` under `to`, as cheaply as the backend can - a hard link or reflink,
   `CopyObject` -, two keys each removed on its own; `local` tries a hard link and falls back to
@@ -910,7 +912,8 @@ previews and everything else with name, type, size and a download; the tool card
    changes `TranscriptEntry::Message` and everything that reads it.
 5. **A message without text**, an image alone: allowed, heard, published and shown. The
    moderator's policies and the decision model are given messages with text today; one without
-   is given its note (`core.attachments`) as its text where a model reads it.
+   is given its note (`core.attachments`) as its text where a model reads it. Decided so by the
+   maintainer on 2026-10-24.
 
 ## History
 
@@ -991,3 +994,12 @@ previews and everything else with name, type, size and a download; the tool card
   plugin no longer has backends of a service of its own. Stored data to delete: the content of
   artifacts, which lies under other keys now; the section `artifacts.storage` of a configuration
   becomes `content.storage`.
+- **2026-10-24** - Before step 2, decided with the maintainer and built as a refactoring of its own:
+  the backends a section names are one type for every service, `NamedBackends<T>` of
+  `caelumora_runtime::backend` (`get`, `chosen`, `iter`), which `Backends::make_named` answers - the
+  storages of workspaces (`WorkspaceManager`, `ControllerManager`, `CommandReaper`) and of content
+  alike; `ContentStorages`, and `UnknownStorage` and `Unnamed` of `ContentError`, which were never a
+  storage's, go into it. A storage's `destination` is asked by one question,
+  `ConfidentialityQuestions::require_storable`, for a workspace, an artifact's version and, from
+  step 3, an attachment. The manager's module docs no longer name a `published_content` that does
+  not exist. Open 5 decided: a message may carry attachments alone.

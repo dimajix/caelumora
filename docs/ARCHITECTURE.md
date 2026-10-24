@@ -125,11 +125,13 @@ the secret providers first, which need only the policies, then the stores, which
 secrets - a database connects by one -, then the storages and the user providers with the secrets
 and the records of the users at hand. The stores' backends are opened last, once the plugins
 registered and opened the stores of their kinds (`PersistenceBackend::open`, issue 447), so that one
-that cannot be made ready fails the start. What a plugin keeps beyond documents it keeps in the
-core's storages of content, which it is handed when it registers
-(`RuntimeBuilder::content_storages`), in a key space of its own - the artifacts do. Unlike a
-component, a backend serves the whole process and lives in no container, which is why it is no
-component.
+that cannot be made ready fails the start. The backends a section names by name are handed to their
+owners as one `NamedBackends` - the storages of workspaces, the storages of content -, of which an
+owner keeps what is new in the one its section names, or in the one there is: among several, one has
+to be named (`NamedBackends::chosen`). What a plugin keeps beyond documents it keeps in the core's
+storages of content, which it is handed when it registers (`RuntimeBuilder::content_storages`), in a
+key space of its own - the artifacts do. Unlike a component, a backend serves the whole process and
+lives in no container, which is why it is no component.
 
 The stores are such backends since what a backend keeps is not generic: documents of any kind and
 states, each offered by a method of its own (`PersistenceBackend`, issue 448); the runtime makes the

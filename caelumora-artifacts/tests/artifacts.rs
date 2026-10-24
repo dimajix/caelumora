@@ -30,6 +30,7 @@ use caelumora_model::config::{AppConfig, AuthConfig, BackendConfig, ContentConfi
 use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError, Stored};
 use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
 use caelumora_model::user_provider::UserManager;
+use caelumora_model::user::UserId;
 use caelumora_model::workspace::Workspace;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::ApiError;
@@ -180,6 +181,25 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
 }
 
 // --- The plugin -----------------------------------------------------------
+
+/// A storage of content takes no version classified above its
+/// `destination` (`require_storable`, issue 282): refused before anything
+/// is kept.
+#[tokio::test]
+async fn a_storage_of_content_takes_nothing_above_its_destination() {
+    let files = tempfile::tempdir().unwrap();
+    let storage = [("kept".to_string(), BackendConfig::new("local", json!({ "root": files.path(), "destination": { "level": "public" } })))].into();
+    let config = AppConfig { content: ContentConfig { storage }, ..Default::default() };
+    let runtime = TestRuntime { config, plugins: vec![&TestAgents, &ArtifactsPlugin], ..Default::default() }.build();
+    let manager = Arc::clone(runtime.services().get::<ArtifactManager>().unwrap());
+    let alice = SecurityContext::new(ActorId::User(UserId::new()), SessionId::new(), ChannelId::new());
+    let internal = Classification::general(Confidentiality::Internal);
+    let refused = manager.publish(&alice, (3, file("a,b")), &internal, "r.csv", None, SessionId::new(), ChannelId::new()).await;
+    assert!(matches!(refused, Err(ArtifactError::StorageNotCleared(ref name)) if name == "kept"), "{refused:?}");
+    assert!(fs::read_dir(files.path()).unwrap().next().is_none(), "nothing kept");
+    let public = manager.publish(&alice, (3, file("a,b")), &Classification::PUBLIC, "r.csv", None, SessionId::new(), ChannelId::new()).await;
+    assert!(public.is_ok(), "what it may hold it takes: {public:?}");
+}
 
 /// New artifacts are kept in the storage of content the section names, or
 /// the one there is (issue 282); one it cannot have is said naming

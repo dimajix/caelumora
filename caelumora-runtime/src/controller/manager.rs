@@ -4,6 +4,7 @@
 
 use super::{AgentController, ChannelController, PersonalityController, SessionController, UserController, WorkspaceController};
 use crate::event::EventBus;
+use crate::backend::NamedBackends;
 use crate::terminal::TerminalProvider;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
@@ -16,7 +17,7 @@ use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultE
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::user::{User, UserId, UserProfile};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, OnceLock, Weak};
 use tokio::sync::Mutex;
@@ -53,7 +54,7 @@ pub struct ControllerManager {
     /// The storages of workspaces, by name, shared with the
     /// `WorkspaceManager` and the `CommandReaper`: a workspace's controller
     /// holds its own.
-    storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>,
+    storages: Arc<NamedBackends<dyn TerminalProvider>>,
     /// The states and their histories: a user's controller keeps what the
     /// user read of each channel (issue 404).
     states: Arc<dyn StateStore>,
@@ -68,7 +69,7 @@ pub struct ControllerManager {
 }
 
 impl ControllerManager {
-    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>, states: Arc<dyn StateStore>, histories: Arc<dyn HistoryStore>) -> Self {
+    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn TerminalProvider>>, states: Arc<dyn StateStore>, histories: Arc<dyn HistoryStore>) -> Self {
         Self {
             stores,
             event_bus,

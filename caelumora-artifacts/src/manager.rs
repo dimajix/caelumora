@@ -7,13 +7,6 @@
 //! `artifacts/<artifact>/<number>`, an artifact's versions under
 //! `artifacts/<artifact>`.
 //!
-//! A version is read in one of two ways:
-//!
-//! - *by its owner* (`content`): `GetArtifact`, wherever it lies;
-//! - *in the channel it was published in* (`published_content`): by
-//!   whoever may read that channel - asked by the channel's view before it
-//!   asks here -, and only a version published there.
-//!
 //! An artifact is published into its session's scope, made with the first
 //! version of its name there and gone with the session, until its owner
 //! keeps it in their own scope or the global one (`keep`). Its
@@ -37,7 +30,8 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::component::{ComponentError, ComponentResult};
-use caelumora_runtime::content::{ContentError, ContentStorage, ContentStorages};
+use caelumora_runtime::backend::NamedBackends;
+use caelumora_runtime::content::{ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
 use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
@@ -92,15 +86,13 @@ pub enum ArtifactError {
 pub type ArtifactResult<T> = Result<T, ArtifactError>;
 
 /// What a storage of content says, as an artifact's error: a version too
-/// large and a storage not configured as such, anything else as the
-/// storage's failure.
+/// large as such, anything else as the storage's failure.
 impl From<ContentError> for ArtifactError {
     fn from(error: ContentError) -> Self {
         match error {
             ContentError::TooLarge { limit } => Self::TooLarge { limit },
-            ContentError::UnknownStorage(name) => Self::UnknownStorage(name),
             ContentError::Unavailable(what) => Self::Unavailable(what),
-            error @ (ContentError::InvalidKey(_) | ContentError::NotFound(_) | ContentError::Unnamed) => Self::Unavailable(error.to_string()),
+            error @ (ContentError::InvalidKey(_) | ContentError::NotFound(_)) => Self::Unavailable(error.to_string()),
         }
     }
 }
@@ -149,7 +141,7 @@ pub struct ArtifactManager {
     access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where (issue 304): into a storage that keeps it.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    storages: Arc<ContentStorages>,
+    storages: Arc<NamedBackends<dyn ContentStorage>>,
     /// The storage new artifacts are made in.
     publish_to: Option<String>,
     max_bytes: u64,
@@ -172,8 +164,8 @@ impl ArtifactManager {
     /// # Errors
     /// `ComponentError::InvalidConfig` where `config` names no storage of
     /// `storages`, or none among several.
-    pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<ContentStorages>, config: &ArtifactsConfig) -> ComponentResult<Self> {
-        let publish_to = storages.chosen(config.publish_to.as_deref()).map_err(|e| ComponentError::InvalidConfig(format!("artifacts.publish_to: {e}")))?.map(String::from);
+    pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn ContentStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+        let publish_to = storages.chosen(config.publish_to.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("artifacts.publish_to {why}")))?.map(String::from);
         Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, publish_to, max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
@@ -185,6 +177,14 @@ impl ArtifactManager {
     /// Whether artifacts can be published: a storage is configured.
     pub fn is_configured(&self) -> bool {
         self.publish_to.is_some()
+    }
+
+    /// The storage of content `name`.
+    ///
+    /// # Errors
+    /// `UnknownStorage` if none of that name is configured.
+    fn storage(&self, name: &str) -> ArtifactResult<&Arc<dyn ContentStorage>> {
+        self.storages.get(name).ok_or_else(|| ArtifactError::UnknownStorage(name.to_string()))
     }
 
     /// Publishes `content` - its size and its bytes, as a file of a
@@ -232,10 +232,8 @@ impl ArtifactManager {
                 (ArtifactId::new(), 1, self.publish_to.clone().ok_or(ArtifactError::NotConfigured)?)
             }
         };
-        let storage = self.storages.get(&storage_name)?;
-        if let Some(destination) = storage.destination() {
-            self.confidentiality.require_publish(ctx, classification, destination, || ArtifactError::StorageNotCleared(storage_name.clone()))?;
-        }
+        let storage = self.storage(&storage_name)?;
+        self.confidentiality.require_storable(ctx, classification, storage.destination(), || ArtifactError::StorageNotCleared(storage_name.clone()))?;
 
         if size > self.max_bytes {
             return Err(ArtifactError::TooLarge { limit: self.max_bytes });
@@ -326,7 +324,7 @@ impl ArtifactManager {
         if artifact.version(number).is_none() {
             return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
         }
-        self.storages.get(&artifact.storage)?.get(&version_key(artifact.id, number)).await.map_err(|e| match e {
+        self.storage(&artifact.storage)?.get(&version_key(artifact.id, number)).await.map_err(|e| match e {
             ContentError::NotFound(_) => ArtifactError::VersionNotFound { artifact: artifact.id, version: number },
             e => e.into(),
         })
@@ -450,7 +448,7 @@ impl ArtifactManager {
         let _writing = self.writing.lock().await;
         let Some(artifact) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.access_policy.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), StoreError::PermissionDenied).await?;
-        self.storages.get(&artifact.storage)?.remove_under(&versions_key(id)).await?;
+        self.storage(&artifact.storage)?.remove_under(&versions_key(id)).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
         Ok(purged)
@@ -514,8 +512,8 @@ impl ScopeMember for ArtifactManager {
         let _writing = self.writing.lock().await;
         for artifact in self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             // Its content is its storage too.
-            let unremoved = |e: ContentError| StoreError::Backend(format!("the content of artifact {} cannot be removed: {}", artifact.id, ArtifactError::from(e)));
-            self.storages.get(&artifact.storage).map_err(unremoved)?.remove_under(&versions_key(artifact.id)).await.map_err(unremoved)?;
+            let unremoved = |e: ArtifactError| StoreError::Backend(format!("the content of artifact {} cannot be removed: {e}", artifact.id));
+            self.storage(&artifact.storage).map_err(unremoved)?.remove_under(&versions_key(artifact.id)).await.map_err(|e| unremoved(e.into()))?;
             self.artifacts.purge(&system, artifact.id).await?;
         }
         Ok(())

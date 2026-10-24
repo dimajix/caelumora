@@ -11,6 +11,7 @@
 use crate::component::{ComponentError, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
+use crate::backend::NamedBackends;
 use crate::terminal::{CommandKey, TerminalProvider};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
@@ -23,7 +24,6 @@ use caelumora_model::store::{EntityStore, EntityStores, Stored, StoreResultExt};
 use caelumora_model::user::User;
 use caelumora_model::workspace::Workspace;
 use futures::future::join_all;
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
@@ -57,7 +57,7 @@ pub(crate) struct CommandReaper {
     /// roles as they are now (issue 304), and the workspaces asked.
     controllers: Arc<ControllerManager>,
     /// The storages, by name, whose commands it ends.
-    storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>,
+    storages: Arc<NamedBackends<dyn TerminalProvider>>,
     /// The task that ends the commands nobody may run any longer; ends with
     /// the reaper.
     checker: OnceLock<AbortOnDropHandle<()>>,
@@ -65,7 +65,7 @@ pub(crate) struct CommandReaper {
 
 impl fmt::Debug for CommandReaper {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommandReaper").field("storages", &self.storages.keys().collect::<Vec<_>>()).finish_non_exhaustive()
+        f.debug_struct("CommandReaper").field("storages", &self.storages).finish_non_exhaustive()
     }
 }
 
@@ -78,8 +78,8 @@ impl CommandReaper {
     /// # Errors
     /// `ComponentError::InvalidConfig` for a storage with a shell outside a
     /// Tokio runtime.
-    pub(crate) fn new(stores: &EntityStores, events: &EventBus, controllers: Arc<ControllerManager>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>) -> ComponentResult<Arc<Self>> {
-        let with_shell = storages.values().any(|provider| provider.has_shell());
+    pub(crate) fn new(stores: &EntityStores, events: &EventBus, controllers: Arc<ControllerManager>, storages: Arc<NamedBackends<dyn TerminalProvider>>) -> ComponentResult<Arc<Self>> {
+        let with_shell = storages.iter().any(|(_, provider)| provider.has_shell());
         let reaper = Arc::new(Self { sessions: Arc::clone(&stores.sessions), channels: Arc::clone(&stores.channels), controllers, storages, checker: OnceLock::new() });
         if with_shell {
             let runtime = Handle::try_current()
@@ -95,7 +95,7 @@ impl CommandReaper {
     /// runs in its channels (issue 254).
     pub(crate) async fn end_commands_in(&self, channels: &[ChannelId]) {
         let scopes: Vec<String> = channels.iter().copied().map(scope_of).collect();
-        for provider in self.storages.values() {
+        for (_, provider) in self.storages.iter() {
             let ending = provider.commands().into_iter().filter(|(_, scope, _)| scopes.contains(scope)).collect();
             end_commands(provider.as_ref(), ending, "its session stopped").await;
         }
@@ -105,14 +105,14 @@ impl CommandReaper {
     /// outlive it (issue 297): each storage decides what that is
     /// (`TerminalProvider::shutdown`).
     pub(crate) async fn shutdown(&self) {
-        join_all(self.storages.values().map(|provider| provider.shutdown())).await;
+        join_all(self.storages.iter().map(|(_, provider)| provider.shutdown())).await;
     }
 
     /// Ends every command of the storages that nobody may run any longer
     /// where it was started (issue 254). One whose question cannot be
     /// answered now runs on until it can.
     async fn end_unusable_commands(&self) {
-        for provider in self.storages.values() {
+        for (_, provider) in self.storages.iter() {
             let mut ending = Vec::new();
             for key in provider.commands() {
                 match self.may_run(&key).await {

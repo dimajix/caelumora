@@ -36,6 +36,61 @@ use std::sync::Arc;
 use crate::{content, terminal};
 use serde_json::Value;
 
+/// The backends a section of the configuration names, by their names - the
+/// storages of workspaces, the storages of content -, which what lies there
+/// refers to its backend by. Shown by their names alone: a backend's
+/// parameters may name places of the host.
+pub struct NamedBackends<T: ?Sized>(BTreeMap<String, Arc<T>>);
+
+/// Why no backend of a `NamedBackends` could be chosen (`chosen`), as the
+/// end of a sentence about the parameter that names it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Unchosen {
+    #[error("names '{0}', which is not configured")]
+    Unknown(String),
+    #[error("has to name one where there are several")]
+    Unnamed,
+}
+
+impl<T: ?Sized> NamedBackends<T> {
+    /// The backend `name`, if one is configured.
+    pub fn get(&self, name: &str) -> Option<&Arc<T>> {
+        self.0.get(name)
+    }
+
+    /// The name of the one to use: `named`, which has to be one of them, or
+    /// the one there is - `None` where none is configured.
+    ///
+    /// # Errors
+    /// `Unknown` if `named` is none of them, `Unnamed` if nothing is named
+    /// among several.
+    pub fn chosen(&self, named: Option<&str>) -> Result<Option<&str>, Unchosen> {
+        match named {
+            Some(name) => self.0.get_key_value(name).map(|(name, _)| Some(name.as_str())).ok_or_else(|| Unchosen::Unknown(name.to_string())),
+            None if self.0.len() > 1 => Err(Unchosen::Unnamed),
+            None => Ok(self.0.keys().next().map(String::as_str)),
+        }
+    }
+
+    /// Every backend, by its name.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &Arc<T>)> {
+        self.0.iter().map(|(name, backend)| (name.as_str(), backend))
+    }
+}
+
+/// None configured.
+impl<T: ?Sized> Default for NamedBackends<T> {
+    fn default() -> Self {
+        Self(BTreeMap::new())
+    }
+}
+
+impl<T: ?Sized> fmt::Debug for NamedBackends<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.0.keys()).finish()
+    }
+}
+
 /// What makes a backend of `T`: given the name it is configured under - its
 /// position in a chain -, its parameters and the services made before it.
 type BackendFactory<T> = Box<dyn Fn(&str, &Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync>;
@@ -131,10 +186,11 @@ impl Backends {
     ///
     /// # Errors
     /// `ComponentError::Backend` naming the first that cannot be made.
-    pub fn make_named<T: ?Sized + 'static>(&self, what: &str, configs: &BTreeMap<String, BackendConfig>, services: &Services) -> ComponentResult<BTreeMap<String, Arc<T>>> {
+    pub fn make_named<T: ?Sized + 'static>(&self, what: &str, configs: &BTreeMap<String, BackendConfig>, services: &Services) -> ComponentResult<NamedBackends<T>> {
         configs.iter()
             .map(|(name, config)| Ok((name.clone(), self.make(&format!("the {what} '{name}'"), name, config, services)?)))
-            .collect()
+            .collect::<ComponentResult<_>>()
+            .map(NamedBackends)
     }
 
     /// The chain of backends of `T` that `configs` names, in its order;
@@ -227,9 +283,25 @@ mod tests {
     fn a_backend_is_made_by_the_factory_of_its_type_from_its_parameters() {
         let configs = [("front".to_string(), BackendConfig::new("fixed", json!({ "greeting": "hello" })))].into();
         let made = greeters().make_named::<dyn Greeter>("greeter", &configs, &Services::empty()).unwrap();
-        assert_eq!(made["front"].greet(), "hello from front", "given its name and its parameters");
+        assert_eq!(made.get("front").unwrap().greet(), "hello from front", "given its name and its parameters");
         let chain = greeters().make_chain::<dyn Greeter>("greeter", &[BackendConfig::new("fixed", json!({ "greeting": "hi" }))], &Services::empty()).unwrap();
         assert_eq!(chain[0].greet(), "hi from 1", "in a chain, named by its position");
+    }
+
+    #[test]
+    fn of_the_backends_by_name_the_one_named_is_chosen_or_the_one_there_is() {
+        let named = |names: &[&str]| {
+            let configs = names.iter().map(|name| (name.to_string(), BackendConfig::new("fixed", json!({ "greeting": "hi" })))).collect();
+            greeters().make_named::<dyn Greeter>("greeter", &configs, &Services::empty()).unwrap()
+        };
+        assert_eq!(named(&["front"]).chosen(None), Ok(Some("front")));
+        assert_eq!(named(&[]).chosen(None), Ok(None), "none configured");
+        let several = named(&["a", "b"]);
+        assert_eq!(several.chosen(None), Err(Unchosen::Unnamed), "which one, among several, must be said");
+        assert_eq!(several.chosen(Some("b")), Ok(Some("b")));
+        assert_eq!(several.chosen(Some("c")), Err(Unchosen::Unknown("c".to_string())), "not one that is not there");
+        assert_eq!(several.iter().map(|(name, _)| name).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(format!("{several:?}"), r#"["a", "b"]"#, "shown by their names alone");
     }
 
     #[test]

@@ -97,9 +97,7 @@ pub(crate) fn store_error(id: WorkspaceId) -> impl FnOnce(StoreError) -> Workspa
 /// `ClassificationRefused`, `StorageNotCleared` or `NotCleared`.
 pub(crate) fn require_classification(policy: &dyn ConfidentialityPolicy, ctx: &SecurityContext, storage: &str, provider: &dyn TerminalProvider, classification: &Classification) -> WorkspaceResult<()> {
     policy.require_classifiable(classification, || WorkspaceError::ClassificationRefused)?;
-    if let Some(destination) = provider.destination() {
-        policy.require_publish(ctx, classification, destination, || WorkspaceError::StorageNotCleared(storage.to_string()))?;
-    }
+    policy.require_storable(ctx, classification, provider.destination(), || WorkspaceError::StorageNotCleared(storage.to_string()))?;
     policy.require_cleared_for(ctx, classification, || WorkspaceError::NotCleared)
 }
 

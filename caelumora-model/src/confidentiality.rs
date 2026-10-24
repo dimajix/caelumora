@@ -555,6 +555,15 @@ pub trait ConfidentialityQuestions {
     /// `refusal()` if it may not.
     fn require_publish<E>(&self, context: &SecurityContext, classification: &Classification, into: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E>;
 
+    /// Nothing if what is so classified may be put into a storage bounded
+    /// by `destination` - a storage of workspaces or of content, which says
+    /// how much what lies there may be classified at most -, as publishing
+    /// it there (`require_publish`); a storage without one takes anything.
+    ///
+    /// # Errors
+    /// `refusal()` if it may not.
+    fn require_storable<E>(&self, context: &SecurityContext, classification: &Classification, destination: Option<&Classification>, refusal: impl FnOnce() -> E) -> Result<(), E>;
+
     /// Nothing if `participant`, by `roles`, is cleared for `classification`;
     /// `refusal` otherwise.
     ///
@@ -601,6 +610,10 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
 
     fn require_publish<E>(&self, context: &SecurityContext, classification: &Classification, into: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
         refused(self.may_publish(context, classification, into), context, || format!("publishing {classification} into {into}"), refusal)
+    }
+
+    fn require_storable<E>(&self, context: &SecurityContext, classification: &Classification, destination: Option<&Classification>, refusal: impl FnOnce() -> E) -> Result<(), E> {
+        destination.map_or(Ok(()), |destination| self.require_publish(context, classification, destination, refusal))
     }
 
     fn require_cleared<E>(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {

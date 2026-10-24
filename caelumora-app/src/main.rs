@@ -427,7 +427,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
         let services = Services::empty().with(secrets);
         let storages = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &services).expect("every type is known");
-        assert!(storages.contains_key("sandbox"), "the shared Open Terminal of the example");
+        assert!(storages.get("sandbox").is_some(), "the shared Open Terminal of the example");
         let docker = [("isolated".to_string(), BackendConfig::new("open_terminal_docker", json!({ "image": "x", "max_run_secs": 0 })))].into();
         let refused = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &docker, &services).map(|_| ()).unwrap_err().to_string();
         assert!(refused.contains("max_run_secs") && !refused.contains("no backend of this type"), "{refused}");
