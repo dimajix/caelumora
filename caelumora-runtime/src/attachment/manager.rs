@@ -1,7 +1,8 @@
 //! The `AttachmentManager`: what is uploaded for a message - checked, kept and waiting for the
 //! message that claims it -, what a message may carry as its channel admits it, and the content of
-//! an attachment for a download.
+//! an attachment for a download or for a model given it along.
 
+use super::cache::ContentCache;
 use super::{AttachmentError, AttachmentResult};
 use crate::backend::NamedBackends;
 use crate::component::{ComponentError, ComponentResult};
@@ -12,6 +13,10 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::config::AttachmentsConfig;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::content::{self, ContentId, ContentRef};
+use caelumora_model::context::ModelProfile;
+use caelumora_model::digest;
+use caelumora_model::message::Message;
+use bytes::{Bytes, BytesMut};
 use caelumora_model::session::ChannelId;
 use caelumora_model::value::text::FileName;
 use futures::{stream, StreamExt};
@@ -43,8 +48,9 @@ struct Upload {
 }
 
 /// The one owner of the content of attachments (issue 282): what is uploaded for a message, kept
-/// and waiting for it, claimed by it as its channel admits it, read for a download, and removed
-/// with its channel - the only code that keeps content in the key space `attachments`.
+/// and waiting for it, claimed by it as its channel admits it, read for a download or for a model
+/// given it along, and removed with its channel - the only code that keeps content in the key
+/// space `attachments`.
 pub struct AttachmentManager {
     /// What may flow where (issue 304): into the channel, into the storage.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -58,6 +64,8 @@ pub struct AttachmentManager {
     /// The uploads no message claimed yet, in memory: what a restart loses has never been part of
     /// anything, and lies in its channel's key space until the channel is purged.
     uploads: Mutex<HashMap<ContentId, Upload>>,
+    /// The content models are given along, held for their next calls.
+    cache: ContentCache,
 }
 
 impl fmt::Debug for AttachmentManager {
@@ -83,6 +91,7 @@ impl AttachmentManager {
             max_per_message: config.max_per_message,
             unclaimed_expire: Duration::from_secs(config.unclaimed_expire_secs),
             uploads: Mutex::new(HashMap::new()),
+            cache: ContentCache::new(config.cache_bytes),
         })
     }
 
@@ -123,7 +132,7 @@ impl AttachmentManager {
         let key = format!("{}/{id}", channel_key(channel.id()));
         let (head, content) = head_of(content).await;
         let digest = keep_digested(storage.as_ref(), &key, size, content, self.max_bytes).await?;
-        let content = ContentRef { id, name, media_type: content::media_type(&head).to_string(), size, digest, classification, storage: storage_name.to_string(), key };
+        let content = ContentRef { id, name, media_type: content::media_type(&head).to_string(), size, digest, classification, storage: storage_name.to_string(), key, number: None, content: None };
         let upload = Upload { by, channel: channel.id(), content: content.clone(), at: Instant::now() };
         self.uploads.lock().unwrap_or_else(PoisonError::into_inner).insert(id, upload);
         debug!(attachment = %id, channel = %channel.id(), by = %by, size, "Attachment uploaded");
@@ -179,6 +188,45 @@ impl AttachmentManager {
         })
     }
 
+    /// Puts their content on the attachments of `messages` the model of `profile` is given along
+    /// (issue 282) - held in memory, else read from its storage and checked against its digest -,
+    /// and answers how each is classified: what the model is given of them. Asking nothing: what
+    /// lies in an agent's transcript, it heard (`ActorRuntime::load_attachments`).
+    ///
+    /// # Errors
+    /// `NotFound` if the storage has nothing under an attachment's key, `Altered` if its bytes are
+    /// not what the message says they are, `UnknownStorage`, `Unavailable`.
+    pub(crate) async fn load(&self, messages: &mut [Message], profile: &ModelProfile) -> AttachmentResult<Vec<Classification>> {
+        let mut given = Vec::new();
+        for attachment in messages.iter_mut().flat_map(|message| message.attachments.iter_mut()).filter(|attachment| profile.gives_along(attachment)) {
+            attachment.content = Some(self.content(attachment).await?);
+            given.push(attachment.classification.clone());
+        }
+        Ok(given)
+    }
+
+    /// The bytes of the attachment `attachment`, held in memory or read from its storage - and then
+    /// held -, checked against its digest.
+    async fn content(&self, attachment: &ContentRef) -> AttachmentResult<Bytes> {
+        if let Some(content) = self.cache.get(attachment) {
+            return Ok(content);
+        }
+        let (size, mut chunks) = self.content_of(attachment).await?;
+        if size != attachment.size {
+            return Err(AttachmentError::Altered(attachment.id));
+        }
+        let mut content = BytesMut::with_capacity(usize::try_from(size).unwrap_or_default());
+        while let Some(chunk) = chunks.next().await {
+            content.extend_from_slice(&chunk.map_err(|e| AttachmentError::Unavailable(e.to_string()))?);
+        }
+        let content = content.freeze();
+        if digest::content(&content) != attachment.digest {
+            return Err(AttachmentError::Altered(attachment.id));
+        }
+        self.cache.put(attachment, content.clone());
+        Ok(content)
+    }
+
     /// Removes every attachment of the channel `channel` for good (issue 282), with the history
     /// that carries them: from every storage, since one configured before may hold some, and the
     /// uploads that wait for a message there.
@@ -188,6 +236,7 @@ impl AttachmentManager {
     pub(crate) async fn purge(&self, channel: ChannelId) -> AttachmentResult<()> {
         let prefix = channel_key(channel);
         self.uploads.lock().unwrap_or_else(PoisonError::into_inner).retain(|_, upload| upload.channel != channel);
+        self.cache.forget_under(&format!("{prefix}/"));
         for (_, storage) in self.storages.iter() {
             storage.remove_under(&prefix).await?;
         }
@@ -328,6 +377,36 @@ mod tests {
         let kept = world.files.path().join("content").join("attachments");
         assert!(!kept.exists() || walk(&kept).is_empty(), "nothing kept of any of them");
         assert!(attachments.create(&main, "a.txt", Some(Classification::PUBLIC), bytes(b"a")).await.is_ok(), "released, below the channel");
+    }
+
+    #[tokio::test]
+    async fn what_a_model_is_given_along_is_loaded_checked_and_held() {
+        use caelumora_model::context::ModelProfile;
+        use caelumora_model::message::Message;
+        let world = World::new().await;
+        let session = world.shared_session(&[], &[]).await;
+        let main = main_of(&world, &session, World::as_user(world.alice)).await;
+        let attachments = world.runtime.attachment_manager();
+        let image = attachments.create(&main, "chart.png", None, bytes(PNG)).await.unwrap();
+        let text = attachments.create(&main, "notes.txt", None, bytes(b"notes")).await.unwrap();
+        let messages = || vec![Message { attachments: vec![image.clone(), text.clone()], ..Message::new(main.classification().clone()) }];
+        let contents = |messages: &[Message]| messages[0].attachments.iter().map(|a| a.content.as_deref().map(<[u8]>::to_vec)).collect::<Vec<_>>();
+
+        let (mut blind, mut seeing) = (messages(), messages());
+        assert!(attachments.load(&mut blind, &ModelProfile::default()).await.unwrap().is_empty(), "nothing given to a model that does not see");
+        assert_eq!(contents(&blind), [None, None]);
+        let given = attachments.load(&mut seeing, &ModelProfile { images: true, ..ModelProfile::default() }).await.unwrap();
+        assert_eq!(contents(&seeing), [Some(PNG.to_vec()), None], "the image alone");
+        assert_eq!(given, slice::from_ref(&image.classification), "what was given, by its classification");
+
+        let file = world.files.path().join("content").join(&image.key);
+        fs::write(&file, b"another image").unwrap();
+        assert!(attachments.load(&mut messages(), &ModelProfile { images: true, ..ModelProfile::default() }).await.is_ok(), "held: not read again");
+        attachments.purge(main.id()).await.unwrap();
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, b"another image").unwrap();
+        let changed = attachments.load(&mut messages(), &ModelProfile { images: true, ..ModelProfile::default() }).await;
+        assert!(matches!(changed, Err(AttachmentError::Altered(id)) if id == image.id), "read again once let go of, and refused as not what the message says: {changed:?}");
     }
 
     /// The files below `dir`.

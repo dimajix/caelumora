@@ -106,6 +106,11 @@ impl Filter<HistoryField> {
         Filter::all_of([Filter::negated(Filter::IsNull(HistoryField::Content)), Filter::negated(Filter::eq(HistoryField::Content, ""))])
     }
 
+    /// A message that says something: words, or attachments (issue 282).
+    pub fn saying() -> Self {
+        Filter::any_of([Filter::written(), Filter::negated(Filter::IsNull(HistoryField::Attachments))])
+    }
+
     /// A message containing `words` (`Filter::Contains`).
     pub fn containing(words: &str) -> Self {
         Filter::contains(HistoryField::Content, words)
@@ -118,7 +123,7 @@ impl Filter<HistoryField> {
         Filter::all_of([
             Filter::is_in(HistoryField::Role, [MessageRole::User, MessageRole::Assistant]),
             Filter::eq(HistoryField::Internal, false),
-            Filter::any_of([Filter::written(), Filter::negated(Filter::IsNull(HistoryField::Attachments))]),
+            Filter::saying(),
         ])
     }
 

@@ -67,7 +67,7 @@ impl AgentBody {
             },
         };
         let taken = match &perceived {
-            Some(perceived) => state.transcript.modify(perceived.clone()),
+            Some(perceived) => state.modify(perceived.clone()),
             None => state.transcript.revoke(id, at),
         };
         if taken {

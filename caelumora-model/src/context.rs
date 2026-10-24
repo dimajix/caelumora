@@ -23,6 +23,7 @@ use crate::actor::ActorId;
 use crate::agent::{AgentChannelState, AgentId};
 use crate::chain::{Node, Position};
 use crate::confidentiality::Classification;
+use crate::content::ContentRef;
 use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
@@ -37,6 +38,7 @@ use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::iter;
 use uuid::Uuid;
 use crate::channel::ChannelId;
 use crate::mention::handle_of;
@@ -219,6 +221,12 @@ pub struct ModelProfile {
     /// (`work/message_times/RESULTS.md`, finding 2). Nothing where senders
     /// are not marked.
     pub message_times: bool,
+    /// Whether the model is given images (issue 282): an attachment that is
+    /// one is given along with its message, else the model is told of it
+    /// alone. Read as `false` where a context recorded before has none: it
+    /// was given none.
+    #[serde(default)]
+    pub images: bool,
 }
 
 /// Whether a model or remote agent is given the times of messages unless its
@@ -241,11 +249,34 @@ impl ModelProfile {
         self.frame(message, agent, time_zone)
     }
 
-    /// `message` framed as the model of `agent` is given it: marked with its
+    /// Whether the model is given `attachment` along with its message rather
+    /// than told of it alone (issue 282): an image, to a model that sees.
+    pub fn gives_along(&self, attachment: &ContentRef) -> bool {
+        self.images && attachment.is_image()
+    }
+
+    /// How what the model is given of `message` is classified: the message,
+    /// its tool results, and the attachments it is given along (issue 282) -
+    /// what sets the label of what the model produces from it.
+    pub fn classifications_given<'m>(&self, message: &'m Message) -> impl Iterator<Item = &'m Classification> {
+        let profile = *self;
+        iter::once(&message.classification)
+            .chain(message.tool_results.iter().map(|result| &result.classification))
+            .chain(message.attachments.iter().filter(move |attachment| profile.gives_along(attachment)).map(|attachment| &attachment.classification))
+    }
+
+    /// `message` framed as the model of `agent` is given it: its attachments
+    /// noted after its text (`noted`), whoever said it; then marked with its
     /// sender as `sender_format` and `sender_style` say, and with when it was
     /// written in `time_zone` where `message_times` says so - if another
-    /// participant, a user or agent, said it; unchanged otherwise.
+    /// participant, a user or agent, said it.
     fn frame(&self, mut message: Message, agent: ActorId, time_zone: TimeZone) -> Message {
+        if let Some(note) = self.noted(&message.attachments) {
+            message.content = Some(match message.content.take().filter(|content| !content.is_empty()) {
+                Some(content) => format!("{content}\n{note}"),
+                None => note,
+            });
+        }
         let said_by_another = message.sender_id != agent
             && matches!(message.sender_id, ActorId::User(_) | ActorId::Agent(_))
             && message.role == MessageRole::User;
@@ -263,12 +294,34 @@ impl ModelProfile {
             // more hides typos in code from the model (RESULTS.md, 7).
             (SenderFormat::Xml, at) => format!(
                 "<message from=\"{}\"{}>{}</message>",
-                sender.replace('&', "&amp;").replace('"', "&quot;"),
+                attribute(&sender),
                 at.map(|at| format!(" at=\"{at}\"")).unwrap_or_default(),
                 content.replace("</message", "&lt;/message").replace("<message", "&lt;message"),
             ),
         });
         message
+    }
+
+    /// The note on `attachments` (issue 282), one line each, the model told
+    /// of each what it is, how it names it, and whether it is given it along:
+    /// a marker, as the sender's is, in the form of the sender's - an element
+    /// with `xml`, else in brackets. `None` without attachments.
+    fn noted(&self, attachments: &[ContentRef]) -> Option<String> {
+        let lines: Vec<String> = attachments.iter().map(|attachment| {
+            let size = attachment.size_shown();
+            let shown = self.gives_along(attachment);
+            match self.sender_format {
+                SenderFormat::Xml => {
+                    let reference = attachment.reference().map(|reference| format!(" ref=\"{reference}\"")).unwrap_or_default();
+                    format!("<attachment{reference} name=\"{}\" type=\"{}\" size=\"{size}\" shown=\"{}\"/>", attribute(attachment.name.as_str()), attribute(&attachment.media_type), if shown { "yes" } else { "no" })
+                }
+                SenderFormat::None | SenderFormat::Prefix => {
+                    let reference = attachment.reference().map(|reference| format!("{reference}: ")).unwrap_or_default();
+                    format!("[attachment {reference}{}, {}, {size}{}]", attachment.name.as_str(), attachment.media_type, if shown { "" } else { ", not shown" })
+                }
+            }
+        }).collect();
+        (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
     /// What a receiver that keeps its own conversation - the remote agent
@@ -576,7 +629,7 @@ impl<'a> ContextResolver<'a> {
     /// As `resolve`.
     pub fn token_positions(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Result<Option<(Vec<u64>, bool)>, PromptError> {
         let Some((leading, entries)) = self.given_path(reference, turn, agent)? else { return Ok(None) };
-        let size = |items: &[ContextItem]| items.iter().map(ContextItem::estimated_tokens).sum::<u64>();
+        let size = |items: &[ContextItem]| items.iter().map(|item| item.estimated_tokens(&reference.frame.profile)).sum::<u64>();
         let added_from = entries.iter().rposition(|(node, _)| matches!(node.entry, TranscriptEntry::Compacted { .. })).map_or(0, |at| at + 1);
         let measured: Vec<Option<u64>> = entries.iter().enumerate()
             .map(|(at, (node, _))| match &node.entry {
@@ -668,14 +721,28 @@ impl<'a> ContextResolver<'a> {
 }
 
 impl ContextItem {
-    /// About how many tokens the model is given of the item (issue 284), as
-    /// `Message::estimated_tokens` estimates.
-    pub fn estimated_tokens(&self) -> u64 {
+    /// About how many tokens the model of `profile` is given of the item
+    /// (issue 284), as `Message::estimated_tokens` estimates, and an image it
+    /// is given along as `IMAGE_TOKENS` (issue 282).
+    pub fn estimated_tokens(&self, profile: &ModelProfile) -> u64 {
         match self {
-            ContextItem::Conversation { message } => message.estimated_tokens(),
+            ContextItem::Conversation { message } => {
+                let images = message.attachments.iter().filter(|attachment| profile.gives_along(attachment)).count();
+                message.estimated_tokens().saturating_add(IMAGE_TOKENS.saturating_mul(u64::try_from(images).unwrap_or(u64::MAX)))
+            }
             ContextItem::Prompt { text, .. } => estimated_tokens(text.len()),
         }
     }
+}
+
+/// About how many tokens an image counts in a context (issue 282): what Ollama counts one as where
+/// it truncates; an encoder of its own counts it otherwise.
+const IMAGE_TOKENS: u64 = 768;
+
+/// `text` as the value of an attribute of a marker: what would end it or open an element escaped,
+/// nothing more - escaping more hides typos in code from the model (RESULTS.md, 7).
+fn attribute(text: &str) -> String {
+    text.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
 }
 
 /// What the model is told of the turn `turn`, given up at `at` for `reason`
@@ -772,6 +839,32 @@ mod tests {
         }
         assert_eq!(ReasoningHistory::given(ReasoningHistory::Never, thought(agent), agent, true).content, thought(agent).content, "only the reasoning goes");
         assert_eq!(ReasoningHistory::default(), ReasoningHistory::CurrentTurn);
+    }
+
+    /// Issue 282: every message with attachments carries a note on them, a marker in the form of
+    /// the sender's, each with its number if its transcript gave it one, and whether the model is
+    /// given it along - an image, to a model that sees.
+    #[test]
+    fn the_attachments_of_a_message_are_noted_as_the_models_rule_says() {
+        use crate::content::testing::make_content_ref;
+        let agent = ActorId::Agent(AgentId::new());
+        let alice = ActorId::User(UserId::new());
+        let image = ContentRef { number: Some(3), size: 2_300_000, ..make_content_ref("chart \"q3\".png", b"x") };
+        let report = ContentRef { media_type: "application/pdf".to_string(), size: 512, ..make_content_ref("report.pdf", b"y") };
+        let attached = Message { sender_id: alice, sender_name: "Alice".to_string(), role: MessageRole::User, attachments: vec![image.clone(), report.clone()], ..text("look") };
+        let given = |profile: ModelProfile, message: Message| profile.given(message, agent, false, Default::default()).content.unwrap_or_default();
+
+        let xml = ModelProfile { sender_format: SenderFormat::Xml, images: true, ..ModelProfile::default() };
+        assert_eq!(given(xml, attached.clone()), "<message from=\"@alice\">look\n<attachment ref=\"a3\" name=\"chart &quot;q3&quot;.png\" type=\"image/png\" size=\"2.3 MB\" shown=\"yes\"/>\n<attachment name=\"report.pdf\" type=\"application/pdf\" size=\"512 B\" shown=\"no\"/></message>", "inside the marker, an image given along to a model that sees");
+        let blind = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
+        assert_eq!(given(blind, attached.clone()), "@alice: look\n[attachment a3: chart \"q3\".png, image/png, 2.3 MB, not shown]\n[attachment report.pdf, application/pdf, 512 B, not shown]", "to one that does not, none");
+        let alone = Message { content: None, ..attached.clone() };
+        assert!(given(ModelProfile::default(), alone).starts_with("[attachment a3: "), "the note is the text of a message of attachments alone");
+        let own = Message { sender_id: agent, ..attached.clone() };
+        assert!(given(xml, own).starts_with("look\n<attachment ref=\"a3\""), "its own messages are noted, though not marked");
+
+        let item = |profile| ContextItem::Conversation { message: attached.clone() }.estimated_tokens(&profile);
+        assert_eq!(item(xml) - item(blind), IMAGE_TOKENS, "an image given along counts");
     }
 
     #[test]

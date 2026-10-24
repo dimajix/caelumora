@@ -439,7 +439,9 @@ it starts at `public` and rises with
     another channel's history by the join of the messages given,
 *   every tool result, once the model is given it. A built-in tool whose answer is derived only from
     what the model asked - `calculate`, `echo`, `write_note`, `remember`, ... - classifies it as the
-    turn.
+    turn,
+*   every attachment the model is given along, by its own label, as it is given (issue 282): one it
+    is only told of counts as its message does, whose note tells what the message says.
 
 The join (`Classification::join`) is the higher level and the audience in common. It is never above
 the channel the turn began in: everything the turn sees flows into the channel, and where the join

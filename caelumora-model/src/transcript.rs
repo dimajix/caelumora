@@ -249,11 +249,17 @@ impl Chain<TranscriptEntry> {
     /// heard during it (issue 431) -: a turn under way produces its next
     /// message from the transcript as its context names it.
     pub fn modify(&mut self, modified: Message) -> bool {
-        if !self.standing(modified.id).is_some_and(|mut m| m.modify(&modified)) {
+        if !self.takes(&modified) {
             return false;
         }
         self.append(TranscriptEntry::Modified { message: modified });
         true
+    }
+
+    /// Whether `modify` takes `modified`: a change of a message of the
+    /// active path as it stands that it can be modified to.
+    pub fn takes(&self, modified: &Message) -> bool {
+        self.standing(modified.id).is_some_and(|mut message| message.modify(modified))
     }
 
     /// Records that the message `id` of the active path was taken back at

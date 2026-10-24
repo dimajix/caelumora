@@ -416,7 +416,8 @@ read from the store (`TranscriptStore`): the path to a digest, for the context o
 which messages reached the transcript, for a page of the agent's history; and, for an external
 agent, a message as its remote agent was given it, before it tells of a change (`tell`, through
 `ActorRuntime::transcript_message`). Its sums are parts of its state, not read over the branches:
-the tokens used (`used`) and the classifications the remote agent was given (`RemoteState`).
+the tokens used (`used`), the classifications the remote agent was given (`RemoteState`), and the
+numbers its transcript gave attachments (`attachments`, see [attachments](#attachments)).
 
 Of the prompt texts and the tool sets, kept once by digest, the actor holds those its turn under way
 names, and between turns none (issue 383): the turn's calls, how full its context is and the tools
@@ -500,6 +501,37 @@ same after the session's changed. `read_history` writes the times of what it rea
 
 A marker is a claim like any text: a participant can write another's into their own message, and
 models believe it. Nothing with consequences may rest on whom the model believes said something.
+
+### Attachments
+
+A message's attachments (issue 282) are noted after its text, whoever said it - the agent's own
+messages too -, before the sender is marked: a marker in code, as the sender's is, one line each in
+the form of the sender's. With `xml` `<attachment ref="a3" name="report.pdf" type="application/pdf"
+size="2.3 MB" shown="no"/>`, else `[attachment a3: report.pdf, application/pdf, 2.3 MB, not shown]`.
+A message of attachments alone has its note as its text. Every reader of a message for a model
+that frames it passes the profile (`ModelProfile::given`): the turn's context, the decision policy,
+an external agent's remote agent. `read_history`, which gives another channel's messages as data,
+names each message's attachments there - name, type, size - without a number: they are none of
+the agent's transcript.
+
+*   **The number** (`a3`) is how the model names an attachment; each agent numbers the attachments
+    as they enter its transcript, so that the same image may be `a3` to one agent and `a1` to
+    another. The number lies on the transcript's copy (`ContentRef::number`), covered by its digest,
+    and the translation in the agent's state (`AgentChannelState::attachments`, an
+    `AttachmentIndex`), since a number has to resolve beyond the window of the transcript the actor
+    holds and beyond a compaction. A number is never given again: an attachment a modification
+    keeps keeps its number (`AgentChannelState::modify`), and one the transcript does not take is
+    given none. Without a number - the decision policy reads the channel's history - the note has
+    no `ref`.
+*   **Given along** is an image, to a model that sees (`ModelProfile::images`,
+    `ModelProfile::gives_along`): in the message it is attached to, with its content, for every
+    call. Before each call the turn has the content put on what is given along
+    (`Turn::full_context`, `context_until`, through `ActorRuntime::load_attachments`), from a cache
+    of the process (`attachments.cache_bytes`) or the storage, checked against its digest. One that
+    cannot be read fails the call: a model told of an image it is not given makes one up.
+*   **Its label** counts for the turn as the model is given the attachment along - the turn sees it
+    then -, not as it is heard: the note tells what its message says.
+*   An image given along counts as 768 tokens in how full a context is estimated.
 
 ### Tokens used
 
@@ -779,7 +811,9 @@ What the model is given is not stored; it is resolved from what is (`caelumora_m
 *   **Prompt parts** are kept once per digest; their references go into the turn's context, where
     they count for the messages produced from then on.
 *   **Resolving** - the `ContextResolver` resolves a reference against the transcript, the prompt
-    texts and the tool sets, each as the profile gives it. The turn's next call and every later
+    texts and the tool sets, each as the profile gives it; what it resolves holds references to
+    attachments alone, whose content the turn has put on what its model is given along before each
+    call ([attachments](#attachments)). The turn's next call and every later
     question about a message go through it: the turn against the active branch, the texts and the
     tool sets the agent's state holds (`ContextResolver::of`), a question about an older message
     against the path, the texts and the tool sets its reference names, loaded from the store

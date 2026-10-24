@@ -20,12 +20,17 @@ impl Turn<'_> {
     /// every prompt part as a message of the agent in its role - and the
     /// tools the turn offers (issue 137). Resolved from the turn's context the
     /// way a recorded message's context is (`ContextResolver`, issue 136),
-    /// so the two cannot diverge.
-    pub(crate) fn full_context(&self) -> Result<(Vec<Message>, Vec<Tool>)> {
+    /// so the two cannot diverge. The attachments the model is given along
+    /// carry their content (`given_along`).
+    ///
+    /// # Errors
+    /// If the context names what the agent's state does not hold, or an
+    /// attachment given along cannot be read.
+    pub(crate) async fn full_context(&mut self) -> Result<(Vec<Message>, Vec<Tool>)> {
         let resolved = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
             .resolve(&self.current().work.context, self.turn_id(), ActorId::Agent(self.agent_id))?
             .context("the context of the turn names what the agent's state does not hold")?;
-        let messages = self.as_messages(resolved.items);
+        let messages = self.given_along(self.as_messages(resolved.items)).await?;
         // The backends are given the tools natively, which knows no sets.
         Ok((messages, resolved.tool_sets.into_iter().flat_map(|set| set.tools).collect()))
     }
@@ -37,17 +42,34 @@ impl Turn<'_> {
     /// no longer flows into the channel reduced to the tools it called -,
     /// without prompt parts or tools (issue 16): what a component hands a
     /// model to work on the conversation itself, a summary say. Resolved as
-    /// the turn's own context is (`ContextResolver`), so the same rules hold.
+    /// the turn's own context is (`ContextResolver`), so the same rules hold,
+    /// the attachments given along with their content (`given_along`).
     ///
     /// # Errors
-    /// If the transcript holds no entry `last`.
-    pub fn context_until(&self, last: Digest) -> Result<Vec<Message>> {
+    /// If the transcript holds no entry `last`, or an attachment given along
+    /// cannot be read.
+    pub async fn context_until(&mut self, last: Digest) -> Result<Vec<Message>> {
         let FrameRef { profile, time_zone, .. } = self.current().work.context.frame;
         let reference = ContextRef { transcript: Some(last), frame: FrameRef { profile, time_zone, ..FrameRef::default() } };
         let resolved = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
             .resolve(&reference, self.turn_id(), ActorId::Agent(self.agent_id))?
             .context("the transcript holds no such entry")?;
-        Ok(self.as_messages(resolved.items))
+        self.given_along(self.as_messages(resolved.items)).await
+    }
+
+    /// `messages`, the attachments the turn's model is given along with
+    /// their content (issue 282), each seen by the turn as it is given: its
+    /// classification counts for what the turn produces from now on, as what
+    /// it heard does. One that cannot be read fails the call - a model told
+    /// of an image it is not given makes one up.
+    async fn given_along(&mut self, mut messages: Vec<Message>) -> Result<Vec<Message>> {
+        let profile = self.current().work.context.frame.profile;
+        let given = self.runtime.load_attachments(&mut messages, &profile).await
+            .context("an attachment the model is to be given cannot be read")?;
+        for classification in &given {
+            self.current_mut().work.see(classification);
+        }
+        Ok(messages)
     }
 
     /// The model's messages for `items`: a message as it is, a prompt part
@@ -126,6 +148,65 @@ mod tests {
     use caelumora_model::work::Work;
     use futures::executor;
 
+    /// Issue 282: the model is given along what its profile says - an image, to a model that
+    /// sees -, with its content, which the turn has seen then; one whose bytes are not what its
+    /// message says fails the call.
+    #[tokio::test]
+    async fn the_model_is_given_along_what_its_profile_says_and_the_turn_sees_it() {
+        use crate::testing::TestAgents;
+        use caelumora_model::config::{AppConfig, BackendConfig, ContentConfig};
+        use caelumora_model::confidentiality::Confidentiality;
+        use caelumora_model::content::testing::make_content_ref;
+        use caelumora_model::content::{self, ContentId, ContentRef};
+        use caelumora_model::digest;
+        use caelumora_model::session::SessionId;
+        use caelumora_runtime::agent::state::AgentStateHandle;
+        use caelumora_runtime::session::testing::{bare_channel, bare_session, detached_actor_runtime_in};
+        use caelumora_runtime::testing::TestRuntime;
+        use std::fs;
+        use std::sync::Arc;
+        let files = tempfile::tempdir().unwrap();
+        let content = ContentConfig { storage: [("kept".to_string(), BackendConfig::new("local", serde_json::json!({ "root": files.path() })))].into() };
+        let runtime = TestRuntime { config: AppConfig { content, ..Default::default() }, plugins: vec![&TestAgents], ..Default::default() }.build();
+        let session = bare_session(SessionId::new());
+        let channel = bare_channel(session.id);
+        let kept = |name: &str, bytes: &[u8], classification: &Classification| {
+            let id = ContentId::new();
+            let key = format!("attachments/{}/{id}", channel.id);
+            fs::create_dir_all(files.path().join(format!("attachments/{}", channel.id))).unwrap();
+            fs::write(files.path().join(&key), bytes).unwrap();
+            ContentRef { id, media_type: content::media_type(bytes).to_string(), classification: classification.clone(), key, ..make_content_ref(name, bytes) }
+        };
+        let confidential = Classification::general(Confidentiality::Confidential);
+        let png: &[u8] = b"\x89PNG\r\n\x1a\nthe rest";
+        let (image, notes) = (kept("chart.png", png, &confidential), kept("notes.txt", b"notes", &Classification::PUBLIC));
+
+        let given = |images: bool, attachments: Vec<ContentRef>| {
+            let runtime = detached_actor_runtime_in(Arc::clone(&runtime), session.clone(), channel.clone());
+            let channel_classification = confidential.clone();
+            async move {
+                let mut state = AgentChannelState::default();
+                state.perceive(vec![Message { role: MessageRole::User, attachments, ..Message::new(Classification::PUBLIC) }]);
+                let profile = ModelProfile { images, ..ModelProfile::default() };
+                state.begin_turn(Work::new(Default::default(), None, Default::default(), channel_classification, Default::default()).given_as(profile));
+                let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached(), runtime).unwrap();
+                let context = turn.full_context().await.map(|(messages, _)| messages);
+                (context, turn.situation().label())
+            }
+        };
+        let contents = |messages: &[Message]| messages[0].attachments.iter().map(|a| a.content.as_deref().map(<[u8]>::to_vec)).collect::<Vec<_>>();
+
+        let (seeing, label) = given(true, vec![image.clone(), notes.clone()]).await;
+        assert_eq!(contents(&seeing.unwrap()), [Some(png.to_vec()), None], "the image alone, with its content");
+        assert_eq!(label, confidential, "seen as it is given");
+        let (blind, label) = given(false, vec![image.clone()]).await;
+        assert_eq!(contents(&blind.unwrap()), [None], "nothing to a model that does not see");
+        assert_eq!(label, Classification::PUBLIC, "and not seen, though heard");
+        let changed = ContentRef { digest: digest::content(b"another"), ..image.clone() };
+        let (failed, _) = given(true, vec![changed]).await;
+        assert!(failed.is_err(), "not what its message says: the call fails");
+    }
+
     #[tokio::test]
     async fn the_model_is_given_reasoning_as_its_rule_says_and_that_is_recorded() {
         use caelumora_model::context::ReasoningHistory;
@@ -154,7 +235,7 @@ mod tests {
             let mut turn = Turn::under_way(agent, &mut state);
             turn.set_context(Vec::new(), Vec::new());
             let first = turn.push_message(first.clone());
-            assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [false, false, true], "only the turn's own reasoning");
+            assert_eq!(reasoning_of(&turn.full_context().await.unwrap().0), [false, false, true], "only the turn's own reasoning");
             let second = turn.push_message(second.clone());
             turn.commit(false, &Discard).await;
             (first, second)
@@ -177,7 +258,7 @@ mod tests {
         let mut turn = Turn::under_way(agent, &mut state);
         turn.set_context(Vec::new(), Vec::new());
         turn.push_message(third);
-        assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [true, false, true, true, true]);
+        assert_eq!(reasoning_of(&turn.full_context().await.unwrap().0), [true, false, true, true, true]);
     }
 
     #[tokio::test]
@@ -197,7 +278,7 @@ mod tests {
         let (first, second) = {
             let mut turn = Turn::begun(agent, &mut state);
             turn.set_context(vec![system()], Vec::new());
-            let (given, _) = turn.full_context().unwrap();
+            let (given, _) = turn.full_context().await.unwrap();
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
             assert_eq!(given[0].role, MessageRole::System);
             let first = turn.push_message(first.clone());
@@ -262,7 +343,7 @@ mod tests {
             state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));
             state.offer_tools(sets);
             let mut turn = Turn::under_way(agent, state);
-            let (_, offered) = turn.full_context().unwrap();
+            let (_, offered) = executor::block_on(turn.full_context()).unwrap();
             assert_eq!(offered, tools, "the model is offered what the turn began with");
             let sent: Vec<Message> = messages.iter().map(|message| turn.push_message((*message).clone())).collect();
             executor::block_on(turn.commit(false, &Discard));

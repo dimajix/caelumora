@@ -284,8 +284,8 @@ pub struct ContentConfig {
 
 /// What a message may carry besides its text (issue 282): how large one attachment may be, how many
 /// a message carries at most, which storage of content they are kept in - needed where there are
-/// several, the one there is where there is one -, and how long an upload no message named yet is
-/// kept.
+/// several, the one there is where there is one -, how long an upload no message named yet is
+/// kept, and how many bytes of them the process holds in memory for the models given them along.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct AttachmentsConfig {
@@ -293,11 +293,12 @@ pub struct AttachmentsConfig {
     pub max_per_message: usize,
     pub keep_in: Option<String>,
     pub unclaimed_expire_secs: u64,
+    pub cache_bytes: u64,
 }
 
 impl Default for AttachmentsConfig {
     fn default() -> Self {
-        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, max_per_message: 10, keep_in: None, unclaimed_expire_secs: 3600 }
+        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, max_per_message: 10, keep_in: None, unclaimed_expire_secs: 3600, cache_bytes: 256 * 1024 * 1024 }
     }
 }
 

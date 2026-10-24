@@ -118,6 +118,7 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::executor;
     use crate::notes::NoteKind;
     use crate::turn::tests::message;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -172,8 +173,8 @@ mod tests {
 
     /// What the model of the next turn begun on `state` is given.
     fn given_next(state: &mut AgentChannelState) -> Vec<Message> {
-        let turn = Turn::begun(AgentId::default(), state);
-        turn.full_context().expect("resolved").0
+        let mut turn = Turn::begun(AgentId::default(), state);
+        executor::block_on(turn.full_context()).expect("resolved").0
     }
 
     #[tokio::test]

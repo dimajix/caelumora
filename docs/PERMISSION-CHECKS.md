@@ -224,6 +224,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 |---|---|---|---|---|
 | Upload (`AttachmentManager::create`) | the channel reached as a view (V, reach); the viewer listed among its participants (structural); `require_classifiable`; `require_publish` into the channel (V,2); `require_storable` into the storage's destination (V,2); content kept | reach + R2 | the channel's admission of the message that claims it | `NotAParticipant`, `ClassificationRefused`, `StorageNotCleared` |
 | Download (`ChannelView::attachment`) | the message read as the viewer sees it in the history (V, reach); the attachment one it carries, which a channel read entry by entry releases by its own label (`may_read_entry`); content read asking nothing (`AttachmentManager::content_of`) | reach | - | `MessageNotFound` (`NoChannelNamed` entry by entry), `AttachmentError::NotFound` |
+| Given a model along (`ActorRuntime::load_attachments`, `AttachmentManager::load`) | nothing: what lies in the actor's transcript, it heard; the turn sees each attachment's label as it is given (`Work::see`) | - | - | `Altered`, `NotFound`, `Unavailable`: the call fails |
 | Purge with a channel's state (`purge`, behind `SessionManager::purge`) | in S, after the session's purge was permitted | - | - | - |
 
 ### Groups

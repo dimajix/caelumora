@@ -15,6 +15,7 @@
 //! axis, `Visibility`: ownership, not sensitivity.
 
 use crate::actor::ActorId;
+use crate::context::ModelProfile;
 use crate::message::Message;
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
@@ -320,10 +321,11 @@ impl LabelCauses {
         }
     }
 
-    /// Whether `message` set the label, by its own classification or that
-    /// of a tool result in it.
-    pub fn set_by_message(&self, message: &Message) -> bool {
-        self.set_by(Some(&message.classification)) || message.tool_results.iter().any(|r| self.set_by(Some(&r.classification)))
+    /// Whether `message`, as the model of `profile` was given it, set the
+    /// label: by its own classification, that of a tool result in it, or that
+    /// of an attachment it was given along (issue 282).
+    pub fn set_by_message(&self, message: &Message, profile: &ModelProfile) -> bool {
+        profile.classifications_given(message).any(|classification| self.set_by(Some(classification)))
     }
 }
 
@@ -763,6 +765,9 @@ mod tests {
     use crate::agent::AgentId;
     use crate::user::UserId;
     use crate::tool::{ToolCall, ToolCallResult};
+    use crate::content::ContentRef;
+    use crate::content::testing::make_content_ref;
+    use crate::context::ModelProfile;
     use Confidentiality::*;
     use crate::session::SessionId;
 
@@ -1136,7 +1141,11 @@ mod tests {
             &ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
             Default::default(), "secret".to_string(), confidential.clone());
         let message = Message { tool_results: vec![result], ..Message::new(internal.clone()) };
-        assert!(causes.set_by_message(&message), "a tool result in a message sets the label as the message");
-        assert!(!causes.set_by_message(&Message::new(internal)));
+        let profile = ModelProfile::default();
+        assert!(causes.set_by_message(&message, &profile), "a tool result in a message sets the label as the message");
+        let attached = Message { attachments: vec![ContentRef { classification: confidential.clone(), ..make_content_ref("a.png", b"a") }], ..Message::new(internal.clone()) };
+        assert!(causes.set_by_message(&attached, &ModelProfile { images: true, ..profile }), "and an attachment given along (issue 282)");
+        assert!(!causes.set_by_message(&attached, &profile), "not one only noted");
+        assert!(!causes.set_by_message(&Message::new(internal), &profile));
     }
 }

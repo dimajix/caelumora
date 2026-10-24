@@ -1,10 +1,11 @@
-use crate::attachment::AttachmentManager;
+use crate::attachment::{AttachmentManager, AttachmentResult};
 use crate::channel::ChannelLoop;
 use crate::actor::ActorManager;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, SessionController};
 use anyhow::{anyhow, Result};
+use caelumora_model::context::ModelProfile;
 use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -71,8 +72,19 @@ impl ActorRuntime {
     /// Where the actor's outbox is kept across its runs (issue 386).
     pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> { self.runtime.runtime_manager.actor_manager() }
 
-    /// What a user's message names of what they uploaded (issue 282).
+    /// The owner of attachments (issue 282): what a user's message names of what they uploaded,
+    /// what a model is given along.
     pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> { self.runtime.runtime_manager.attachment_manager() }
+
+    /// Puts their content on the attachments of `messages` - what the actor's model is given of
+    /// its transcript - that the model of `profile` is given along (issue 282), and answers how
+    /// each is classified. Asking nothing: what lies in the actor's transcript, it heard.
+    ///
+    /// # Errors
+    /// `AttachmentError` if one cannot be read, or is not what its message says.
+    pub async fn load_attachments(&self, messages: &mut [Message], profile: &ModelProfile) -> AttachmentResult<Vec<Classification>> {
+        self.attachment_manager().load(messages, profile).await
+    }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()

@@ -1450,13 +1450,12 @@ mod tests {
     #[tokio::test]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it() {
         use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
-        use caelumora_model::content::{ContentId, ContentRef};
-        use caelumora_model::digest;
+        use caelumora_model::content::testing::make_content_ref;
+        use caelumora_model::content::ContentRef;
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::privacy::SessionPrivacy;
-        use caelumora_model::value::text::FileName;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (store, manager) = owned_runtime(ConfidentialityRules::new(compartments));
@@ -1487,7 +1486,7 @@ mod tests {
         let mut state = store.state_store().get_channel_state(secret.id).await.unwrap();
         let plan = said("the plan", &secret.classification);
         // Attached to what was released, each with its own label (issue 282) - kept nowhere.
-        let attached = |name: &str, classification: &Classification| ContentRef { id: ContentId::new(), name: FileName::new(name).unwrap(), media_type: "text/plain".to_string(), size: 0, digest: digest::content(b""), classification: classification.clone(), storage: "nowhere".to_string(), key: name.to_string() };
+        let attached = |name: &str, classification: &Classification| ContentRef { classification: classification.clone(), storage: "nowhere".to_string(), ..make_content_ref(name, b"") };
         let (agenda, minutes) = (attached("agenda.txt", &public.classification), attached("minutes.txt", &secret.classification));
         let date = Message { attachments: vec![agenda.clone(), minutes.clone()], ..said("the date", &public.classification) };
         state.history.extend(vec![plan.clone(), date.clone()]);

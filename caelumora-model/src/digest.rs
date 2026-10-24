@@ -198,7 +198,7 @@ fn to_json<T: Serialize>(value: &T) -> Value {
 /// what only describes it afterwards: timestamps, usage statistics, resolved mentions and metadata.
 /// Its predecessor is covered as `previous`.
 pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
-    let mut e = Encoder::new("caelumora.message-chain.v2");
+    let mut e = Encoder::new("caelumora.message-chain.v3");
     e.opt_digest(previous);
     e.bytes(message.id.0.as_bytes());
     e.json(&to_json(&message.role));
@@ -218,7 +218,7 @@ pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
 /// decides where it may go - content, reasoning, what each attachment is and how it is classified,
 /// the classification - not when it was made.
 pub fn message_modified(previous: Option<&Digest>, modified: &Message) -> Digest {
-    let mut e = Encoder::new("caelumora.message-modified.v2");
+    let mut e = Encoder::new("caelumora.message-modified.v3");
     e.opt_digest(previous);
     e.bytes(modified.id.0.as_bytes());
     e.opt_str(modified.content.as_deref());
@@ -230,9 +230,10 @@ pub fn message_modified(previous: Option<&Digest>, modified: &Message) -> Digest
 }
 
 /// What a model is told of the content `refs` name (issue 282): what each is - its id, name, media
-/// type, size and the digest of its bytes -, not where the bytes lie.
+/// type, size and the digest of its bytes - and the number its transcript gave it, not where the
+/// bytes lie.
 fn content_seen(refs: &[ContentRef]) -> Value {
-    to_json(&refs.iter().map(|r| (r.id, &r.name, &r.media_type, r.size, r.digest)).collect::<Vec<_>>())
+    to_json(&refs.iter().map(|r| (r.id, &r.name, &r.media_type, r.size, r.digest, r.number)).collect::<Vec<_>>())
 }
 
 /// The tool results `results` as a digest covers them: whole, as they are stored, but for what each
@@ -664,6 +665,9 @@ mod tests {
         moved.attachments[0].storage = "elsewhere".to_string();
         moved.attachments[0].key = "attachments/elsewhere".to_string();
         assert_eq!(message_chain(None, &attached), message_chain(None, &moved), "where the bytes lie is no part of what was said");
+        let mut numbered = attached.clone();
+        numbered.attachments[0].number = Some(3);
+        assert_ne!(message_chain(None, &attached), message_chain(None, &numbered), "how the model names it");
 
         let mut released = attached.clone();
         released.attachments[0].classification = Classification::PUBLIC;

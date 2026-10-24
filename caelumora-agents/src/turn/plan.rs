@@ -215,6 +215,7 @@ fn plan_texts(prompts: &PromptTexts, plan: &Plan) -> Result<Vec<String>, PromptE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::executor;
     use caelumora_runtime::transport::Discard;
     use crate::turn::tests::{message, seen};
     use caelumora_model::actor::ActorId;
@@ -252,8 +253,8 @@ mod tests {
     }
 
     /// What the model of `turn` is given, as role and text.
-    fn given(turn: &Turn) -> Vec<(MessageRole, String)> {
-        turn.full_context().unwrap().0.into_iter().map(|m| (m.role, m.content.unwrap_or_default())).collect()
+    fn given(turn: &mut Turn) -> Vec<(MessageRole, String)> {
+        executor::block_on(turn.full_context()).unwrap().0.into_iter().map(|m| (m.role, m.content.unwrap_or_default())).collect()
     }
 
     #[test]
@@ -268,7 +269,7 @@ mod tests {
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
         assert!(turn.situation().agent_channel_state().transcript.messages().iter().all(|m| m.turn_id != Some(turn.turn_id())), "the instruction is no message of the turn");
-        let (role, text) = given(&turn).pop().expect("the instruction is given to the model");
+        let (role, text) = given(&mut turn).pop().expect("the instruction is given to the model");
         assert_eq!(role, MessageRole::User, "a system message in the middle, given as a user message");
         assert!(text.contains("second"));
         match started {
@@ -316,7 +317,7 @@ mod tests {
         let started = turn.advance_plan(2).unwrap();
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
-        let (_, text) = given(&turn).pop().expect("the instruction to finalize is given to the model");
+        let (_, text) = given(&mut turn).pop().expect("the instruction to finalize is given to the model");
         assert!(text.contains("completed every step"));
         assert!(started.is_none(), "finalization is not a step, so nothing is announced");
     }
@@ -340,7 +341,7 @@ mod tests {
             internal.internal = true;
             turn.push_message(internal);
             turn.advance_plan(1).unwrap();
-            let roles = given(&turn).into_iter().map(|(role, _)| role).collect::<Vec<_>>();
+            let roles = given(&mut turn).into_iter().map(|(role, _)| role).collect::<Vec<_>>();
             use MessageRole::{Assistant, System, User};
             assert_eq!(roles, [System, User, System, Assistant, System], "a model that keeps them in place is given system messages");
             let answer = turn.push_message(answer.clone());
@@ -360,7 +361,7 @@ mod tests {
         state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::default(), Default::default()).given_as(keeps_system));
         let mut turn = Turn::under_way(agent, &mut state);
         turn.set_context(Vec::new(), Vec::new());
-        assert_eq!(given(&turn).len(), 3, "a later turn is not given them");
+        assert_eq!(given(&mut turn).len(), 3, "a later turn is not given them");
     }
 
     #[test]
@@ -431,12 +432,12 @@ mod tests {
         turn.push_message(message("working on the second"));
         let at_first = turn.situation().agent_channel_state().transcript.entries().next().map(|node| node.digest);
         turn.compact(vec![(message("summary"), None)], at_first).expect("compacted");
-        assert_eq!(given(&turn).len(), 6, "nothing of the plan was replaced, so it is not named again: {:?}", given(&turn));
+        assert_eq!(given(&mut turn).len(), 6, "nothing of the plan was replaced, so it is not named again: {:?}", given(&mut turn));
 
         // From its last message: the head is where the compaction's part ends.
         let kept_from = turn.situation().agent_channel_state().transcript.entries().rev().find(|node| node.entry.message().is_some()).map(|node| node.digest);
         turn.compact(vec![(message("summary again"), None)], kept_from).expect("compacted");
-        let texts: Vec<String> = given(&turn).into_iter().map(|(_, text)| text).collect();
+        let texts: Vec<String> = given(&mut turn).into_iter().map(|(_, text)| text).collect();
         assert_eq!(texts.len(), 3, "the summary, the plan named again, what was kept: {texts:?}");
         assert_eq!(texts[0], "summary again");
         assert!(texts[1].starts_with("You are carrying out a plan: do the thing\n1. [done] first\n2. [under way] second\n\nStep 2 of 2: second"), "{}", texts[1]);

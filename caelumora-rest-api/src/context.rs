@@ -5,7 +5,7 @@ use caelumora_model::chain::Position;
 use caelumora_model::actor::ActorId;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, LabelCauses};
-use caelumora_model::context::ContextItem;
+use caelumora_model::context::{ContextItem, ModelProfile};
 use caelumora_model::digest::Digest;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::session::{ChannelId, SessionId};
@@ -106,15 +106,16 @@ pub enum SeenItemResponse {
 }
 
 impl SeenItemResponse {
-    /// `item`, with whether it set the label, which `causes` tells.
-    pub fn of(item: ContextItem, causes: &LabelCauses) -> Self {
+    /// `item`, as the model of `profile` was given it, with whether it set
+    /// the label, which `causes` tells.
+    pub fn of(item: ContextItem, causes: &LabelCauses, profile: &ModelProfile) -> Self {
         match item {
             ContextItem::Prompt { digest, role, text, classification } => {
                 let sets_label = causes.set_by(classification.as_ref());
                 SeenItemResponse::Prompt { digest, role, text, classification, sets_label }
             }
             ContextItem::Conversation { message } => {
-                let sets_label = causes.set_by_message(&message);
+                let sets_label = causes.set_by_message(&message, profile);
                 SeenItemResponse::Message { message, sets_label }
             }
         }

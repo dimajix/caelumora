@@ -94,12 +94,14 @@ content:
 
 # What a message may carry besides its text (issue 282): how large one
 # attachment may be, how many a message carries, which storage of content
-# they are kept in where there are several (`keep_in`), and how long an
-# upload waits for the message that names it.
+# they are kept in where there are several (`keep_in`), how long an
+# upload waits for the message that names it, and how much of them is held
+# in memory for the models given them along.
 attachments:
   max_bytes: 52428800
   max_per_message: 10
   unclaimed_expire_secs: 3600
+  cache_bytes: 268435456
 
 # Published artifacts (issue 271): how large a version may be, and which
 # storage of content new artifacts go to where there are several

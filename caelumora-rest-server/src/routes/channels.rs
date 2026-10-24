@@ -630,10 +630,7 @@ pub(super) async fn message_context(
     for item in &seen.items {
         match item {
             ContextItem::Prompt { classification, .. } => classified.extend(classification),
-            ContextItem::Conversation { message } => {
-                classified.push(&message.classification);
-                classified.extend(message.tool_results.iter().map(|r| &r.classification));
-            }
+            ContextItem::Conversation { message } => classified.extend(seen.reference.frame.profile.classifications_given(message)),
         }
     }
     let causes = LabelCauses::new(label, classified);
@@ -645,7 +642,7 @@ pub(super) async fn message_context(
         message_id: MessageId(mid),
         actor_id: participant.id(),
         transcript_digest: seen.reference.transcript,
-        items: seen.items.into_iter().map(|item| SeenItemResponse::of(item, &causes)).collect(),
+        items: seen.items.into_iter().map(|item| SeenItemResponse::of(item, &causes, &seen.reference.frame.profile)).collect(),
         knowledge,
         tools_digest: seen.reference.frame.tools,
         tool_sets: seen.tool_sets,

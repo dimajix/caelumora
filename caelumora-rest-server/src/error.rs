@@ -277,6 +277,8 @@ impl From<AttachmentError> for ApiError {
             AttachmentError::TooLarge { .. } => Self::new(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large", detail),
             AttachmentError::Changed => Self::bad_request("changed", detail),
             AttachmentError::NotFound(_) => Self::not_found("attachment_not_found", detail),
+            // What a storage holds is not what was kept: the server's, not the request's.
+            altered @ AttachmentError::Altered(_) => Self::internal("attachment_altered", "reading an attachment", &Error::new(altered)),
             AttachmentError::Invalid(e) => e.into(),
             // Names the storage and what it reported: for the log alone (`user_message`).
             AttachmentError::UnknownStorage(_) | AttachmentError::Unavailable(_) => {
@@ -709,6 +711,7 @@ mod tests {
         assert_eq!(answer(AttachmentError::TooLarge { limit: 1 }), (413, "file_too_large".to_string()));
         assert_eq!(answer(Error::new(AttachmentError::NotFound(ContentId::new()))), (404, "attachment_not_found".to_string()), "also as a user's actor fails with it");
         assert_eq!(answer(AttachmentError::Unavailable("permission denied".to_string())), (503, "storage_unavailable".to_string()));
+        assert_eq!(answer(AttachmentError::Altered(ContentId::new())), (500, "attachment_altered".to_string()));
         let failed = ApiError::from(ViewError::Attachment(AttachmentError::Unavailable("/srv/content: permission denied".to_string())));
         assert_eq!(failed.status, StatusCode::SERVICE_UNAVAILABLE, "downloaded through a view");
         assert!(!failed.detail.contains("/srv"), "for the log alone: {}", failed.detail);

@@ -96,6 +96,22 @@ half of its answers with a time of its own, made up - which is why they never ca
 models are not measured; `message_times: false` turns the times off for one that handles them
 badly.
 
+## Seeing images
+
+Whether a model sees images is asked of Ollama's `/api/show` as the agent is built (`vision`, its
+`capabilities`); configured, it is not asked. Tried with Ollama 0.40.6 on 2026-10-24 (issue 282):
+an image showing "KIWI 7319", given in a user message and as a tool's result.
+
+| Model | In a user message | In a tool result |
+|---|---|---|
+| gemma4:e4b | read | read |
+| gemma4:26b | read | read |
+| qwen3.6:27b | read | read |
+| gemma4:cloud | read | read with `think: true`; with `think: false` garbled or no answer |
+
+Every model made up an image it was told of but not given, which is why an attachment that cannot
+be read fails the call rather than be left out.
+
 ## External agents
 
 An `a2a_agent` takes the same `sender_format` and `sender_style`. The model behind a remote agent is

@@ -9,7 +9,9 @@ use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptRef};
 use crate::prompt_catalogue::PromptCatalogue;
 #[cfg(any(test, feature = "test-support"))]
 use crate::context::ContextRef;
+use crate::content::ContentId;
 use crate::digest::Digest;
+use super::AttachmentIndex;
 use crate::external_agent::RemoteState;
 use crate::history::{Heard, HistoryEntry};
 use crate::kept::Kept;
@@ -117,6 +119,10 @@ pub struct AgentChannelState {
     /// delivers on from after a restart - what the stored state lacks,
     /// nothing twice.
     pub heard: Heard,
+    /// The numbers its transcript gives the attachments it holds (issue
+    /// 282): how its model names them.
+    #[serde(default, skip_serializing_if = "AttachmentIndex::is_empty")]
+    pub attachments: AttachmentIndex,
 }
 
 impl AgentChannelState {
@@ -202,8 +208,10 @@ impl AgentChannelState {
     /// Takes in what it perceived of what others said (issues 196, 206),
     /// the same for both kinds of agent - what passed its perceive
     /// processors - into its transcript, which a turn under way has then
-    /// seen (issue 168). What was offered to it is in its channel's history.
-    pub fn perceive(&mut self, perceived: Vec<Message>) {
+    /// seen (issue 168), their attachments numbered (issue 282). What was
+    /// offered to it is in its channel's history.
+    pub fn perceive(&mut self, mut perceived: Vec<Message>) {
+        perceived.iter_mut().for_each(|message| self.attachments.number(message));
         self.transcript.extend(perceived.clone());
         // A turn under way has seen it, and its next message is produced
         // from the transcript with it (issue 260).
@@ -211,6 +219,19 @@ impl AgentChannelState {
             perceived.iter().for_each(|m| turn.work.see_message(m));
             turn.work.context.transcript = self.transcript.digest();
         }
+    }
+
+    /// Takes in `modified`, a change of a message it heard or said, into its
+    /// transcript (`Transcript::modify`), the attachments it adds numbered
+    /// (issue 282) - one it keeps keeps its number -, if the transcript
+    /// takes it: what it does not take is given no number. `false` as for
+    /// `Transcript::modify`.
+    pub fn modify(&mut self, mut modified: Message) -> bool {
+        if !self.transcript.takes(&modified) {
+            return false;
+        }
+        self.attachments.number(&mut modified);
+        self.transcript.modify(modified)
     }
 
     /// Takes note of `entry` of the channel's history, which the agent is
@@ -238,20 +259,24 @@ impl AgentChannelState {
     /// while they ran follows it (`given`, issue 389). Returns the message
     /// as the agent sends it: with what it was produced from - the turn's
     /// context as it stood, its frame kept once by digest (issue 426) - for
-    /// its channel's history to hold (issue 417).
+    /// its channel's history to hold (issue 417); its attachments numbered
+    /// on the transcript's copy alone (issue 282).
     /// Between turns, which says nothing, it is recorded as heard would be,
     /// without a context.
     pub fn said(&mut self, mut message: Message) -> Message {
         self.used = TokenUsage::counted(self.used, &message);
         self.last_message = Some(message.id);
+        if let Some(turn) = self.turn.as_ref() {
+            message.turn_id = Some(turn.work.turn_id);
+        }
+        let mut numbered = message.clone();
+        self.attachments.number(&mut numbered);
+        self.transcript.push(numbered);
         let Some(turn) = self.turn.as_mut() else {
             tracing::warn!("A message was said by an agent without a turn under way");
-            self.transcript.push(message.clone());
             return message;
         };
-        message.turn_id = Some(turn.work.turn_id);
         let context = turn.work.context.clone();
-        self.transcript.push(message.clone());
         if !message.internal {
             turn.answer.push(message.clone());
         }
@@ -644,6 +669,9 @@ pub enum AgentChannelStateChange {
     /// Where the agent stands in its channel's history, whole: small, and
     /// moved at almost every put (issue 440).
     Heard(Heard),
+    /// The numbers its transcript gave attachments since stored (issue
+    /// 282).
+    Attachments(Vec<(ContentId, u32)>),
 }
 
 impl Journaled for AgentChannelState {
@@ -660,6 +688,9 @@ impl Journaled for AgentChannelState {
         changes.push(AgentChannelStateChange::TranscriptFrom(self.transcript_from));
         changes.push(AgentChannelStateChange::LastMessage(self.last_message));
         changes.push(AgentChannelStateChange::Heard(self.heard.clone()));
+        if !self.attachments.changes().is_empty() {
+            changes.push(AgentChannelStateChange::Attachments(self.attachments.changes().to_vec()));
+        }
         changes
     }
 
@@ -668,6 +699,7 @@ impl Journaled for AgentChannelState {
     fn mark_stored(&mut self) {
         self.notes.mark_stored();
         self.private_notes.mark_stored();
+        self.attachments.mark_stored();
     }
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
@@ -681,6 +713,7 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::TranscriptFrom(from) => self.transcript_from = from,
             AgentChannelStateChange::LastMessage(message) => self.last_message = message,
             AgentChannelStateChange::Heard(heard) => self.heard = heard,
+            AgentChannelStateChange::Attachments(given) => self.attachments.apply(given),
         }
         Ok(())
     }
@@ -1156,12 +1189,13 @@ mod tests {
 
     #[test]
     fn what_changed_in_an_agents_channel_state_replays_onto_what_was_stored() {
+        use crate::content::testing::make_content_ref;
         use crate::message::testing::{id, make_message};
         let mut state = AgentChannelState::default();
         state.transcript.push(make_message(id(1)));
         let mut copy = stored(&mut state);
 
-        state.transcript.push(make_message(id(2)));
+        state.perceive(vec![Message { attachments: vec![make_content_ref("a.png", b"a")], ..make_message(id(2)) }]);
         state.notes.push(NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
         state.private_notes.push(NoteChange::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
         state.processing_state = ActorState::WaitingForUser;
@@ -1182,9 +1216,11 @@ mod tests {
             AgentChannelStateChange::TranscriptFrom(_) => "transcript_from",
             AgentChannelStateChange::LastMessage(_) => "last_message",
             AgentChannelStateChange::Heard(_) => "heard",
+            AgentChannelStateChange::Attachments(_) => "attachments",
         }).collect();
-        assert_eq!(parts, ["notes", "private_notes", "processing_state", "turn", "used", "remote", "transcript_from", "last_message", "heard"], "what was added, then the small parts whole; the transcript, the prompt parts and the tool sets are the store's to write");
+        assert_eq!(parts, ["notes", "private_notes", "processing_state", "turn", "used", "remote", "transcript_from", "last_message", "heard", "attachments"], "what was added, then the small parts whole; the transcript, the prompt parts and the tool sets are the store's to write");
         replayed(&state, &mut copy);
+        assert!(!copy.attachments.is_empty(), "the numbers its transcript gave attachments (issue 282)");
         assert_eq!(copy.used, state.used, "the running total with them");
         assert_eq!((copy.last_message, &copy.heard), (Some(id(2)), &state.heard), "and where it stands in its channel's history (issue 440)");
 
@@ -1209,6 +1245,25 @@ mod tests {
         state.perceive(vec![confidential]);
         assert_eq!(state.turn.as_ref().map(|t| t.work.label()), Some(channel), "the turn has seen it");
         assert_eq!(state.turn.as_ref().map(|t| t.work.context.transcript), Some(state.transcript.digest()), "and its next message follows it (issue 260)");
+    }
+
+    #[test]
+    fn the_attachments_of_its_transcript_are_numbered_on_its_copy_alone() {
+        use crate::content::testing::make_content_ref;
+        use crate::message::testing::{id, make_message};
+        let (a, b, c) = (make_content_ref("a.png", b"a"), make_content_ref("b.png", b"b"), make_content_ref("c.png", b"c"));
+        let mut state = AgentChannelState::default();
+        let heard = Message { attachments: vec![a.clone()], ..make_message(id(1)) };
+        state.perceive(vec![heard.clone()]);
+        state.turn = Some(TurnState::default());
+        let sent = state.said(Message { attachments: vec![b], ..make_message(id(2)) });
+        assert_eq!(sent.attachments[0].number, None, "the copy it sends is the channel's, unnumbered");
+        assert!(state.modify(Message { attachments: vec![c, a], ..heard }));
+        let numbers = |messages: Vec<Message>| messages.iter().map(|m| m.attachments.iter().filter_map(|a| a.reference()).collect::<Vec<_>>()).collect::<Vec<_>>();
+        assert_eq!(numbers(state.transcript.messages()), [vec!["a3", "a1"], vec!["a2"]], "heard, said, then one a modification added - one it kept keeps its number");
+        assert!(!state.modify(Message { attachments: vec![make_content_ref("d.png", b"d")], ..make_message(id(9)) }), "of no message it holds");
+        state.perceive(vec![Message { attachments: vec![make_content_ref("e.png", b"e")], ..make_message(id(4)) }]);
+        assert_eq!(numbers(state.transcript.messages())[2], ["a4"], "what it did not take was given no number");
     }
 
     #[test]

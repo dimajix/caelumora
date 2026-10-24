@@ -9,6 +9,7 @@
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::value::text::FileName;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::str;
 
@@ -37,9 +38,39 @@ pub struct ContentRef {
     /// key there.
     pub storage: String,
     pub key: String,
+    /// The number the transcript it stands in gives it, on a transcript's copy alone: how its
+    /// model names it (`reference`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u32>,
+    /// Its bytes, on the copy of a message a model is given it along with
+    /// (`ModelProfile::gives_along`) - never stored.
+    #[serde(skip)]
+    pub content: Option<Bytes>,
 }
 
 impl ContentRef {
+    /// Its size as a person reads one: in bytes, kB, MB or GB, by powers of ten, with one decimal
+    /// above bytes - `2.3 MB`.
+    pub fn size_shown(&self) -> String {
+        const UNITS: [&str; 3] = ["kB", "MB", "GB"];
+        if self.size < 1000 {
+            return format!("{} B", self.size);
+        }
+        #[expect(clippy::cast_precision_loss, reason = "a size shown to one decimal")]
+        let mut size = self.size as f64 / 1000.0;
+        let mut unit = 0;
+        while size >= 1000.0 && unit + 1 < UNITS.len() {
+            size /= 1000.0;
+            unit += 1;
+        }
+        format!("{size:.1} {}", UNITS[unit])
+    }
+
+    /// How a model names it, `a3`, if its transcript numbered it.
+    pub fn reference(&self) -> Option<String> {
+        self.number.map(|number| format!("a{number}"))
+    }
+
     /// Whether it is an image every model API takes and a browser shows without running anything:
     /// png, jpeg or webp (issue 282) - given along to a model that sees, downloaded inline.
     pub fn is_image(&self) -> bool {
@@ -83,25 +114,28 @@ fn is_text(head: &[u8]) -> bool {
     !text.chars().any(|c| c.is_control() && !c.is_whitespace())
 }
 
-/// References for the tests of this crate.
-#[cfg(test)]
-pub(crate) mod testing {
+/// References for the tests of this crate and of others.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
     use super::*;
     use crate::digest;
 
     /// A reference to `name` of the bytes `bytes`, as a channel's storage "kept" keeps them,
     /// classified as a channel is by default.
-    pub(crate) fn make_content_ref(name: &str, bytes: &[u8]) -> ContentRef {
+    #[expect(clippy::expect_used, reason = "test code: a name that is none fails the test that gives it")]
+    pub fn make_content_ref(name: &str, bytes: &[u8]) -> ContentRef {
         let id = ContentId::new();
         ContentRef {
             id,
-            name: FileName::new(name).unwrap(),
+            name: FileName::new(name).expect("a test's name of a file is one"),
             media_type: "image/png".to_string(),
             size: bytes.len() as u64,
             digest: digest::content(bytes),
             classification: Classification::CHANNEL_DEFAULT,
             storage: "kept".to_string(),
             key: format!("attachments/{id}"),
+            number: None,
+            content: None,
         }
     }
 }

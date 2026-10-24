@@ -797,39 +797,94 @@ impl ChannelView {
 
 ### Step 4: numbers, the note, and the images a model is given
 
-- **`AgentChannelState::attachments: AttachmentIndex`** - `numbers: BTreeMap<ContentId, u32>`,
-  `next: u32` -, with `AgentChannelStateChange::Attachments`; `number(&mut self, id) -> u32`
-  gives the next number once and the same again. `perceive` and `said` number every attachment,
-  medium and shown of what enters the transcript, on the transcript's copy
-  (`ContentRef::number`); a modification taken in numbers what is new. `Situation::attachments()`
-  answers the index, by which a tool resolves `a3` and `offered` sees whether there are any.
-- **`ModelProfile::images: bool`** (`#[serde(default)]`): whether the model is given images. Set
-  by `ollama_client` from its parameter `vision` - open 3 -, `false` for `a2a_agent`.
-- **The note**: `ContextResolver::given_path` appends to the content of a message with
-  attachments, before the sender is marked, the text `core.attachments` rendered with the
-  profile's `sender_format` and the attachments (`reference`, `name`, `media_type`, `size`,
-  `given_along`): with `xml` one `<attachment ref="a3" name=".." type=".." size=".." shown="no"/>`
-  a line, else `[attachment a3: report.pdf, application/pdf, 2.3 MB, not shown]`. The agent's own
-  messages are marked alike, so that it knows what it attached. A medium of a tool result is
-  described by the tool's own content, not by a note.
-- **Loading**: `Turn::full_context` and `context_until` become `async` and, after resolving,
-  call `attachments.load(&mut messages, &profile)`; the messages hold the `Bytes` for the call.
-  An external agent loads nothing. With it, from step 3: the `ContentCache` (`Bytes` by key within
-  `attachments.cache_bytes`, 256 MiB, least recently used first) and `AttachmentManager::content`,
-  the bytes checked against the digest.
-- **The note goes where every reader of a message for a model passes**: `ModelProfile::given`
-  (`frame`), so that the context of a turn, the decision policy and an external agent's remote
-  agent are all told of an attachment - also of a message of attachments alone, whose note is then
-  its text. `read_history` (`channel_history`) lists a message of attachments alone with its note,
-  and what set a message's label (`LabelCauses`, the context route) counts the attachments and
-  media its turn was given.
-- **`ollama_client`**: `OllamaChatMessage::images: Option<Vec<String>>`, base64 of every
-  attachment of a `user` message and every medium and shown of a `tool` message that carries
-  content; `vision: bool` in `OllamaClientConfig`; LLM-MODELS.md says which models see.
-- Tests: the index gives a number once; the note in both formats; `full_context` puts content
-  where the profile says and nowhere else; the client sends `images`.
+`caelumora-model`:
+
+```rust
+pub struct ContentRef {
+    // ...
+    /// The number its transcript gives it (`a3`), on a transcript's copy alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u32>,
+    /// Its bytes, on the copy a model is given along - never stored.
+    #[serde(skip)]
+    pub content: Option<Bytes>,
+}
+
+impl ContentRef {
+    /// How a model names it, `a3`, if its transcript numbered it.
+    pub fn reference(&self) -> Option<String>;
+}
+
+/// The numbers an agent's transcript gives the attachments it holds, each once.
+pub struct AttachmentIndex { /* numbers: BTreeMap<ContentId, u32>, unstored */ }
+
+impl AgentChannelState {
+    /// Takes in `modified` - its attachments numbered - into the transcript.
+    pub fn modify(&mut self, modified: Message) -> bool;
+}
+
+pub struct ModelProfile {
+    // ...
+    /// Whether the model is given images.
+    #[serde(default)]
+    pub images: bool,
+}
+
+impl ModelProfile {
+    /// Whether the model is given `attachment` along rather than told of it alone: an image, to a
+    /// model that sees.
+    pub fn gives_along(&self, attachment: &ContentRef) -> bool;
+}
+```
+
+- **Numbers**: `AgentChannelState::attachments: AttachmentIndex`, absent where empty as `remote`
+  is, with `AgentChannelStateChange::Attachments` - the numbers given since stored, as notes
+  record theirs. `perceive`, `said` and `modify` number every attachment of what enters the
+  transcript, on the transcript's copy; an attachment a modification keeps keeps its number. Both
+  kinds of agent number alike, an external agent too: its numbers are stable across its calls,
+  though nothing it is given resolves them. `digest::message_chain` and `message_modified` cover
+  the number (v3). Resolving a number - `Situation::attachments()` - comes with its first caller,
+  the tools of step 5.
+- **The note** is a marker, as the sender's is: `ModelProfile::frame` appends it to the content of
+  a message with attachments, in code, before the sender is marked - the agent's own messages too,
+  and whatever `sender_format` says -: with `xml` one `<attachment ref="a3" name=".." type=".."
+  size=".." shown="no"/>` a line, else `[attachment a3: report.pdf, application/pdf, 2.3 MB, not
+  shown]`; without a number no `ref`. A message of attachments alone has its note as its text.
+  `given` keeps its signature. What the note means is explained where the tools that reach an
+  attachment are described (step 5). Every reader of a message for a model passes `given`: the
+  context of a turn, the decision policy, an external agent's remote agent.
+- **Loading**: `Turn::full_context` and `context_until` become `async` and, after resolving, have
+  the content put on what the profile gives along (`ActorRuntime::load_attachments`, the
+  runtime's `AttachmentManager::load`: from a cache of `Bytes` within `attachments.cache_bytes`,
+  256 MiB, least recently used first, else from the storage, checked against the digest; `purge`
+  empties it of a channel's). Loading asks nothing - what lies in an agent's transcript it heard -,
+  so it is an actor's, not a public method of the manager. An attachment that cannot be loaded
+  fails the model call, as a model server that cannot be reached does: a note saying it is shown
+  while it is not makes the model invent it. An external agent loads nothing.
+- **The label**: a turn sees an attachment's classification as its model is given it along -
+  `load` answers the classifications, the turn sees them -, not as it is heard: a note tells only
+  what its message says. `ModelProfile::classifications_given` says what of a message the model is
+  given, so classified - the message, its tool results, the attachments given along -, and
+  `LabelCauses::set_by_message` and the REST answer on what a message was produced from count by
+  it.
+- **Tokens**: `ContextItem::estimated_tokens(profile)` counts an image given along as 768 tokens,
+  as Ollama counts one.
+- **`read_history`** lists a message of attachments alone and names each attachment of a message
+  (`name`, `type`, `size`), without a number: another channel's attachments are none of the
+  agent's transcript.
+- **`ollama_client`**: `vision: Option<bool>` - asked of `/api/show`'s `capabilities` as the
+  component is built (`register_async`) unless configured; `false` with a warning where the server
+  cannot be asked -, `ModelProfile::images` from it; `OllamaChatMessage::images:
+  Option<Vec<String>>`, base64 of every attachment given along. `a2a_agent`: `images` stays `false`.
+- **In step 5, with their first producer**: images of a `tool` message (`media`, `shown`) loaded
+  and sent.
+- Tests: the index gives a number once and keeps it through a modification; the note in both
+  formats, with and without numbers, for a message of attachments alone; `full_context` puts
+  content where the profile says and nowhere else, and fails on a digest that does not match; the
+  turn sees what it was given along; the cache keeps within its budget; the client sends `images`
+  and asks `/api/show`.
 - Docs: AGENT-TURN.md (*Who said what*, *The turn's context and the resolver*, what is held),
-  CONFIGURATION.md (`vision`), COMPONENTS.md (`ollama_client` row), LLM-MODELS.md.
+  CONFIGURATION.md (`vision`, `cache_bytes`), COMPONENTS.md (`ollama_client` row), LLM-MODELS.md.
 
 ### Step 5: the tools
 
@@ -1052,3 +1107,24 @@ previews and everything else with name, type, size and a download; the tool card
   `create` and `purge`. `ChannelView::attachment` answers the size the storage gives beside the
   reference, against *Small return values*: what the response says it sends must be what the
   storage sends, as `ArtifactView::content` answers.
+- **2026-10-24** - Step 4 decided with the maintainer: the note on a message's attachments is a
+  marker in code, as the sender's is, and `given` keeps its signature; an attachment that cannot be
+  loaded fails the model call; a turn sees an attachment's label as its model is given it along,
+  not as it is heard; an external agent numbers as any agent does. Resolving a number and images in
+  tool messages go to step 5, with their first callers. The plan of step 4 says so now.
+- **2026-10-24** - Step 4 built: an agent numbers the attachments of its transcript
+  (`AttachmentIndex`, on the transcript's copy, covered by the digest - `message-chain.v3`,
+  `message-modified.v3`); every message with attachments is noted for a model, in the form of its
+  sender's marker; an image is given along to a model that sees (`ModelProfile::images`,
+  `gives_along`), loaded before each call through the actor's runtime from a cache of the process
+  keyed by storage, key and digest, its label seen by the turn as it is given; `ollama_client`
+  asks `/api/show` whether its model sees unless `vision` is configured, and sends `images`;
+  `read_history` lists a message of attachments alone and names what each carries.
+- **2026-10-24** - Step 4, after its review: content that is no longer what its message says fails
+  with an error of its own (`AttachmentError::Altered`, `500 attachment_altered`); a modification
+  the transcript does not take gives no number (`Transcript::takes`); what of a message sets a
+  label is the profile's to say (`classifications_given`), an attachment only told of counting as
+  its message; one escaping of a marker's attributes, one reader of `/api/show`, whether a model
+  sees read once through `OnceCell` as its control tokens are and asked within 10 s at build;
+  `read_history` names attachments only where there are any, their size as the note writes it;
+  `content::testing::make_content_ref` shared with the other crates' tests.

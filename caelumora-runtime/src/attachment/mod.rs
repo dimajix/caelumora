@@ -1,9 +1,11 @@
 //! What messages carry besides their text (issue 282): the one owner of the content of attachments,
 //! the `AttachmentManager` - what is uploaded for a message not yet sent, what a message claims as
-//! its channel admits it, what is read for a download, and what goes with a channel purged. An
+//! its channel admits it, what is read for a download or given a model along - held in memory for
+//! its next calls -, and what goes with a channel purged. An
 //! attachment is a `ContentRef` a message holds; its bytes lie under `attachments/<channel>/<id>`
 //! in a storage of content.
 
+mod cache;
 mod manager;
 
 pub use manager::AttachmentManager;
@@ -35,6 +37,10 @@ pub enum AttachmentError {
     TooLarge { limit: u64 },
     #[error("the content was not as large as it was said to be")]
     Changed,
+    /// What a storage holds of an attachment is no longer what its message says - other bytes, or
+    /// as many.
+    #[error("the content of attachment {0} is no longer what its message says")]
+    Altered(ContentId),
     /// No such attachment, or none the caller may reach - one case, so that nothing can be probed.
     #[error("there is no attachment {0}")]
     NotFound(ContentId),
