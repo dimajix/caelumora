@@ -96,7 +96,7 @@ Only the turn fills it (see *Giving it to the model*), on the copies it hands to
 message with content is never stored. Where it is `None`, the client tells the model of the
 attachment in text.
 
-### How attachments are managed - open
+### How attachments are managed
 
 **Not by their digest.** Keeping content by its digest - kept once however often it is attached -
 leaves open when an object may finally be deleted: only once nothing refers to it any more, and
@@ -136,6 +136,39 @@ content under both - a key and bytes, without permissions - rather than a second
 backend (local, S3, 272). With the first way that means generalizing `ArtifactStorage` first, as a
 step of its own; with the second, attachments are artifacts and use it as it is.
 
+Since then artifacts have become a plugin of their own (`caelumora-artifacts`, issue 328), while
+`Message` lies in the core: as artifacts of the user's, attachments would make the core depend on
+a plugin.
+
+**Decided: an attachment is part of its message; where its content comes from is not.** A
+recorded copy of what was attached has to be kept for audit as long as its message, unchanged -
+so a message cannot borrow its content from something its owner may delete, replace or move. An
+attachment names what is known of it - its name, media type, size and the digest of its content -
+and where its content lies: the name of a binary storage, as configured, and a key in it. The key
+is opaque, given by whoever puts the content there; the digest is no key, but what the content is
+checked against, so that the message records what was said wherever its bytes lie. A storage knows
+keys and bytes and nothing of permissions: who may read a message may read its attachments, and
+the reference points to bytes, never to an entity with permissions of its own, such as an
+artifact's version. Under a key a message refers to, only its message removes the content.
+
+- **The binary storages move into the core.** They leave `artifacts.storage` for a section of the
+  core's, and artifacts use them as attachments do, in a key space of their own - as
+  `Artifact::storage` already names the storage its content lies in. A step of its own, before
+  attachments, without a change of behaviour.
+- **Content from elsewhere is copied.** A version of an artifact - later a library of uploads, or a
+  cloud drive - is attached by copying it within the storage (`copy(from, to)`) to a key of the
+  message: two lifetimes, nothing counted. A backend makes the copy cheap where it can - a hard
+  link or reflink on a local disk, `CopyObject` in S3; between two storages it is a transfer, slower
+  but not wrong. Whether and when the artifacts plugin attaches a version - `publish_artifact`
+  included - is the plugin's to decide; neither the message nor the core change for it.
+- **What a user attaches directly is not versioned.** It is uploaded first into an area of the
+  user's own, readable only by them, and becomes the message's attachment when the message is
+  sent. A library of uploads to manage, as Open WebUI has, would be another source to copy from,
+  not part of this.
+- **Who removes which keys:** the core those of attachments - when their message is erased (237)
+  or its session purged - and those of uploads never sent, after a while; the artifacts plugin
+  those of artifacts, when one is purged. The storage knows nothing of it.
+
 ### Upload and the REST API
 
 - **Two steps:** the content is uploaded first (`POST …/channels/{cid}/attachments`, the raw body
@@ -161,6 +194,61 @@ attachment that is part of it, while a file of the user's stays theirs to delete
 The message's digest (`digest::message_chain`) covers the attachments - name, media type and the
 content's digest - since they are part of what was said. That changes the digest: stored histories
 and transcripts have to be deleted.
+
+**Decided: an attachment has its message's classification, and none before it is sent.**
+
+- **An upload not yet sent has no label.** Only the user who uploaded it reads it, so nothing flows
+  anywhere - as with text in the message field, not yet sent. What it is uploaded into is checked
+  all the same: the storage attachments are kept in is configured (as `artifacts.publish_to` names
+  artifacts'), and an upload is refused unless the channel's classification may be put into that
+  storage's `destination` (`may_publish`), as making a workspace in a storage is checked. Since a
+  message is never classified above its channel, whatever label the user then gives the message
+  fits the storage. One storage for attachments, not one per label, as long as nobody needs more.
+- **A sent attachment has no label of its own.** Who may read a message reads its attachments, so
+  a label of their own would change nothing: a higher one would need the message classified so, a
+  lower one matters only where another channel is read, and there it follows its message. A channel
+  lowered fits its messages (`Classification::fitted_into`), and their attachments and renditions
+  follow without anything stored at them. A message lowered is not checked further; a message
+  raised is checked against the `destination` of its attachments' storage besides, and refused if
+  its new label may not be put there - as raising a workspace is.
+- **Attaching an artifact's version brings its label into the message.** For a user: they have to
+  be allowed to read the artifact, and its classification has to flow into the message's
+  (`may_publish`); if it does not, attaching is refused, and the message's label is not raised -
+  the API does not reinterpret what it is told. The web UI may propose the label needed. For an
+  agent it follows from its turn: having read the artifact, the turn's label covers the artifact's.
+  The artifacts plugin checks it in its copy; the core is handed a copy only. Kept the other way -
+  an attachment kept as an artifact - the artifact takes the message's classification as it is then.
+- **Nothing reads the content to classify it.** The user classifies what they attach as they
+  classify what they write.
+
+**Decided: a modification may remove and add attachments; only what stands is read.** A history
+keeps every version (234): the message said stays as `Said`, each modification is appended as
+`Modified` with the whole new version, a taking back as `Revoked`, all of it in the digest chain;
+reading folds the changes into what stands (`HistoryEntry::fold_into`), and nobody is given an
+older version - neither a page of the history nor a context. `Message::modify` takes over content,
+reasoning, classification and mentions, and leaves tool calls and results as they were said.
+
+- **An older version keeps its attachments, as a record.** Their keys stay as long as the history
+  refers to them: a modification that removes an attachment removes nothing from the storage - only
+  erasing the message (237) or purging its session does.
+- **Only what stands is read and downloaded,** as only what stands of the text is. An attachment
+  removed is not found, by an old link neither.
+- **An attachment has an id of its own** (`AttachmentId`), stable within its message: a download
+  is `GET …/messages/{mid}/attachments/{aid}`, not by the attachment's place, which a removal
+  shifts; and the owner of attachments makes their keys from the session and that id.
+- **`MessageRequest::attachments` names the attachments as they are to stand,** read alike for a
+  new message and a modification: the id of an attachment it has keeps it, the reference to an
+  upload not yet sent adds it, one not named is removed. `Message::modify` takes the attachments
+  over as it takes the content; `Modified` carrying the whole version, the digest chain covers them.
+  The main case: a wrong screenshot, which from the next turn on no agent is given - taken back,
+  not erased, as text is.
+- **A tool result's attachments (208) stay with their result,** which `modify` leaves as it was.
+- **Taking a message back** empties its attachments as its content; their keys stay until it is
+  erased.
+- **A modification that raises the label** is checked against its attachments' storage, as a
+  reclassification is (above).
+- An agent's transcript keeps which rendition its model was given of an attachment since removed:
+  what it saw stays recorded; its next turns are given what stands.
 
 ### Giving it to the model
 
@@ -208,8 +296,32 @@ and transcripts have to be deleted.
 - **Converting.** A PDF is given to most models only as text or as images of its pages. A converter
   between storage and client, chosen by what the model takes, whose results are kept by the
   digest of the source. Not part of the first step; the type must leave room for it.
+
+  **Decided: the original is attached, a rendition belongs to its attachment.** Which rendition a
+  model is given depends on the model, not on the message - markdown for one, images of the pages
+  for another, the PDF itself for OpenAI -, and a message, once stored, does not change. So the
+  attachment holds the original, as uploaded. A rendition of it in a target format lies in the same
+  storage, under a key made of the attachment's and the target format; it is made once - a request
+  while a conversion is under way waits for that one - and removed with its attachment. Every copy
+  of the message refers to the same attachment, so the agents of a channel share its renditions.
+  Not kept by the source's digest across sessions: how fast a conversion is answered would tell
+  whether someone else attached the same document, and a converter that is not deterministic (OCR,
+  a model) makes a rendition a record of what a model saw, not a cache that can be made again. The
+  price: the same document in two messages is converted twice. The owner of attachments converts;
+  the converters are interchangeable.
+
+  The transcript does not hold a rendition, only which one the model was given - its target
+  format, the converter and its version, the rendition's digest -, so that what a model saw can be
+  checked, and a model changed in between is given the rendition it takes at its next turn.
 - **The context window.** Images fill the context fast and are sent with every call; compaction
   ([16](16-context-compression.md)) has to be able to leave old ones out, replaced by a note.
+
+  **Decided: a large document is read through a tool.** A rendition below a threshold is put into
+  the context; of a larger one the model is told what it is - name, type, size, about how many
+  tokens - and reads parts of it through a tool (`read_attachment`, with a range), as `read_file`
+  reads a workspace's files. The tool reads only the renditions of attachments in the turn's
+  context, and asks for no permission of its own. Open: the threshold - configured, or a share of
+  the model's context window (`ModelProfile`) - and whether images are kept to it as well.
 - **Other participants.** Every agent of the channel hears the message with its attachments and
   gives its model what the model can take. An external agent (A2A, file parts) is told of the
   attachment in text at first; handing on the content is a question of its own.
@@ -231,9 +343,9 @@ size and a download.
 - An agent whose model can see is given the images of the messages in its context; one whose model
   cannot is told in text that an image was attached.
 - Who may read a message may download its attachments, nobody else; the security suite covers it.
-- How attachments are managed - as part of their message or as files of the user's - is decided,
-  their content lies in the same storage as artifacts' content, and 208 knows which type it uses for
-  what a model is to see.
+- An attachment's content lies in a binary storage of the core, which artifacts use as well; an
+  attachment refers to it by storage and key, and 208 knows which type it uses for what a model is
+  to see.
 - CHANNELS.md, AGENT-TURN.md, STORAGE.md, REST-SERVER.md, WEB-UI.md and CONFIGURATION.md describe
   it; which stored data has to be deleted is said.
 
@@ -255,3 +367,26 @@ size and a download.
   in the cache. Left open at the maintainer's request: how attachments are managed - as part of
   their message, kept by session and id, or as files of the user's, as artifacts, as Open WebUI
   does it (*How attachments are managed*).
+- **2026-10-24** — Decided with the maintainer (*How attachments are managed*, *Converting*, *The
+  context window*): attachments are treated alike whatever their source - a tool's artifact, an
+  image a model generated, a file uploaded with the message or before it. An attachment is part of
+  its message and names its content by storage and an opaque key, the digest beside it as what the
+  content is checked against; a storage holds keys and bytes, without permissions. The binary
+  storages move from the artifacts plugin into the core, as a step of their own. Content from
+  another source, an artifact's version among them, is attached by copying it within the storage;
+  what a user uploads directly is not versioned. The original is attached; a rendition belongs to
+  its attachment, is made once and removed with it; the transcript records only which rendition a
+  model was given. A large document is read through a tool, not put into the context whole.
+- **2026-10-24** — Decided with the maintainer (*Classification, changes, taking back*): an upload
+  not yet sent has no label - only the channel's classification is checked against the
+  `destination` of the storage attachments are kept in; a sent attachment has its message's
+  classification and none of its own, and raising a message is checked against its attachments'
+  storage; attaching an artifact's version whose classification may not flow into the message's is
+  refused, not answered by raising the message's label.
+- **2026-10-24** — Decided with the maintainer (*Classification, changes, taking back*): a
+  modification may remove and add attachments; `MessageRequest::attachments` names them as they are
+  to stand, for a new message and a modification alike. An older version keeps its attachments as a
+  record, their keys until the message is erased or its session purged; only what stands is read
+  and downloaded. An attachment has an id of its own within its message (`AttachmentId`), by which
+  it is downloaded and its key is made. Taking a message back empties its attachments; a tool
+  result's attachments stay with their result.
