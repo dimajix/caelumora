@@ -367,6 +367,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [438](438-agents-mention-without-knowing-it-asks.md) | done | An agent is told to mention others by their `@handle` to address them, but not that a mention of an agent asks that agent to respond, so agents greet and thank each other with `@` and every greeting starts another turn. |
 | [442](442-agents-mention-each-other-despite-the-roster.md) | done | Agents greet, thank and praise each other with `@handle` although the roster says since issue 438 that a mention asks the agent to respond, because the rule stands once in the system prompt next to an invitation to address others by `@handle`, so nearly every turn in a channel of several agents is asked for by another agent's courtesy. |
 | [464](464-compaction-wired-into-the-agent.md) | done | The agent's actor knows compaction by name - its policy and strategy as fields, when it is due, how it is carried out and what is said when there was nothing to compact -, though what an agent does of its own accord before a model call is meant to be generic, so that every further such activity would be wired into the actor the same way. |
+| [465](465-attachments-in-the-context.md) | open | What of a message's attachments is put into a model's context and what it has to fetch through a tool is decided by no bound, so a few images or one long text can fill the context and are sent again with every call. |
 
 ## Maintenance
 
