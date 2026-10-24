@@ -608,3 +608,7 @@ size and a download.
   `view_attachment`, and the cut with 208.
 - **2026-10-24** — Confirmed by the maintainer: `shown` for `view_attachment`, and the cut with 208
   (*What is said and what is seen*); 208's history says so.
+- **2026-10-24** — The last question open under *The context window* - where the line lies between
+  what is given along and what is fetched through a tool, configured or a share of the model's
+  context window, and whether images are kept to it as well - moved to its own issue,
+  [465](465-attachments-in-the-context.md), at the maintainer's request.
