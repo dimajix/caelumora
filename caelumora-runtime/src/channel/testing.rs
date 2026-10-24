@@ -135,7 +135,7 @@ pub async fn settled(actor: &Arc<dyn Actor>, wanted: ActorState) {
 pub async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, SecurityContext, AgentId, UserId)) -> Stuck {
     let events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
-    channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
+    channel.user_actor(alice).unwrap().send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
     let helper = channel.actor(ActorId::Agent(agent)).unwrap();
     Stuck { channel, context, agent, helper, events, running }
 }

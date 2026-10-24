@@ -26,7 +26,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, Grant, Refused, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::config::{AppConfig, AuthConfig, BackendConfig, ContentConfig};
+use caelumora_model::config::{AppConfig, AttachmentsConfig, AuthConfig, BackendConfig, ContentConfig};
 use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError, Stored};
 use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
 use caelumora_model::user_provider::UserManager;
@@ -203,7 +203,7 @@ async fn a_storage_of_content_takes_nothing_above_its_destination() {
 
 /// New artifacts are kept in the storage of content the section names, or
 /// the one there is (issue 282); one it cannot have is said naming
-/// `publish_to`.
+/// `artifacts.keep_in`.
 #[tokio::test]
 async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is() {
     let world = world().await;
@@ -211,16 +211,18 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
 
     fn built(names: &[&str], section: Value) -> Result<RuntimeManager, String> {
         let storage = names.iter().map(|name| (name.to_string(), BackendConfig::new("local", json!({ "root": name })))).collect();
-        let config = AppConfig { content: ContentConfig { storage }, plugins: [("artifacts".to_string(), section)].into(), ..Default::default() };
+        // Attachments kept in the first, so that only the artifacts' choice is asked.
+        let attachments = AttachmentsConfig { keep_in: names.first().map(|name| name.to_string()), ..Default::default() };
+        let config = AppConfig { content: ContentConfig { storage }, attachments, plugins: [("artifacts".to_string(), section)].into(), ..Default::default() };
         TestRuntime { config, plugins: vec![&TestAgents, &ArtifactsPlugin], ..Default::default() }.try_build().map_err(|e| format!("{e:#}"))
     }
     let configured = |runtime: RuntimeManager| runtime.services().get::<ArtifactManager>().is_some_and(|manager| manager.is_configured());
     assert!(!configured(built(&[], json!({})).unwrap()), "no storage unless configured");
     let message = built(&["a", "b"], json!({})).map(|_| ()).expect_err("which one");
-    assert!(message.contains("publish_to"), "which one, among several, must be said: {message}");
-    let message = built(&["a", "b"], json!({ "publish_to": "c" })).map(|_| ()).expect_err("none such");
-    assert!(message.contains("publish_to") && message.contains("'c'"), "not one that is not there: {message}");
-    assert!(configured(built(&["a", "b"], json!({ "publish_to": "b" })).unwrap()));
+    assert!(message.contains("artifacts.keep_in"), "which one, among several, must be said: {message}");
+    let message = built(&["a", "b"], json!({ "keep_in": "c" })).map(|_| ()).expect_err("none such");
+    assert!(message.contains("artifacts.keep_in") && message.contains("'c'"), "not one that is not there: {message}");
+    assert!(configured(built(&["a", "b"], json!({ "keep_in": "b" })).unwrap()));
 }
 
 /// What the API answers for what went wrong with an artifact: its status

@@ -24,6 +24,7 @@ use axum::middleware;
 use axum::routing;
 
 mod agents;
+mod attachments;
 mod channels;
 mod compartments;
 mod events;
@@ -88,26 +89,40 @@ pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
 /// artifact's, is anybody's content, and HTML or SVG would otherwise run in
 /// the web UI's origin (issues 208, 253, 271) -, and not cached.
 pub fn attachment_response(size: u64, content: ByteStream, name: &str) -> Response {
+    content_response(size, content, name, None)
+}
+
+/// `content` of `size` bytes, streamed, named `name`: shown inline as the
+/// image of the media type `image` names - png, jpeg or webp, which a
+/// browser shows without running anything (`ContentRef::is_image`, issue
+/// 282) -, otherwise as `attachment_response` answers; never sniffed, and
+/// not cached.
+pub(super) fn content_response(size: u64, content: ByteStream, name: &str, image: Option<&str>) -> Response {
     use axum::http::{header, HeaderValue};
     use axum::response::IntoResponse;
     let mut response = Body::from_stream(content).into_response();
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    let (media_type, disposition) = match image.and_then(|image| HeaderValue::from_str(image).ok()) {
+        Some(image) => (image, "inline"),
+        None => (HeaderValue::from_static("application/octet-stream"), "attachment"),
+    };
+    headers.insert(header::CONTENT_TYPE, media_type);
     headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    if let Ok(disposition) = HeaderValue::from_str(&attachment(name)) {
+    if let Ok(disposition) = HeaderValue::from_str(&content_disposition(disposition, name)) {
         headers.insert(header::CONTENT_DISPOSITION, disposition);
     }
     response
 }
 
-/// `Content-Disposition` of a download named `name` (RFC 6266): the name
-/// as it is, encoded, and plain for the clients that read only that.
-fn attachment(name: &str) -> String {
+/// `Content-Disposition` of `disposition` - `attachment` or `inline` -
+/// named `name` (RFC 6266): the name as it is, encoded, and plain for the
+/// clients that read only that.
+fn content_disposition(disposition: &str, name: &str) -> String {
     use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
     let plain: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect();
-    format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{}", utf8_percent_encode(name, NON_ALPHANUMERIC))
+    format!("{disposition}; filename=\"{plain}\"; filename*=UTF-8''{}", utf8_percent_encode(name, NON_ALPHANUMERIC))
 }
 
 /// What changing a place failed with, as the API answers it: `400` with
@@ -177,6 +192,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/sessions/{id}/channels/{cid}/history", get(channels::get_channel_history))
         .route("/sessions/{id}/channels/{cid}/read", routing::put(channels::mark_read))
         .route("/sessions/{id}/channels/{cid}/messages", routing::post(channels::send_message))
+        .route("/sessions/{id}/channels/{cid}/attachments", routing::post(attachments::upload_attachment))
         .route("/sessions/{id}/channels/{cid}/classification", routing::put(channels::reclassify_channel))
         .route("/sessions/{id}/channels/{cid}/language", routing::put(channels::set_channel_language))
         .route("/sessions/{id}/channels/{cid}/approval-rules", routing::put(channels::update_channel_approval_rules))
@@ -190,6 +206,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         )
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/classification", routing::put(channels::reclassify_message))
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/retry", post(channels::retry_message))
+        .route("/sessions/{id}/channels/{cid}/messages/{mid}/attachments/{aid}", get(attachments::download_attachment))
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/questions/{qid}", post(channels::answer_questions))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
@@ -236,7 +253,7 @@ pub(crate) mod tests {
     use crate::auth::{Auth, TokenService, SESSION_COOKIE};
     use axum::http::header::{COOKIE, SET_COOKIE};
     use axum::http::Request;
-    use caelumora_model::config::AuthConfig;
+    use caelumora_model::config::{AppConfig, AuthConfig};
     use caelumora_model::user_provider::UserManager;
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_runtime::event::EventBus;
@@ -274,7 +291,12 @@ pub(crate) mod tests {
     /// The state of an API that lets anybody log in and permits everything,
     /// on a runtime of memory stores.
     pub(crate) fn state() -> Arc<AppState> {
-        let runtime = TestRuntime { plugins: Vec::new(), ..Default::default() }.build();
+        state_with(AppConfig::default())
+    }
+
+    /// The state `state` makes, of a runtime configured by `config`.
+    pub(crate) fn state_with(config: AppConfig) -> Arc<AppState> {
+        let runtime = TestRuntime { config, plugins: Vec::new(), ..Default::default() }.build();
         let users = Arc::clone(&runtime.entity_stores().users);
         let auth = Arc::new(Auth {
             tokens: TokenService::new(b"0123456789abcdef0123456789abcdef", &AuthConfig::default()).unwrap(),
@@ -307,8 +329,9 @@ pub(crate) mod tests {
 
     #[test]
     fn a_download_is_named_plainly_and_as_it_is() {
-        assert_eq!(attachment("report.md"), "attachment; filename=\"report.md\"; filename*=UTF-8''report%2Emd");
-        let named = attachment("Bericht \"Q3\" ü.pdf");
+        assert_eq!(content_disposition("attachment", "report.md"), "attachment; filename=\"report.md\"; filename*=UTF-8''report%2Emd");
+        assert_eq!(content_disposition("inline", "a.png"), "inline; filename=\"a.png\"; filename*=UTF-8''a%2Epng");
+        let named = content_disposition("attachment", "Bericht \"Q3\" ü.pdf");
         assert!(named.starts_with("attachment; filename=\"Bericht__Q3___.pdf\";"), "{named}");
         assert!(named.ends_with("filename*=UTF-8''Bericht%20%22Q3%22%20%C3%BC%2Epdf"), "{named}");
     }

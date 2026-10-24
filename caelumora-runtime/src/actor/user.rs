@@ -6,6 +6,7 @@ use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use caelumora_model::content::ContentId;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use caelumora_model::work::TurnId;
 use caelumora_model::approval::{ApprovalDecision, ApprovalRequest, ApprovalResponse, ApprovalRule, ApprovalRuleId, RuleDecision};
@@ -208,7 +209,9 @@ impl UserActor {
         Ok(span_id)
     }
 
-    /// Sends a message from this user into the channel, classified
+    /// Sends a message from this user into the channel - its text `content`
+    /// and the attachments `attachments` names, which the user uploaded for
+    /// the channel (`AttachmentManager::create`, issue 282) -, classified
     /// `classification` - the channel's if `None` (issue 133). A user may
     /// release what they write: classify it for a wider audience or a
     /// lower level than the channel, as long as it may flow into the
@@ -220,14 +223,17 @@ impl UserActor {
     /// caused by the message carries as well (see `crate::logging`).
     ///
     /// # Errors
-    /// An error if the channel is gone.
-    pub async fn send_message(&self, message: String, classification: Option<Classification>) -> Result<Uuid> {
+    /// `AttachmentError::NotFound` for an attachment that is not one of this
+    /// user's uploads for the channel; an error if the channel is gone.
+    pub async fn send_message(&self, content: Option<String>, classification: Option<Classification>, attachments: Vec<ContentId>) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let classification = classification.unwrap_or_else(|| channel_loop.classification());
+        let attachments = self.actor_runtime.attachment_manager().named(self.id, self.channel_id, &attachments, &[])?;
         let msg = Message {
             role: MessageRole::User,
-            mentions: channel_loop.mentions_in(&message),
-            content: Some(message),
+            mentions: content.as_deref().map(|content| channel_loop.mentions_in(content)).unwrap_or_default(),
+            content,
+            attachments,
             id: MessageId(Uuid::new_v4()),
             sender_id: self.id(),
             sender_name: self.name().to_string(),
@@ -250,7 +256,9 @@ impl UserActor {
     }
 
     /// Modifies this user's message `message` to read `content` from now on
-    /// (issue 234), classified `classification` - as it is classified now
+    /// (issue 234), with the attachments `attachments` names - those it
+    /// carries that it keeps, and uploads of the user for the channel to add
+    /// (issue 282) -, classified `classification` - as it is classified now
     /// if `None`. The modified message speaks as its author, as every
     /// message does, and only its author's actor can send it (issue 228):
     /// another's is refused here, without asking the policy. Whether they
@@ -264,8 +272,10 @@ impl UserActor {
     /// # Errors
     /// `ChannelError::MessageNotFound` if the channel has no such message,
     /// `Forbidden` if it is not this user's, `MessageRevoked` if it was
-    /// taken back; an error if the channel is gone.
-    pub async fn modify_message(&self, message: MessageId, content: String, classification: Option<Classification>) -> Result<Uuid> {
+    /// taken back; `AttachmentError::NotFound` for an attachment that is
+    /// neither the message's nor an upload of the user's for the channel; an
+    /// error if the channel is gone.
+    pub async fn modify_message(&self, message: MessageId, content: Option<String>, classification: Option<Classification>, attachments: Vec<ContentId>) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let original = self.message_to_change(&channel_loop, message).await?;
         if original.sender_id != self.id {
@@ -273,9 +283,11 @@ impl UserActor {
             return Err(ChannelError::Forbidden { action: "modifying a message of", channel: self.channel_id, refused }.into());
         }
         let classification = classification.unwrap_or_else(|| original.classification.clone());
+        let attachments = self.actor_runtime.attachment_manager().named(self.id, self.channel_id, &attachments, &original.attachments)?;
         let modified = Message {
-            mentions: channel_loop.mentions_in(&content),
-            content: Some(content),
+            mentions: content.as_deref().map(|content| channel_loop.mentions_in(content)).unwrap_or_default(),
+            content,
+            attachments,
             classification,
             timestamp: Utc::now(),
             ..original
@@ -846,7 +858,7 @@ mod tests {
     async fn send_message_asks_for_a_wakeup_and_returns_the_span_of_all_its_envelopes() {
         let (actor, _channel) = user_actor().await;
 
-        let span_id = actor.send_message("hello".to_string(), None).await.unwrap();
+        let span_id = actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
 
         let mut rx = actor.user_rx.lock().await;
         let wakeup = rx.recv().await.expect("WakeupRequested");
@@ -875,7 +887,7 @@ mod tests {
         });
         assert!(matches!(following.next().await, Ok(Shown::Started)), "its run begins first (issue 386)");
 
-        actor.send_message("hello".to_string(), None).await.unwrap();
+        actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
         for _ in ["WakeupRequested", "CompleteMessageGenerated"] {
             channel_inbox.recv().await.expect("forwarded");
         }
@@ -909,7 +921,7 @@ mod tests {
         let (output, channel_inbox) = mpsc::channel(1);
         drop(channel_inbox);
 
-        actor.send_message("hello".to_string(), None).await.unwrap();
+        actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
         let ended = time::timeout(
             Duration::from_secs(5),
             actor.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output))),

@@ -157,7 +157,7 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
     main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All).await.expect("it may run");
     let alice = main.user_actor(world.alice).expect("she takes part");
     let mut watch = alice.watch();
-    alice.send_message("@helper hello".to_string(), None).await.expect("sent");
+    alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.expect("sent");
     let answered = loop {
         let ActorEvent::CompleteMessageGenerated(answered) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
         if answered.sender_id == ActorId::Agent(helper) {
@@ -190,7 +190,7 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     let main = Arc::clone(&session.channels()[0]);
     let mut his = main.user_actor(world.bob).expect("he takes part").watch();
 
-    main.user_actor(world.alice).expect("she takes part").send_message("@helper hello".to_string(), None).await.expect("sent");
+    main.user_actor(world.alice).expect("she takes part").send_message(Some("@helper hello".to_string()), None, Vec::new()).await.expect("sent");
     let answered = loop {
         let ActorEvent::CompleteMessageGenerated(answered) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
         if answered.sender_id == ActorId::Agent(helper) {
@@ -431,7 +431,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
-    alice.send_message("@helper hello".to_string(), None).await.expect("sent");
+    alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
     let answered = loop {
         let ActorEvent::CompleteMessageGenerated(answered) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
@@ -741,7 +741,7 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut watch = main.user_actor(asker(&world)).expect("the asker takes part").watch();
     let his = main.user_actor(world.bob).expect("he takes part").watch();
-    main.user_actor(asker(&world)).unwrap().send_message("@helper ask".to_string(), None).await.expect("sent");
+    main.user_actor(asker(&world)).unwrap().send_message(Some("@helper ask".to_string()), None, Vec::new()).await.expect("sent");
     let ActorEvent::QuestionRequested(request) = shown(&mut watch, "QuestionRequested").await else { unreachable!() };
     (world, session, main, request, his)
 }
@@ -838,7 +838,7 @@ struct Asked {
 async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
     use caelumora_model::actor::ActorEvent;
     let mut watch = main.user_actor(user).expect("they take part").watch();
-    main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
+    main.user_actor(world.alice).unwrap().send_message(Some("@helper wait".to_string()), None, Vec::new()).await.expect("sent");
     let mut asked = Asked { request: None, by_rule: None, approved: None, decided_by: Vec::new() };
     let _ = time::timeout(Duration::from_millis(1500), async {
         loop {
@@ -1063,7 +1063,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     let (world, session, main, helper) = with_a_call_to_approve().await;
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
 
-    main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
+    main.user_actor(world.alice).unwrap().send_message(Some("@helper wait".to_string()), None, Vec::new()).await.expect("sent");
     let request = time::timeout(Duration::from_secs(5), async {
         loop {
             if let ActorEvent::ApprovalRequested(request) = watch.recv().await.expect("the channel runs").event {
@@ -1188,7 +1188,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
     let mut watch = main.user_actor(world.bob).expect("he takes part").watch();
 
     let (answered, asked) = world.asked(async {
-        main.user_actor(world.bob).unwrap().send_message("@helper send it".to_string(), None).await.expect("sent");
+        main.user_actor(world.bob).unwrap().send_message(Some("@helper send it".to_string()), None, Vec::new()).await.expect("sent");
         time::timeout(Duration::from_secs(5), async {
             loop {
                 if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
@@ -1256,7 +1256,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     world.manager.open(&World::as_user(world.carol), session.id()).await.expect("she opens it");
 
     let (_, asked) = world.asked(async {
-        main.user_actor(world.carol).expect("she takes part").send_message("@relay ask doer".to_string(), None).await.expect("sent");
+        main.user_actor(world.carol).expect("she takes part").send_message(Some("@relay ask doer".to_string()), None, Vec::new()).await.expect("sent");
         asked_for(&world, "alice as doer, asked by carol: CallTool yes").await;
     }).await;
     let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
@@ -1295,8 +1295,8 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let participants = if in_side { vec![ActorId::Agent(reader)] } else { vec![] };
     let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.expect("hers");
     let hers = side.user_actor(world.alice).expect("she takes part");
-    hers.send_message("only for side".to_string(), None).await.expect("said");
-    hers.send_message("for main too".to_string(), Some(Classification::PUBLIC)).await.expect("said");
+    hers.send_message(Some("only for side".to_string()), None, Vec::new()).await.expect("said");
+    hers.send_message(Some("for main too".to_string()), Some(Classification::PUBLIC), Vec::new()).await.expect("said");
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap();
     assert!(his.channel(side.id()).await.is_err(), "not his to read");
@@ -1308,7 +1308,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
 /// copied is asked once, as the channel is reached (issue 421).
 async fn asked_to_read_side(world: &World, main: &ChannelLoop, line: &str) -> Vec<String> {
     let (_, asked) = world.asked(async {
-        main.user_actor(world.bob).expect("he takes part").send_message("@reader what is on side?".to_string(), None).await.expect("sent");
+        main.user_actor(world.bob).expect("he takes part").send_message(Some("@reader what is on side?".to_string()), None, Vec::new()).await.expect("sent");
         asked_for(world, line).await;
         time::sleep(Duration::from_millis(200)).await;
     }).await;
@@ -1455,11 +1455,11 @@ async fn bob_speaks_while_alices_turn_works(others: OthersWords, alice_again: Op
     let mut watch = main.user_actor(world.bob).expect("he takes part").watch();
 
     let (_, asked) = world.asked(async {
-        main.user_actor(world.alice).expect("she takes part").send_message("@helper echo it".to_string(), None).await.expect("she asks");
+        main.user_actor(world.alice).expect("she takes part").send_message(Some("@helper echo it".to_string()), None, Vec::new()).await.expect("she asks");
         time::timeout(Duration::from_secs(5), async {
             while model.given.lock().unwrap().is_empty() { time::sleep(Duration::from_millis(10)).await }
         }).await.expect("the model is asked");
-        main.user_actor(world.bob).expect("he takes part").send_message("@helper and delete it".to_string(), None).await.expect("he speaks meanwhile");
+        main.user_actor(world.bob).expect("he takes part").send_message(Some("@helper and delete it".to_string()), None, Vec::new()).await.expect("he speaks meanwhile");
         time::timeout(Duration::from_secs(5), async {
             loop {
                 if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
@@ -1468,7 +1468,7 @@ async fn bob_speaks_while_alices_turn_works(others: OthersWords, alice_again: Op
             }
         }).await.expect("his message is said");
         if let Some(again) = alice_again {
-            main.user_actor(world.alice).expect("she takes part").send_message(again.to_string(), None).await.expect("she speaks again");
+            main.user_actor(world.alice).expect("she takes part").send_message(Some(again.to_string()), None, Vec::new()).await.expect("she speaks again");
             time::timeout(Duration::from_secs(5), async {
                 loop {
                     if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
@@ -1662,7 +1662,7 @@ async fn with_a_task_bob_asked_for(calls: &Arc<Mutex<Vec<&'static str>>>) -> (Wo
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
     let (_, asked) = world.asked(async {
-        main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+        main.user_actor(world.bob).expect("he takes part").send_message(Some("@hermes find it out".to_string()), None, Vec::new()).await.expect("and asks");
         calls_made(calls, 1).await;
     }).await;
     time::timeout(Duration::from_secs(5), async {
@@ -1753,13 +1753,13 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch();
-    main.user_actor(world.alice).expect("she takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+    main.user_actor(world.alice).expect("she takes part").send_message(Some("@hermes find it out".to_string()), None, Vec::new()).await.expect("and asks");
     calls_made(&calls, 1).await;
 
     let (_, asked) = world.asked(async {
         // Both ask while it works; both messages are said before it is free.
-        main.user_actor(world.alice).expect("she takes part").send_message("@hermes and this".to_string(), None).await.expect("she asks");
-        main.user_actor(world.bob).expect("he takes part").send_message("@hermes and that".to_string(), None).await.expect("he asks");
+        main.user_actor(world.alice).expect("she takes part").send_message(Some("@hermes and this".to_string()), None, Vec::new()).await.expect("she asks");
+        main.user_actor(world.bob).expect("he takes part").send_message(Some("@hermes and that".to_string()), None, Vec::new()).await.expect("he asks");
         let said_by = |envelope: &Envelope, sender: ActorId| envelope.context.sender_id == sender
             && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_));
         let finished_by = |envelope: &Envelope, sender: ActorId| envelope.context.sender_id == sender
@@ -1800,7 +1800,7 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     let mut events = main.user_actor(world.bob).expect("he takes part").watch();
 
     let (failed, asked) = world.asked(async {
-        main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+        main.user_actor(world.bob).expect("he takes part").send_message(Some("@hermes find it out".to_string()), None, Vec::new()).await.expect("and asks");
         time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel runs");
@@ -1834,7 +1834,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch();
-    main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+    main.user_actor(world.bob).expect("he takes part").send_message(Some("@hermes find it out".to_string()), None, Vec::new()).await.expect("and asks");
     calls_made(&calls, 1).await;
 
     let (failed, asked) = world.asked(async {

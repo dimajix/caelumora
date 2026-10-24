@@ -1,3 +1,4 @@
+use crate::attachment::AttachmentManager;
 use crate::channel::ChannelLoop;
 use crate::actor::ActorManager;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
@@ -69,6 +70,9 @@ impl ActorRuntime {
 
     /// Where the actor's outbox is kept across its runs (issue 386).
     pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> { self.runtime.runtime_manager.actor_manager() }
+
+    /// What a user's message names of what they uploaded (issue 282).
+    pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> { self.runtime.runtime_manager.attachment_manager() }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()

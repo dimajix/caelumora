@@ -62,7 +62,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     };
 
     // Modified while the turn about it runs: the turn ends as it began.
-    alice.modify_message(hello, "good evening".to_string(), None).await.expect("hers");
+    alice.modify_message(hello, Some("good evening".to_string()), None, Vec::new()).await.expect("hers");
     time::timeout(Duration::from_secs(5), async {
         while channel.message_of(hello).await.and_then(|m| m.content).as_deref() != Some("good evening") {
             time::sleep(Duration::from_millis(10)).await;
@@ -72,7 +72,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
     assert_eq!(said(answered(&mut events, agent).await), ["first"]);
 
-    alice.send_message("and now?".to_string(), None).await.unwrap();
+    alice.send_message(Some("and now?".to_string()), None, Vec::new()).await.unwrap();
     model.gate.add_permits(1);
     assert_eq!(said(answered(&mut events, agent).await), ["second"]);
     let seen = model.seen.lock().unwrap().clone();
@@ -127,7 +127,7 @@ async fn an_agent_does_not_answer_again_once_more_was_said() {
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
     let first = answered(&mut events, agent).await.pop().expect("an answer");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("and now?".to_string(), None).await.unwrap();
+    alice.send_message(Some("and now?".to_string()), None, Vec::new()).await.unwrap();
     answered(&mut events, agent).await;
 
     alice.request_retry(first.id).await.expect("asked");
@@ -222,7 +222,7 @@ async fn what_was_said_during_a_turn_asked_for_again_is_answered_in_the_one_that
     let ActorEvent::ResponseStarted { turn_id: turn } = shown_by(&mut events, agent, "ResponseStarted").await else { unreachable!() };
     let alice_id = alice_of(&context);
     let alice = channel.user_actor(alice_id).unwrap();
-    alice.send_message("and this too".to_string(), None).await.expect("taken during a turn");
+    alice.send_message(Some("and this too".to_string()), None, Vec::new()).await.expect("taken during a turn");
     time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -250,13 +250,13 @@ async fn an_older_answer_asked_for_again_leaves_the_answer_under_way_alone() {
     model.gate.add_permits(1);
     let first = answered(&mut events, agent).await.pop().expect("an answer");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("and now?".to_string(), None).await.unwrap();
+    alice.send_message(Some("and now?".to_string()), None, Vec::new()).await.unwrap();
     asked(&model, 2).await;
 
     // Asked while the next answer is under way: it waits for it, and
     // so does what is said meanwhile.
     alice.request_retry(first.id).await.expect("asked");
-    alice.send_message("one more".to_string(), None).await.unwrap();
+    alice.send_message(Some("one more".to_string()), None, Vec::new()).await.unwrap();
     time::sleep(Duration::from_millis(200)).await;
     assert_eq!(helper.state(), ActorState::Planning, "the answer under way goes on");
     model.gate.add_permits(2);
@@ -326,7 +326,7 @@ async fn what_a_user_says_during_a_turn_is_answered_after_it() {
 
     // Taken while the turn waits for its model: nothing holds the user back.
     let alice = alice_of(&context);
-    channel.user_actor(alice).unwrap().send_message("and this too".to_string(), None).await.expect("taken during a turn");
+    channel.user_actor(alice).unwrap().send_message(Some("and this too".to_string()), None, Vec::new()).await.expect("taken during a turn");
     time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -363,13 +363,13 @@ async fn an_agent_whose_turn_outlasts_its_inbox_hears_all_of_it_afterwards() {
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     for n in 0..SAID {
-        alice.send_message(format!("message {n}"), None).await.expect("taken during a turn");
+        alice.send_message(Some(format!("message {n}")), None, Vec::new()).await.expect("taken during a turn");
     }
     let said = until_said(&channel, alice_of(&context), &format!("message {}", SAID - 1)).await;
     let first = said.into_iter().find(|m| m.content.as_deref() == Some("message 0")).expect("said first");
-    alice.modify_message(first.id, "message 0, corrected".to_string(), None).await.expect("hers to modify");
+    alice.modify_message(first.id, Some("message 0, corrected".to_string()), None, Vec::new()).await.expect("hers to modify");
     alice.execute_command("mark", "@helper during").await.expect("sent to the agent");
-    alice.send_message("after the command".to_string(), None).await.expect("said");
+    alice.send_message(Some("after the command".to_string()), None, Vec::new()).await.expect("said");
     until_said(&channel, alice_of(&context), "after the command").await;
     model.gate.add_permits(2);
 
@@ -396,8 +396,8 @@ async fn what_an_agent_was_delivered_and_did_not_store_before_a_restart_is_deliv
     let (Stuck { channel, context, agent, running, .. }, model) = asking_a_gated_model(&["never given", "Answered.", "Again."]).await;
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     let hello = channel.whole_history().await.into_iter().find(|m| m.content.as_deref() == Some("hello")).expect("said");
-    alice.send_message("and this too".to_string(), None).await.expect("taken during a turn");
-    alice.modify_message(hello.id, "hello, corrected".to_string(), None).await.expect("hers to modify");
+    alice.send_message(Some("and this too".to_string()), None, Vec::new()).await.expect("taken during a turn");
+    alice.modify_message(hello.id, Some("hello, corrected".to_string()), None, Vec::new()).await.expect("hers to modify");
     time::timeout(Duration::from_secs(5), async {
         while channel.message_of(hello.id).await.and_then(|m| m.content).as_deref() != Some("hello, corrected") {
             time::sleep(Duration::from_millis(10)).await;
@@ -429,7 +429,7 @@ async fn told_while_calculating(hears: HearsDuringTurn) -> (Stuck, Arc<Gated>) {
     let mut stuck = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
     asked(&model, 1).await;
     let alice = alice_of(&stuck.context);
-    stuck.channel.user_actor(alice).unwrap().send_message("and this too".to_string(), None).await.expect("taken during a turn");
+    stuck.channel.user_actor(alice).unwrap().send_message(Some("and this too".to_string()), None, Vec::new()).await.expect("taken during a turn");
     time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = stuck.events.recv().await.expect("the channel is running");
@@ -498,7 +498,7 @@ async fn an_agent_only_chosen_is_told_so_and_one_mentioned_is_not() {
     assert!(seen[0][told].contains("Nobody mentioned you") && seen[0][told].contains("call `silence` and write nothing."), "{:?}", seen[0][told]);
     assert!(given_at(&seen[0], "hello").is_some_and(|hello| told < hello), "before the message it answers: {:?}", seen[0]);
 
-    channel.user_actor(alice_of(&context)).unwrap().send_message("@helper, are you there?".to_string(), None).await.expect("sent");
+    channel.user_actor(alice_of(&context)).unwrap().send_message(Some("@helper, are you there?".to_string()), None, Vec::new()).await.expect("sent");
     asked(&model, 2).await;
     let seen = model.seen.lock().unwrap().clone();
     assert!(given_at(&seen[1], "are you there?").is_some(), "the next turn hears the mention");
@@ -540,7 +540,7 @@ async fn an_agent_hearing_during_a_turn_hears_what_its_inbox_reads_from_the_hist
     let alice = alice_of(&context);
     let said: Vec<String> = (0..SAID).map(|n| numbered("message", n)).collect();
     for text in &said {
-        channel.user_actor(alice).unwrap().send_message(text.clone(), None).await.expect("taken during a turn");
+        channel.user_actor(alice).unwrap().send_message(Some(text.clone()), None, Vec::new()).await.expect("taken during a turn");
     }
     until_said(&channel, alice, &said[SAID - 1]).await;
     model.gate.add_permits(3);
@@ -574,11 +574,11 @@ async fn behind_a_barrier_an_agent_hearing_during_a_turn_waits_for_what_the_hist
     let Stuck { channel, context, agent, running, .. } = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
     asked(&model, 1).await;
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("before the command.".to_string(), None).await.expect("taken during a turn");
+    alice.send_message(Some("before the command.".to_string()), None, Vec::new()).await.expect("taken during a turn");
     alice.execute_command("mark", "@helper during").await.expect("sent to the agent");
     let after: Vec<String> = (0..AFTER).map(|n| numbered("after the command", n)).collect();
     for text in &after {
-        alice.send_message(text.clone(), None).await.expect("taken during a turn");
+        alice.send_message(Some(text.clone()), None, Vec::new()).await.expect("taken during a turn");
     }
     until_said(&channel, alice_of(&context), &after[AFTER - 1]).await;
     model.gate.add_permits(3);
@@ -609,7 +609,7 @@ async fn what_a_turn_heard_before_a_restart_is_neither_delivered_nor_answered_ag
     let Stuck { channel, context, agent, running, .. } = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
     asked(&model, 1).await;
     let alice = alice_of(&context);
-    channel.user_actor(alice).unwrap().send_message("and this too".to_string(), None).await.expect("taken during a turn");
+    channel.user_actor(alice).unwrap().send_message(Some("and this too".to_string()), None, Vec::new()).await.expect("taken during a turn");
     until_said(&channel, alice, "and this too").await;
     model.gate.add_permits(1);
     asked(&model, 2).await;
@@ -672,7 +672,7 @@ async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
     let alice = alice_of(&context);
     let queued = ["one", "two", "three"];
     for text in queued {
-        channel.user_actor(alice).unwrap().send_message(text.to_string(), None).await.expect("taken during a turn");
+        channel.user_actor(alice).unwrap().send_message(Some(text.to_string()), None, Vec::new()).await.expect("taken during a turn");
     }
     time::timeout(Duration::from_secs(5), async {
         let mut said = 0;
@@ -693,7 +693,7 @@ async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
 
     // Nothing is left to answer: told something new, the agent answers
     // it with the next call of its model, not with a stale one.
-    channel.user_actor(alice).unwrap().send_message("four".to_string(), None).await.expect("sent");
+    channel.user_actor(alice).unwrap().send_message(Some("four".to_string()), None, Vec::new()).await.expect("sent");
     assert_eq!(said(answered(&mut events, agent).await), ["third"]);
     let seen = model.seen.lock().unwrap().clone();
     assert_eq!(seen.len(), 3, "one call per turn, one turn per batch");
@@ -726,7 +726,7 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
 
     // The message and the request reach it together, and it was woken
     // before either: it answers (issue 222).
-    channel.user_actor(alice).unwrap().send_message("@helper, are you there?".to_string(), None).await.expect("sent");
+    channel.user_actor(alice).unwrap().send_message(Some("@helper, are you there?".to_string()), None, Vec::new()).await.expect("sent");
     let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
     loop {
         if said(answered(&mut events, agent).await) == ["I am back."] {
@@ -791,7 +791,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
     let mut shown = channel.user_actor(alice).unwrap().watch();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
     assert_eq!(told_states(&mut shown, agent, ActorState::Idle).await, [ActorState::Idle], "where it starts, before it is asked");
-    channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
+    channel.user_actor(alice).unwrap().send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
     let helper = channel.actor_of(ActorId::Agent(agent)).unwrap();
     assert_eq!(told_states(&mut shown, agent, ActorState::Sleeping).await, [ActorState::Planning, ActorState::ExecutingTools, ActorState::Reflecting, ActorState::Sleeping], "each step it moves to, once");
 
@@ -1090,7 +1090,7 @@ async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
         with_an_agent(Arc::new(FailsWhere(Mutex::new([None].into()))), Default::default()).await;
     let failed = given_up_turn(&mut events, agent).await;
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("are you there?".to_string(), None).await.unwrap();
+    alice.send_message(Some("are you there?".to_string()), None, Vec::new()).await.unwrap();
     // The message is in the channel's history once it was routed.
     time::timeout(Duration::from_secs(5), async {
         while channel.whole_history().await.len() < 2 { time::sleep(Duration::from_millis(10)).await }
@@ -1931,7 +1931,7 @@ async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its
 
     // Heard between turns; the turn it starts waits for a model that
     // does not answer any more.
-    channel.user_actor(alice_of(&context)).unwrap().send_message("the secret is 42".to_string(), None).await.unwrap();
+    channel.user_actor(alice_of(&context)).unwrap().send_message(Some("the secret is 42".to_string()), None, Vec::new()).await.unwrap();
     settled(&helper, ActorState::Planning).await;
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
@@ -1963,7 +1963,7 @@ async fn asked_to_nap(listed: Vec<ComponentDescriptor>, afterwards: Vec<Message>
     let mut stuck = with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
     answered(&mut stuck.events, stuck.agent).await;
     settled(&stuck.helper, ActorState::Idle).await;
-    stuck.channel.user_actor(alice_of(&stuck.context)).unwrap().send_message("take a nap".to_string(), None).await.unwrap();
+    stuck.channel.user_actor(alice_of(&stuck.context)).unwrap().send_message(Some("take a nap".to_string()), None, Vec::new()).await.unwrap();
     stuck
 }
 

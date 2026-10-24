@@ -233,9 +233,12 @@ pub struct AppConfig {
     /// Where the files of workspaces lie (issue 253). No storage unless
     /// configured: then no workspace can be made.
     pub workspaces: WorkspacesConfig,
-    /// Where binary content lies - the versions of artifacts (issue 282).
-    /// No storage unless configured: then nothing such can be kept.
+    /// Where binary content lies - the versions of artifacts, the attachments
+    /// of messages (issue 282). No storage unless configured: then nothing
+    /// such can be kept.
     pub content: ContentConfig,
+    /// What a message may carry besides its text (issue 282).
+    pub attachments: AttachmentsConfig,
     /// The variants of the texts given to models (issue 57), each by its
     /// name and the directory of its files, one per namespace - `default`
     /// overriding the defaults for every model. Read and checked when the
@@ -272,11 +275,30 @@ impl Default for WorkspacesConfig {
 /// The storages binary content is kept in (issue 282), each by the name
 /// what is kept there refers to it with and a backend (`dyn
 /// ContentStorage`). Whose content goes where, and how large it may be, is
-/// its owner's to configure - `artifacts.publish_to`, say.
+/// its owner's to configure - `artifacts.keep_in`, say.
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct ContentConfig {
     pub storage: BTreeMap<String, BackendConfig>,
+}
+
+/// What a message may carry besides its text (issue 282): how large one attachment may be, how many
+/// a message carries at most, which storage of content they are kept in - needed where there are
+/// several, the one there is where there is one -, and how long an upload no message named yet is
+/// kept.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct AttachmentsConfig {
+    pub max_bytes: u64,
+    pub max_per_message: usize,
+    pub keep_in: Option<String>,
+    pub unclaimed_expire_secs: u64,
+}
+
+impl Default for AttachmentsConfig {
+    fn default() -> Self {
+        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, max_per_message: 10, keep_in: None, unclaimed_expire_secs: 3600 }
+    }
 }
 
 /// The system's rules on tool calls (issue 13): each asks or denies - the
@@ -306,6 +328,7 @@ impl Default for AppConfig {
             approvals: ApprovalsConfig::default(),
             workspaces: WorkspacesConfig::default(),
             content: ContentConfig::default(),
+            attachments: AttachmentsConfig::default(),
             prompts: BTreeMap::new(),
             plugins: BTreeMap::new(),
         }

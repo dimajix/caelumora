@@ -101,6 +101,8 @@ pub enum ClassificationError {
     UnnamedCompartment,
     #[error("Compartment '{0}' is configured twice")]
     DuplicateCompartment(Compartment),
+    #[error("Compartments are given with a level")]
+    CompartmentsWithoutLevel,
 }
 
 /// A level and an audience of compartments (issue 133).
@@ -149,6 +151,20 @@ impl Classification {
             return Err(ClassificationError::PublicWithCompartments);
         }
         Ok(Self { level, compartments })
+    }
+
+    /// `level` with the audience `compartments`, or `None` - whatever it is given to decides
+    /// then - if no level is given, as for a file uploaded for a message (issue 282).
+    ///
+    /// # Errors
+    /// `CompartmentsWithoutLevel` for compartments without a level, `PublicWithCompartments`.
+    pub fn given(level: Option<Confidentiality>, compartments: impl IntoIterator<Item = Compartment>) -> Result<Option<Self>, ClassificationError> {
+        let mut compartments = compartments.into_iter().peekable();
+        match level {
+            Some(level) => Self::new(level, compartments).map(Some),
+            None if compartments.peek().is_none() => Ok(None),
+            None => Err(ClassificationError::CompartmentsWithoutLevel),
+        }
     }
 
     /// `level` without compartments.
@@ -796,6 +812,14 @@ mod tests {
         assert_eq!(Classification::new(Public, [compartment("hr")]), Err(ClassificationError::PublicWithCompartments));
         let written = serde_json::json!({"level": "public", "compartments": ["hr"]});
         assert!(serde_json::from_value::<Classification>(written).is_err(), "not even when it is read");
+    }
+
+    #[test]
+    fn a_classification_given_without_a_level_is_left_to_its_destination() {
+        assert_eq!(Classification::given(None, []), Ok(None));
+        assert_eq!(Classification::given(Some(Confidential), [compartment("hr")]), Ok(Some(classified(Confidential, &["hr"]))));
+        assert_eq!(Classification::given(None, [compartment("hr")]), Err(ClassificationError::CompartmentsWithoutLevel));
+        assert_eq!(Classification::given(Some(Public), [compartment("hr")]), Err(ClassificationError::PublicWithCompartments));
     }
 
     #[test]

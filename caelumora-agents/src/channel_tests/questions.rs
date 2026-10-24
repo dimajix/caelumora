@@ -87,7 +87,7 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
     questions_requested(&mut events).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
-    channel.user_actor(alice_of(&context)).unwrap().send_message("rather not".to_string(), None).await.unwrap();
+    channel.user_actor(alice_of(&context)).unwrap().send_message(Some("rather not".to_string()), None, Vec::new()).await.unwrap();
     let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the turn goes on without the answers");
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();

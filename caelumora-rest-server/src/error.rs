@@ -18,12 +18,14 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use caelumora_model::confidentiality::ClassificationError;
 use caelumora_model::question::QuestionError;
 use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::agent::AgentError;
+use caelumora_runtime::attachment::AttachmentError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::error::{refusal, user_message};
@@ -170,6 +172,13 @@ impl From<ValueError> for ApiError {
     }
 }
 
+impl From<ClassificationError> for ApiError {
+    /// A classification the request gives that is none (issue 282).
+    fn from(error: ClassificationError) -> Self {
+        Self::bad_request("invalid_classification", error.to_string())
+    }
+}
+
 impl From<StoreError> for ApiError {
     /// A store's error as an operation passed it on: not found is what the
     /// request named, unlike one met on the way (`From<anyhow::Error>`).
@@ -228,6 +237,7 @@ impl From<ViewError> for ApiError {
             ViewError::AgentNotFound(_) => Self::not_found("agent_not_found", detail),
             ViewError::NoContext { .. } => Self::not_found("context_not_recorded", detail),
             ViewError::Forbidden { ref refused, .. } | ViewError::NotPermitted(ref refused) => Self::refused(refused, detail),
+            ViewError::Attachment(e) => e.into(),
             ViewError::Failed(e) => e.into(),
         }
     }
@@ -250,6 +260,29 @@ impl From<WorkspaceError> for ApiError {
             WorkspaceError::Store(e) => Self::of_store(e),
             // A caller that is no user: not the client's request.
             WorkspaceError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
+        }
+    }
+}
+
+impl From<AttachmentError> for ApiError {
+    /// What uploading or reading an attachment failed with (issue 282): what does not fit is the
+    /// client's, a storage that failed or is no longer configured is unavailable.
+    fn from(error: AttachmentError) -> Self {
+        let detail = error.to_string();
+        match error {
+            AttachmentError::NotConfigured => Self::bad_request("attachments_not_configured", detail),
+            AttachmentError::ClassificationRefused => Self::bad_request("invalid_classification", detail),
+            AttachmentError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
+            AttachmentError::NotAParticipant(_) => Self::forbidden("not_a_participant", detail),
+            AttachmentError::TooLarge { .. } => Self::new(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large", detail),
+            AttachmentError::Changed => Self::bad_request("changed", detail),
+            AttachmentError::NotFound(_) => Self::not_found("attachment_not_found", detail),
+            AttachmentError::Invalid(e) => e.into(),
+            // Names the storage and what it reported: for the log alone (`user_message`).
+            AttachmentError::UnknownStorage(_) | AttachmentError::Unavailable(_) => {
+                tracing::error!("Keeping or reading an attachment failed: {detail}");
+                Self::unavailable("storage_unavailable", "The storage of attachments is unavailable; the details are in the server log")
+            }
         }
     }
 }
@@ -392,7 +425,7 @@ impl From<Error> for ApiError {
                 };
             )*};
         }
-        answer_as!(error, AgentContextError, ViewError, WorkspaceError, AgentError, GroupError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
+        answer_as!(error, AgentContextError, ViewError, WorkspaceError, AttachmentError, AgentError, GroupError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
         if error.chain().any(|e| matches!(e.downcast_ref(), Some(StoreError::NameTaken { .. }))) {
             return Self::conflict("name_taken", user_message(&error).unwrap_or_else(|| error.to_string()));
         }
@@ -481,6 +514,7 @@ mod tests {
     use serde::Deserialize;
     use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
+    use caelumora_model::content::ContentId;
     use caelumora_model::message::MessageId;
     use caelumora_model::question::QuestionId;
     use caelumora_model::store::Stored;
@@ -665,6 +699,20 @@ mod tests {
         let failed = ApiError::from(bundle(StoreError::Backend("/srv/data/component_bundle: permission denied".to_string())));
         assert_eq!((failed.status.as_u16(), failed.code.as_ref()), (500, "internal_error"));
         assert!(!failed.detail.contains("/srv"), "{}", failed.detail);
+    }
+
+    #[test]
+    fn attachments_answer_with_status_and_code() {
+        assert_eq!(answer(AttachmentError::NotConfigured), (400, "attachments_not_configured".to_string()));
+        assert_eq!(answer(AttachmentError::ClassificationRefused), (400, "invalid_classification".to_string()));
+        assert_eq!(answer(AttachmentError::NotAParticipant(ActorId::User(UserId::new()))), (403, "not_a_participant".to_string()));
+        assert_eq!(answer(AttachmentError::TooLarge { limit: 1 }), (413, "file_too_large".to_string()));
+        assert_eq!(answer(Error::new(AttachmentError::NotFound(ContentId::new()))), (404, "attachment_not_found".to_string()), "also as a user's actor fails with it");
+        assert_eq!(answer(AttachmentError::Unavailable("permission denied".to_string())), (503, "storage_unavailable".to_string()));
+        let failed = ApiError::from(ViewError::Attachment(AttachmentError::Unavailable("/srv/content: permission denied".to_string())));
+        assert_eq!(failed.status, StatusCode::SERVICE_UNAVAILABLE, "downloaded through a view");
+        assert!(!failed.detail.contains("/srv"), "for the log alone: {}", failed.detail);
+        assert_eq!(answer(ClassificationError::CompartmentsWithoutLevel), (400, "invalid_classification".to_string()));
     }
 
     #[test]

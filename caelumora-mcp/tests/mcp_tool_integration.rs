@@ -386,7 +386,7 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
 
     let main = Arc::clone(&session.channels()[0]);
     let (_, asked) = world.asked(async {
-        main.user_actor(world.bob).expect("he takes part").send_message("@helper do it".to_string(), None).await.expect("sent");
+        main.user_actor(world.bob).expect("he takes part").send_message(Some("@helper do it".to_string()), None, Vec::new()).await.expect("sent");
         asked_for(&world, "alice as helper, asked by bob: ReadSecret yes").await;
     }).await;
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();

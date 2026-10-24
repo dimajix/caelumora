@@ -111,9 +111,11 @@ its handler's doc comment.
 | `PUT …/channels/{cid}/classification`, `…/language`, `…/description`, `…/uses-workspace`, `…/approval-rules` | Change a channel: reclassify it, its language, what it is for, whether it uses the session's workspace, what it restricts of tool calls |
 | `GET …/channels/{cid}/artifacts` | The artifacts with a version published in the channel (the plugin's) |
 | `POST …/channels/{cid}/commands/{command_id}/kill` | End a command of the workspace's shell started in the channel, with what it started |
-| `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message |
+| `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message - its `content`, the `attachments` it carries by their ids, or both |
+| `POST …/attachments?name=&level=&compartments=` | Upload a file for a message the user is about to write (issue 282): the body, with its `Content-Length` (`411 length_required` without), classified by `level` and `compartments` (comma-separated) - the channel's if no level is given -; answers `201` with the reference a message names by its `id` |
+| `GET …/messages/{mid}/attachments/{aid}` | Download an attachment of a message the user sees in the history: a png, jpeg or webp image inline, anything else as a download |
 | `PUT …/read` | Mark the channel read up to a message (`message_id`): the newest of someone else the user was shown; `404 message_not_found` for one their view of the history does not reach |
-| `GET`, `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Read a message as it stands (`404 message_not_found` where the user's view of the history does not reach it); modify or take back one's own message; reclassify a message; ask the agent that said it to answer again |
+| `GET`, `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Read a message as it stands (`404 message_not_found` where the user's view of the history does not reach it); modify or take back one's own message - a modification names its `attachments` as they are to stand, so that one naming none removes them all -; reclassify a message; ask the agent that said it to answer again |
 | `POST …/approvals`, `POST …/questions/{qid}` | Approve or deny a tool call; answer or decline the questions of an agent's call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant - one not in the session yet is taken into it, too; one participant, with what its model calls used and who it is |
@@ -134,9 +136,13 @@ Some rules hold across the endpoints:
     its session.
 *   **Files are reached by their workspace alone**, never through a channel; whoever the workspace's
     access list lets read and who is cleared for its classification reads them, whoever it lets
-    change them writes (`403 read_only` otherwise). A download - of a file or of an artifact's
-    version - is always `application/octet-stream`, `Content-Disposition: attachment`, `nosniff`
-    and `no-store`: never shown inline.
+    change them writes (`403 read_only` otherwise).
+*   **A download is never shown inline** - of a file, of an artifact's version, of an attachment:
+    `application/octet-stream`, `Content-Disposition: attachment`, `nosniff` and `no-store`, so that
+    HTML or SVG never run in the web UI's origin. The one exception is an attachment that is a png,
+    jpeg or webp image, as its bytes say: served as what it is, inline, since a browser runs nothing
+    of it (issue 282). An attachment is reached through the message that carries it, by whoever
+    reads the message.
 *   **Sending into a channel is answered once it is on its way** - a message, a change to one, a
     retry, the answers to questions. Whether the channel lets it in arrives on the stream (see [Who
     follows a channel](#who-follows-a-channel)).

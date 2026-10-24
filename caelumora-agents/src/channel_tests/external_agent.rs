@@ -212,7 +212,7 @@ async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_give
     answered(&mut events, agent).await;
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("the secret is 42".to_string(), None).await.unwrap();
+    alice.send_message(Some("the secret is 42".to_string()), None, Vec::new()).await.unwrap();
     assert!(answered(&mut events, agent).await.is_empty(), "nothing new reached it, so it is not asked");
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
@@ -224,7 +224,7 @@ async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_give
     assert_eq!(contents(given), vec!["hello"], "its transcript what it was given, on whichever branch");
     assert_eq!(remote.sent.lock().unwrap().len(), 1, "the secret was not given to the remote agent");
 
-    alice.send_message("and now?".to_string(), None).await.unwrap();
+    alice.send_message(Some("and now?".to_string()), None, Vec::new()).await.unwrap();
     answered(&mut events, agent).await;
     let sent = remote.sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 2);
@@ -276,7 +276,7 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     assert_eq!(channel.whole_history().await.last().map(|m| m.id), Some(first[0].id), "in the channel's history");
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("How are you?".to_string(), None).await.unwrap();
+    alice.send_message(Some("How are you?".to_string()), None, Vec::new()).await.unwrap();
     let second = answered(&mut events, agent).await;
     assert_eq!(second[0].content.as_deref(), Some("Fine."));
 
@@ -326,7 +326,7 @@ async fn an_agent_is_given_the_times_of_messages_in_its_sessions_time_zone_as_it
     let berlin = TimeZone::new("Europe/Berlin").unwrap();
     let session = channel.session_controller_of();
     session.update_time_zone(&SecurityContext::system(), Some(berlin.as_str())).await.unwrap();
-    channel.user_actor(alice_of(&context)).unwrap().send_message("How are you?".to_string(), None).await.unwrap();
+    channel.user_actor(alice_of(&context)).unwrap().send_message(Some("How are you?".to_string()), None, Vec::new()).await.unwrap();
     let second = answered(&mut events, agent).await;
 
     let seen = channel.visible_messages(ActorId::User(alice_of(&context))).await;
@@ -363,11 +363,11 @@ async fn an_external_agent_tells_its_remote_agent_of_a_message_it_was_given_that
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     let id_of = |history: Vec<Message>, text: &str| history.into_iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).expect("said");
 
-    alice.modify_message(id_of(channel.whole_history().await, "hello"), "hello, corrected".to_string(), None).await.unwrap();
-    alice.send_message("And?".to_string(), None).await.unwrap();
+    alice.modify_message(id_of(channel.whole_history().await, "hello"), Some("hello, corrected".to_string()), None, Vec::new()).await.unwrap();
+    alice.send_message(Some("And?".to_string()), None, Vec::new()).await.unwrap();
     let second = answered(&mut events, agent).await;
     alice.revoke_message(id_of(channel.whole_history().await, "And?")).await.unwrap();
-    alice.send_message("Well?".to_string(), None).await.unwrap();
+    alice.send_message(Some("Well?".to_string()), None, Vec::new()).await.unwrap();
     answered(&mut events, agent).await;
 
     let sent = remote.sent.lock().unwrap().clone();
@@ -485,7 +485,7 @@ async fn an_external_agent_asked_several_times_while_it_answers_is_called_once_a
     let alice = alice_of(&context);
     let queued = ["one", "two", "three"];
     for text in queued {
-        channel.user_actor(alice).unwrap().send_message(text.to_string(), None).await.expect("taken while it answers");
+        channel.user_actor(alice).unwrap().send_message(Some(text.to_string()), None, Vec::new()).await.expect("taken while it answers");
     }
     time::timeout(Duration::from_secs(5), async {
         let mut said = 0;
@@ -504,7 +504,7 @@ async fn an_external_agent_asked_several_times_while_it_answers_is_called_once_a
 
     // Nothing is left to answer: told something new, the agent asks the
     // remote one about it, not about something stale.
-    channel.user_actor(alice).unwrap().send_message("four".to_string(), None).await.expect("sent");
+    channel.user_actor(alice).unwrap().send_message(Some("four".to_string()), None, Vec::new()).await.expect("sent");
     assert_eq!(said(answered(&mut events, agent).await), ["Third."]);
     let sent: Vec<Vec<Said>> = remote.sent.lock().unwrap().iter().map(|(_, message)| message.said.clone()).collect();
     let texts = |said: &[Said]| said.iter().map(|s| s.text.clone()).collect::<Vec<_>>();
@@ -528,7 +528,7 @@ async fn an_external_agent_that_fails_or_cannot_be_reached_fails_its_answer_and_
     assert!(failed.contains("hermes could not answer: out of coffee"), "{failed}");
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("Still there?".to_string(), None).await.unwrap();
+    alice.send_message(Some("Still there?".to_string()), None, Vec::new()).await.unwrap();
     let unreachable = turn_given_up(&mut events, agent).await;
     assert!(unreachable.contains("cannot reach the external agent at https://agent.example"), "{unreachable}");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
@@ -548,7 +548,7 @@ async fn what_an_external_agent_could_not_send_is_sent_with_its_next_call() {
     assert!(unreachable.contains("cannot reach the external agent"), "{unreachable}");
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("Still there?".to_string(), None).await.unwrap();
+    alice.send_message(Some("Still there?".to_string()), None, Vec::new()).await.unwrap();
     answered(&mut events, agent).await;
     let sent = remote.sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
@@ -578,7 +578,7 @@ async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_t
     let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), |_| None).await.expect("the external agent can be run");
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
     let first = answered(&mut events, agent).await;
-    channel.user_actor(alice_of(&context)).unwrap().send_message("How are you?".to_string(), None).await.unwrap();
+    channel.user_actor(alice_of(&context)).unwrap().send_message(Some("How are you?".to_string()), None, Vec::new()).await.unwrap();
     answered(&mut events, agent).await;
 
     let sent = remote.sent.lock().unwrap().clone();
@@ -632,7 +632,7 @@ async fn the_prompt_parts_an_external_agent_could_not_send_are_sent_with_its_nex
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
     turn_given_up(&mut events, agent).await;
 
-    channel.user_actor(alice_of(&context)).unwrap().send_message("Still there?".to_string(), None).await.unwrap();
+    channel.user_actor(alice_of(&context)).unwrap().send_message(Some("Still there?".to_string()), None, Vec::new()).await.unwrap();
     answered(&mut events, agent).await;
     let sent = remote.sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
@@ -808,7 +808,7 @@ async fn an_external_agent_that_asked_back_is_answered_within_the_same_task() {
     assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::InputRequired)]);
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("Bonn".to_string(), None).await.unwrap();
+    alice.send_message(Some("Bonn".to_string()), None, Vec::new()).await.unwrap();
     let answer = answered(&mut events, agent).await;
     assert_eq!(answer[0].content.as_deref(), Some("Sunny in Bonn."));
     assert_eq!(remote.sent.lock().unwrap()[1].1.answers, Some(task("t-1")), "the reply continues the task that asked");
@@ -833,7 +833,7 @@ async fn a_task_taken_up_again_is_done_as_the_call_that_took_it_up_though_the_re
     answered(&mut events, agent).await;
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    alice.send_message("Bonn".to_string(), None).await.unwrap();
+    alice.send_message(Some("Bonn".to_string()), None, Vec::new()).await.unwrap();
     let (request, said) = time::timeout(Duration::from_secs(5), async {
         let mut answers = Vec::new();
         while answers.len() < 2 {
@@ -1278,11 +1278,11 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     };
 
     let waiting = answered(&mut events);
-    channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
+    channel.user_actor(alice.id).unwrap().send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
     waiting.await;
     let waiting = answered(&mut events);
     channel.add_participant(&alice_ctx, ActorId::User(bob.id), HistoryAccess::All).await.unwrap();
-    channel.user_actor(alice.id).unwrap().send_message("bob is here".to_string(), None).await.unwrap();
+    channel.user_actor(alice.id).unwrap().send_message(Some("bob is here".to_string()), None, Vec::new()).await.unwrap();
     waiting.await;
 
     let sent = remote.sent.lock().unwrap().clone();
@@ -1302,7 +1302,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     channel.remove_participant(&alice_ctx, ActorId::User(bob.id)).await.unwrap();
     channel.add_participant(&alice_ctx, ActorId::Agent(hermes.id), HistoryAccess::All).await.unwrap();
     let waiting = answered(&mut events);
-    channel.user_actor(alice.id).unwrap().send_message("welcome back".to_string(), None).await.unwrap();
+    channel.user_actor(alice.id).unwrap().send_message(Some("welcome back".to_string()), None, Vec::new()).await.unwrap();
     waiting.await;
     let sent = remote.sent.lock().unwrap().clone();
     let told = sent[2].1.said.iter().map(|said| said.text.clone()).collect::<Vec<_>>();

@@ -40,6 +40,7 @@ pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
 
+use crate::attachment::{AttachmentError, AttachmentManager};
 use crate::actor::ActorManager;
 use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
@@ -143,6 +144,10 @@ pub enum ViewError {
     /// Only agents have a context.
     #[error("There is nothing {actor} saw: it is no agent, or no longer exists")]
     NoContext { actor: ActorId },
+    /// An attachment of a message the viewer sees could not be read: it carries none such, or its
+    /// storage failed (issue 282).
+    #[error(transparent)]
+    Attachment(#[from] AttachmentError),
     /// Reaching it failed; the cause is in the log.
     #[error("Reading failed")]
     Failed(#[source] Error),
@@ -208,6 +213,8 @@ pub struct Views {
     controllers: Arc<ControllerManager>,
     /// Where a user follows a channel through, running or not (issue 386).
     actors: Arc<ActorManager>,
+    /// Where the attachments of messages are read (issue 282).
+    attachments: Arc<AttachmentManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -227,6 +234,7 @@ impl Views {
             workspaces: Arc::clone(runtime.workspace_manager()),
             controllers: Arc::clone(runtime.controller_manager()),
             actors: Arc::clone(runtime.actor_manager()),
+            attachments: Arc::clone(runtime.attachment_manager()),
             running,
             viewer,
         }
@@ -301,6 +309,10 @@ impl Views {
 
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> {
         &self.controllers
+    }
+
+    pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> {
+        &self.attachments
     }
 
     /// Every session the viewer may read, in the order the store lists
@@ -1438,10 +1450,13 @@ mod tests {
     #[tokio::test]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it() {
         use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_model::content::{ContentId, ContentRef};
+        use caelumora_model::digest;
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::privacy::SessionPrivacy;
+        use caelumora_model::value::text::FileName;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (store, manager) = owned_runtime(ConfidentialityRules::new(compartments));
@@ -1471,7 +1486,11 @@ mod tests {
         let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(classification.clone()) };
         let mut state = store.state_store().get_channel_state(secret.id).await.unwrap();
         let plan = said("the plan", &secret.classification);
-        state.history.extend(vec![plan.clone(), said("the date", &public.classification)]);
+        // Attached to what was released, each with its own label (issue 282) - kept nowhere.
+        let attached = |name: &str, classification: &Classification| ContentRef { id: ContentId::new(), name: FileName::new(name).unwrap(), media_type: "text/plain".to_string(), size: 0, digest: digest::content(b""), classification: classification.clone(), storage: "nowhere".to_string(), key: name.to_string() };
+        let (agenda, minutes) = (attached("agenda.txt", &public.classification), attached("minutes.txt", &secret.classification));
+        let date = Message { attachments: vec![agenda.clone(), minutes.clone()], ..said("the date", &public.classification) };
+        state.history.extend(vec![plan.clone(), date.clone()]);
         let ended = HistoryEntry::TurnGivenUp { turn_id: TurnId::new(), actor: ActorId::Agent(helper.id), reason: GivenUpReason::Left, at: Utc::now() };
         state.history.record(ended);
         store.state_store().put_channel_state(secret.id, &mut state).await.unwrap();
@@ -1503,6 +1522,11 @@ mod tests {
         let page = secret_from_team.history_page(None, 10).await.unwrap();
         assert_eq!(page.entries().filter_map(HistoryEntry::said).filter_map(|m| m.content.as_deref()).collect::<Vec<_>>(), ["the date"], "a page of what was released (issue 218)");
         assert!(matches!(secret_from_team.message(plan.id).await, Err(ViewError::NoChannelNamed(_))), "what was not released is not found");
+        let read = |id| secret_from_team.attachment(date.id, id);
+        assert!(matches!(read(minutes.id).await, Err(ViewError::Attachment(AttachmentError::NotFound(_)))), "not released by its own label, though its message is");
+        assert!(matches!(read(agenda.id).await, Err(ViewError::Attachment(AttachmentError::UnknownStorage(_)))), "released, and read from its storage");
+        let whole_secret = manager.views(Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, secret.id))).session(session.id).await.unwrap().channel(secret.id).await.unwrap();
+        assert!(matches!(whole_secret.attachment(date.id, minutes.id).await, Err(ViewError::Attachment(AttachmentError::UnknownStorage(_)))), "read as a whole: every one");
         let notes = secret_from_team.notes().await.unwrap();
         assert_eq!(notes[0].notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["noted openly"]);
         let refused = secret_from_team.participant(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not as a whole");
@@ -1768,9 +1792,9 @@ mod tests {
 
         let writer = hr.user_actor(alice.id).expect("the creator takes part");
         let mut events = writer.watch();
-        writer.send_message("for HR".to_string(), None).await.unwrap();
-        writer.send_message("for finance too".to_string(), Some(classified(Confidentiality::Internal, &["hr", "finance"]))).await.unwrap();
-        writer.send_message("too secret".to_string(), Some(classified(Confidentiality::Confidential, &["hr"]))).await.expect("sent: the channel decides");
+        writer.send_message(Some("for HR".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(Some("for finance too".to_string()), Some(classified(Confidentiality::Internal, &["hr", "finance"])), Vec::new()).await.unwrap();
+        writer.send_message(Some("too secret".to_string()), Some(classified(Confidentiality::Confidential, &["hr"])), Vec::new()).await.expect("sent: the channel decides");
         assert_eq!(rejection(&mut events).await.1, Rejection::ClassificationRefused, "above the channel, and its writer is told (issue 304)");
         let history = history_of(&hr, 2).await;
         assert_eq!(history[0].classification, classified(Confidentiality::Internal, &["hr"]), "the channel's, unless classified otherwise");
@@ -1837,7 +1861,7 @@ mod tests {
         assert_eq!(participant().await.turn_under_way, None, "nothing under way yet");
 
         let started = shown(&mut events, "ResponseStarted");
-        channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
+        channel.user_actor(alice.id).unwrap().send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
         let ActorEvent::ResponseStarted { turn_id } = started.await else { unreachable!() };
         assert_eq!(participant().await.turn_under_way, Some(turn_id), "the turn its start announced");
 

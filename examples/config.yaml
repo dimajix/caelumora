@@ -83,18 +83,27 @@ workspaces:
 #      destination: { level: confidential }
 
 # Where binary content lies (issue 282) - the versions of published
-# artifacts: storages by name, each with its type. `local` keeps a file per
-# key under `root`. A storage takes nothing classified above its
-# `destination`, if it has one.
+# artifacts, the attachments of messages: storages by name, each with its
+# type. `local` keeps a file per key under `root`. A storage takes nothing
+# classified above its `destination`, if it has one.
 content:
   storage:
     kept:
       type: local
       root: "local/content"
 
+# What a message may carry besides its text (issue 282): how large one
+# attachment may be, how many a message carries, which storage of content
+# they are kept in where there are several (`keep_in`), and how long an
+# upload waits for the message that names it.
+attachments:
+  max_bytes: 52428800
+  max_per_message: 10
+  unclaimed_expire_secs: 3600
+
 # Published artifacts (issue 271): how large a version may be, and which
 # storage of content new artifacts go to where there are several
-# (`publish_to`).
+# (`keep_in`).
 artifacts:
   max_bytes: 52428800
 

@@ -132,9 +132,9 @@ their notes and histories, and the agent's own private notes of the other channe
 *   **Who may read what.** Another channel is reached if the agent's owner may read it or the agent
     takes part in it itself (`GetChannel`), as a user reaches a channel they may read. Of a channel
     reached, the agent reads it as a whole if it may be copied into its own by their
-    classifications (`may_copy_information`); otherwise entry by entry - message, note - as each
-    entry's classification may be copied. An entry released below its channel is read where the
-    channel as a whole is not (see
+    classifications (`may_copy_information`); otherwise entry by entry - message, its
+    attachments, note - as each entry's classification may be copied. An entry released below its
+    channel is read where the channel as a whole is not (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel)), but no release reaches an
     agent that may not reach its channel.
 *   **What the agent knows itself.** Its private notes of the session's other channels and its

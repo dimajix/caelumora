@@ -10,6 +10,7 @@ use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::value::text::FileName;
 use serde::{Deserialize, Serialize};
+use std::str;
 
 define_id!(ContentId);
 
@@ -38,6 +39,50 @@ pub struct ContentRef {
     pub key: String,
 }
 
+impl ContentRef {
+    /// Whether it is an image every model API takes and a browser shows without running anything:
+    /// png, jpeg or webp (issue 282) - given along to a model that sees, downloaded inline.
+    pub fn is_image(&self) -> bool {
+        matches!(self.media_type.as_str(), PNG | JPEG | WEBP)
+    }
+}
+
+const PNG: &str = "image/png";
+const JPEG: &str = "image/jpeg";
+const WEBP: &str = "image/webp";
+
+/// What content is, as its first bytes say (issue 282) - never as whoever hands it over claims:
+/// png, jpeg, webp, gif, pdf or zip (the Office formats among it) by their signatures, plain text
+/// where `head` is UTF-8 without control characters other than whitespace, and
+/// `application/octet-stream` for anything else. `head` is what came first, a few hundred bytes;
+/// a character cut off at its end does not count against the text.
+pub fn media_type(head: &[u8]) -> &'static str {
+    match head {
+        [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', ..] => PNG,
+        [0xff, 0xd8, 0xff, ..] => JPEG,
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => WEBP,
+        [b'G', b'I', b'F', b'8', b'7' | b'9', b'a', ..] => "image/gif",
+        [b'%', b'P', b'D', b'F', b'-', ..] => "application/pdf",
+        [b'P', b'K', 3, 4, ..] => "application/zip",
+        _ if is_text(head) => "text/plain",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Whether `head` reads as text: UTF-8, but for a character cut off at its end, without a control
+/// character other than whitespace.
+fn is_text(head: &[u8]) -> bool {
+    let text = match str::from_utf8(head) {
+        Ok(text) => text,
+        Err(e) if e.error_len().is_none() => match str::from_utf8(&head[..e.valid_up_to()]) {
+            Ok(text) => text,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+    !text.chars().any(|c| c.is_control() && !c.is_whitespace())
+}
+
 /// References for the tests of this crate.
 #[cfg(test)]
 pub(crate) mod testing {
@@ -58,5 +103,27 @@ pub(crate) mod testing {
             storage: "kept".to_string(),
             key: format!("attachments/{id}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use testing::make_content_ref;
+
+    #[test]
+    fn what_content_is_is_told_by_its_first_bytes() {
+        assert_eq!(media_type(b"\x89PNG\r\n\x1a\n...."), "image/png");
+        assert_eq!(media_type(b"\xff\xd8\xff\xe0..JFIF"), "image/jpeg");
+        assert_eq!(media_type(b"RIFF\x10\x00\x00\x00WEBPVP8 "), "image/webp");
+        assert_eq!(media_type(b"GIF89a.."), "image/gif");
+        assert_eq!(media_type(b"%PDF-1.7\n"), "application/pdf");
+        assert_eq!(media_type(b"PK\x03\x04 xlsx"), "application/zip");
+        assert_eq!(media_type("a,b\n1,2\nZoë".as_bytes()), "text/plain");
+        assert_eq!(media_type(&"Zoë".as_bytes()[..3]), "text/plain", "a character cut off at the end of the head");
+        assert_eq!(media_type(b"\x00\x01binary"), "application/octet-stream");
+        assert_eq!(media_type(b"<svg onload=..."), "text/plain", "what claims to be an image is text, never an image");
+        let image = |media_type: &str| ContentRef { media_type: media_type.to_string(), ..make_content_ref("x", b"x") };
+        assert!(image("image/png").is_image() && image("image/webp").is_image() && !image("image/gif").is_image() && !image("text/plain").is_image());
     }
 }

@@ -350,13 +350,14 @@ pub(super) async fn send_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.send_message(payload.content, payload.classification).await?;
+    let span_id = user_actor.send_message(payload.content, payload.classification, payload.attachments).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
 
 /// Modifies the authenticated user's message `mid` (issue 234): it reads as
-/// `content` from now on, in its place. Answered once it is on its way; the
+/// `content` from now on, in its place, with the attachments named (issue
+/// 282). Answered once it is on its way; the
 /// channel's stream shows it as `MessageModified`.
 pub(super) async fn modify_message(
     State(state): State<Arc<AppState>>,
@@ -366,7 +367,7 @@ pub(super) async fn modify_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.modify_message(MessageId(mid), payload.content, payload.classification).await?;
+    let span_id = user_actor.modify_message(MessageId(mid), payload.content, payload.classification, payload.attachments).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }

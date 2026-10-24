@@ -1,5 +1,6 @@
 use crate::actor::AgentKinds;
 use crate::actor::ActorManager;
+use crate::attachment::AttachmentManager;
 use crate::channel::Participation;
 use crate::component::ComponentRegistry;
 use crate::content::ContentStorage;
@@ -61,6 +62,7 @@ pub struct RuntimeBuilder {
     /// The storages of content (issue 282), which their owners - a
     /// plugin's manager - are made with.
     content_storages: Arc<NamedBackends<dyn ContentStorage>>,
+    attachments: Arc<AttachmentManager>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopeMember>>,
@@ -98,7 +100,8 @@ impl RuntimeBuilder {
     /// of facets of which an agent has one (`component_defaults`, issue 99),
     /// what the system restricts of tool calls (`approvals`, issue 13), the
     /// storages workspaces are made in (`workspaces`, issue 253), the
-    /// storages of content (`content`, issue 282), the user providers
+    /// storages of content (`content`, issue 282), what a message may carry
+    /// (`attachments`, issue 282), the user providers
     /// (`users`) and the sections of the plugins.
     /// `component_registry` holds the component kinds agents and sessions are
     /// built from - `ComponentRegistry::built_in`, to which a test may add
@@ -134,6 +137,7 @@ impl RuntimeBuilder {
         let command_reaper = CommandReaper::new(&entity_stores, &event_bus, Arc::clone(&controller_manager), Arc::clone(&storages))?;
         let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), storages, &config.workspaces));
         let content_storages = Arc::new(backends.make_named::<dyn ContentStorage>("storage of content", &config.content.storage, &backend_services)?);
+        let attachments = Arc::new(AttachmentManager::new(Arc::clone(&confidentiality), Arc::clone(&content_storages), &config.attachments)?);
         // Users are recorded and their changes announced on the event bus
         // (issue 306).
         let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
@@ -173,6 +177,7 @@ impl RuntimeBuilder {
             workspaces,
             command_reaper,
             content_storages,
+            attachments,
             groups,
             agents,
             scope_members,
@@ -379,6 +384,7 @@ impl RuntimeBuilder {
             agent_states: self.agent_states,
             workspaces: self.workspaces,
             command_reaper: self.command_reaper,
+            attachments: self.attachments,
             groups: self.groups,
             agents: self.agents,
             actors: Arc::new(ActorManager::new()),

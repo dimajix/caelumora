@@ -18,7 +18,6 @@ use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
@@ -31,16 +30,15 @@ use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::component::{ComponentError, ComponentResult};
 use caelumora_runtime::backend::NamedBackends;
-use caelumora_runtime::content::{ContentError, ContentStorage};
+use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
 use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
 use caelumora_runtime::terminal::ByteStream;
 use chrono::{DateTime, Utc};
-use futures::StreamExt;
 use serde::Deserialize;
 use std::fmt;
-use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use std::slice;
@@ -91,6 +89,7 @@ impl From<ContentError> for ArtifactError {
     fn from(error: ContentError) -> Self {
         match error {
             ContentError::TooLarge { limit } => Self::TooLarge { limit },
+            ContentError::Changed => Self::Changed,
             ContentError::Unavailable(what) => Self::Unavailable(what),
             error @ (ContentError::InvalidKey(_) | ContentError::NotFound(_)) => Self::Unavailable(error.to_string()),
         }
@@ -107,12 +106,12 @@ pub struct ArtifactsConfig {
     pub max_bytes: u64,
     /// The storage new artifacts are made in; needed where there are
     /// several, the one there is where there is one.
-    pub publish_to: Option<String>,
+    pub keep_in: Option<String>,
 }
 
 impl Default for ArtifactsConfig {
     fn default() -> Self {
-        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, publish_to: None }
+        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, keep_in: None }
     }
 }
 
@@ -143,7 +142,7 @@ pub struct ArtifactManager {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     storages: Arc<NamedBackends<dyn ContentStorage>>,
     /// The storage new artifacts are made in.
-    publish_to: Option<String>,
+    keep_in: Option<String>,
     max_bytes: u64,
     /// Held while a document and its content are changed together, so that
     /// two versions of one artifact are not numbered alike.
@@ -152,7 +151,7 @@ pub struct ArtifactManager {
 
 impl fmt::Debug for ArtifactManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ArtifactManager").field("publish_to", &self.publish_to).finish_non_exhaustive()
+        f.debug_struct("ArtifactManager").field("keep_in", &self.keep_in).finish_non_exhaustive()
     }
 }
 
@@ -165,8 +164,8 @@ impl ArtifactManager {
     /// `ComponentError::InvalidConfig` where `config` names no storage of
     /// `storages`, or none among several.
     pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn ContentStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
-        let publish_to = storages.chosen(config.publish_to.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("artifacts.publish_to {why}")))?.map(String::from);
-        Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, publish_to, max_bytes: config.max_bytes, writing: Mutex::new(()) })
+        let keep_in = storages.chosen(config.keep_in.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?.map(String::from);
+        Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, keep_in, max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
     /// The store of artifacts, which the views read in the viewer's name.
@@ -176,7 +175,7 @@ impl ArtifactManager {
 
     /// Whether artifacts can be published: a storage is configured.
     pub fn is_configured(&self) -> bool {
-        self.publish_to.is_some()
+        self.keep_in.is_some()
     }
 
     /// The storage of content `name`.
@@ -229,30 +228,13 @@ impl ArtifactManager {
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
                 self.access_policy.require(ctx, ActionType::create(Artifact::KIND, &attributes), StoreError::PermissionDenied).await?;
-                (ArtifactId::new(), 1, self.publish_to.clone().ok_or(ArtifactError::NotConfigured)?)
+                (ArtifactId::new(), 1, self.keep_in.clone().ok_or(ArtifactError::NotConfigured)?)
             }
         };
         let storage = self.storage(&storage_name)?;
         self.confidentiality.require_storable(ctx, classification, storage.destination(), || ArtifactError::StorageNotCleared(storage_name.clone()))?;
 
-        if size > self.max_bytes {
-            return Err(ArtifactError::TooLarge { limit: self.max_bytes });
-        }
-        let digest = Arc::new(SyncMutex::new(ContentDigest::new(size)));
-        let digesting = Arc::clone(&digest);
-        let content: ByteStream = Box::pin(content.inspect(move |chunk| {
-            if let Ok(chunk) = chunk {
-                digesting.lock().unwrap_or_else(PoisonError::into_inner).update(chunk);
-            }
-        }));
-        let kept = storage.put(&version_key(id, number), content, self.max_bytes).await?;
-        let digest = match Arc::try_unwrap(digest) {
-            Ok(digest) if kept == size => digest.into_inner().unwrap_or_else(PoisonError::into_inner).finish(),
-            _ => {
-                self.forget(storage, id, number, existing.is_none()).await;
-                return Err(ArtifactError::Changed);
-            }
-        };
+        let digest = keep_digested(storage.as_ref(), &version_key(id, number), size, content, self.max_bytes).await?;
 
         // Read by the participants of the channel it is published in (issues 23,
         // 316) - the group of its participants (issue 286) -, who read the

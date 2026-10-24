@@ -354,6 +354,10 @@ What changes an entity is split by what it changes:
     and its manager changes its attributes too. A controller is made for a kind once
     something holds it live, not for the sake of this split.
 
+An attachment is no entity: it is part of its message, read and taken back with it. The lifecycle
+of its content is the `AttachmentManager`'s: kept as it is uploaded for a message, claimed by the
+message as the channel admits it, and removed with the channel's history (issue 282).
+
 ## Security and confidentiality
 
 Two questions are kept apart:

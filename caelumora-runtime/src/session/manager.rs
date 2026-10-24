@@ -28,6 +28,7 @@ use caelumora_model::workspace::WorkspaceChoice;
 use crate::scoped::ScopedEntities;
 use crate::workspace::reaper::CommandReaper;
 use crate::agent::AgentManager;
+use crate::attachment::AttachmentManager;
 use dashmap::DashMap;
 use futures::future::join_all;
 use std::collections::HashSet;
@@ -75,6 +76,8 @@ pub struct SessionManager {
     /// What deletes and restores the groups of its participants with it
     /// (issue 348).
     groups: Arc<GroupManager>,
+    /// What removes the attachments of the channels of a session purged (issue 282).
+    attachments: Arc<AttachmentManager>,
 }
 
 /// A session as [`SessionManager::find`] found it for a context that may
@@ -120,6 +123,7 @@ impl SessionManager {
             agents: Arc::clone(runtime_manager.agent_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
             groups: Arc::clone(runtime_manager.group_manager()),
+            attachments: Arc::clone(runtime_manager.attachment_manager()),
             runtime_manager,
         }
     }
@@ -684,7 +688,8 @@ impl SessionManager {
     /// Removes the deleted session `id` for good on behalf of `context`
     /// (issue 164): its document, and - in the runtime's name, since the
     /// purge was permitted - the documents and the state of its channels,
-    /// those it listed and those deleted from it before. Only what was
+    /// those it listed and those deleted from it before, and the content of
+    /// their attachments (issue 282). Only what was
     /// deleted is purged; the store asks `Purge`. Under the lock of
     /// deleting and restoring it, so that what is restored meanwhile is not
     /// purged.
@@ -704,10 +709,11 @@ impl SessionManager {
         let of_it = Query::filtered(Filter::eq(ChannelField::Session, id));
         channels.extend(self.stores.channels.list_deleted(&SecurityContext::system(), &of_it).await?.items.into_iter().map(|c| c.id));
         // The state lives in the `StateStore`, which may be another store
-        // than the session's.
+        // than the session's; the attachments its history carries go with it.
         for channel_id in channels {
             purge_channel_document(&self.stores, channel_id).await?;
             self.state_store.delete_channel_state(channel_id).await?;
+            self.attachments.purge(channel_id).await?;
         }
         // And what lay in its scope and in its channels' (issue 178), and the
         // group of its participants, as a channel's (issue 348).
@@ -1178,6 +1184,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_purged_session_takes_the_attachments_of_its_channels_along() {
+        use crate::attachment::AttachmentError;
+        use crate::testing::World;
+        use bytes::Bytes;
+        use futures::stream;
+
+        let world = World::new().await;
+        let session = world.shared_session(&[], &[]).await;
+        let (alice, system) = (World::as_user(world.alice), SecurityContext::system());
+        let main = world.manager.views(Viewer::new(alice.clone())).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
+        let attachments = world.runtime.attachment_manager();
+        let uploaded = attachments.create(&main, "a.txt", None, (1, Box::pin(stream::iter([Ok(Bytes::from_static(b"a"))])))).await.unwrap();
+
+        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.manager.delete(&alice, session.id()).await.unwrap();
+        assert!(attachments.content_of(&uploaded).await.is_ok(), "kept while the session can be restored");
+        world.manager.purge(&system, session.id()).await.unwrap();
+        assert!(matches!(attachments.content_of(&uploaded).await, Err(AttachmentError::NotFound(_))), "gone with its channel's state");
+    }
+
+    #[tokio::test]
     async fn what_lies_in_a_scope_goes_with_its_session_or_channel() {
         use caelumora_model::agent::{Personality, PersonalityId};
         use caelumora_model::component::ComponentBundle;
@@ -1318,7 +1345,7 @@ mod tests {
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent])).await.unwrap();
         let mut events = channel.observe();
-        channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
+        channel.user_actor(alice.id).unwrap().send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
         time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");

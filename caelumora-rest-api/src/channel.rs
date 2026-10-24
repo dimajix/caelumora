@@ -10,7 +10,8 @@ use caelumora_model::agent::PersonalityKind;
 use caelumora_model::approval::{ApprovalRequest, ApprovalRule};
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::command::Command;
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, Confidentiality};
+use caelumora_model::content::ContentId;
 use caelumora_model::message::{Message, MessageId, TokenUsage};
 use caelumora_model::note::Note;
 use caelumora_model::question::{QuestionRequest, Response};
@@ -344,15 +345,32 @@ impl ChannelParticipantResponse {
 }
 
 /// What a user writes: a new message, or the new version of one of their
-/// messages (issue 234).
+/// messages (issue 234) - its text, and what it carries besides (issue 282).
 #[derive(Debug, Deserialize)]
 pub struct MessageRequest {
-    pub content: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    /// The attachments it carries, in their order: each uploaded for the
+    /// channel before (`POST …/attachments`), or - of a message modified -
+    /// one it carries already. None unless given.
+    #[serde(default)]
+    pub attachments: Vec<ContentId>,
     /// How the message is classified (issue 133) - if absent, a new one as
     /// the channel is, a modified one as it is now. Another than the
     /// channel's releases it: to a wider audience or a lower level, as long
     /// as it may flow into the channel.
     pub classification: Option<Classification>,
+}
+
+/// What a file uploaded for a message is (issue 282): its name, and how it
+/// is classified - `level` and the `compartments`, separated by commas; the
+/// channel's if no level is given.
+#[derive(Debug, Deserialize)]
+pub struct AttachmentQuery {
+    pub name: String,
+    pub level: Option<Confidentiality>,
+    #[serde(default)]
+    pub compartments: String,
 }
 
 /// The turn of a participant a request is about, as `ResponseStarted` and

@@ -3,6 +3,8 @@
 use super::participant::{participant_state, AgentParticipant, ParticipantState};
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::actor::user::ChannelWatch;
+use crate::attachment::AttachmentError;
+use crate::terminal::ByteStream;
 use crate::channel::ChannelLoop;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
@@ -14,6 +16,7 @@ use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::content::{ContentId, ContentRef};
 use caelumora_model::confidentiality::{Reading, Place};
 use caelumora_model::digest::Digest;
 use caelumora_model::history::{HistoryEntry, HistoryPage, Reader};
@@ -317,6 +320,24 @@ impl ChannelView {
             _ if self.reading != Reading::Whole => Err(self.nothing_released()),
             _ => Err(ViewError::MessageNotFound { channel: self.channel.id, message: id }),
         }
+    }
+
+    /// The attachment `id` of message `message`, if the viewer sees the message and may read what
+    /// it carries (issue 282), with its content and the size its storage gives it - not the
+    /// reference's, so that what a response says it sends is what it sends, as
+    /// `ArtifactView::content` answers.
+    ///
+    /// # Errors
+    /// As `message`; `Attachment` with `NotFound` if it carries no such attachment or one the
+    /// viewer may not read - a channel read entry by entry releases each by its own label -, or
+    /// the storage has nothing under its key; `UnknownStorage`, `Unavailable`.
+    pub async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<(ContentRef, u64, ByteStream)> {
+        let message = self.message(message).await?;
+        let attachment = message.attachments.into_iter()
+            .find(|attachment| attachment.id == id && self.may_read_entry(&attachment.classification))
+            .ok_or(AttachmentError::NotFound(id))?;
+        let (size, content) = self.views().attachment_manager().content_of(&attachment).await?;
+        Ok((attachment, size, content))
     }
 
     /// Whoever reads the history: an agent reads as itself, not as the owner

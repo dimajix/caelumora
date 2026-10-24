@@ -95,7 +95,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
     let mut watch = main.user_actor(world.bob).expect("he takes part").watch();
 
     let (answered, asked) = world.asked(async {
-        main.user_actor(world.bob).unwrap().send_message("@helper write it".to_string(), None).await.expect("sent");
+        main.user_actor(world.bob).unwrap().send_message(Some("@helper write it".to_string()), None, Vec::new()).await.expect("sent");
         time::timeout(Duration::from_secs(5), async {
             loop {
                 if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {

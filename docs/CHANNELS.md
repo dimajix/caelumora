@@ -381,6 +381,20 @@ covered by its digest. What a tool gave its model besides its text is a referenc
 but no attachment: it stays with the tool's result (`ToolCallResult::media`), seen rather than said,
 and is withheld with it.
 
+A person attaches a file in two steps. First they upload it for the channel
+(`AttachmentManager::create`): as a participant of the channel, classified as they say - the
+channel's classification unless they say otherwise - so that it may flow into the channel and into
+the storage it is kept in. What it is is told by its first bytes, never by its name or by what
+the client claims; any file may be uploaded. It is kept at once, under `attachments/<channel>/<id>`,
+and waits for the message that names it, in memory, as long as `attachments.unclaimed_expire_secs`
+says; one that waited longer is removed as the next upload is kept. Then their message names it by
+its id: their actor puts the reference into the message (`AttachmentManager::named`), and the
+channel admits it only as it was uploaded - by the sender, for this channel, not yet claimed, at
+most `attachments.max_per_message`, none twice, each flowing into the channel - and claims it as it
+lets the message in: no other message can carry it then. A modified message keeps what it carried
+and may add what its author uploaded. What a removed attachment was stays in the storage, as what
+was said stays in the history; every attachment of a session goes when the session is purged.
+
 ## Changing what was said
 
 What was said can be changed by its author, but never rewritten: a message is *modified* - it reads

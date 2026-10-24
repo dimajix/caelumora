@@ -127,7 +127,7 @@ pub async fn asked_for_a_call(world: &World, kind: &str, present: &[&str], done:
         fs::write(place.join(file), "present").unwrap();
     }
     let (_, asked) = world.asked(async {
-        main.user_actor(world.bob).unwrap().send_message("@helper do it".to_string(), None).await.expect("sent");
+        main.user_actor(world.bob).unwrap().send_message(Some("@helper do it".to_string()), None, Vec::new()).await.expect("sent");
         timeout(Duration::from_secs(5), async {
             while !done(world.files.path(), &place) {
                 sleep(Duration::from_millis(10)).await;

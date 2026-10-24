@@ -265,7 +265,8 @@ it follows at their next use. Nothing in it is fitted - there is nothing inside 
 ## Reading another channel
 
 Reading from another channel is decided per entry: per message of its history, per note, per memory
-entry. The policy is asked once what of the other channel may be copied into the reading one,
+entry - and per attachment of a message, by its own label, also where its message is released (issue
+282). The policy is asked once what of the other channel may be copied into the reading one,
 `ConfidentialityPolicy::copyable`: the source channel and its session as privacy sees it
 (`SessionPrivacy`), and the reading `Place` - its channel, its classification, its session. It
 answers data, not a decision per entry: how far the reader reads the channel, the whole, what was

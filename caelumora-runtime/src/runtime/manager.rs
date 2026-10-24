@@ -31,6 +31,7 @@ use crate::group::GroupManager;
 use crate::scoped::ScopedEntities;
 use crate::workspace::WorkspaceManager;
 use crate::actor::ActorManager;
+use crate::attachment::AttachmentManager;
 use crate::workspace::reaper::CommandReaper;
 use super::{RuntimeBuilder, Services};
 
@@ -67,6 +68,8 @@ pub struct RuntimeManager {
     pub(super) workspaces: Arc<WorkspaceManager>,
     /// What ends the commands nobody may run any longer (issues 254, 344).
     pub(super) command_reaper: Arc<CommandReaper>,
+    /// The one owner of the content of attachments (issue 282).
+    pub(super) attachments: Arc<AttachmentManager>,
     /// The one writer of teams (issue 286).
     pub(super) groups: Arc<GroupManager>,
     /// The one owner of agents' lifecycle (issue 314).
@@ -214,6 +217,10 @@ impl RuntimeManager {
         &self.command_reaper
     }
 
+    /// The one owner of the content of attachments (issue 282).
+    pub fn attachment_manager(&self) -> &Arc<AttachmentManager> {
+        &self.attachments
+    }
 
     /// The one writer of teams (issue 286), and what deletes and restores
     /// the groups of the participants with their session or channel (issue

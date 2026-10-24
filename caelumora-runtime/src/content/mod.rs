@@ -19,6 +19,10 @@ use crate::backend::Backends;
 use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::digest::{ContentDigest, Digest};
+use futures::StreamExt;
+use std::sync::{Arc, Mutex, PoisonError};
+use tracing::warn;
 use std::fmt;
 
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +35,10 @@ pub enum ContentError {
     NotFound(String),
     #[error("the content is larger than {limit} bytes")]
     TooLarge { limit: u64 },
+    /// What was kept is not as large as it was said to be: it changed while it was read, or broke
+    /// off.
+    #[error("the content was not as large as it was said to be")]
+    Changed,
     /// The storage failed: what happened, never where.
     #[error("the storage of content failed: {0}")]
     Unavailable(String),
@@ -60,7 +68,60 @@ pub trait ContentStorage: Send + Sync + fmt::Debug {
     fn destination(&self) -> Option<&Classification>;
 }
 
+/// Keeps `content`, said to be `size` bytes, under `key` in `storage`, at most `limit` bytes, and
+/// answers the digest of its bytes (`digest::content`), taken as they are kept - by an owner that
+/// records what it keeps (issue 282). What is not as large as it was said to be is removed again.
+///
+/// # Errors
+/// `TooLarge` for more than `limit` bytes, said or kept, `Changed` for other than `size`, and what
+/// the storage reports.
+pub async fn keep_digested(storage: &dyn ContentStorage, key: &str, size: u64, content: ByteStream, limit: u64) -> ContentResult<Digest> {
+    if size > limit {
+        return Err(ContentError::TooLarge { limit });
+    }
+    let digest = Arc::new(Mutex::new(ContentDigest::new(size)));
+    let digesting = Arc::clone(&digest);
+    let content: ByteStream = Box::pin(content.inspect(move |chunk| {
+        if let Ok(chunk) = chunk {
+            digesting.lock().unwrap_or_else(PoisonError::into_inner).update(chunk);
+        }
+    }));
+    let kept = storage.put(key, content, limit).await?;
+    match Arc::try_unwrap(digest) {
+        Ok(digest) if kept == size => Ok(digest.into_inner().unwrap_or_else(PoisonError::into_inner).finish()),
+        _ => {
+            if let Err(e) = storage.delete(key).await {
+                warn!("What was kept of content not as large as said stays: {e}");
+            }
+            Err(ContentError::Changed)
+        }
+    }
+}
+
 /// Registers the core's storages of content with `backends`: `local`.
 pub(crate) fn register_backends(backends: &mut Backends) {
     local::register_backend(backends);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use caelumora_model::digest;
+    use futures::stream;
+    use local::LocalContentStorage;
+
+    fn stream(content: &'static [u8]) -> ByteStream {
+        Box::pin(stream::iter([Ok(Bytes::from_static(content))]))
+    }
+
+    #[tokio::test]
+    async fn content_is_kept_with_its_digest_or_not_at_all() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = LocalContentStorage::new(root.path().to_path_buf(), None);
+        assert_eq!(keep_digested(&storage, "a/1", 5, stream(b"hello"), 10).await.unwrap(), digest::content(b"hello"));
+        assert!(matches!(keep_digested(&storage, "a/2", 4, stream(b"hello"), 10).await, Err(ContentError::Changed)), "not as large as said");
+        assert!(matches!(storage.get("a/2").await, Err(ContentError::NotFound(_))), "removed again");
+        assert!(matches!(keep_digested(&storage, "a/3", 11, stream(b"hello"), 10).await, Err(ContentError::TooLarge { limit: 10 })), "said too large");
+    }
 }

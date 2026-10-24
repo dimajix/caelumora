@@ -177,8 +177,8 @@ mod tests {
         let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
         let spec = ChannelSpec { classification: Some(classified(Confidentiality::Confidential, &["hr"])), ..spec("hr", vec![bob_id]) };
         let hr = session.create_channel(&alice_ctx, spec).await.unwrap();
-        hr.user_actor(bob.id).unwrap().send_message("from bob".to_string(), None).await.unwrap();
-        hr.user_actor(alice.id).unwrap().send_message("from alice".to_string(), None).await.unwrap();
+        hr.user_actor(bob.id).unwrap().send_message(Some("from bob".to_string()), None, Vec::new()).await.unwrap();
+        hr.user_actor(alice.id).unwrap().send_message(Some("from alice".to_string()), None, Vec::new()).await.unwrap();
         let history = history_of(&hr, 2).await;
         // Two users' messages arrive in either order.
         let id_of = |history: &[Message], text: &str| history.iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).unwrap();

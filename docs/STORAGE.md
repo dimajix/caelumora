@@ -151,13 +151,14 @@ its own. Without the variable they are skipped.
 
 ### Content
 
-Binary content - the versions of artifacts - lies in the storages configured under `content`, each
-a `ContentStorage` (issue 282): bytes under keys, put, read and removed without asking anything -
-a backend made by the factory registered for its `type`, `local` the core's (see
-[ARCHITECTURE.md](ARCHITECTURE.md#backends)). What lies under a key is kept whole or not at all.
-Each owner of content keeps it in a key space of its own, the first segment of its keys, and is the
-only code that writes there; who may read what a key names is that owner's to decide, by what the
-key belongs to. What one owner keeps of one thing lies under one prefix, removed with it at once.
+Binary content - the versions of artifacts, the attachments of messages - lies in the storages
+configured under `content`, each a `ContentStorage` (issue 282): bytes under keys, put, read and
+removed without asking anything - a backend made by the factory registered for its `type`, `local`
+the core's (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)). What lies under a key is kept whole or
+not at all. Each owner of content keeps it in a key space of its own, the first segment of its keys,
+and is the only code that writes there; who may read what a key names is that owner's to decide, by
+what the key belongs to. What one owner keeps of one thing lies under one prefix, removed with it at
+once.
 
 The `ArtifactManager` keeps a version under `artifacts/<artifact>/<number>` and is the one writer
 of artifact documents: a version's content is kept before the document says it exists, and removed
@@ -165,6 +166,14 @@ again if the document cannot be stored; an artifact is purged with its content, 
 It knows no workspace: where the content comes from is its caller's. Artifacts are entities, not
 state: each has its own owner, permissions, a name unique in its scope and a trash, and one that is
 kept outlives the session it was published in.
+
+The `AttachmentManager` keeps an attachment under `attachments/<channel>/<id>`, in the
+storage `attachments.keep_in` names. An attachment is no entity: it is part of the message that
+carries it, read through the message (`ChannelView::attachment`) - where a channel is read entry by
+entry, as its own label is released -, and its reference (`ContentRef`) is kept with the
+message in the channel's history. What waits for its message is held in memory alone; what a
+restart loses lies under its channel's prefix until the channel's state is purged with its session,
+which removes the whole prefix from every storage of content.
 
 ### Component bundles
 
