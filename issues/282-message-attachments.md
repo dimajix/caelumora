@@ -1,6 +1,6 @@
 # 282 — A user cannot attach an image or a file to a message
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** high
 **Area:** User interaction
@@ -619,32 +619,40 @@ pub trait ContentStorage: Send + Sync + fmt::Debug {
     async fn put(&self, key: &str, content: ByteStream, limit: u64) -> ContentResult<u64>;
     /// The content under `key`, with its size.
     async fn get(&self, key: &str) -> ContentResult<(u64, ByteStream)>;
-    /// Keeps a copy of what lies under `from` under `to`, as cheaply as the backend can - a hard
-    /// link or reflink, `CopyObject` -: two keys, each removed on its own.
-    async fn copy(&self, from: &str, to: &str) -> ContentResult<()>;
     /// Removes what lies under `key`; nothing there is no error.
     async fn delete(&self, key: &str) -> ContentResult<()>;
-    /// Removes everything whose key begins with `prefix`; nothing there is no error.
-    async fn remove_prefix(&self, prefix: &str) -> ContentResult<()>;
+    /// Removes everything whose key lies under `prefix` - whose leading segments it is; nothing
+    /// there is no error.
+    async fn remove_under(&self, prefix: &str) -> ContentResult<()>;
     /// What may be put into it: the classification content in it may have at most; `None` for
     /// no bound.
     fn destination(&self) -> Option<&Classification>;
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ContentError { NotFound(String), TooLarge { limit: u64 }, Unavailable(String) }
+pub enum ContentError { InvalidKey(String), NotFound(String), TooLarge { limit: u64 }, UnknownStorage(String), Unnamed, Unavailable(String) }
 pub type ContentResult<T> = Result<T, ContentError>;
+
+/// The storages of content the configuration names, by their names.
+pub struct ContentStorages(BTreeMap<String, Arc<dyn ContentStorage>>);
+impl ContentStorages {
+    /// The storage `name`; `UnknownStorage` if none is.
+    pub fn get(&self, name: &str) -> ContentResult<&Arc<dyn ContentStorage>>;
+    /// The name of the storage an owner keeps new content in: `named`, or the one there is.
+    pub fn chosen(&self, named: Option<&str>) -> ContentResult<Option<&str>>;
+}
 ```
 
-- A key is a path of segments without `..`, checked by `local` before it touches the file system
-  (`ContentKey::parse`, as `WorkspacePath::parse`); `<root>/<key>`, written through
-  `write_whole`. `copy` tries a hard link and falls back to copying the file.
+- A key is a path of segments, none empty, `.` or `..`, checked by `local` before it touches the
+  file system; `<root>/<key>`, written through `write_whole`.
 - `caelumora-model/src/config.rs`: `ContentConfig { storage: BTreeMap<String, BackendConfig> }`,
   section `content`; `RuntimeBuilder::new` makes them (`"storage of content"`) and offers them,
-  `pub fn content_storages(&self) -> &Arc<BTreeMap<String, Arc<dyn ContentStorage>>>`.
+  `pub fn content_storages(&self) -> &Arc<ContentStorages>`. `RuntimeBuilder::make_named`, whose
+  one user the plugin was, goes.
 - `caelumora-artifacts`: `ArtifactsConfig` loses `storage` and keeps `max_bytes` and
-  `publish_to`, now naming a storage of content; the manager takes the storages from the builder
-  and keys `artifacts/<id>/<n>`; `local.rs` goes; `remove` becomes `remove_prefix`.
+  `publish_to`, now naming a storage of content (`ContentStorages::chosen`, the rule the config
+  held before); the manager takes the storages from the builder and keys `artifacts/<id>/<n>`;
+  `local.rs` goes; `remove` becomes `remove_under`.
 - Docs: CONFIGURATION.md (section `content`, `artifacts` row), STORAGE.md (*Artifact content* →
   *Content*), ARCHITECTURE.md (backends), `examples/config.yaml`; the tests of `local` move to the
   core, those of the plugin configure `content`.
@@ -759,9 +767,13 @@ impl ScopeMember for AttachmentManager { /* delete and restore do nothing; purge
   `keep_in` (the storage, as `artifacts.publish_to`), `cache_bytes` (256 MiB),
   `unclaimed_expire_secs` (3600). Without a storage, an upload fails
   saying so (`NotConfigured`).
+- **`ContentStorage::copy(from, to)`** comes with its first caller, here: keeps a copy of what
+  lies under `from` under `to`, as cheaply as the backend can - a hard link or reflink,
+  `CopyObject` -, two keys each removed on its own; `local` tries a hard link and falls back to
+  copying the file.
 - **Pending** is a record in memory: who put it, into which channel, when. A sweeper, built as
   `CommandReaper` is (an interval task aborted on drop), deletes what expired. What a crash
-  leaves unclaimed is removed with its channel (`remove_prefix`), not before - accepted. Open 2.
+  leaves unclaimed is removed with its channel (`remove_under`), not before - accepted. Open 2.
 - **`ContentCache`**: `Bytes` by key within `cache_bytes`, least recently used first; `forget(key)`
   for erasing (237) and purging.
 - **The channel** (`ChannelLoop::admission`): for every message of the event, each attachment's
@@ -969,3 +981,13 @@ previews and everything else with name, type, size and a download; the tool card
   what is given along and what is fetched through a tool, configured or a share of the model's
   context window, and whether images are kept to it as well - moved to its own issue,
   [465](465-attachments-in-the-context.md), at the maintainer's request.
+- **2026-10-24** - Step 1, the content storages in the core, built: `ContentStorage` with `local`
+  in `caelumora-runtime/src/content/`, the section `content`, `ContentStorages` (`get`, and
+  `chosen` - the rule `ArtifactsConfig::publish_to` held, to be shared with attachments), the
+  artifacts keeping their versions under `artifacts/<id>/<n>`. Built otherwise than planned, and
+  the plan says so now: `copy` comes with step 3, its first caller; the prefix is removed by
+  whole segments (`remove_under`); no type of its own for a key; the builder hands out
+  `&Arc<ContentStorages>`; `RuntimeBuilder::make_named` is gone with its one user, so that a
+  plugin no longer has backends of a service of its own. Stored data to delete: the content of
+  artifacts, which lies under other keys now; the section `artifacts.storage` of a configuration
+  becomes `content.storage`.

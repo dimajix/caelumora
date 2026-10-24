@@ -55,10 +55,8 @@ store of the users - with `service_of`. While it registers, a plugin
     personality, what builds its agents' actors and which facets their components are asked for.
     The agents' plugin (`AgentsPlugin`, issue 370) registers both kinds there are; a program
     without it runs no agent;
-*   makes the backends of a service of its own from its section of the configuration
-    (`make_named`), with the factories the core and the plugins registered and what a backend may
-    ask for, as the core makes those of its services: the storages of artifacts, say, of which
-    another crate may bring one, registered for the plugin's service (issue 328);
+*   is handed the core's storages of content (`content_storages`, issue 282) for what it keeps
+    beyond documents - the versions of artifacts -, under a key space of its own;
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`);
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, and of the seed
     files (`seed_section`, a `SeedSection`). Both sections stand at the top level of their files;

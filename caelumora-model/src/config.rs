@@ -233,6 +233,9 @@ pub struct AppConfig {
     /// Where the files of workspaces lie (issue 253). No storage unless
     /// configured: then no workspace can be made.
     pub workspaces: WorkspacesConfig,
+    /// Where binary content lies - the versions of artifacts (issue 282).
+    /// No storage unless configured: then nothing such can be kept.
+    pub content: ContentConfig,
     /// The variants of the texts given to models (issue 57), each by its
     /// name and the directory of its files, one per namespace - `default`
     /// overriding the defaults for every model. Read and checked when the
@@ -266,6 +269,16 @@ impl Default for WorkspacesConfig {
     }
 }
 
+/// The storages binary content is kept in (issue 282), each by the name
+/// what is kept there refers to it with and a backend (`dyn
+/// ContentStorage`). Whose content goes where, and how large it may be, is
+/// its owner's to configure - `artifacts.publish_to`, say.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ContentConfig {
+    pub storage: BTreeMap<String, BackendConfig>,
+}
+
 /// The system's rules on tool calls (issue 13): each asks or denies - the
 /// system is a place, and a place only restricts.
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -292,6 +305,7 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             approvals: ApprovalsConfig::default(),
             workspaces: WorkspacesConfig::default(),
+            content: ContentConfig::default(),
             prompts: BTreeMap::new(),
             plugins: BTreeMap::new(),
         }

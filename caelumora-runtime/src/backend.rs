@@ -1,6 +1,6 @@
 //! Backends (issue 324): what serves a service - a storage of workspaces
-//! (`dyn TerminalProvider`) or of a plugin's (a storage of artifacts, issue
-//! 328), a user provider (`dyn UserProvider`), a secret provider (`dyn
+//! (`dyn TerminalProvider`) or of content (`dyn ContentStorage`, issue
+//! 282), a user provider (`dyn UserProvider`), a secret provider (`dyn
 //! SecretProvider`), what the stores keep their data in (`dyn
 //! PersistenceBackend`, issue 446) - named in the configuration by its type
 //! (`BackendConfig`) and made by the factory registered under that type for
@@ -33,7 +33,7 @@ use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
-use crate::terminal::register_backends;
+use crate::{content, terminal};
 use serde_json::Value;
 
 /// What makes a backend of `T`: given the name it is configured under - its
@@ -66,7 +66,7 @@ impl Backends {
     }
 
     /// The core's backends: the stores in memory, the storages of
-    /// `terminal`, the secrets of a file and of the environment, and the
+    /// `terminal` and of `content`, the secrets of a file and of the environment, and the
     /// users of a file and `accept_any`. The stores in JSON files are a
     /// plugin's (`caelumora-store-json`, issue 446).
     pub fn built_in() -> Self {
@@ -75,7 +75,8 @@ impl Backends {
             config_of_params::<NoParams>(params)?;
             Ok(Arc::new(MemoryStore::new()))
         });
-        register_backends(&mut backends);
+        terminal::register_backends(&mut backends);
+        content::register_backends(&mut backends);
         backends.register::<dyn SecretProvider, _>("file", |_, params, _| {
             let config: FileSecretConfig = config_of_params(params)?;
             Ok(Arc::new(FileSecretProvider::new(config.path)))

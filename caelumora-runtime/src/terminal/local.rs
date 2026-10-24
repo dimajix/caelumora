@@ -225,8 +225,8 @@ pub enum WriteFailure {
 /// Writes `content` to `target` whole, at most `limit` bytes, or not at
 /// all: into a file beside it, renamed over it once complete. The directory
 /// it lies in must exist. Answers how many bytes were written. Shared by
-/// the files of a local workspace and the content of local artifacts
-/// (issue 271).
+/// the files of a local workspace and the local storage of content (issue
+/// 282).
 pub async fn write_whole(target: &Path, mut content: ByteStream, limit: u64) -> Result<u64, WriteFailure> {
     let part = partial(target);
     let written = async {

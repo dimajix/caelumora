@@ -2,7 +2,7 @@
 //! `EntityStore` over them (issue 446).
 //!
 //! A backend keeps documents: serialized, by their id, without asking
-//! anything (`DocumentStorage`) - as an `ArtifactStorage` keeps content. What
+//! anything (`DocumentStorage`) - as a `ContentStorage` keeps content. What
 //! is asked, in which order and what is answered is the model's, once for
 //! every kind and every backend (`CheckedStore`, over `store::access`). A
 //! storage is not generic, so that a backend is a trait object and opens the
