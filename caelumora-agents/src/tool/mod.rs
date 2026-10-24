@@ -1,15 +1,18 @@
-//! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that
-//! runs an agent's tool calls with the tools of its providers and with the
-//! checks the runtime keeps to itself (issues 127, 280), and the built-in
-//! tool components, one file per component kind. A component that offers tools along with another
-//! facet - a prompt part, say - stays in `components`.
+//! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that runs an agent's tool calls
+//! with the tools of its providers and with the checks the runtime keeps to itself (issues 127,
+//! 280), what tools share - a text given a page at a time (`page_of`, issue 282) -, and the
+//! built-in tool components, one file per component kind. A component that offers tools along with
+//! another facet - a prompt part, say - stays in `components`.
 
 pub mod ask_user_tool;
 pub mod calculator_tool;
 pub mod echo_tool;
+mod page;
 mod providers;
 pub mod sleep_tool;
 pub mod stop_tool;
+
+pub use page::{page_of, TextPage};
 
 use crate::turn::Turn;
 use crate::situation::Situation;

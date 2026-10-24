@@ -888,38 +888,86 @@ impl ModelProfile {
 
 ### Step 5: the tools
 
-`caelumora-agents/src/tool/attachment_tool.rs`, kind `attachment_tool`, `ToolProvider`,
-`uses::<AttachmentManager>()`, texts under `agents.tools.attachment_tool`; registered in
-`tool::register_all`. Offered where `Situation::attachments()` is not empty.
+Revised with the maintainer on 2026-10-24, from the code as step 4 left it.
 
-| Tool | Parameters | Does | Approval, visibility, classification |
+**5a, a restructuring without a change of behaviour**: how `read_file` gives a text a page at a
+time - the lines from `start_line`, at most `line_count`, as many whole lines as `max_output_bytes`
+holds but one at least, and where to read on - becomes a function of `caelumora-agents`
+(`tool::page_of`, a `TextPage`), which `read_file` calls and `read_attachment` will.
+
+**5b, the tools**: `caelumora-agents/src/tool/attachment_tool.rs`, kind `attachment_tool`,
+`ToolProvider`, texts under `agents.tools.attachment_tool`, registered in `tool::register_all`;
+offered where the agent's transcript numbered attachments, `view_attachment` only to a model that
+sees.
+
+| Tool | Parameters | Does | Approval; classification |
 |---|---|---|---|
-| `view_attachment` | `ref` | Gives the model an image again: the attachment as `shown` of its result, loaded with the message. Refuses one that is no image, with its type. | none; `SHOWN`; the attachment's label |
-| `read_attachment` | `ref`, `start_line?`, `line_count?` | Text of an attachment of a text type, bounded as `read_file` bounds it, saying where to read on. | none; `SHOWN`; the attachment's label |
-| `copy_attachment` | `ref`, `path?` (default `attachments/<name>`) | Writes the attachment's bytes into the workspace the turn may use (`Turn::workspace_terminal(Grant::Write)`), where its label may flow into the workspace's (`may_publish`); answers the path. | where changes are (`requires_approval`, as `terminal_tool`); `SHOWN`; the workspace's |
-| `attach` | `ref` | Puts a copy aside for the turn's next message that others hear (`Turn::put_aside`); answers that it will be attached. | none; `SHOWN`; the attachment's label |
+| `view_attachment` | `ref` | Gives the model an image again, as `shown` of its result, loaded as an attachment is; refuses one that is no image, with its type. | none; the attachment's label |
+| `read_attachment` | `ref`, `start_line?`, `line_count?` | Text of an attachment of a text type, a page at a time as `read_file` gives one. | none; the attachment's label |
+| `copy_attachment` | `ref`, `path?` (`attachments/<name>`) | Writes the attachment's bytes into the workspace the turn may use (`Turn::workspace_terminal(Grant::Write)`), where its label may flow into the workspace's (`may_publish`); answers the path. | always asked, as a write; the workspace's |
+| `attach` | `ref` | Puts a copy aside for the turn's next message that others hear (`Turn::put_aside`); answers that it will be attached. | none; the attachment's label |
 
-- **`ContentStorage::copy(from, to)`** and `AttachmentManager::copy`, from step 3, with `attach`,
-  their first caller: a copy of what lies under `from` under `to`, as cheaply as the backend can -
-  a hard link or reflink, `CopyObject` -, two keys each removed on its own.
-- `ref` is resolved through `Situation::attachments()`; an unknown one is the model's to correct.
-  Reading one records knowledge (`KnowledgeSource::Content { id, digest }`) and the turn sees
-  its label (`Turn::see`).
-- **`TurnState::attachments: Vec<ContentRef>`** - put aside, pending -, `Turn::put_aside`,
-  `Turn::take_aside`; `AgentActor::stamp` of a complete message that is heard (`!internal`) moves
-  them onto it. A turn given up leaves them pending; they expire.
-- **The channel admits `media` and `shown`**, refused until then: what a tool gave is claimed by
-  the result's message as an attachment is (`claim`), what it showed lies in the channel's key
-  space.
-- **`ToolOutput::media: Vec<Media>`**, each a `name`, a `media_type` if the tool says, `bytes`;
-  `ToolExecutor::admitted` puts each through `AttachmentManager::create` as the agent, classified as
-  the result, into `ToolCallResult::media`; a put that fails fails the result. No built-in tool
-  gives media yet; 208 brings the first (MCP).
-- Tests: each tool (the number resolved, the refusals, what is recorded), `attach` to the answer
-  and nothing to a plan step, the executor keeping media, the agents' security suite
+```rust
+impl AttachmentIndex {
+    /// The attachment a model names `reference` (`a3`), and the message that carries it, if this
+    /// transcript numbered one so.
+    pub fn named(&self, reference: &str) -> Option<(MessageId, ContentId)>;
+}
+
+pub trait ContentStorage {
+    /// A copy of what lies under `from` under `to`, as cheaply as the backend can.
+    async fn copy(&self, from: &str, to: &str) -> ContentResult<()>;
+}
+
+impl AttachmentManager {
+    /// A copy of `attachment` for a message `channel`'s viewer will say there, waiting for it as
+    /// an upload.
+    pub async fn copy(&self, channel: &ChannelView, attachment: &ContentRef) -> AttachmentResult<ContentRef>;
+}
+
+impl ChannelView {
+    /// The attachment `id` of message `message`, if the viewer sees the message and may read it.
+    pub async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<ContentRef>;
+    /// The same with its content and the size its storage gives it.
+    pub async fn attachment_content(&self, message: MessageId, id: ContentId) -> ViewResult<(ContentRef, u64, ByteStream)>;
+}
+
+pub struct ToolOutput { /* ... */ pub shown: Vec<ContentRef> }
+
+impl Turn {
+    /// Puts `attachment` aside for the turn's next message that others hear.
+    pub fn put_aside(&mut self, attachment: ContentRef);
+}
+```
+
+- **A number names the message too.** `AttachmentIndex` keeps, for each number, the attachment and
+  the message that carries it - a `Vec` whose position is the number -, and a tool resolves `a3`
+  by reading that message through the view of its own channel as it stands: an attachment a
+  modification removed is not found, its label is the current one - fitted by a lowered channel
+  too -, and a number survives every compaction. The agent's transcript is read through
+  `Situation::agent_channel_state`; no `Situation::attachments`. `number` numbers what a result
+  `shown` too: the same attachment, the same number.
+- **Nothing recorded as knowledge**: what `read_attachment` read and `view_attachment` showed is
+  the result in the transcript, which carries the attachment's label (`ToolOutput::classification`).
+- **`TurnState::attachments: Vec<ContentRef>`**, put aside, not stored (`#[serde(skip)]`): a copy
+  waits for its message in memory as an upload does, so a turn resumed after a restart loses what
+  it put aside, not its answer. `stamp` of a complete message that is heard moves them onto it;
+  the channel claims them as it claims an upload, for the agent. A turn given up leaves them
+  pending; they expire.
+- **`ContentStorage::copy`**, a hard link for `local`: two keys, each removed on its own.
+- **The channel admits `shown`**: each reference lies in the channel's key space and its label may
+  flow into the channel. `media` stays refused.
+- **Loading**: `AttachmentManager::load` gives what a result `shown` along as it gives an
+  attachment, and `ollama_client` sends it as the `images` of the `tool` message.
+- **To issue 208, with their first producer**: `ToolOutput::media`, the executor keeping it, and
+  the channel admitting `media`.
+- Tests: each tool (the number resolved, the refusals, the label), `attach` to the answer and
+  nothing to a plan step, the channel admitting `shown`, the agents' security suite
   (`copy_attachment` asks the workspace's questions, nothing else asks).
 - Docs: TOOLS.md (*Attachments*), COMPONENTS.md (the row), AGENT-TURN.md (*What leaves the
   agent*), APPROVALS.md (*What needs approval*).
+- Stored data to delete: agent channel states holding numbers of attachments (since step 4) - the
+  index takes another form.
 
 ### Step 6: the web UI and the TUI
 
@@ -1128,3 +1176,11 @@ previews and everything else with name, type, size and a download; the tool card
   sees read once through `OnceCell` as its control tokens are and asked within 10 s at build;
   `read_history` names attachments only where there are any, their size as the note writes it;
   `content::testing::make_content_ref` shared with the other crates' tests.
+- **2026-10-24** - Step 5 revised with the maintainer before it was built: `ToolOutput::media` and
+  the channel admitting it move to issue 208, which brings their first producer; a number names
+  the message that carries its attachment, resolved through the view of the agent's channel;
+  nothing is recorded as knowledge; what a turn put aside is not stored; `ChannelView::attachment`
+  answers the reference, `attachment_content` its content; `copy_attachment` is always asked;
+  5a makes paging a text a function of its own first. `Situation::attachments`, which step 4's
+  plan left to this step, is not built: a tool reads the agent's state through
+  `Situation::agent_channel_state`. The plan of step 5 says so now.

@@ -144,3 +144,9 @@ A2A is the first producer, not the shape of the design.
   (`call_tool_result_to_value`) -, an A2A answer's file parts as attachments of the external
   agent's message, and the question of files given by URL. The panel of a channel's artifacts
   wanted above would become a list of a channel's attachments, if it is still wanted.
+- **2026-10-24** - From issue 282, step 5: the way a tool hands media over moves here with its
+  first producer, an MCP result's images - `ToolOutput::media` (each a name, a media type if the
+  tool says, the bytes), the `ToolExecutor` keeping them through `AttachmentManager::create` as the
+  agent, classified as the result, into `ToolCallResult::media`, and the channel admitting `media`
+  (refused until then, `ChannelLoop::require_parts`) and claiming it as it claims an upload. The
+  model is given `media` along as 282 gives `shown`.

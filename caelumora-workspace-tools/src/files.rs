@@ -23,7 +23,7 @@ use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_agents::turn::Turn;
 use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
-use caelumora_agents::tool::{arguments, ToolError, ToolResult};
+use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
 use caelumora_model::workspace::Workspace;
 use caelumora_model::approval::{ArgumentMatcher, ToolMatcher};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -405,24 +405,10 @@ pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, ter
             let at = path(&at)?;
             let (text, digest) = text(terminal, &at).await?;
             read(turn, Some(digest));
-            let lines: Vec<&str> = text.split_inclusive('\n').collect();
-            let start = start_line.unwrap_or(1).max(1);
-            if start > lines.len().max(1) {
-                return Err(ToolError::InvalidParameter(format!("'{at}' has {} lines; start_line {start} is beyond them", lines.len())));
-            }
-            let wanted = lines.iter().skip(start - 1).take(line_count.unwrap_or(usize::MAX));
-            let (mut given, mut end) = (String::new(), start - 1);
-            for line in wanted {
-                if given.len() + line.len() > config.max_output_bytes && end >= start {
-                    break;
-                }
-                given.push_str(line);
-                end += 1;
-            }
-            let mut result = json!({ "path": at.to_string(), "content": given, "start_line": start, "end_line": end, "total_lines": lines.len() });
-            let asked_end = line_count.map_or(lines.len(), |count| (start - 1 + count).min(lines.len()));
-            if end < asked_end {
-                if let Some(next) = next(prompts, "read_on", context! { line => end + 1 }) {
+            let page = page_of(&text, &format!("'{at}'"), start_line, line_count, config.max_output_bytes)?;
+            let mut result = json!({ "path": at.to_string(), "content": page.content, "start_line": page.start_line, "end_line": page.end_line, "total_lines": page.total_lines });
+            if let Some(line) = page.next_line {
+                if let Some(next) = next(prompts, "read_on", context! { line }) {
                     result["next"] = json!(next);
                 }
             }
