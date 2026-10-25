@@ -974,7 +974,7 @@ impl Turn {
 
 ### Step 6: the web UI and the TUI
 
-Revised with the maintainer on 2026-10-25, in three steps.
+Revised with the maintainer on 2026-10-25, in four steps.
 
 **6a, a refactoring:** the chat keeps the messages as they came - live as from a snapshot - and
 puts each tool result with its call only as it is drawn (`mergeToolResults`), not also as an event
@@ -988,7 +988,12 @@ before it, so that a message between them, of a user or of another agent, no lon
 result on its own and its call shown as executing. The history and context panels merge across
 their notices and prompt parts alike (`mergeToolResultsAmong`).
 
-**6c, the attachments:**
+**6c, where a step's answer streams:** an answer of a step of a plan streams in its step's block
+only while nothing follows the block - where `chatRows` puts it once complete -, below everything
+else otherwise, so that it does not move as it ends. 6b made it common: a result put with its call
+leaves the step's block above a message the user wrote meanwhile.
+
+**6d, the attachments:**
 
 - The TUI prints a message's attachments by name, type and size, so that one of attachments alone
   is shown.
@@ -1253,3 +1258,7 @@ their notices and prompt parts alike (`mergeToolResultsAmong`).
   whose call is not shown stays where it is, and a tool message whose results all went to their
   calls is left out. The history and context panels merge across their other rows - who joined, a
   command, a prompt part - instead of within each run of messages between them.
+- **2026-10-25** - Step 6c inserted with the maintainer, the attachments become 6d: the review of
+  6b found that a step's answer streamed in its step's block though something followed it, and
+  moved below once complete. Built: it streams in the block only while the block is the last row,
+  by the rule by which `chatRows` lets an internal message join a row (`joinsSteps`).

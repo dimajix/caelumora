@@ -78,7 +78,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chainCutOffNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, chainCutOffNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -1596,10 +1596,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // The row of each turn's step that came last: the step it is in now, open
   // while the turn is under way (issue 263).
   const currentSteps = new Map(rows.flatMap((row, i) => row.kind === 'steps' ? [[row.turnId, i] as const] : []));
-  // An answer that streams in a step of a plan is shown in the step's block;
-  // where its turn has none - a snapshot without the step's mark - below,
-  // with every other answer.
-  const inStep = (answer: Answer) => answer.internal && currentSteps.has(answer.turnId);
+  // An answer that streams in a step of a plan is shown where it will stand once complete: in the
+  // step's block while nothing follows it (`joinsSteps`), else below - after whatever followed, or
+  // where its turn has no block, a snapshot without the step's mark -, so that it does not move.
+  const inStep = (answer: Answer) => answer.internal && joinsSteps(rows[rows.length - 1], answer.turnId);
   // The row before which the new messages begin (issue 404), if there were
   // any as the channel was opened: after the one last read, or at the top
   // where it lies before what is shown or nothing was read.

@@ -291,8 +291,10 @@ others say in it as the global stream announces it.
 *   **A plan** is shown by its call, its steps numbered. While an agent works through it, each step
     is a block of its own, headed with the step, that holds what the step said; the step a turn is
     in is open while the turn is under way, every other one folded unless the user opened or closed
-    it. Internal messages before any step's mark are headed "the plan". None of them is offered for
-    another answer.
+    it. A step's answer under way streams in its block while nothing follows the block; once
+    anything else stands below it, the answer streams below that, where it will stand when
+    complete. Internal messages before any step's mark are headed "the plan". None of
+    them is offered for another answer.
 *   **Changing one's own messages.** A participant's own message can be edited in place or taken
     back, which asks once more. A modified message shows "edited"; one taken back is a placeholder
     naming who took it back. Both are applied to the message in place as the server reads them. A

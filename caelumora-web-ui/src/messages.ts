@@ -395,13 +395,21 @@ export function chatRows(messages: Message[]): ChatRow[] {
       rows.push({kind: 'steps', turnId, sender: message.sender_name, step: message.planStep, messages: []});
     } else if (!message.internal) {
       rows.push({kind: 'message', message});
-    } else if (last?.kind === 'steps' && last.turnId === turnId) {
+    } else if (joinsSteps(last, turnId)) {
       last.messages.push(message);
     } else {
       rows.push({kind: 'steps', turnId, sender: message.sender_name, step: steps.get(turnId) ?? null, messages: [message]});
     }
   }
   return rows;
+}
+
+/**
+ * Whether an internal message of the turn `turnId` joins `row`, the last row before it, rather than
+ * beginning a row of its own (`chatRows`): where that row is the turn's step.
+ */
+export function joinsSteps(row: ChatRow | undefined, turnId: string | null): row is Extract<ChatRow, {kind: 'steps'}> {
+  return row?.kind === 'steps' && row.turnId === turnId;
 }
 
 /** The turn a row was said in, or `null` for what was said outside of any - a user's message, a notice of the channel. */
