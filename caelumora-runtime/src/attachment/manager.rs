@@ -1,6 +1,6 @@
-//! The `AttachmentManager`: what is uploaded for a message - checked, kept and waiting for the
-//! message that claims it -, what a message may carry as its channel admits it, and the content of
-//! an attachment for a download or for a model given it along.
+//! The `AttachmentManager`: what is uploaded or copied for a message - checked, kept and waiting
+//! for the message that claims it -, what a message may carry as its channel admits it, and the
+//! content of an attachment for a download or for a model given it along.
 
 use super::cache::ContentCache;
 use super::{AttachmentError, AttachmentResult};
@@ -36,6 +36,21 @@ const KEY_SPACE: &str = "attachments";
 /// The key every attachment of channel `channel` lies under.
 fn channel_key(channel: ChannelId) -> String {
     format!("{KEY_SPACE}/{channel}")
+}
+
+/// Who keeps content for a message in `channel`: its viewer, who takes part in it.
+///
+/// # Errors
+/// `NotAParticipant` for a viewer who does not.
+fn uploader(channel: &ChannelView) -> AttachmentResult<ActorId> {
+    let by = channel.views().context().caller_id;
+    channel.lists(by).then_some(by).ok_or(AttachmentError::NotAParticipant(by))
+}
+
+/// A new id for content of channel `channel`, and the key its bytes lie under.
+fn new_key(channel: ChannelId) -> (ContentId, String) {
+    let id = ContentId::new();
+    (id, format!("{}/{id}", channel_key(channel)))
 }
 
 /// An upload no message claimed yet: who uploaded it for which channel, and when.
@@ -115,10 +130,7 @@ impl AttachmentManager {
     /// `ClassificationRefused`, `StorageNotCleared`, `TooLarge`, `Changed`, `Unavailable`.
     pub async fn create(&self, channel: &ChannelView, name: &str, classification: Option<Classification>, (size, content): (u64, ByteStream)) -> AttachmentResult<ContentRef> {
         let context = channel.views().context();
-        let by = context.caller_id;
-        if !channel.lists(by) {
-            return Err(AttachmentError::NotAParticipant(by));
-        }
+        let by = uploader(channel)?;
         let name = FileName::new(name)?;
         let classification = classification.unwrap_or_else(|| channel.classification().clone());
         self.confidentiality.require_classifiable(&classification, || AttachmentError::ClassificationRefused)?;
@@ -128,13 +140,11 @@ impl AttachmentManager {
         self.confidentiality.require_storable(context, &classification, storage.destination(), || AttachmentError::StorageNotCleared(storage_name.to_string()))?;
         self.forget_expired().await;
 
-        let id = ContentId::new();
-        let key = format!("{}/{id}", channel_key(channel.id()));
+        let (id, key) = new_key(channel.id());
         let (head, content) = head_of(content).await;
         let digest = keep_digested(storage.as_ref(), &key, size, content, self.max_bytes).await?;
         let content = ContentRef { id, name, media_type: content::media_type(&head).to_string(), size, digest, classification, storage: storage_name.to_string(), key, number: None, content: None };
-        let upload = Upload { by, channel: channel.id(), content: content.clone(), at: Instant::now() };
-        self.uploads.lock().unwrap_or_else(PoisonError::into_inner).insert(id, upload);
+        self.wait(by, channel.id(), content.clone());
         debug!(attachment = %id, channel = %channel.id(), by = %by, size, "Attachment uploaded");
         Ok(content)
     }
@@ -176,6 +186,12 @@ impl AttachmentManager {
         carried
     }
 
+    /// Whether `content` lies in the key space of channel `channel`: one of its attachments, or a
+    /// copy of one (issue 282).
+    pub(crate) fn lies_in(&self, channel: ChannelId, content: &ContentRef) -> bool {
+        content.key.strip_prefix(&channel_key(channel)).is_some_and(|rest| rest.starts_with('/'))
+    }
+
     /// The content of the attachment `content`, with its size - asking nothing: the view it is read
     /// through decided who may (`ChannelView::attachment`).
     ///
@@ -188,17 +204,51 @@ impl AttachmentManager {
         })
     }
 
-    /// Puts their content on the attachments of `messages` the model of `profile` is given along
-    /// (issue 282) - held in memory, else read from its storage and checked against its digest -,
-    /// and answers how each is classified: what the model is given of them. Asking nothing: what
+    /// A copy of `attachment` - one of the channel's, as the viewer of `channel` read it there -
+    /// for a message the viewer will say there (issue 282): the same content, label and name under
+    /// an id and a key of its own in the same storage, waiting for the message that claims it as an
+    /// upload does. What an agent shows of what it heard, so that each message holds its own.
+    ///
+    /// # Errors
+    /// `NotAParticipant`; `NotFound` for content that is none of the channel's, or that its storage
+    /// has nothing of; `UnknownStorage`, `Unavailable`.
+    pub async fn copy(&self, channel: &ChannelView, attachment: &ContentRef) -> AttachmentResult<ContentRef> {
+        let by = uploader(channel)?;
+        if !self.lies_in(channel.id(), attachment) {
+            return Err(AttachmentError::NotFound(attachment.id));
+        }
+        self.forget_expired().await;
+        let (id, key) = new_key(channel.id());
+        self.storage(&attachment.storage)?.copy(&attachment.key, &key).await.map_err(|e| match e {
+            ContentError::NotFound(_) => AttachmentError::NotFound(attachment.id),
+            e => e.into(),
+        })?;
+        let copy = ContentRef { id, key, number: None, content: None, ..attachment.clone() };
+        self.wait(by, channel.id(), copy.clone());
+        debug!(attachment = %id, of = %attachment.id, channel = %channel.id(), by = %by, "Attachment copied");
+        Ok(copy)
+    }
+
+    /// Lets `content`, kept for a message `by` will say in `channel`, wait for that message.
+    fn wait(&self, by: ActorId, channel: ChannelId, content: ContentRef) {
+        let upload = Upload { by, channel, at: Instant::now(), content };
+        self.uploads.lock().unwrap_or_else(PoisonError::into_inner).insert(upload.content.id, upload);
+    }
+
+    /// Puts their content on the attachments of `messages`, and on what their tool results showed,
+    /// that the model of `profile` is given along (issue 282) - held in memory, else read from its
+    /// storage and checked against its digest -, and answers how each is classified: what the
+    /// model is given of them. Asking nothing: what
     /// lies in an agent's transcript, it heard (`ActorRuntime::load_attachments`).
     ///
     /// # Errors
     /// `NotFound` if the storage has nothing under an attachment's key, `Altered` if its bytes are
     /// not what the message says they are, `UnknownStorage`, `Unavailable`.
     pub(crate) async fn load(&self, messages: &mut [Message], profile: &ModelProfile) -> AttachmentResult<Vec<Classification>> {
-        let mut given = Vec::new();
-        for attachment in messages.iter_mut().flat_map(|message| message.attachments.iter_mut()).filter(|attachment| profile.gives_along(attachment)) {
+        // Collected first: what is held across the reads must be `Send`.
+        let carried: Vec<&mut ContentRef> = messages.iter_mut().flat_map(Message::carried_mut).filter(|content| profile.gives_along(content)).collect();
+        let mut given = Vec::with_capacity(carried.len());
+        for attachment in carried {
             attachment.content = Some(self.content(attachment).await?);
             given.push(attachment.classification.clone());
         }
@@ -353,6 +403,12 @@ mod tests {
         assert!(attachments.claim(alice, main.id(), slice::from_ref(&uploaded), slice::from_ref(&uploaded)), "kept by the message that has it");
         assert!(matches!(attachments.named(alice, main.id(), &ids, &[]), Err(AttachmentError::NotFound(_))));
         assert_eq!(read(attachments.content_of(&uploaded).await.unwrap()).await, PNG, "and kept");
+
+        let copy = attachments.copy(&main, &uploaded).await.expect("a copy for her next message");
+        assert!(copy.id != uploaded.id && copy.key != uploaded.key && (copy.digest, &copy.classification) == (uploaded.digest, &uploaded.classification), "its own id and key, the same content and label");
+        assert_eq!(read(attachments.content_of(&copy).await.unwrap()).await, PNG);
+        assert!(attachments.lies_in(main.id(), &copy) && !attachments.lies_in(ChannelId::new(), &copy), "in the channel's key space alone");
+        assert!(attachments.claim(alice, main.id(), slice::from_ref(&copy), &[]), "waiting for her message as an upload does");
     }
 
     #[tokio::test]
@@ -383,13 +439,19 @@ mod tests {
     async fn what_a_model_is_given_along_is_loaded_checked_and_held() {
         use caelumora_model::context::ModelProfile;
         use caelumora_model::message::Message;
+        use caelumora_model::tool::{ToolCall, ToolCallResult};
+        use serde_json::Value;
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
         let main = main_of(&world, &session, World::as_user(world.alice)).await;
         let attachments = world.runtime.attachment_manager();
         let image = attachments.create(&main, "chart.png", None, bytes(PNG)).await.unwrap();
         let text = attachments.create(&main, "notes.txt", None, bytes(b"notes")).await.unwrap();
-        let messages = || vec![Message { attachments: vec![image.clone(), text.clone()], ..Message::new(main.classification().clone()) }];
+        let showing = ToolCallResult { shown: vec![image.clone()], ..ToolCallResult::of(&ToolCall { id: None, function_name: "view_attachment".to_string(), arguments: Value::Null, visibility: Default::default(), presentation: Default::default() }, Default::default(), String::new(), main.classification().clone()) };
+        let messages = || vec![
+            Message { attachments: vec![image.clone(), text.clone()], ..Message::new(main.classification().clone()) },
+            Message { tool_results: vec![showing.clone()], ..Message::new(main.classification().clone()) },
+        ];
         let contents = |messages: &[Message]| messages[0].attachments.iter().map(|a| a.content.as_deref().map(<[u8]>::to_vec)).collect::<Vec<_>>();
 
         let (mut blind, mut seeing) = (messages(), messages());
@@ -397,7 +459,8 @@ mod tests {
         assert_eq!(contents(&blind), [None, None]);
         let given = attachments.load(&mut seeing, &ModelProfile { images: true, ..ModelProfile::default() }).await.unwrap();
         assert_eq!(contents(&seeing), [Some(PNG.to_vec()), None], "the image alone");
-        assert_eq!(given, slice::from_ref(&image.classification), "what was given, by its classification");
+        assert_eq!(seeing[1].tool_results[0].shown[0].content.as_deref(), Some(PNG), "and what a tool showed (issue 282, step 5)");
+        assert_eq!(given, [image.classification.clone(), image.classification.clone()], "what was given, by its classification");
 
         let file = world.files.path().join("content").join(&image.key);
         fs::write(&file, b"another image").unwrap();

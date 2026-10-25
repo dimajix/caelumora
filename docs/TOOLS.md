@@ -269,6 +269,31 @@ A command handed back as running is ended by the model, or by a user who may cha
 files in the channel; the agent sees `killed` the next time it follows the command. How long a
 command lives and when the runtime ends it is in [WORKSPACE.md](WORKSPACE.md#commands).
 
+### Attachments
+
+`view_attachment`, `read_attachment`, `copy_attachment` and `attach` (component `attachment_tool`,
+issue 282) reach the attachments the agent heard, by the number its transcript gave each (`a3`, see
+[AGENT-TURN.md](AGENT-TURN.md#attachments)). A number resolves to the message that carries the
+attachment (`AttachmentIndex::named`), read through the view of the agent's channel as it stands
+(`ChannelView::attachment`): one a change removed is not found, and its label is the current one.
+They are offered where the transcript numbered any, `view_attachment` only to a model that sees.
+
+*   `view_attachment` gives the model an image again: its result shows it (`ToolOutput::shown`,
+    `ToolCallResult::shown`), and the model is given it along with the result as it is given an
+    attachment. A result shows only attachments of its channel, which the channel checks as it
+    admits the result.
+*   `read_attachment` gives a text a page at a time, as `read_file` gives a file (`page_of`).
+*   `copy_attachment` writes an attachment into the workspace the turn may use, to be worked on
+    there: a document converted, data processed. A workspace used in the channel takes what the
+    channel holds. It writes, so it is always asked.
+*   `attach` puts a copy aside for the turn's next answer (`Turn::put_aside`), under an id and a key
+    of its own (`AttachmentManager::copy`), so that what an agent shows of what it heard is its
+    message's own. What a turn put aside is not stored: a turn resumed after a restart has lost it,
+    not its answer.
+
+Each result is classified as the attachment, `copy_attachment`'s as the workspace; nothing is
+recorded as knowledge besides - the result in the transcript is what was read.
+
 ### Artifacts
 
 `publish_artifact` (component `artifact_tool`, of the plugin `caelumora-artifacts`, issue 328)

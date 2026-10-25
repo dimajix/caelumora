@@ -71,16 +71,28 @@ impl ContentRef {
         self.number.map(|number| format!("a{number}"))
     }
 
+    /// The number a model's `reference` names (`a3`: 3), if it names one as `reference` writes it.
+    pub fn number_named(reference: &str) -> Option<u32> {
+        reference.strip_prefix('a')?.parse().ok().filter(|number| *number > 0)
+    }
+
     /// Whether it is an image every model API takes and a browser shows without running anything:
     /// png, jpeg or webp (issue 282) - given along to a model that sees, downloaded inline.
     pub fn is_image(&self) -> bool {
         matches!(self.media_type.as_str(), PNG | JPEG | WEBP)
+    }
+
+    /// Whether it is plain text, as its bytes say (`media_type`): what a model reads a page at a
+    /// time (issue 282).
+    pub fn is_text(&self) -> bool {
+        self.media_type == TEXT
     }
 }
 
 const PNG: &str = "image/png";
 const JPEG: &str = "image/jpeg";
 const WEBP: &str = "image/webp";
+const TEXT: &str = "text/plain";
 
 /// What content is, as its first bytes say (issue 282) - never as whoever hands it over claims:
 /// png, jpeg, webp, gif, pdf or zip (the Office formats among it) by their signatures, plain text
@@ -95,7 +107,7 @@ pub fn media_type(head: &[u8]) -> &'static str {
         [b'G', b'I', b'F', b'8', b'7' | b'9', b'a', ..] => "image/gif",
         [b'%', b'P', b'D', b'F', b'-', ..] => "application/pdf",
         [b'P', b'K', 3, 4, ..] => "application/zip",
-        _ if is_text(head) => "text/plain",
+        _ if is_text(head) => TEXT,
         _ => "application/octet-stream",
     }
 }

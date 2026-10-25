@@ -60,7 +60,8 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
 use caelumora_model::memory::{MemoryChange, MemoryOrigin};
-use caelumora_model::message::Message;
+use caelumora_model::content::ContentRef;
+use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::note::NoteChange;
 use caelumora_model::security::Grant;
 use caelumora_model::tool::Tool;
@@ -347,12 +348,24 @@ impl<'a> Turn<'a> {
         self.answering().send(event, output).await
     }
 
+    /// Puts `attachment` aside for the turn's answer (issue 282), which
+    /// carries it (`say`).
+    pub fn put_aside(&mut self, attachment: ContentRef) {
+        self.current_mut().attachments.push(attachment);
+    }
+
     /// Says `message`: keeps it in the turn and publishes it, the one way
     /// a turn's complete message reaches the channel (issue 258) - the
     /// model's, a step's tool message, the one answering the calls the turn
     /// abandoned. Kept before it is sent, so that a failed send loses
-    /// nothing of the turn.
-    pub(crate) async fn say(&mut self, message: Message, output: &dyn EventSender) -> Result<()> {
+    /// nothing of the turn. The turn's answer - a message of the model
+    /// calling no tools, not a step of a plan - carries what the turn put
+    /// aside (`put_aside`), with words or without: what it attaches is
+    /// heard all the same.
+    pub(crate) async fn say(&mut self, mut message: Message, output: &dyn EventSender) -> Result<()> {
+        if message.role == MessageRole::Assistant && !message.internal && message.tool_calls.is_empty() {
+            message.attachments.append(&mut self.current_mut().attachments);
+        }
         let said = self.push_message(message);
         self.send_event(event_for(said, false), output).await
     }
@@ -430,6 +443,29 @@ mod tests {
         stored["turn"].as_object_mut().unwrap().remove("model_calls");
         let state: AgentChannelState = serde_json::from_value(stored).unwrap();
         assert_eq!(state.turn.unwrap().model_calls, 0, "a turn stored before the count was kept starts from 0");
+    }
+
+    /// Issue 282: what a turn put aside goes with its next message of the model that others hear,
+    /// not with a step of a plan, one without words or a tool message.
+    #[tokio::test]
+    async fn what_is_put_aside_goes_with_the_next_answer() {
+        use caelumora_model::content::testing::make_content_ref;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+        use caelumora_runtime::transport::Discard;
+        let mut state = AgentChannelState::default();
+        state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));
+        let mut turn = Turn::under_way(AgentId::new(), &mut state);
+        let aside = make_content_ref("a.png", b"a");
+        turn.put_aside(aside.clone());
+        let said = |role, internal| Message { role, internal, content: Some("said".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "attach".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::default(), presentation: Default::default() };
+        turn.say(said(MessageRole::Assistant, true), &Discard).await.unwrap();
+        turn.say(Message { tool_calls: vec![call], ..said(MessageRole::Assistant, false) }, &Discard).await.unwrap();
+        turn.say(said(MessageRole::Tool, false), &Discard).await.unwrap();
+        turn.say(Message { content: None, ..said(MessageRole::Assistant, false) }, &Discard).await.unwrap();
+        turn.say(said(MessageRole::Assistant, false), &Discard).await.unwrap();
+        let carried: Vec<usize> = state.transcript.messages().iter().map(|message| message.attachments.len()).collect();
+        assert_eq!(carried, [0, 0, 0, 1, 0], "the answer alone, once, with words or without - not a step of a plan, nor one that calls tools");
     }
 
     /// Issue 417: what a turn says leaves the agent as it is, what only its

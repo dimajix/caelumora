@@ -234,7 +234,7 @@ impl NotesComponent {
             listed.push(serde_json::json!({ "channel": channel.name(), "notes": notes }));
         }
         let value = serde_json::json!({ "channels": listed });
-        Ok(ToolOutput { value, classification: Classification::join_all(&read) })
+        Ok(ToolOutput { value, classification: Classification::join_all(&read), shown: Vec::new() })
     }
 }
 

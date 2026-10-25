@@ -358,10 +358,11 @@ impl ChannelLoop {
     ///
     /// - a message, by the actor that is acting - only who acts puts
     ///   something into the channel -, each part of it, the message, its
-    ///   attachments and its tool results, as it is classified
-    ///   (`ConfidentialityPolicy::may_publish`, issue 133): its sender
-    ///   misclassified what does not flow in; a tool's result carries no
-    ///   media yet (issue 282, step 5);
+    ///   attachments, its tool results and what they showed, as it is
+    ///   classified (`ConfidentialityPolicy::may_publish`, issue 133): its
+    ///   sender misclassified what does not flow in; what a result showed is
+    ///   one of the channel's attachments, and a tool's result carries no
+    ///   media yet (issues 282, 208);
     /// - a change of a message (issue 234): the message is in its history,
     ///   its author - the sender the history names - may change it, and it
     ///   can be changed so as it stands (`Message::modify`,
@@ -495,15 +496,17 @@ impl ChannelLoop {
         }
     }
 
-    /// Nothing if every part of `message` - the message, its attachments and its tool results - may
-    /// enter the channel, classified `classification`, in `context` (issue 133); why not otherwise.
-    /// What a tool gave or showed its model is admitted from step 5 of issue 282 on.
+    /// Nothing if every part of `message` - the message, its attachments, its tool results and what
+    /// they showed - may enter the channel, classified `classification`, in `context` (issue 133);
+    /// why not otherwise. What a result showed its model is one of the channel's attachments
+    /// (issue 282); what a tool gave it is admitted with its first producer (issue 208).
     fn require_parts(&self, context: &SecurityContext, message: &Message, classification: &Classification) -> Result<(), Rejection> {
-        if message.tool_results.iter().any(|result| !result.media.is_empty() || !result.shown.is_empty()) {
+        let shown = message.tool_results.iter().flat_map(|result| &result.shown);
+        if message.tool_results.iter().any(|result| !result.media.is_empty()) || !shown.into_iter().all(|content| self.attachments.lies_in(self.id, content)) {
             return Err(Rejection::Invalid);
         }
-        let attachments = message.attachments.iter().map(|content| &content.classification);
-        let parts = iter::once(&message.classification).chain(attachments).chain(message.tool_results.iter().map(|r| &r.classification));
+        let carried = message.carried().map(|content| &content.classification);
+        let parts = iter::once(&message.classification).chain(carried).chain(message.tool_results.iter().map(|r| &r.classification));
         for part in parts {
             self.confidentiality.require_publish(context, part, classification, || Rejection::ClassificationRefused)?;
         }
@@ -1656,8 +1659,17 @@ mod tests {
         let call = ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
         let result = ToolCallResult { media: vec![hers.clone()], ..ToolCallResult::of(&call, Default::default(), "done".to_string(), main.classification()) };
         let with_media = sent(alice, ActorEvent::CompleteMessageGenerated(Message { sender_id: alice, role: MessageRole::Assistant, tool_results: vec![result], ..Message::new(main.classification()) }));
-        assert_eq!(main.admission(&with_media).await, Err(Rejection::Invalid), "what a tool gave, not yet (step 5)");
-        let elsewhere = ContentRef { key: format!("attachments/{}/{}/{}", session.id(), ChannelId::new(), hers.id), ..hers.clone() };
+        assert_eq!(main.admission(&with_media).await, Err(Rejection::Invalid), "what a tool gave, not yet (issue 208)");
+        let elsewhere = ContentRef { key: format!("attachments/{}/{}", ChannelId::new(), hers.id), ..hers.clone() };
+        let showing = |shown: ContentRef| sent(alice, ActorEvent::CompleteMessageGenerated(Message {
+            sender_id: alice, role: MessageRole::Tool,
+            tool_results: vec![ToolCallResult { shown: vec![shown], ..ToolCallResult::of(&call, Default::default(), "shown".to_string(), main.classification()) }],
+            ..Message::new(main.classification())
+        }));
+        assert_eq!(main.admission(&showing(hers.clone())).await, Ok(()), "what a result showed: one of the channel's");
+        assert_eq!(main.admission(&showing(elsewhere.clone())).await, Err(Rejection::Invalid), "not another channel's");
+        let above = ContentRef { classification: Classification::general(Confidentiality::StrictlyConfidential), ..hers.clone() };
+        assert_eq!(main.admission(&showing(above)).await, Err(Rejection::ClassificationRefused), "nor what may not flow in");
         assert_eq!(main.admission(&said(alice, vec![elsewhere])).await, Err(Rejection::Invalid), "only as it was uploaded");
         let mut many = Vec::new();
         for _ in 0..11 {

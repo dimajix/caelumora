@@ -108,7 +108,7 @@ tools:
 
 # What a result says of how to go on, as its `next`: a command still
 # running, to be followed with `command_output` or ended with
-# `kill_command`; a file read in part, from `line` on.
+# `kill_command`. A file read in part says it as every text does
+# (`agents.results.read_on`).
 results:
   still_running: "It is still running: follow it with {{ command_output }} (id, offset = next_offset), or end it with {{ kill_command }}."
-  read_on: "Not all of it fits into one result: read on with start_line {{ line }}."

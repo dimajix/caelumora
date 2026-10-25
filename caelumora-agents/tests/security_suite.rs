@@ -2289,3 +2289,56 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
     assert_eq!((turn.caller_id, turn.principal_id, turn.initiator_id), (helper, ActorId::User(world.alice), ActorId::User(world.bob)));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
+
+// --- Attachments ---------------------------------------------------------------
+
+/// M5: an agent reaches an attachment it heard (issue 282) through the view of its channel, as its
+/// owner, by the number its transcript gave it - asking what reaching the channel asks, nothing
+/// of its own; copying one into the workspace asks what writing there asks, and attaching one to
+/// its answer nothing more.
+#[tokio::test]
+async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel() {
+    use caelumora_agents::tool::attachment_tool::{AttachmentTool, ATTACH, COPY_ATTACHMENT, READ_ATTACHMENT};
+    use caelumora_agents::tool::ToolProvider;
+    use caelumora_model::agent::AgentChannelState;
+    use caelumora_model::history::HistoryEntry;
+    use caelumora_model::message::{Message, MessageRole};
+    use serde_json::json;
+    use tokio_util::bytes::Bytes;
+
+    let world = World::with(&[&TestAgents], |_| {}).await;
+    let personality = world.personality("plain", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let alice = World::as_user(world.alice);
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[helper], &[]).await;
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    let main = Arc::clone(&session.channels()[0]);
+    let view = world.manager.views(Viewer::new(alice.clone())).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+    let notes = world.runtime.attachment_manager().create(&view, "notes.txt", None, (5, Box::pin(stream::iter([Ok(Bytes::from_static(b"notes"))])))).await.unwrap();
+    main.user_actor(world.alice).unwrap().send_message(None, None, vec![notes.id]).await.unwrap();
+    let said = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let page = view.history_page(None, 10).await.unwrap();
+            if let Some(message) = page.entries().filter_map(HistoryEntry::said).find(|said| !said.attachments.is_empty()) {
+                break message.clone();
+            }
+            time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("said");
+
+    let mut state = AgentChannelState::default();
+    state.perceive(vec![Message { role: MessageRole::User, ..said }]);
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    let tool = AttachmentTool::new(agent_testing::prompts(), Arc::clone(world.runtime.attachment_manager()), Arc::clone(world.runtime.workspace_manager())).unwrap();
+    let (_, read) = world.asked(tool.execute(READ_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn)).await;
+    let (_, attached) = world.asked(tool.execute(ATTACH, &json!({ "ref": "a1" }), None, &mut turn)).await;
+    let (_, copied) = world.asked(tool.execute(COPY_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn)).await;
+    let reaching = ["alice as helper: GetSession(alice's) yes", "alice as helper: GetChannel(alice's) yes"];
+    assert_eq!(read, checks(&reaching), "reaching the channel as its owner, nothing of its own");
+    assert_eq!(attached, checks(&reaching), "nor attaching it");
+    let writing = ["alice as helper: GetWorkspace(alice's) yes", "alice as helper: Publish yes", "alice as helper: Publish yes", "alice as helper: WriteWorkspace(alice's) yes"];
+    assert_eq!(copied, checks(&[&reaching[..], &writing[..], &reaching[..]].concat()), "copying: what writing into the workspace asks, then reading it");
+    drop(turn);
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}

@@ -100,6 +100,23 @@ impl ContentStorage for LocalContentStorage {
         }
     }
 
+    /// A hard link where the file system makes one, else a copy written as `put` writes, whole or
+    /// not at all.
+    async fn copy(&self, from: &str, to: &str) -> ContentResult<()> {
+        let (source, place) = (self.place(from)?, self.place(to)?);
+        if !fs::metadata(&source).await.is_ok_and(|metadata| metadata.is_file()) {
+            return Err(ContentError::NotFound(from.to_string()));
+        }
+        if let Some(dir) = place.parent() {
+            fs::create_dir_all(dir).await.map_err(unavailable)?;
+        }
+        if fs::hard_link(&source, &place).await.is_err() {
+            let (size, content) = self.get(from).await?;
+            self.put(to, content, size).await?;
+        }
+        Ok(())
+    }
+
     async fn remove_under(&self, prefix: &str) -> ContentResult<()> {
         let dir = self.place(prefix)?;
         match fs::metadata(&dir).await {
@@ -131,7 +148,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn content_is_kept_read_deleted_and_removed_under_a_prefix() {
+    async fn content_is_kept_copied_read_deleted_and_removed_under_a_prefix() {
         let root = tempfile::tempdir().unwrap();
         let storage = LocalContentStorage::new(root.path().to_path_buf(), None);
         assert_eq!(storage.put("artifacts/a/1", stream(b"first"), 100).await.unwrap(), 5);
@@ -145,12 +162,17 @@ mod tests {
         assert!(matches!(storage.get("artifacts/a/3").await, Err(ContentError::NotFound(_))), "nothing left of it");
         assert!(matches!(storage.get("artifacts/a").await, Err(ContentError::NotFound(_))), "a prefix is no key");
 
+        storage.copy("artifacts/a/1", "artifacts/c/1").await.unwrap();
+        assert_eq!(read(&storage, "artifacts/c/1").await, b"first", "a copy");
+        assert!(matches!(storage.copy("artifacts/a/9", "artifacts/c/9").await, Err(ContentError::NotFound(_))), "of nothing");
+
         storage.delete("artifacts/a/2").await.unwrap();
         assert!(matches!(storage.get("artifacts/a/2").await, Err(ContentError::NotFound(_))));
         storage.delete("artifacts/a/2").await.expect("nothing there is no error");
         storage.remove_under("artifacts/a").await.unwrap();
         assert!(matches!(storage.get("artifacts/a/1").await, Err(ContentError::NotFound(_))));
         assert_eq!(read(&storage, "artifacts/b/1").await, b"other", "what lies under another prefix stays");
+        assert_eq!(read(&storage, "artifacts/c/1").await, b"first", "a copy is removed on its own");
         storage.remove_under("artifacts/a").await.expect("nothing there is no error");
         storage.remove_under("artifacts/b/1").await.expect("a key itself lies under no key");
         assert_eq!(read(&storage, "artifacts/b/1").await, b"other");

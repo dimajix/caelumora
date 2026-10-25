@@ -896,7 +896,9 @@ holds but one at least, and where to read on - becomes a function of `caelumora-
 (`tool::page_of`, a `TextPage`), which `read_file` calls and `read_attachment` will.
 
 **5b, the tools**: `caelumora-agents/src/tool/attachment_tool.rs`, kind `attachment_tool`,
-`ToolProvider`, texts under `agents.tools.attachment_tool`, registered in `tool::register_all`;
+`ToolProvider`, `uses::<AttachmentManager>()` - a service of the runtime now, as the
+`WorkspaceManager` is -, texts under `agents.tools.attachment_tool`, registered in
+`tool::register_all`;
 offered where the agent's transcript numbered attachments, `view_attachment` only to a model that
 sees.
 
@@ -904,7 +906,7 @@ sees.
 |---|---|---|---|
 | `view_attachment` | `ref` | Gives the model an image again, as `shown` of its result, loaded as an attachment is; refuses one that is no image, with its type. | none; the attachment's label |
 | `read_attachment` | `ref`, `start_line?`, `line_count?` | Text of an attachment of a text type, a page at a time as `read_file` gives one. | none; the attachment's label |
-| `copy_attachment` | `ref`, `path?` (`attachments/<name>`) | Writes the attachment's bytes into the workspace the turn may use (`Turn::workspace_terminal(Grant::Write)`), where its label may flow into the workspace's (`may_publish`); answers the path. | always asked, as a write; the workspace's |
+| `copy_attachment` | `ref`, `path?` (`attachments/<name>`) | Writes the attachment's bytes into the workspace the turn may use (`Turn::workspace_terminal(Grant::Write)`), offered only where one may be written to; answers the path. Built without a check of its own that the label flows into the workspace's: the attachment's flows into the channel, and a workspace used in a channel takes what the channel holds (`may_publish` both ways). | always asked, as a write; the workspace's |
 | `attach` | `ref` | Puts a copy aside for the turn's next message that others hear (`Turn::put_aside`); answers that it will be attached. | none; the attachment's label |
 
 ```rust
@@ -951,9 +953,10 @@ impl Turn {
   the result in the transcript, which carries the attachment's label (`ToolOutput::classification`).
 - **`TurnState::attachments: Vec<ContentRef>`**, put aside, not stored (`#[serde(skip)]`): a copy
   waits for its message in memory as an upload does, so a turn resumed after a restart loses what
-  it put aside, not its answer. `stamp` of a complete message that is heard moves them onto it;
-  the channel claims them as it claims an upload, for the agent. A turn given up leaves them
-  pending; they expire.
+  it put aside, not its answer. `Turn::say` - the one way a turn's complete message reaches the
+  channel - moves them onto the turn's answer: a message of the model calling no tools, not a step
+  of a plan, with words or without; the channel claims them as it claims an upload, for the agent.
+  A turn given up leaves them pending; they expire.
 - **`ContentStorage::copy`**, a hard link for `local`: two keys, each removed on its own.
 - **The channel admits `shown`**: each reference lies in the channel's key space and its label may
   flow into the channel. `media` stays refused.
@@ -1184,3 +1187,22 @@ previews and everything else with name, type, size and a download; the tool card
   5a makes paging a text a function of its own first. `Situation::attachments`, which step 4's
   plan left to this step, is not built: a tool reads the agent's state through
   `Situation::agent_channel_state`. The plan of step 5 says so now.
+- **2026-10-24** - Step 5b built: the tools of `attachment_tool` reach what the agent heard by its
+  number, resolved to the message that carries it and read through the view of its channel;
+  `view_attachment` shows an image as its result's `shown`, which the channel admits where it lies
+  in the channel's key space, and which is given along and sent to Ollama with the result;
+  `read_attachment` pages a text as `read_file` does; `copy_attachment` writes into the workspace,
+  always asked; `attach` puts a copy aside (`ContentStorage::copy`, a hard link locally), which
+  `Turn::say` moves onto the next answer. The `AttachmentManager` is a service of the runtime.
+  Tested in the agents' security suite (M5): nothing asks beyond reaching the channel, copying
+  what writing into the workspace asks.
+- **2026-10-24** - Step 5b, after its review: what a turn put aside goes with its answer - a message
+  of the model calling no tools, not a step of a plan, with words or without -, not with a step that
+  calls tools; what a message carries - attachments and what its results showed - is one method of
+  the message (`Message::carried`), used wherever both are meant, the label of what was shown
+  included (`classifications_given`); the `ToolExecutor` withholds a result whose shown content may
+  not flow into the channel; `AttachmentManager::copy` copies only what lies in the channel; `local`
+  copies whole or not at all where it cannot link; a storage's failure is the tool's
+  (`AttachmentError::is_storage_failure`, one `From<AttachmentError> for ToolError`); a page of a
+  text gives its value and where to read on itself (`TextPage::value`, `agents.results.read_on`);
+  `copy_attachment` is offered only where a workspace may be written to.

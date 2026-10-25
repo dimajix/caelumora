@@ -637,7 +637,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     assert_eq!(asked, checks(&["alice: Publish yes", "alice: Publish yes"]), "the channel, as it admits it: the message, then its attachment");
 
     let (read, asked) = world.asked(async {
-        let (_, _, content) = channel_of(world.bob).await.unwrap().attachment(said.id, uploaded.id).await.expect("he reads it with the message");
+        let (_, _, content) = channel_of(world.bob).await.unwrap().attachment_content(said.id, uploaded.id).await.expect("he reads it with the message");
         content.collect::<Vec<_>>().await.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect::<Vec<u8>>()
     }).await;
     assert_eq!(read, b"notes");

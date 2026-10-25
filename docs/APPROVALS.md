@@ -78,6 +78,9 @@ approval follows from that:
     configuration says so, and relaxing nothing beyond that. Read-only does not mean that nothing
     leaves the system: the arguments of a search reach the server all the same.
 *   **Releasing** a note, a private note or something remembered to a wider circle needs it.
+*   **Writing into the workspace** an attachment heard needs it: `copy_attachment` is always asked,
+    as a write there is. Showing an attachment again, reading one or attaching it to the answer
+    stays in the conversation (issue 282).
 *   **What stays in the conversation** needs none: reading within what the agent may read and its
     channel may take in, the tools without an effect, and ending the turn - an agent put to sleep on
     someone's word is woken with `/wakeup`. A plan is one of them: it says what the agent intends,

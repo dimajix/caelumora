@@ -1,7 +1,10 @@
 //! A text given a page at a time (issue 282): what a tool that reads a text - a workspace's file,
 //! an attachment - gives its model of it at once, and where it reads on.
 
-use super::{ToolError, ToolResult};
+use super::{result_text, ToolError, ToolResult};
+use caelumora_model::prompt_catalogue::{context, PromptTexts};
+use serde_json::{json, Value};
+use tracing::error;
 
 /// The lines of a text a tool gives its model at once: from `start_line` through `end_line`, of
 /// `total_lines`, and where to read on if what was asked for goes beyond them.
@@ -13,6 +16,21 @@ pub struct TextPage {
     pub total_lines: usize,
     /// The line to read on from, if what was asked for goes beyond the page.
     pub next_line: Option<usize>,
+}
+
+impl TextPage {
+    /// The page as a tool's result gives it - its content, the lines it covers, and where to read
+    /// on, worded by `prompts` (`results.read_on`) -, for the tool to add what the text is.
+    pub fn value(self, prompts: &PromptTexts) -> Value {
+        let mut value = json!({ "content": self.content, "start_line": self.start_line, "end_line": self.end_line, "total_lines": self.total_lines });
+        if let Some(line) = self.next_line {
+            match result_text(prompts, "read_on", context! { line }) {
+                Ok(next) => value["next"] = json!(next),
+                Err(e) => error!("A page of a text is given without saying where to read on: {e}"),
+            }
+        }
+        value
+    }
 }
 
 /// The page of `text` from line `start_line` - the first if `None` - of at most `line_count` lines:

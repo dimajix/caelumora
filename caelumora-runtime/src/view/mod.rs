@@ -1521,11 +1521,11 @@ mod tests {
         let page = secret_from_team.history_page(None, 10).await.unwrap();
         assert_eq!(page.entries().filter_map(HistoryEntry::said).filter_map(|m| m.content.as_deref()).collect::<Vec<_>>(), ["the date"], "a page of what was released (issue 218)");
         assert!(matches!(secret_from_team.message(plan.id).await, Err(ViewError::NoChannelNamed(_))), "what was not released is not found");
-        let read = |id| secret_from_team.attachment(date.id, id);
-        assert!(matches!(read(minutes.id).await, Err(ViewError::Attachment(AttachmentError::NotFound(_)))), "not released by its own label, though its message is");
-        assert!(matches!(read(agenda.id).await, Err(ViewError::Attachment(AttachmentError::UnknownStorage(_)))), "released, and read from its storage");
+        assert!(matches!(secret_from_team.attachment(date.id, minutes.id).await, Err(ViewError::Attachment(AttachmentError::NotFound(_)))), "not released by its own label, though its message is");
+        assert_eq!(secret_from_team.attachment(date.id, agenda.id).await.unwrap(), agenda, "released");
+        assert!(matches!(secret_from_team.attachment_content(date.id, agenda.id).await, Err(ViewError::Attachment(AttachmentError::UnknownStorage(_)))), "and read from its storage");
         let whole_secret = manager.views(Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, secret.id))).session(session.id).await.unwrap().channel(secret.id).await.unwrap();
-        assert!(matches!(whole_secret.attachment(date.id, minutes.id).await, Err(ViewError::Attachment(AttachmentError::UnknownStorage(_)))), "read as a whole: every one");
+        assert_eq!(whole_secret.attachment(date.id, minutes.id).await.unwrap(), minutes, "read as a whole: every one");
         let notes = secret_from_team.notes().await.unwrap();
         assert_eq!(notes[0].notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["noted openly"]);
         let refused = secret_from_team.participant(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not as a whole");

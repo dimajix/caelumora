@@ -14,6 +14,7 @@ use crate::note::NoteChange;
 use crate::plan::PlanState;
 use crate::tool::{ToolCallState, ToolCallStatus};
 use crate::confidentiality::Classification;
+use crate::content::ContentRef;
 use crate::context::KnowledgeRef;
 use crate::message::Message;
 use crate::work::Work;
@@ -142,6 +143,12 @@ pub struct TurnState {
     /// own; one resumed after a restart runs its command again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<CommandRequest>,
+    /// What the turn put aside for its answer (issue 282): copies of
+    /// attachments, waiting for that message as an upload waits - in
+    /// memory, so not stored: a turn resumed after a restart has lost them,
+    /// not its answer, which its channel would refuse with them.
+    #[serde(skip)]
+    pub attachments: Vec<ContentRef>,
 }
 
 /// A command an agent was asked to carry out (issue 269), as the turn

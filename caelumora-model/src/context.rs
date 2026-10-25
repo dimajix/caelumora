@@ -256,13 +256,14 @@ impl ModelProfile {
     }
 
     /// How what the model is given of `message` is classified: the message,
-    /// its tool results, and the attachments it is given along (issue 282) -
-    /// what sets the label of what the model produces from it.
+    /// its tool results, and what it carries that the model is given along -
+    /// an attachment, what a result showed (issue 282) - what sets the label
+    /// of what the model produces from it.
     pub fn classifications_given<'m>(&self, message: &'m Message) -> impl Iterator<Item = &'m Classification> {
         let profile = *self;
         iter::once(&message.classification)
             .chain(message.tool_results.iter().map(|result| &result.classification))
-            .chain(message.attachments.iter().filter(move |attachment| profile.gives_along(attachment)).map(|attachment| &attachment.classification))
+            .chain(message.carried().filter(move |content| profile.gives_along(content)).map(|content| &content.classification))
     }
 
     /// `message` framed as the model of `agent` is given it: its attachments
@@ -723,11 +724,12 @@ impl<'a> ContextResolver<'a> {
 impl ContextItem {
     /// About how many tokens the model of `profile` is given of the item
     /// (issue 284), as `Message::estimated_tokens` estimates, and an image it
-    /// is given along as `IMAGE_TOKENS` (issue 282).
+    /// is given along - attached, or shown by a tool - as `IMAGE_TOKENS`
+    /// (issue 282).
     pub fn estimated_tokens(&self, profile: &ModelProfile) -> u64 {
         match self {
             ContextItem::Conversation { message } => {
-                let images = message.attachments.iter().filter(|attachment| profile.gives_along(attachment)).count();
+                let images = message.carried().filter(|content| profile.gives_along(content)).count();
                 message.estimated_tokens().saturating_add(IMAGE_TOKENS.saturating_mul(u64::try_from(images).unwrap_or(u64::MAX)))
             }
             ContextItem::Prompt { text, .. } => estimated_tokens(text.len()),

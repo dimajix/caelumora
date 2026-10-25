@@ -167,13 +167,15 @@ It knows no workspace: where the content comes from is its caller's. Artifacts a
 state: each has its own owner, permissions, a name unique in its scope and a trash, and one that is
 kept outlives the session it was published in.
 
-The `AttachmentManager` keeps an attachment under `attachments/<channel>/<id>`, in the
-storage `attachments.keep_in` names. An attachment is no entity: it is part of the message that
-carries it, read through the message (`ChannelView::attachment`) - where a channel is read entry by
-entry, as its own label is released -, and its reference (`ContentRef`) is kept with the
-message in the channel's history. What waits for its message is held in memory alone; what a
-restart loses lies under its channel's prefix until the channel's state is purged with its session,
-which removes the whole prefix from every storage of content.
+The `AttachmentManager` keeps an attachment under `attachments/<channel>/<id>`, in the storage
+`attachments.keep_in` names. An attachment is no entity: it is part of the message that carries it,
+read through the message (`ChannelView::attachment`, its content `attachment_content`) - where a
+channel is read entry by entry, as its own label is released -, and its reference (`ContentRef`) is
+kept with the message in the channel's history. What an agent attaches of what it heard is a copy
+(`ContentStorage::copy`, a hard link where the file system makes one): two keys, each removed on its
+own, the copy waiting for its message as an upload does. What waits for its message is held in
+memory alone; what a restart loses lies under its channel's prefix until the channel's state is
+purged with its session, which removes the whole prefix from every storage of content.
 
 ### Component bundles
 

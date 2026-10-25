@@ -5,6 +5,7 @@
 //! another facet - a prompt part, say - stays in `components`.
 
 pub mod ask_user_tool;
+pub mod attachment_tool;
 pub mod calculator_tool;
 pub mod echo_tool;
 mod page;
@@ -22,9 +23,11 @@ use caelumora_runtime::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Compartment, Confidentiality};
+use caelumora_model::content::ContentRef;
 use caelumora_model::security::{ActionType, Enforcement, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
 use caelumora_runtime::runtime::ActorRuntime;
+use caelumora_runtime::attachment::AttachmentError;
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ViewError, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceError;
@@ -37,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
 use std::future::Future;
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -64,7 +68,20 @@ impl From<ViewError> for ToolError {
         match error {
             ViewError::Forbidden { .. } => ToolError::PermissionDenied(error.to_string()),
             ViewError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
+            ViewError::Attachment(error) => error.into(),
             _ => ToolError::InvalidParameter(error.to_string()),
+        }
+    }
+}
+
+/// What reaching an attachment failed with (issue 282), as the model is told it: a storage that
+/// failed is the tool's; an attachment that is not there, or what does not fit, the model's to
+/// correct.
+impl From<AttachmentError> for ToolError {
+    fn from(error: AttachmentError) -> Self {
+        match error.is_storage_failure() {
+            true => ToolError::ExecutionFailed(error.to_string()),
+            false => ToolError::InvalidParameter(error.to_string()),
         }
     }
 }
@@ -87,24 +104,27 @@ impl From<TerminalError> for ToolError {
 /// What a tool gives back (issue 133): its value and, if the tool
 /// classifies it - by its input, by what it read, by the source it drew
 /// on - how sensitive it is. `None` leaves it to the tool's configuration
-/// or the channel (`ToolExecutor`).
+/// or the channel (`ToolExecutor`). And the attachments of its channel it
+/// shows its model again (issue 282), which the model is given with the
+/// result as it is given an attachment (`ToolCallResult::shown`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolOutput {
     pub value: Value,
     pub classification: Option<Classification>,
+    pub shown: Vec<ContentRef>,
 }
 
 impl ToolOutput {
     /// `value`, classified `classification` by the tool.
     pub fn classified(value: Value, classification: Classification) -> Self {
-        Self { value, classification: Some(classification) }
+        Self { value, classification: Some(classification), shown: Vec::new() }
     }
 }
 
 /// A value the tool does not classify.
 impl From<Value> for ToolOutput {
     fn from(value: Value) -> Self {
-        Self { value, classification: None }
+        Self { value, classification: None, shown: Vec::new() }
     }
 }
 
@@ -199,7 +219,7 @@ pub fn text_argument(params: &Value) -> ToolResult<String> {
 
 /// The text `key` of `prompts` for the result of a tool call (issue 57),
 /// rendered with `values`.
-fn result_text(prompts: &PromptTexts, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+pub(crate) fn result_text(prompts: &PromptTexts, key: &str, values: impl Serialize) -> Result<String, PromptError> {
     prompts.render(&format!("{NAMESPACE}.results.{key}"), values)
 }
 
@@ -673,20 +693,22 @@ impl ToolExecutor {
 
     /// The result for `call`, whose tool gave `output`: classified as the
     /// tool classified it, else as the tool is configured - as the turn
-    /// began with its tools - else as the channel, and withheld if that may
-    /// not flow into the channel (`ConfidentialityPolicy::may_publish`, in the agent's
+    /// began with its tools - else as the channel, and withheld - with what
+    /// it showed (issue 282) - if that, or what it showed, may not flow into
+    /// the channel (`ConfidentialityPolicy::may_publish`, in the agent's
     /// name: the result enters its context in the channel).
     async fn admitted(&self, call: &ToolCall, output: ToolOutput, turn: &Turn<'_>) -> ToolCallResult {
         let channel = turn.situation().classification();
         let configured = turn.tools().find(|t| t.name == call.function_name).and_then(|t| t.classification.clone());
         let classification = output.classification.or(configured).unwrap_or_else(|| channel.clone());
         let context = turn.situation().security_context();
-        if !self.confidentiality.may_publish(context, &classification, &channel) {
-            debug!(tool = %call.function_name, %classification, "Withheld a result the channel does not admit");
-            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&turn.situation().texts(), &classification), channel);
+        let parts = iter::once(&classification).chain(output.shown.iter().map(|shown| &shown.classification));
+        if let Some(refused) = parts.into_iter().find(|part| !self.confidentiality.may_publish(context, part, &channel)) {
+            debug!(tool = %call.function_name, classification = %refused, "Withheld a result the channel does not admit");
+            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&turn.situation().texts(), refused), channel);
         }
         match successful_result(&turn.situation().texts(), output.value, call.visibility) {
-            Ok(content) => ToolCallResult::of(call, ToolResultStatus::Ok, content, classification),
+            Ok(content) => ToolCallResult { shown: output.shown, ..ToolCallResult::of(call, ToolResultStatus::Ok, content, classification) },
             // Not given without the mark that it is the agent's alone.
             Err(e) => {
                 error!(tool = %call.function_name, "Withheld a result only its agent may see, which cannot be marked so: {e}");
@@ -793,6 +815,7 @@ impl ToolExecutor {
 /// Registers the tool kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
     ask_user_tool::register(registry);
+    attachment_tool::register(registry);
     calculator_tool::register(registry);
     echo_tool::register(registry);
     sleep_tool::register(registry);
@@ -802,6 +825,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::content::testing::make_content_ref;
     use crate::testing::{self, TestAgents};
     use caelumora_model::event::GlobalEvent;
     use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
@@ -848,7 +872,9 @@ mod tests {
     }
 
     /// `test_tool` does not classify its result; `hr_tool` classifies it as
-    /// HR's; `configured_tool` does not classify, but is configured as HR's.
+    /// HR's; `configured_tool` does not classify, but is configured as HR's;
+    /// `showing_tool` shows an attachment of the channel's, `showing_hr_tool`
+    /// one of HR's (issue 282).
     #[derive(Debug)]
     struct MockToolProvider {
         requires_approval: bool,
@@ -881,6 +907,8 @@ mod tests {
                 tool("hr_tool", self.requires_approval, None),
                 tool("configured_tool", self.requires_approval, Some(hr())),
                 tool("hanging_tool", self.requires_approval, None),
+                tool("showing_tool", self.requires_approval, None),
+                tool("showing_hr_tool", self.requires_approval, None),
             ]
         }
         async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -888,6 +916,11 @@ mod tests {
                 "hr_tool" => Ok(ToolOutput::classified(json!({"salary": 1}), hr())),
                 "configured_tool" => Ok(json!({"salary": 2}).into()),
                 "hanging_tool" => future::pending().await,
+                "showing_tool" | "showing_hr_tool" => {
+                    let classification = if name == "showing_hr_tool" { hr() } else { Classification::CHANNEL_DEFAULT };
+                    let shown = ContentRef { classification, ..make_content_ref("a.png", b"a") };
+                    Ok(ToolOutput { shown: vec![shown], ..json!({"shown": true}).into() })
+                }
                 _ => Ok(json!({"result": "ok"}).into()),
             }
         }
@@ -1278,6 +1311,22 @@ mod tests {
             assert_eq!(result.classification, Classification::CHANNEL_DEFAULT, "what the model is told is the channel's");
             assert!(result.started_at.is_some(), "it ran");
         }
+    }
+
+    /// Issue 282: what a result showed goes with it to the model, and is withheld with it where it
+    /// may not flow into the channel.
+    #[tokio::test]
+    async fn what_a_result_showed_goes_with_it_where_the_channel_admits_it() {
+        let executor = with_hr();
+        let mut agent_channel_state = agent_turn(&executor).await;
+        let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
+
+        let shown = executor.execute(&call("showing_tool"), None, &mut turn, future::pending()).await;
+        assert_eq!((shown.status, shown.shown.len()), (ToolResultStatus::Ok, 1), "into the result");
+        let withheld = executor.execute(&call("showing_hr_tool"), None, &mut turn, future::pending()).await;
+        assert_eq!(withheld.status, ToolResultStatus::Withheld, "HR's, and the channel is general");
+        assert!(withheld.shown.is_empty(), "withheld with the result");
+        assert!(withheld.content.contains("internal {hr}"), "the model is told why: {}", withheld.content);
     }
 
     #[tokio::test]

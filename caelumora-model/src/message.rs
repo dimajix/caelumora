@@ -271,6 +271,17 @@ impl Message {
         Some(message)
     }
 
+    /// The content the message carries (issue 282): its attachments, and what its tool results
+    /// showed its model.
+    pub fn carried(&self) -> impl Iterator<Item = &ContentRef> {
+        self.attachments.iter().chain(self.tool_results.iter().flat_map(|result| &result.shown))
+    }
+
+    /// The same, to change: the copy a transcript numbers, or a model is given with content.
+    pub fn carried_mut(&mut self) -> impl Iterator<Item = &mut ContentRef> {
+        self.attachments.iter_mut().chain(self.tool_results.iter_mut().flat_map(|result| &mut result.shown))
+    }
+
     /// Whether a participant hears anything of the message when someone else said it (issue 224):
     /// whether it was said or answered in words or attachments (issue 282) - not a tool message,
     /// not an inner step of a plan, not a message without either. That nobody hears their own

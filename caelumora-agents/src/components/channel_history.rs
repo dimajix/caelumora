@@ -134,7 +134,7 @@ impl ToolProvider for ChannelHistoryComponent {
             }).collect::<Vec<_>>(),
             "more": more,
         });
-        Ok(ToolOutput { value, classification })
+        Ok(ToolOutput { value, classification, shown: Vec::new() })
     }
 }
 

@@ -155,7 +155,8 @@ impl RuntimeBuilder {
             .with(Arc::clone(&access_policy))
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
-            .with(Arc::clone(&workspaces));
+            .with(Arc::clone(&workspaces))
+            .with(Arc::clone(&attachments));
         // The core's texts, before any plugin adds its own.
         let mut prompts = PromptCatalogue::new();
         prompts.add(CORE, CORE_PROMPTS)?;

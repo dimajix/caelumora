@@ -19,7 +19,7 @@
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
 //! changed the file in between is overwritten.
 
-use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
+use crate::terminal_tool::{tool, TerminalTool, TerminalToolConfig};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_agents::turn::Turn;
 use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
@@ -405,13 +405,8 @@ pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, ter
             let at = path(&at)?;
             let (text, digest) = text(terminal, &at).await?;
             read(turn, Some(digest));
-            let page = page_of(&text, &format!("'{at}'"), start_line, line_count, config.max_output_bytes)?;
-            let mut result = json!({ "path": at.to_string(), "content": page.content, "start_line": page.start_line, "end_line": page.end_line, "total_lines": page.total_lines });
-            if let Some(line) = page.next_line {
-                if let Some(next) = next(prompts, "read_on", context! { line }) {
-                    result["next"] = json!(next);
-                }
-            }
+            let mut result = page_of(&text, &format!("'{at}'"), start_line, line_count, config.max_output_bytes)?.value(prompts);
+            result["path"] = json!(at.to_string());
             Ok(result)
         }
         GREP_FILES => {

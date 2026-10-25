@@ -669,9 +669,9 @@ pub enum AgentChannelStateChange {
     /// Where the agent stands in its channel's history, whole: small, and
     /// moved at almost every put (issue 440).
     Heard(Heard),
-    /// The numbers its transcript gave attachments since stored (issue
-    /// 282).
-    Attachments(Vec<(ContentId, u32)>),
+    /// The attachments its transcript numbered since stored, each with the
+    /// message that carries it (issue 282).
+    Attachments(Vec<(MessageId, ContentId)>),
 }
 
 impl Journaled for AgentChannelState {

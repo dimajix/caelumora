@@ -48,6 +48,7 @@ use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::context::{message_times_by_default, ModelProfile, ReasoningHistory, SenderFormat, SenderStyle, SystemMessages};
+use caelumora_model::content::ContentRef;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::tool::{ToolCall, ToolVisibility, Tool, ToolParameters};
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -251,6 +252,13 @@ struct OllamaChatResponse {
     eval_duration: Option<u64>,
 }
 
+/// What of `given` the model is given along (issue 282), as Ollama takes images: base64; `None`
+/// for none.
+fn images_of(given: &[ContentRef]) -> Option<Vec<String>> {
+    let images: Vec<String> = given.iter().filter_map(|content| content.content.as_deref()).map(|content| BASE64.encode(content)).collect();
+    (!images.is_empty()).then_some(images)
+}
+
 impl OllamaChatMessage {
     fn from(value: &Message) -> Vec<Self> {
         let mut messages = Vec::new();
@@ -282,7 +290,6 @@ impl OllamaChatMessage {
             )
         };
 
-        let images: Vec<String> = value.attachments.iter().filter_map(|attachment| attachment.content.as_deref()).map(|content| BASE64.encode(content)).collect();
         if tool_calls.is_some() || value.content.is_some() || value.reasoning.is_some() {
             messages.push( Self {
                 role,
@@ -291,7 +298,7 @@ impl OllamaChatMessage {
                 tool_name: None,
                 tool_calls,
                 tool_call_id: None,
-                images: (!images.is_empty()).then_some(images),
+                images: images_of(&value.attachments),
             })
         }
         for r in &value.tool_results {
@@ -302,7 +309,7 @@ impl OllamaChatMessage {
                 tool_name: Some(r.tool_name.clone()),
                 tool_calls: None,
                 tool_call_id: r.id.clone(),
-                images: None,
+                images: images_of(&r.shown),
             })
         }
 
@@ -1254,19 +1261,26 @@ mod tests {
     #[tokio::test]
     async fn an_image_given_along_is_sent_with_its_message() {
         use caelumora_model::content::testing::make_content_ref;
-        use caelumora_model::content::ContentRef;
+        use caelumora_model::tool::ToolCallResult;
         let fake = FakeOllama::default();
         let client = client(&serve(fake.clone()).await);
         let attachment = make_content_ref("a.png", b"png");
         let given = ContentRef { content: Some(Bytes::from_static(b"png")), ..attachment.clone() };
+        let given_too = given.clone();
         let context = vec![
             Message { role: MessageRole::User, content: Some("look".to_string()), attachments: vec![given], ..Message::new(Classification::CHANNEL_DEFAULT) },
-            Message { role: MessageRole::User, content: Some("noted".to_string()), attachments: vec![attachment], ..Message::new(Classification::CHANNEL_DEFAULT) },
+            Message { role: MessageRole::User, content: Some("noted".to_string()), attachments: vec![attachment.clone()], ..Message::new(Classification::CHANNEL_DEFAULT) },
+            Message {
+                role: MessageRole::Tool,
+                tool_results: vec![ToolCallResult { shown: vec![given_too], ..ToolCallResult::of(&ToolCall { id: Some("1".to_string()), function_name: "view_attachment".to_string(), arguments: json!({}), visibility: Default::default(), presentation: Default::default() }, Default::default(), "shown".to_string(), Classification::CHANNEL_DEFAULT) }],
+                ..Message::new(Classification::CHANNEL_DEFAULT)
+            },
         ];
         let _: Vec<_> = client.chat_completion(&context, &[]).await.collect().await;
         let sent = fake.sent.lock().unwrap();
         assert_eq!(sent[0]["messages"][0]["images"], json!(["cG5n"]));
         assert!(sent[0]["messages"][1].get("images").is_none(), "nothing of what is only noted");
+        assert_eq!(sent[0]["messages"][2]["images"], json!(["cG5n"]), "what a tool showed, with its result (issue 282, step 5)");
     }
 
     #[test]

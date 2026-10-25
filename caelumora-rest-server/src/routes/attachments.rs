@@ -48,7 +48,7 @@ pub(super) async fn download_attachment(
     user: AuthenticatedUser,
 ) -> Result<Response, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let (attachment, size, content) = channel.attachment(MessageId(mid), ContentId(aid)).await?;
+    let (attachment, size, content) = channel.attachment_content(MessageId(mid), ContentId(aid)).await?;
     Ok(content_response(size, content, attachment.name.as_str(), attachment.is_image().then_some(attachment.media_type.as_str())))
 }
 

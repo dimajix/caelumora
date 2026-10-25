@@ -322,20 +322,29 @@ impl ChannelView {
         }
     }
 
-    /// The attachment `id` of message `message`, if the viewer sees the message and may read what
-    /// it carries (issue 282), with its content and the size its storage gives it - not the
-    /// reference's, so that what a response says it sends is what it sends, as
-    /// `ArtifactView::content` answers.
+    /// The attachment `id` of message `message` as it stands, if the viewer sees the message and
+    /// may read what it carries (issue 282).
     ///
     /// # Errors
     /// As `message`; `Attachment` with `NotFound` if it carries no such attachment or one the
-    /// viewer may not read - a channel read entry by entry releases each by its own label -, or
-    /// the storage has nothing under its key; `UnknownStorage`, `Unavailable`.
-    pub async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<(ContentRef, u64, ByteStream)> {
+    /// viewer may not read - a channel read entry by entry releases each by its own label.
+    pub async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<ContentRef> {
         let message = self.message(message).await?;
         let attachment = message.attachments.into_iter()
             .find(|attachment| attachment.id == id && self.may_read_entry(&attachment.classification))
             .ok_or(AttachmentError::NotFound(id))?;
+        Ok(attachment)
+    }
+
+    /// The attachment `id` of message `message`, as `attachment` answers it, with its content and
+    /// the size its storage gives it - not the reference's, so that what a response says it sends
+    /// is what it sends, as `ArtifactView::content` answers.
+    ///
+    /// # Errors
+    /// As `attachment`; `Attachment` with `NotFound` also if the storage has nothing under its
+    /// key, `UnknownStorage`, `Unavailable`.
+    pub async fn attachment_content(&self, message: MessageId, id: ContentId) -> ViewResult<(ContentRef, u64, ByteStream)> {
+        let attachment = self.attachment(message, id).await?;
         let (size, content) = self.views().attachment_manager().content_of(&attachment).await?;
         Ok((attachment, size, content))
     }

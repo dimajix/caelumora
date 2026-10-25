@@ -60,6 +60,12 @@ pub trait ContentStorage: Send + Sync + fmt::Debug {
     async fn get(&self, key: &str) -> ContentResult<(u64, ByteStream)>;
     /// Removes what lies under `key`; nothing there is no error.
     async fn delete(&self, key: &str) -> ContentResult<()>;
+    /// Puts a copy of what lies under `from` under `to`, as cheaply as the backend can (issue
+    /// 282): two keys, each removed on its own.
+    ///
+    /// # Errors
+    /// `NotFound` if nothing lies under `from`.
+    async fn copy(&self, from: &str, to: &str) -> ContentResult<()>;
     /// Removes everything whose key lies under `prefix` - whose leading
     /// segments it is; nothing there is no error.
     async fn remove_under(&self, prefix: &str) -> ContentResult<()>;

@@ -294,7 +294,7 @@ impl ToolProvider for SkillsComponent {
             LIST_SKILLS_TOOL_NAME => {
                 let skills = session_of(turn).await?.views().usable_skills().await?;
                 let listed: Vec<Value> = skills.iter().map(|s| serde_json::json!({ "name": s.name(), "description": s.description().as_str(), "skill_id": s.id() })).collect();
-                Ok(ToolOutput { value: serde_json::json!({ "skills": listed }), classification: Some(joined(&skills, &turn.situation().classification())) })
+                Ok(ToolOutput::classified(serde_json::json!({ "skills": listed }), joined(&skills, &turn.situation().classification())))
             }
             LOAD_SKILL_TOOL_NAME => {
                 #[derive(Deserialize)]
@@ -317,7 +317,7 @@ impl ToolProvider for SkillsComponent {
                 };
                 let knowledge = skill.knowledge(turn.situation().channel_id(), turn.situation().session_id());
                 turn.give(given, Some(knowledge));
-                Ok(ToolOutput { value: serde_json::json!({ "status": "loaded", "name": skill.name(), "skill_id": skill.id() }), classification: Some(skill.classification().clone()) })
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "loaded", "name": skill.name(), "skill_id": skill.id() }), skill.classification().clone()))
             }
             CREATE_SKILL_TOOL_NAME => {
                 let Create { name, description, body, scope } = arguments(params)?;

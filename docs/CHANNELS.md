@@ -395,6 +395,12 @@ lets the message in: no other message can carry it then. A modified message keep
 and may add what its author uploaded. What a removed attachment was stays in the storage, as what
 was said stays in the history; every attachment of a session goes when the session is purged.
 
+An agent attaches what it heard by its number (`attach`, see [TOOLS.md](TOOLS.md#attachments)): a
+copy of it under an id and a key of its own waits for the agent's answer as an upload does, and the
+channel claims it as it claims one. What a tool's result showed its model again (`shown`) the
+channel admits where it lies in the channel's key space - one of its attachments - and its label
+flows in; what a tool gave its model (`media`) it refuses until issue 208 brings the first.
+
 ## Changing what was said
 
 What was said can be changed by its author, but never rewritten: a message is *modified* - it reads

@@ -51,6 +51,14 @@ pub enum AttachmentError {
     Unavailable(String),
 }
 
+impl AttachmentError {
+    /// Whether a storage failed rather than the request: one that could not be reached, that is no
+    /// longer configured, or that holds other bytes than were kept.
+    pub fn is_storage_failure(&self) -> bool {
+        matches!(self, Self::Unavailable(_) | Self::UnknownStorage(_) | Self::Altered(_))
+    }
+}
+
 /// What the `AttachmentManager` answers.
 pub type AttachmentResult<T> = Result<T, AttachmentError>;
 
