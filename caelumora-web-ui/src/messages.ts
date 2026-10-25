@@ -26,20 +26,47 @@ export function ownerOnly(visibility: ToolVisibility | undefined): string | null
 }
 
 /**
- * `messages` with every tool result attached to the message holding the
- * tool call it answers, so that a call and its result are shown together.
+ * `messages` with every tool result put with the message holding the call it answers - found by
+ * the call's id, the last before it with that call, wherever it stands -, so that a call and its
+ * result are shown together. A tool message whose results all went to their calls is left out; a
+ * result whose call is not among `messages` stays where it is.
  */
 export function mergeToolResults(messages: Message[]): Message[] {
-  return messages.reduce((acc: Message[], msg) => {
-    if (msg.tool_results && msg.tool_results.length > 0) {
-      const lastMsg = acc[acc.length - 1];
-      if (lastMsg && lastMsg.tool_calls && lastMsg.tool_calls.some(tc => msg.tool_results?.some(tr => tr.id === tc.id))) {
-        const merged = {...lastMsg, tool_results: [...(lastMsg.tool_results || []), ...msg.tool_results]};
-        return [...acc.slice(0, -1), merged];
+  return mergeToolResultsAmong(messages, message => message, (_, message) => message);
+}
+
+/**
+ * `items` - messages among other rows - with their tool results merged as `mergeToolResults` merges
+ * them, across the other rows: `messageOf` gives the message an item is, if it is one, and
+ * `withMessage` the item with its message changed.
+ */
+export function mergeToolResultsAmong<T>(items: T[], messageOf: (item: T) => Message | undefined, withMessage: (item: T, message: Message) => T): T[] {
+  const merged: T[] = [];
+  // Where among `merged` the message holding each call stands, by the call's id.
+  const holders = new Map<string, number>();
+  for (const item of items) {
+    const msg = messageOf(item);
+    if (!msg) {
+      merged.push(item);
+      continue;
+    }
+    const kept: ToolResult[] = [];
+    for (const result of msg.tool_results ?? []) {
+      const at = result.id === undefined ? undefined : holders.get(result.id);
+      const holder = at === undefined ? undefined : messageOf(merged[at]);
+      if (at === undefined || !holder) {
+        kept.push(result);
+      } else {
+        merged[at] = withMessage(merged[at], {...holder, tool_results: [...(holder.tool_results ?? []), result]});
       }
     }
-    return [...acc, msg];
-  }, []);
+    if (msg.role === 'Tool' && kept.length === 0 && msg.tool_results?.length) continue;
+    merged.push(kept.length === (msg.tool_results?.length ?? 0) ? item : withMessage(item, {...msg, tool_results: kept}));
+    for (const call of msg.tool_calls ?? []) {
+      if (call.id !== undefined) holders.set(call.id, merged.length - 1);
+    }
+  }
+  return merged;
 }
 
 /** What a shell tool answers of a command (issue 251). */
@@ -352,9 +379,9 @@ export type ChatRow =
  * The rows `messages` are shown as: the mark of a step begins a row of its
  * own, and each internal message joins the row right before it if that is
  * of its turn. Interrupted by another's - agents answering at once - it
- * begins a row of its own, under the step its turn was last in. Tool
- * results are merged first (`mergeToolResults`), so that a step's call and
- * its result stay one message.
+ * begins a row of its own, under the step its turn was last in. `messages`
+ * have their tool results merged (`mergeToolResults`), so that a step's call
+ * and its result stay one message.
  */
 export function chatRows(messages: Message[]): ChatRow[] {
   const rows: ChatRow[] = [];

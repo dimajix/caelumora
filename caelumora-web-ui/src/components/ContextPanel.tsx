@@ -17,7 +17,7 @@ import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {ToolSetList} from './ToolSetList';
 import {MessageView} from './MessageView';
-import {mergeToolResults} from '../messages';
+import {mergeToolResultsAmong} from '../messages';
 
 /** How many of the latest messages are shown before "show earlier". */
 const SHOWN_AT_FIRST = 10;
@@ -61,39 +61,22 @@ const DigestLine: React.FC<{label: string; digest: string | null}> = ({label, di
   </div>
 );
 
-/** What the panel shows, in order: prompt parts, and runs of messages with their tool results merged. */
+/** What the panel shows, in order: prompt parts, and messages with their tool results merged. */
 type Row = SeenPrompt | SeenMessage;
 
 /**
- * `run` with the tool results merged into the messages that called them; a
- * merged message set the label if any message merged into it did.
+ * `items` with the tool results merged into the messages that called them, across the prompt parts
+ * (`mergeToolResultsAmong`); a merged message set the label if any message merged into it did.
  */
-function mergedRun(run: SeenMessage[]): SeenMessage[] {
-  return mergeToolResults(run.map(item => item.message)).map(message => {
-    const results = new Set((message.tool_results ?? []).map(result => result.id));
-    const merged = run.filter(item =>
-      item.message.id === message.id || (item.message.tool_results ?? []).some(result => results.has(result.id)));
-    return {kind: 'message' as const, message, sets_label: merged.some(item => item.sets_label)};
-  });
-}
-
 function rowsOf(items: MessageContextResponse['items']): Row[] {
-  const rows: Row[] = [];
-  let run: SeenMessage[] = [];
-  const flush = () => {
-    rows.push(...mergedRun(run));
-    run = [];
-  };
-  for (const item of items) {
-    if (item.kind === 'message') {
-      run.push(item);
-    } else {
-      flush();
-      rows.push(item);
-    }
-  }
-  flush();
-  return rows;
+  const merged = mergeToolResultsAmong<Row>(items, item => item.kind === 'message' ? item.message : undefined, (item, message) => ({kind: 'message', message, sets_label: item.kind === 'message' && item.sets_label}));
+  return merged.map(row => {
+    if (row.kind !== 'message') return row;
+    const results = new Set((row.message.tool_results ?? []).map(result => result.id));
+    const sets_label = items.some(item => item.kind === 'message' && item.sets_label
+      && (item.message.id === row.message.id || (item.message.tool_results ?? []).some(result => results.has(result.id))));
+    return {...row, sets_label};
+  });
 }
 
 /** The border of a part of the context: marked if it set the message's label. */

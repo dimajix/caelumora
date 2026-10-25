@@ -18,7 +18,7 @@ import {api} from '../api';
 import {actorKey, actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
-import {formatTimestamp, givenUpText, mergeToolResults, participantNotice} from '../messages';
+import {formatTimestamp, givenUpText, mergeToolResultsAmong, participantNotice} from '../messages';
 
 interface HistoryPanelProps {
   sessionId: string;
@@ -64,46 +64,37 @@ async function readBack<M>(read: (before: number | null) => Promise<HistoryPage<
 }
 
 /**
- * The rows of `items`, in the order they happened: the messages, each run of
- * them with its tool results merged in, every turn given up where it ended,
- * every command carried out where it was, every compaction where it was
- * made, and who joined or left where they did. A turn that finished shows
- * nothing of its own.
+ * The rows of `items`, in the order they happened: the messages, with their tool results merged in
+ * (`mergeToolResultsAmong`), every turn given up where it ended, every command carried out where
+ * it was, every compaction where it was made, and who joined or left where they did. A turn that
+ * finished shows nothing of its own.
  */
 function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
-  const rows: Row[] = [];
-  let pending: Message[] = [];
-  const flush = () => {
-    rows.push(...mergeToolResults(pending).map((message): Row => ({kind: 'message', message})));
-    pending = [];
-  };
-  for (const item of items) {
-    if ('said' in item) {
-      pending.push(item.said.message);
-    } else if ('turn_given_up' in item) {
-      flush();
+  const rows = items.flatMap((item): Row[] => {
+    if ('said' in item) return [{kind: 'message', message: item.said.message}];
+    if ('turn_given_up' in item) {
       const {turn_id, reason, at} = item.turn_given_up;
-      rows.push({kind: 'givenUp', turnId: turn_id, reason, at});
-    } else if ('command_executed' in item) {
-      flush();
-      const {turn_id, command, args, issuer, at} = item.command_executed;
-      rows.push({kind: 'command', turnId: turn_id, command, args, issuer, at});
-    } else if ('compacted' in item) {
-      flush();
-      const {turn_id, at} = item.compacted;
-      rows.push({kind: 'compacted', turnId: turn_id, at});
-    } else if ('participant_joined' in item) {
-      flush();
-      const {participant, name, by, by_name, at} = item.participant_joined;
-      rows.push({kind: 'participant', notice: participantNotice('joined', participant, name, by, by_name, at)});
-    } else if ('participant_left' in item) {
-      flush();
-      const {participant, name, by, by_name, at} = item.participant_left;
-      rows.push({kind: 'participant', notice: participantNotice('left', participant, name, by, by_name, at)});
+      return [{kind: 'givenUp', turnId: turn_id, reason, at}];
     }
-  }
-  flush();
-  return rows;
+    if ('command_executed' in item) {
+      const {turn_id, command, args, issuer, at} = item.command_executed;
+      return [{kind: 'command', turnId: turn_id, command, args, issuer, at}];
+    }
+    if ('compacted' in item) {
+      const {turn_id, at} = item.compacted;
+      return [{kind: 'compacted', turnId: turn_id, at}];
+    }
+    if ('participant_joined' in item) {
+      const {participant, name, by, by_name, at} = item.participant_joined;
+      return [{kind: 'participant', notice: participantNotice('joined', participant, name, by, by_name, at)}];
+    }
+    if ('participant_left' in item) {
+      const {participant, name, by, by_name, at} = item.participant_left;
+      return [{kind: 'participant', notice: participantNotice('left', participant, name, by, by_name, at)}];
+    }
+    return [];
+  });
+  return mergeToolResultsAmong(rows, row => row.kind === 'message' ? row.message : undefined, (_, message) => ({kind: 'message', message}));
 }
 
 export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, participant, me, participants, version, onShowContext, onClose}) => {

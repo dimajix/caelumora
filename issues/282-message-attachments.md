@@ -974,7 +974,7 @@ impl Turn {
 
 ### Step 6: the web UI and the TUI
 
-Revised with the maintainer on 2026-10-25, in two steps.
+Revised with the maintainer on 2026-10-25, in three steps.
 
 **6a, a refactoring:** the chat keeps the messages as they came - live as from a snapshot - and
 puts each tool result with its call only as it is drawn (`mergeToolResults`), not also as an event
@@ -982,7 +982,13 @@ arrives. A tool message that arrives twice is then dropped by its id as every ot
 calls and results together - the commands ended, a call left without a result, the last message
 to answer again - reads them as they are shown.
 
-**6b, the attachments:**
+**6b, results by their call:** `mergeToolResults` puts a tool result with the message holding the
+call it answers by the call's id, wherever that message stands - not only with the message right
+before it, so that a message between them, of a user or of another agent, no longer leaves the
+result on its own and its call shown as executing. The history and context panels merge across
+their notices and prompt parts alike (`mergeToolResultsAmong`).
+
+**6c, the attachments:**
 
 - The TUI prints a message's attachments by name, type and size, so that one of attachments alone
   is shown.
@@ -1241,3 +1247,9 @@ to answer again - reads them as they are shown.
   ended, the last message to answer again and the calls a participant that left had without a
   result are read from the messages as shown; an open history panel is read again for a tool result
   too, as for every message.
+- **2026-10-25** - Step 6b inserted with the maintainer, the attachments become 6c: the review of
+  6a found that `mergeToolResults` put a result only with the message right before it. Built: it
+  finds the message holding the call by the call's id, the last before it with that call; a result
+  whose call is not shown stays where it is, and a tool message whose results all went to their
+  calls is left out. The history and context panels merge across their other rows - who joined, a
+  command, a prompt part - instead of within each run of messages between them.
