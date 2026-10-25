@@ -4,7 +4,7 @@
 import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
 import type {ActorId, ChannelParticipant, Message, ToolCall} from '../types';
-import type {ChannelArtifacts, WorkspaceFiles} from '../api';
+import type {ChannelArtifacts, ChannelAttachments, WorkspaceFiles} from '../api';
 import type {Page} from '../page';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -13,6 +13,7 @@ import {formatTimestamp, isOwn, usageGroups} from '../messages';
 import {HoverCard} from './HoverCard';
 import {UsageStats} from './UsageStats';
 import {ToolCallView} from './ToolCallView';
+import {AttachmentList} from './AttachmentList';
 
 /** When a message was written: date and time, the full form on hover (issue 43). */
 export const MessageTime: React.FC<{timestamp?: string; className?: string}> = ({timestamp, className}) => {
@@ -146,6 +147,8 @@ interface MessageViewProps {
   filesVersion?: number;
   /** The artifacts of the channel, where its calls published one (issue 271). */
   artifacts?: ChannelArtifacts;
+  /** The attachments of the channel's messages, where they are downloaded (issue 282); named only without it. */
+  attachments?: ChannelAttachments;
   /** Opens a page in the place of the channel - a skill's, where its calls name one (issue 281). */
   onSelectPage?: (page: Page) => void;
   /** Interrupts one of its calls alone while it runs (issue 276); offered where given. */
@@ -162,7 +165,7 @@ interface MessageViewProps {
   inTurn?: {first: boolean; last: boolean};
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, files, filesVersion, artifacts, onSelectPage, onInterruptCall, onKillCommand, endedCommands, inTurn}) => {
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, files, filesVersion, artifacts, attachments, onSelectPage, onInterruptCall, onKillCommand, endedCommands, inTurn}) => {
   const own = isOwn(msg, me);
   const named = inTurn?.first ?? true;
   const last = inTurn?.last ?? true;
@@ -196,10 +199,12 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, parti
         />
       )}
 
+      <AttachmentList items={msg.attachments ?? []} messageId={msg.id} attachments={attachments} classification={msg.classification} />
+
       {msg.tool_calls && msg.tool_calls.length > 0 && (
         <div className="mt-2 space-y-2">
           {msg.tool_calls.map((call, cidx) => (
-            <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage}
+            <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} messageId={msg.id} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} attachments={attachments} onSelectPage={onSelectPage}
               onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} onKillCommand={onKillCommand} endedCommands={endedCommands} />
           ))}
         </div>

@@ -55,6 +55,16 @@ use rustyline::history::DefaultHistory;
 use std::io::Error;
 use std::future;
 
+/// What `message` says as the terminal prints it: its words, the participants it mentions
+/// highlighted, and what it carries by name, type and size (issue 282); `None` if it says neither.
+fn said(message: &Message, handles: &HashMap<ActorId, String>) -> Option<String> {
+    let words = message.content.as_deref().filter(|content| !content.is_empty()).map(|content| render_content(message, content, handles));
+    let attachments = message.attachments.iter()
+        .map(|attachment| format!("[{}, {}, {}]", attachment.name.as_str(), attachment.media_type, attachment.size_shown()));
+    let parts: Vec<String> = words.into_iter().chain(attachments).collect();
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
 fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
     let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
     let mut rendered = String::with_capacity(content.len());
@@ -210,19 +220,19 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                             last_answer = Some(message.id);
                         }
                         given_up = None;
-                        if let Some(content) = &message.content {
-                            println!("\r{}> {}", message.sender_name, render_content(&message, content, &handles));
+                        if let Some(said) = said(&message, &handles) {
+                            println!("\r{}> {}", message.sender_name, said);
                         }
                     }
                     Some(ActorEvent::IntermediateMessageGenerated(message)) => {
-                        if let Some(content) = &message.content {
-                            println!("\r[working] {}> {}", message.sender_name, render_content(&message, content, &handles));
+                        if let Some(said) = said(&message, &handles) {
+                            println!("\r[working] {}> {}", message.sender_name, said);
                         }
                     }
                     // What another changed of what was said (issue 234).
                     Some(ActorEvent::MessageModified(message)) => {
-                        if let Some(content) = &message.content {
-                            println!("\r{}> [edited] {}", message.sender_name, render_content(&message, content, &handles));
+                        if let Some(said) = said(&message, &handles) {
+                            println!("\r{}> [edited] {}", message.sender_name, said);
                         }
                     }
                     Some(ActorEvent::MessageRevoked { .. }) => {
@@ -616,6 +626,19 @@ mod tests {
             choices: choices.iter().map(|l| Choice { label: l.to_string(), description: None, recommended: false }).collect(),
             multi_select,
         }
+    }
+
+    #[test]
+    fn a_message_is_printed_with_what_it_carries() {
+        use caelumora_model::confidentiality::Classification;
+        use caelumora_model::content::testing::make_content_ref;
+        let message = |content: Option<&str>, attachments| Message { content: content.map(str::to_string), attachments, ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let chart = make_content_ref("chart.png", b"chart");
+        let printed = |message: Message| said(&message, &HashMap::new());
+        assert_eq!(printed(message(Some("hello"), Vec::new())).as_deref(), Some("hello"));
+        assert_eq!(printed(message(None, vec![chart.clone()])).as_deref(), Some("[chart.png, image/png, 5 B]"), "attachments alone");
+        assert_eq!(printed(message(Some("look"), vec![chart])).as_deref(), Some("look [chart.png, image/png, 5 B]"));
+        assert_eq!(printed(message(Some(""), Vec::new())), None, "nothing said");
     }
 
     #[test]

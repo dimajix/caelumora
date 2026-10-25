@@ -277,6 +277,9 @@ export interface ToolResult {
   media?: ContentRef[];
   /** The attachments the call showed its model again (issue 282); absent where its result is not shown. */
   shown?: ContentRef[];
+  // UI only: the message that carries the result, where the chat put it with its call
+  // (`mergeToolResults`) - what `shown` is downloaded through.
+  message_id?: string;
 }
 
 /** Content attached to a message, or given to a model with a tool's result (issue 282). */

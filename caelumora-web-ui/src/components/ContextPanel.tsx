@@ -12,7 +12,7 @@ import {Copy, ScrollText, X} from 'lucide-react';
 import type {ActorId, ChannelParticipant, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolSet} from '../types';
 import {type Classification, classificationDescription, classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
-import {api} from '../api';
+import {api, type ChannelAttachments} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {ToolSetList} from './ToolSetList';
@@ -181,6 +181,8 @@ const ToolList: React.FC<{sets: ToolSet[]}> = ({sets}) => (
 interface ContextPanelProps {
   sessionId: string;
   channelId: string;
+  /** The attachments of the channel's messages, where what its messages carry is downloaded from (issue 282). */
+  attachments: ChannelAttachments;
   /** The agent's message whose context is shown. */
   message: Message;
   /** Who views it, whose messages are their own (issue 407). */
@@ -189,7 +191,7 @@ interface ContextPanelProps {
   onClose: () => void;
 }
 
-export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId, message, me, participants, onClose}) => {
+export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId, attachments, message, me, participants, onClose}) => {
   const actor = actorUuid(message.sender_id);
   const key = `${actor}:${message.id}`;
   const [context, setContext] = useState<MessageContextResponse | null>(() => cache.get(key) ?? null);
@@ -275,6 +277,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
                 message={row.message}
                 me={me}
                 participants={participants}
+                attachments={attachments}
                 className={cn('max-w-full', row.sets_label && 'ring-2 ring-amber-400 dark:ring-amber-500')}
                 badges={[
                   ...(row.message.internal ? ['internal'] : []),

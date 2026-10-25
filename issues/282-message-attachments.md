@@ -1,6 +1,6 @@
 # 282 — A user cannot attach an image or a file to a message
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** User interaction
@@ -1262,3 +1262,20 @@ leaves the step's block above a message the user wrote meanwhile.
   6b found that a step's answer streamed in its step's block though something followed it, and
   moved below once complete. Built: it streams in the block only while the block is the last row,
   by the rule by which `chatRows` lets an internal message join a row (`joinsSteps`).
+- **2026-10-25** - Step 6d built: the web UI attaches files by a paper clip, dropped onto the chat
+  and pasted (`useAttachmentDraft`, `AttachmentDraftView`), each uploaded at once and classified as
+  the release picked then; sends a message of attachments alone; shows what a message carries and
+  what a result showed (`AttachmentList`), downloaded through the message that carries it
+  (`ChannelAttachments`); the editor keeps, removes and adds attachments. `ChannelView::attachment`
+  finds what a message carries (`Message::carried`), what a result showed included where the
+  viewer is shown the result - in the security suite (M4). The TUI prints a message's attachments.
+- **2026-10-25** - Step 6d, after its review: the draft is its channel's - another channel begins
+  with none, and an upload that settles after the channel changed is let go of -; sending removes
+  what was sent, not what was attached meanwhile; a blank text is sent as none; the label of a part
+  classified otherwise than what holds it is one function (`labelOtherThan`); pasting attaches
+  through the draft (`AttachmentDraft::paste`); the panels are handed the channel's attachments.
+- **2026-10-25** - Done with the maintainer's acceptance of step 6d: a user attaches images and
+  files to a message in the web UI and over REST, an agent reaches what it heard by its number, and
+  a model that sees is given the images. Left for later as the plan says: reclassifying one
+  attachment, a bound on what is given along (465), erasing (237), media of tools (208), central
+  conversion, S3 (272).

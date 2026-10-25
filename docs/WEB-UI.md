@@ -51,6 +51,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/types/index.ts` | The request and response types |
 | `src/errors.ts` | Problem details as `ApiRequestError`, and how errors are reported |
 | `src/session.ts` | Keeping the session alive; drafts and the last template in browser storage |
+| `src/attachmentDraft.ts` | The attachments of a message being written, uploaded as they are attached |
 | `src/stream.ts` | `openEventStream`, for both event streams |
 | `src/globalEvents.ts` | What the session list does with a global event |
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
@@ -296,9 +297,11 @@ others say in it as the global stream announces it.
     complete. Internal messages before any step's mark are headed "the plan". None of
     them is offered for another answer.
 *   **Changing one's own messages.** A participant's own message can be edited in place or taken
-    back, which asks once more. A modified message shows "edited"; one taken back is a placeholder
-    naming who took it back. Both are applied to the message in place as the server reads them. A
-    modification keeps the message's classification.
+    back, which asks once more. The editor shows what the message carries, each to remove, and
+    attaches more as the message field does, classified as the message; a modification names the
+    attachments as they are to stand. A modified message shows "edited"; one taken back is a
+    placeholder naming who took it back. Both are applied to the message in place as the server
+    reads them. A modification keeps the message's classification.
 *   **What the channel did not let in.** What the user sends is shown as they sent it, and the
     channel decides whether it enters. A message refused is marked so, with why; a refused change of
     a message is undone by reading the message back (`GET …/messages/{mid}`).
@@ -336,6 +339,19 @@ others say in it as the global stream announces it.
     message can be sent while an agent answers: the agent hears it once its turn ends and answers in
     a turn of its own, if asked to. `Enter` sends, `Shift+Enter` breaks the line. A user's message
     is shown with its line breaks as typed, an agent's as Markdown.
+*   **Attachments.** The paper clip beside the field, files dropped onto the chat and files pasted
+    into the field attach them to the message being written. Each is uploaded at once, classified as
+    the release picked as it is attached - a release picked later changes the text's label alone -,
+    and shown before sending with its name, size, a preview of an image and a remove; one refused
+    says why and has to be removed. A message of attachments alone is sent; while one still uploads,
+    nothing is. A command leaves what is attached for the next message, and what is attached while a
+    message is sent stays for the next one. What is attached and not sent is not kept: another
+    channel or a reload lets go of it, and the server lets its upload expire.
+*   **What a message carries** is shown at it: an image as a preview linked to its full size, any
+    other file with name, type, size and a download, each through the message (see
+    [REST-SERVER.md](REST-SERVER.md#endpoints)); one classified otherwise than its message says how.
+    What a tool's result showed its model again is shown in the call's frame the same way, through
+    the message that carries the result. An image that cannot be fetched is named as a file.
 
 ### Classification
 

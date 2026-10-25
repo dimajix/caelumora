@@ -35,6 +35,7 @@ import type {
   SessionTemplate,
   ArtifactResponse,
   Compartment,
+  ContentRef,
   ProfileRequest,
   ProfileResponse,
   QuestionResponse,
@@ -71,6 +72,17 @@ export interface WorkspaceFiles {
   upload(path: string, file: Blob): Promise<void>;
   /** Removes a file, or a directory if it is empty. */
   remove(path: string): Promise<void>;
+}
+
+/**
+ * The attachments of a channel's messages (issue 282): a file uploaded for a message the user is
+ * about to write, and an attachment downloaded through the message that carries it.
+ */
+export interface ChannelAttachments {
+  /** Uploads `file` for a message being written or modified, classified `classification` - the channel's if absent. */
+  upload(file: File, classification?: Classification): Promise<ContentRef>;
+  /** Where attachment `attachment` of message `message` is downloaded - a plain link; the cookie goes with it. */
+  url(message: string, attachment: string): string;
 }
 
 /** The artifacts of a channel (issue 271): those published there that the user may read, and where their versions are downloaded - by the artifact (issue 23). */
@@ -375,25 +387,29 @@ export const api = {
     await ensureOk(res, 'Failed to change the classification');
   },
 
-  /** Writes a message, classified `classification` - the channel's if absent (issue 133). */
-  async sendMessage(sessionId: string, channelId: string, content: string, classification?: Classification): Promise<void> {
+  /**
+   * Writes a message of `content` - none if blank - carrying the attachments `attachments` uploaded
+   * for it (issue 282), classified `classification` - the channel's if absent (issue 133).
+   */
+  async sendMessage(sessionId: string, channelId: string, content: string, attachments: string[], classification?: Classification): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, classification }),
+      body: JSON.stringify({ content: content.trim() ? content : null, attachments, classification }),
     });
     await ensureOk(res, 'Failed to send message');
   },
 
   /**
-   * Modifies the user's own message `messageId` to read `content` (issue
-   * 234), classified as it is; the stream shows it as `MessageModified`.
+   * Modifies the user's own message `messageId` to read `content` - none if blank - and to carry
+   * `attachments` (issues 234, 282): those of it that are to stay, and new ones uploaded for it.
+   * Classified as it is; the stream shows it as `MessageModified`.
    */
-  async modifyMessage(sessionId: string, channelId: string, messageId: string, content: string): Promise<void> {
+  async modifyMessage(sessionId: string, channelId: string, messageId: string, content: string, attachments: string[]): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content: content.trim() ? content : null, attachments }),
     });
     await ensureOk(res, 'Failed to edit the message');
   },
@@ -977,6 +993,24 @@ export const api = {
         return res.json();
       },
       url: (artifact, version) => api.artifactVersionUrl(artifact, version),
+    };
+  },
+
+  /** The attachments of the messages of a channel (issue 282). */
+  channelAttachments(sessionId: string, channelId: string): ChannelAttachments {
+    const base = `/sessions/${sessionId}/channels/${channelId}`;
+    return {
+      async upload(file, classification) {
+        const query = new URLSearchParams({name: file.name});
+        if (classification) {
+          query.set('level', classification.level);
+          query.set('compartments', (classification.compartments ?? []).join(','));
+        }
+        const res = await request(`${base}/attachments?${query}`, {method: 'POST', body: file});
+        await ensureOk(res, `Failed to attach ${file.name}`);
+        return res.json();
+      },
+      url: (message, attachment) => `${API_BASE}${base}/messages/${message}/attachments/${attachment}`,
     };
   },
 

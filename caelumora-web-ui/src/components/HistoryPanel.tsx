@@ -14,7 +14,7 @@ import {ChevronRight, FoldVertical, History, ScrollText, Undo2, UserMinus, UserP
 import type {ActorId, ChannelParticipant, GivenUpReason, HistoryItem, HistoryMessage, HistoryPage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
-import {api} from '../api';
+import {api, type ChannelAttachments} from '../api';
 import {actorKey, actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
@@ -23,6 +23,8 @@ import {formatTimestamp, givenUpText, mergeToolResultsAmong, participantNotice} 
 interface HistoryPanelProps {
   sessionId: string;
   channelId: string;
+  /** The attachments of the channel's messages, where what its messages carry is downloaded from (issue 282). */
+  attachments: ChannelAttachments;
   /** The agent whose history is shown. */
   participant: ChannelParticipant;
   /** Who views it, whose messages are their own (issue 407). */
@@ -97,7 +99,7 @@ function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
   return mergeToolResultsAmong(rows, row => row.kind === 'message' ? row.message : undefined, (_, message) => ({kind: 'message', message}));
 }
 
-export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, participant, me, participants, version, onShowContext, onClose}) => {
+export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, attachments, participant, me, participants, version, onShowContext, onClose}) => {
   const actor = actorUuid(participant.id);
   const [items, setItems] = useState<HistoryItem<HistoryMessage>[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -158,6 +160,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
         message={message}
         me={me}
         participants={participants}
+        attachments={attachments}
         className={cn('max-w-full', !passedOn && 'opacity-50')}
         badges={[
           ...(message.internal ? ['internal'] : []),

@@ -322,18 +322,19 @@ impl ChannelView {
         }
     }
 
-    /// The attachment `id` of message `message` as it stands, if the viewer sees the message and
-    /// may read what it carries (issue 282).
+    /// The attachment `id` of message `message` as it stands - one it carries, or one its tool
+    /// results showed (`Message::carried`) -, if the viewer sees the message and may read what it
+    /// carries (issue 282). What a result the viewer is not shown showed is not carried for them.
     ///
     /// # Errors
     /// As `message`; `Attachment` with `NotFound` if it carries no such attachment or one the
     /// viewer may not read - a channel read entry by entry releases each by its own label.
     pub async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<ContentRef> {
         let message = self.message(message).await?;
-        let attachment = message.attachments.into_iter()
+        let attachment = message.carried()
             .find(|attachment| attachment.id == id && self.may_read_entry(&attachment.classification))
             .ok_or(AttachmentError::NotFound(id))?;
-        Ok(attachment)
+        Ok(attachment.clone())
     }
 
     /// The attachment `id` of message `message`, as `attachment` answers it, with its content and

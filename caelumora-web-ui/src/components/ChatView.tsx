@@ -60,12 +60,16 @@ import {
   type Classification,
   classificationDescription,
   classificationLabel,
+  labelOtherThan,
   levelsUpTo,
   sameClassification,
 } from '../confidentiality';
 import {ClassificationPicker} from './ClassificationPicker';
 import {ClassificationDialog} from './ClassificationDialog';
 import {MessageEditor} from './MessageEditor';
+import {AttachButton} from './AttachButton';
+import {AttachmentDraftView} from './AttachmentDraftView';
+import {useAttachmentDraft} from '../attachmentDraft';
 import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
@@ -284,6 +288,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const [killedCommands, setKilledCommands] = useState<{channelId: string; ids: ReadonlySet<string>} | null>(null);
   // The channel's artifacts as this user reaches them: what a call published is downloaded from them (issue 271).
   const channelArtifacts = useMemo(() => api.channelArtifacts(sessionId, channelId), [sessionId, channelId]);
+  // The attachments of the channel's messages (issue 282), and those of the message being written.
+  const channelAttachments = useMemo(() => api.channelAttachments(sessionId, channelId), [sessionId, channelId]);
+  const draft = useAttachmentDraft(channelAttachments);
+  // Whether files are dragged over the chat, to be dropped as attachments.
+  const [dragging, setDragging] = useState(false);
   // The widths of the channel panel and of the panel showing an agent's
   // context, history or tools (issue 231). The channel panel keeps the key
   // it had as the participants panel (issue 245), so that its width stays.
@@ -578,9 +587,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const mayChange = (msg: Message) =>
     !!takesPart && !!msg.id && !msg.revoked && isOwn(msg, me);
 
-  const saveEdit = async (msg: Message, content: string) => {
+  const saveEdit = async (msg: Message, content: string, attachments: string[]) => {
     try {
-      await api.modifyMessage(sessionId, channelId, msg.id!, content);
+      await api.modifyMessage(sessionId, channelId, msg.id!, content, attachments);
       setEditing(null);
     } catch (error) {
       reportError('Failed to edit the message', error);
@@ -808,16 +817,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           setAnswers(prev => prev.map(a => a.sender === answerer ? {...a, turnId: a.turnId ?? turnId, reasoning: '', content: ''} : a));
         } else if (actorEvent.MessageModified) {
           // In its place, as the server reads it (`Message::modify`, issue
-          // 234): its words, classification and mentions, and when.
+          // 234): its words, attachments, classification and mentions, and when.
           const modified = actorEvent.MessageModified;
           setMessages(prev => prev.map(m => m.id === modified.id
-            ? {...m, content: modified.content, reasoning: modified.reasoning, classification: modified.classification, mentions: modified.mentions, modified: modified.timestamp}
+            ? {...m, content: modified.content, reasoning: modified.reasoning, attachments: modified.attachments, classification: modified.classification, mentions: modified.mentions, modified: modified.timestamp}
             : m));
         } else if (actorEvent.MessageRevoked) {
           // In its place without what it said (`Message::revoke`).
           const {message, at} = actorEvent.MessageRevoked;
           setMessages(prev => prev.map(m => m.id === message
-            ? {...m, content: null, reasoning: undefined, tool_calls: [], tool_results: [], mentions: [], revoked: at}
+            ? {...m, content: null, reasoning: undefined, attachments: [], tool_calls: [], tool_results: [], mentions: [], revoked: at}
             : m));
         } else if (actorEvent.MessageReclassified) {
           // In its place, classified anew (`Message::reclassify`, issue 239).
@@ -1074,11 +1083,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
+  // What is attached to the message being written, by id; `null` while something still uploads.
+  const attached = draft.ids();
+  const mayBeSent = !isSending && attached !== null && (!!inputText.trim() || draft.items.length > 0);
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() || isSending) return;
+    if (!mayBeSent || attached === null) return;
 
     const text = inputText;
+    // What is sent; anything attached meanwhile stays for the next message.
+    const sent = draft.items.map(item => item.key);
     setInputText('');
     setIsSending(true);
     // What the user says is followed by the chat, wherever they read.
@@ -1104,9 +1119,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           setMessages(prev => [...prev, notice]);
         }
       } else {
-        await api.sendMessage(sessionId, channelId, input.text, release ?? undefined);
-        // A release is for one message.
+        await api.sendMessage(sessionId, channelId, input.text, attached, release ?? undefined);
+        // A release is for one message, and so is what was attached.
         setRelease(null);
+        draft.remove(...sent);
       }
     } catch (error) {
       // The server's detail for a command already names it.
@@ -1513,7 +1529,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     <MessageEditor
       key={key}
       content={msg.content ?? ''}
-      onSave={(content) => saveEdit(msg, content)}
+      carried={msg.attachments ?? []}
+      attachments={channelAttachments}
+      classification={msg.classification}
+      onSave={(content, attachments) => saveEdit(msg, content, attachments)}
       onCancel={() => setEditing(null)}
     />
   ) : (
@@ -1525,14 +1544,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       files={workspaceFiles ?? undefined}
       filesVersion={workspaceVersion}
       artifacts={channelArtifacts}
+      attachments={channelAttachments}
       onSelectPage={onSelectPage}
       onInterruptCall={mayInterruptCallsOf(msg) ? (call) => void interruptCall(msg, call) : undefined}
       onKillCommand={workspace?.can_write ? (commandId) => void killCommand(commandId) : undefined}
       endedCommands={ended}
       inTurn={inTurn}
-      badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
-        ? [`released: ${classificationLabel(msg.classification)}`]
-        : undefined}
+      badges={[channel && msg.classification ? labelOtherThan(msg.classification, channel.classification) : null]
+        .flatMap(released => released ? [`released: ${released}`] : [])}
       actions={(mayShowContext(msg) || mayReclassify(msg) || mayChange(msg) || mayRetry(msg)) ? (
         <>
           {mayRetry(msg) && (
@@ -1676,7 +1695,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   return (
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
-      <div className="flex-1 flex flex-col min-w-0">
+      <div
+        // Files dropped onto the chat are attached to the message being written (issue 282).
+        onDragOver={(e) => {
+          if (!takesPart || !e.dataTransfer.types.includes('Files')) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+        onDrop={(e) => {
+          if (!takesPart || e.dataTransfer.files.length === 0) return;
+          e.preventDefault();
+          setDragging(false);
+          draft.add([...e.dataTransfer.files], release ?? undefined);
+        }}
+        className={cn("flex-1 flex flex-col min-w-0", dragging && "ring-2 ring-inset ring-blue-500")}
+      >
         <div ref={chatRef} onScroll={chatScrolled} className="flex-1 overflow-y-auto p-4 space-y-4">
           {earlier !== null && (
             <div className="text-center">
@@ -1839,6 +1873,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               You do not take part in this channel: its history is shown as it is, not followed live, and you cannot write here.
             </p>
           ) : (
+          <>
+          <AttachmentDraftView draft={draft} channelClassification={channel?.classification} />
           <form
             onSubmit={handleSendMessage}
             // The controls beside the field stay one line of it high, at its
@@ -1855,6 +1891,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 />
               </div>
             )}
+            <div className="h-10.5 flex">
+              <AttachButton onFiles={(files) => draft.add(files, release ?? undefined)} />
+            </div>
             <div className="relative flex-1 flex">
               {suggestions.length > 0 && (
                 <ul
@@ -1903,6 +1942,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 onChange={updateInput}
                 onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? inputText.length)}
                 onKeyDown={handleInputKeyDown}
+                onPaste={(e) => draft.paste(e, release ?? undefined)}
                 onBlur={() => setDismissedMention(suggestionStart)}
                 onFocus={() => setDismissedMention(null)}
                 placeholder={answersOnlyWhenMentioned(channel?.responder_policy)
@@ -1924,7 +1964,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               // Enabled while an agent answers too (issue 202): the runtime
               // takes a message at any time, and an agent in a turn hears it
               // once the turn ends.
-              disabled={isSending || !inputText.trim()}
+              disabled={!mayBeSent}
               className="h-10.5 p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-md transition-colors"
             >
               <Send size={20} />
@@ -1940,6 +1980,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               </button>
             )}
           </form>
+          </>
           )}
         </div>
       </div>
@@ -2013,6 +2054,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           key={contextOf.message.id}
           sessionId={sessionId}
           channelId={channelId}
+          attachments={channelAttachments}
           message={contextOf.message}
           me={me}
           participants={participants}
@@ -2023,6 +2065,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           key={actorKey(historyOf.participant.id)}
           sessionId={sessionId}
           channelId={channelId}
+          attachments={channelAttachments}
           participant={historyOf.participant}
           me={me}
           participants={participants}

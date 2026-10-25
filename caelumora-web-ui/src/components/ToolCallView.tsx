@@ -2,17 +2,18 @@
 // presentation says (issue 165). The frame is the same for every call; what is inside it is the
 // handler's of the call's presentation, the default one for every call that declares none. The
 // frame also shows the questions a call asked and how they were answered, where its result keeps
-// their record (`AnswersRecord`, issue 268).
+// their record (`AnswersRecord`, issue 268), and what its result showed its model (issue 282).
 
 import React, {useEffect, useState} from 'react';
 import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
-import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
+import {api, type ChannelArtifacts, type ChannelAttachments, type WorkspaceFiles} from '../api';
 import type {Page} from '../page';
 import {ApiRequestError, reportError} from '../errors';
 import {commandResult, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandResult} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 import {MarkdownMessage} from './MarkdownMessage';
+import {AttachmentList} from './AttachmentList';
 
 const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   denied: 'Denied',
@@ -942,6 +943,8 @@ interface ToolCallViewProps {
   call: ToolCall;
   /** Its result, once it has one. */
   result?: ToolResult;
+  /** The message holding the call - and its result, unless the result keeps the one that carries it (`ToolResult.message_id`). */
+  messageId?: string;
   /** Its caller was removed from the channel before it ended. */
   abandoned?: boolean;
   /** The files of the channel's workspace, for a call that offers one (issue 273). */
@@ -950,6 +953,8 @@ interface ToolCallViewProps {
   filesVersion?: number;
   /** The artifacts of the channel, for a call that published one (issue 271). */
   artifacts?: ChannelArtifacts;
+  /** The attachments of the channel's messages, for what a result showed (issue 282). */
+  attachments?: ChannelAttachments;
   /** Opens a page in the place of the channel - a skill's, for a call that names one (issue 281). */
   onSelectPage?: (page: Page) => void;
   /** Interrupts the call alone while it runs, for who may (issue 276); the turn goes on. */
@@ -960,7 +965,7 @@ interface ToolCallViewProps {
   endedCommands?: ReadonlySet<string>;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectPage, onInterrupt, onKillCommand, endedCommands}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, messageId, abandoned, files, filesVersion, artifacts, attachments, onSelectPage, onInterrupt, onKillCommand, endedCommands}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -1017,6 +1022,10 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
       </div>
       <div className="p-2">
         <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage} onKillCommand={onKillCommand} endedCommands={endedCommands} />
+        {result?.shown && result.shown.length > 0 && (
+          // What the call showed its model, as a message shows what it carries.
+          <AttachmentList items={result.shown} messageId={result.message_id ?? messageId} attachments={attachments} classification={result.classification} />
+        )}
         {result?.approval && result.approval.length > 0 && (
           // Set apart from what the presentation shows, where it shows anything.
           <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">

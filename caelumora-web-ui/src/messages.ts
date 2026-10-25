@@ -28,7 +28,8 @@ export function ownerOnly(visibility: ToolVisibility | undefined): string | null
 /**
  * `messages` with every tool result put with the message holding the call it answers - found by
  * the call's id, the last before it with that call, wherever it stands -, so that a call and its
- * result are shown together. A tool message whose results all went to their calls is left out; a
+ * result are shown together; a result moved keeps the id of the message that carries it
+ * (`ToolResult.message_id`). A tool message whose results all went to their calls is left out; a
  * result whose call is not among `messages` stays where it is.
  */
 export function mergeToolResults(messages: Message[]): Message[] {
@@ -57,7 +58,8 @@ export function mergeToolResultsAmong<T>(items: T[], messageOf: (item: T) => Mes
       if (at === undefined || !holder) {
         kept.push(result);
       } else {
-        merged[at] = withMessage(merged[at], {...holder, tool_results: [...(holder.tool_results ?? []), result]});
+        const moved = msg.id === undefined ? result : {...result, message_id: msg.id};
+        merged[at] = withMessage(merged[at], {...holder, tool_results: [...(holder.tool_results ?? []), moved]});
       }
     }
     if (msg.role === 'Tool' && kept.length === 0 && msg.tool_results?.length) continue;

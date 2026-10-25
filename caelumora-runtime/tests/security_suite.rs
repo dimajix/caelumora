@@ -602,11 +602,15 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
 /// the channel and the storage it is kept in, asked of the flow alone, and named by the message
 /// that carries it - the channel asks the flow of each again as it lets the message in. Another
 /// participant's message cannot carry it. Its content is read through the message by whoever reads
-/// it, asked what reading the message asks; a stranger reaches neither.
+/// it, asked what reading the message asks; a stranger reaches neither. What a tool's result showed
+/// of it is read the same way through the message of the result, where the result is shown.
 #[tokio::test]
 async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     use caelumora_model::actor::ActorEvent;
+    use caelumora_model::message::{Message, MessageId, MessageRole};
+    use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
     use caelumora_runtime::attachment::AttachmentError;
+    use serde_json::Value;
     use futures::StreamExt;
     use std::slice;
     let world = World::new().await;
@@ -642,6 +646,19 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     }).await;
     assert_eq!(read, b"notes");
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel, as reading the message asks; its attachment asks nothing more");
+
+    let showing = |visibility: ToolVisibility| {
+        let call = ToolCall { id: Some("1".to_string()), function_name: "view_attachment".to_string(), arguments: Value::Null, visibility, presentation: Default::default() };
+        let result = ToolCallResult { shown: vec![uploaded.clone()], ..ToolCallResult::of(&call, Default::default(), "shown".to_string(), main.classification()) };
+        Message { id: MessageId::new(), sender_id: ActorId::Agent(AgentId::new()), role: MessageRole::Tool, tool_results: vec![result], ..Message::new(main.classification()) }
+    };
+    let (shown, withheld) = (showing(ToolVisibility::SHOWN), showing(ToolVisibility::WITHOUT_RESULT));
+    main.record_said(vec![shown.clone(), withheld.clone()]).await;
+    let (read, asked) = world.asked(async { channel_of(world.bob).await.unwrap().attachment(shown.id, uploaded.id).await }).await;
+    assert_eq!(read.expect("what a result shown to him showed"), uploaded);
+    assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "as reading the message of the result asks");
+    let hidden = channel_of(world.bob).await.unwrap().attachment(withheld.id, uploaded.id).await;
+    assert!(matches!(hidden, Err(ViewError::Attachment(AttachmentError::NotFound(_)))), "not what a result withheld from him showed: {hidden:?}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
