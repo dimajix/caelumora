@@ -974,15 +974,41 @@ impl Turn {
 
 ### Step 6: the web UI and the TUI
 
-The TUI prints a message's attachments by name, so that one of attachments alone is shown.
+Revised with the maintainer on 2026-10-25, in two steps.
 
-`caelumora-web-ui`: a paper clip at the message field, drag and drop onto the chat, paste from the
-clipboard (`onPaste` with files); each file uploaded at once (`api.uploadAttachment`), shown
-before sending with its name, size, an image as a preview and a remove; sent with the message
-(`attachments` in the request), a message of attachments alone allowed; at a message, images as
-previews and everything else with name, type, size and a download; the tool card of a call with
-`media` or `shown` shows them alike; `MessageModified` takes the attachments over; the types in
-`src/types` mirror the API. Docs: WEB-UI.md (*Input*, *A channel*).
+**6a, a refactoring:** the chat keeps the messages as they came - live as from a snapshot - and
+puts each tool result with its call only as it is drawn (`mergeToolResults`), not also as an event
+arrives. A tool message that arrives twice is then dropped by its id as every other; what reads
+calls and results together - the commands ended, a call left without a result, the last message
+to answer again - reads them as they are shown.
+
+**6b, the attachments:**
+
+- The TUI prints a message's attachments by name, type and size, so that one of attachments alone
+  is shown.
+- `api.channelAttachments(sessionId, channelId)` gives `ChannelAttachments` - `upload(file,
+  classification?)` and `url(message, attachment)` -, as `channelArtifacts` gives the artifacts;
+  `sendMessage` and `modifyMessage` name the attachments.
+- `useAttachmentDraft` keeps the attachments of a message being written: each uploaded at once,
+  classified as the release picked as it is attached - shown at it where that differs from the
+  channel's; a release picked later changes the text's label alone, and another label for an
+  attachment is given by attaching it again. `AttachmentDraftView` shows them before sending, with
+  name, size, a preview of an image (a local object URL), a spinner while uploading, why it was
+  refused, and a remove. A paper clip at the message field, drag and drop onto the chat, paste from
+  the clipboard; a message of attachments alone is sent, once nothing uploads any more.
+- The editor of a message shows its attachments, removes them and adds new ones the same way; a
+  modification names the attachments as they are to stand.
+- `AttachmentList` shows them at a message: images as previews, linked to their full size, and
+  everything else with name, type, size and a download. `MessageModified` takes the attachments
+  over, `MessageRevoked` empties them.
+- The tool card of a call shows what its result `shown` the same way. It is downloaded through the
+  message that carries the result: `ChannelView::attachment` finds what a message carries
+  (`Message::carried`), and the chat keeps that message's id at a result it merges
+  (`ToolResult.message_id`, the UI's alone). `media` is not shown: no channel admits it before 208.
+- No progress in percent: `fetch` reports none, and a second way of making requests is not worth
+  it.
+- Docs: WEB-UI.md (*Input*, *A channel*), REST-SERVER.md and PERMISSION-CHECKS.md (the download of
+  what a result showed), with its test in the security suite.
 
 ### Later, not in these steps
 
@@ -1206,3 +1232,12 @@ previews and everything else with name, type, size and a download; the tool card
   (`AttachmentError::is_storage_failure`, one `From<AttachmentError> for ToolError`); a page of a
   text gives its value and where to read on itself (`TextPage::value`, `agents.results.read_on`);
   `copy_attachment` is offered only where a workspace may be written to.
+- **2026-10-25** - Step 6 revised with the maintainer before it was built: two steps, a refactoring
+  of how the chat keeps its messages first; an upload labelled as the release picked as it is
+  attached; the editor removes and adds attachments; what a result showed is downloaded through the
+  message that carries it, `media` not shown before 208; no progress in percent.
+- **2026-10-25** - Step 6a built: the chat keeps every message as it came and merges tool results
+  only as it draws them, so that a tool message arriving twice is dropped by its id; the commands
+  ended, the last message to answer again and the calls a participant that left had without a
+  result are read from the messages as shown; an open history panel is read again for a tool result
+  too, as for every message.

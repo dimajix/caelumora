@@ -263,7 +263,10 @@ interface ChatViewProps {
 export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, onSelectPage }) => {
   // The user's actor, whose messages are their own (issue 407).
   const me = useMemo<ActorId>(() => ({User: user.id}), [user.id]);
+  // The messages as they came, and as the chat shows them: each tool result
+  // with the call it answers.
   const [messages, setMessages] = useState<Message[]>([]);
+  const merged = useMemo(() => mergeToolResults(messages), [messages]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
   const [sideTab, setSideTab] = useState<'channel' | 'notes' | 'workspace'>('channel');
@@ -595,7 +598,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    */
   const mayRetry = (msg: Message) => {
     if (!takesPart || answers.length > 0 || !msg.id || !msg.sender_id || !mayRetryOf(actorKey(msg.sender_id))) return false;
-    const last = [...messages].reverse().find(m => m.id && !m.revoked);
+    const last = merged.findLast(m => m.id && !m.revoked);
     return last?.id === msg.id && !msg.internal;
   };
 
@@ -787,21 +790,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const newMsg = (actorEvent.CompleteMessageGenerated ?? actorEvent.IntermediateMessageGenerated)!;
           // A tool call that ended may have changed the files.
           if (newMsg.tool_results?.length) setWorkspaceVersion(v => v + 1);
-          setMessages(prev => {
-            // A message can arrive twice: in the snapshot and as an event.
-            if (newMsg.id && prev.some(m => m.id === newMsg.id)) return prev;
-            if (newMsg.tool_results && newMsg.tool_results.length > 0) {
-              const lastMsg = prev[prev.length - 1];
-              if (lastMsg && lastMsg.tool_calls && lastMsg.tool_calls.some(tc => newMsg.tool_results?.some(tr => tr.id === tc.id))) {
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  tool_results: [...(lastMsg.tool_results || []), ...newMsg.tool_results]
-                };
-                return [...prev.slice(0, -1), updatedLastMsg];
-              }
-            }
-            return [...prev, newMsg];
-          });
+          // A message can arrive twice: in the snapshot and as an event. Kept
+          // as it came, as the snapshot's are; a call and its result are shown
+          // together as the chat is drawn (`mergeToolResults`).
+          setMessages(prev => newMsg.id && prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg]);
           // What its call used, at once: a plan's steps are many calls of
           // one turn, whose end would come too late for the gauge.
           if (newMsg.id && !countedCalls.current.has(newMsg.id)) {
@@ -963,11 +955,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const left = actorKey(participant);
           const notice = participantNotice('left', participant, name, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
           setMessages(prev => {
-            const ended = prev.map(m =>
-              m.sender_id && actorKey(m.sender_id) === left && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id))
-                ? {...m, abandoned: true}
-                : m
-            );
+            // Its calls without a result as the chat shows them.
+            const unanswered = new Set(mergeToolResults(prev)
+              .filter(m => m.sender_id && actorKey(m.sender_id) === left && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id)))
+              .map(m => m.id));
+            const ended = prev.map(m => m.id && unanswered.has(m.id) ? {...m, abandoned: true} : m);
             return ended.some(m => m.id === notice.id) ? ended : [...ended, notice];
           });
           setAnswers(prev => prev.filter(a => a.sender !== left));
@@ -1257,10 +1249,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   // The commands ended in the channel: by a result that shows them so, or by the user (issue 294).
   const ended = useMemo(() => {
-    const ids = endedCommands(messages);
+    const ids = endedCommands(merged);
     if (killedCommands?.channelId === channelId) killedCommands.ids.forEach(id => ids.add(id));
     return ids;
-  }, [messages, killedCommands, channelId]);
+  }, [merged, killedCommands, channelId]);
 
   /**
    * Ends the command `commandId` a call handed back as running, with what it
@@ -1600,7 +1592,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     />
   );
 
-  const rows = chatRows(mergeToolResults(messages));
+  const rows = chatRows(merged);
   // The row of each turn's step that came last: the step it is in now, open
   // while the turn is under way (issue 263).
   const currentSteps = new Map(rows.flatMap((row, i) => row.kind === 'steps' ? [[row.turnId, i] as const] : []));
