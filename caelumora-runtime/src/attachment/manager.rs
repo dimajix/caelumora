@@ -127,7 +127,8 @@ impl AttachmentManager {
     ///
     /// # Errors
     /// `NotConfigured`, `NotAParticipant`, `Invalid` for a name that is none,
-    /// `ClassificationRefused`, `StorageNotCleared`, `TooLarge`, `Changed`, `Unavailable`.
+    /// `ClassificationRefused`, `StorageNotCleared`, `Content` for content too large, other than
+    /// said, or a storage that failed.
     pub async fn create(&self, channel: &ChannelView, name: &str, classification: Option<Classification>, (size, content): (u64, ByteStream)) -> AttachmentResult<ContentRef> {
         let context = channel.views().context();
         let by = uploader(channel)?;
@@ -196,7 +197,7 @@ impl AttachmentManager {
     /// through decided who may (`ChannelView::attachment`).
     ///
     /// # Errors
-    /// `NotFound` if its storage has nothing under its key, `UnknownStorage`, `Unavailable`.
+    /// `NotFound` if its storage has nothing under its key, `UnknownStorage`, `Content`.
     pub(crate) async fn content_of(&self, content: &ContentRef) -> AttachmentResult<(u64, ByteStream)> {
         self.storage(&content.storage)?.get(&content.key).await.map_err(|e| match e {
             ContentError::NotFound(_) => AttachmentError::NotFound(content.id),
@@ -211,7 +212,7 @@ impl AttachmentManager {
     ///
     /// # Errors
     /// `NotAParticipant`; `NotFound` for content that is none of the channel's, or that its storage
-    /// has nothing of; `UnknownStorage`, `Unavailable`.
+    /// has nothing of; `UnknownStorage`, `Content`.
     pub async fn copy(&self, channel: &ChannelView, attachment: &ContentRef) -> AttachmentResult<ContentRef> {
         let by = uploader(channel)?;
         if !self.lies_in(channel.id(), attachment) {
@@ -243,7 +244,7 @@ impl AttachmentManager {
     ///
     /// # Errors
     /// `NotFound` if the storage has nothing under an attachment's key, `Altered` if its bytes are
-    /// not what the message says they are, `UnknownStorage`, `Unavailable`.
+    /// not what the message says they are, `UnknownStorage`, `Content`.
     pub(crate) async fn load(&self, messages: &mut [Message], profile: &ModelProfile) -> AttachmentResult<Vec<Classification>> {
         // Collected first: what is held across the reads must be `Send`.
         let carried: Vec<&mut ContentRef> = messages.iter_mut().flat_map(Message::carried_mut).filter(|content| profile.gives_along(content)).collect();
@@ -267,7 +268,7 @@ impl AttachmentManager {
         }
         let mut content = BytesMut::with_capacity(usize::try_from(size).unwrap_or_default());
         while let Some(chunk) = chunks.next().await {
-            content.extend_from_slice(&chunk.map_err(|e| AttachmentError::Unavailable(e.to_string()))?);
+            content.extend_from_slice(&chunk.map_err(ContentError::unavailable)?);
         }
         let content = content.freeze();
         if digest::content(&content) != attachment.digest {
@@ -282,7 +283,7 @@ impl AttachmentManager {
     /// uploads that wait for a message there.
     ///
     /// # Errors
-    /// `Unavailable` if a storage cannot remove them.
+    /// `Content` if a storage cannot remove them.
     pub(crate) async fn purge(&self, channel: ChannelId) -> AttachmentResult<()> {
         let prefix = channel_key(channel);
         self.uploads.lock().unwrap_or_else(PoisonError::into_inner).retain(|_, upload| upload.channel != channel);
@@ -427,9 +428,9 @@ mod tests {
         assert!(matches!(attachments.create(&main, "../a.txt", None, bytes(b"a")).await, Err(AttachmentError::Invalid(_))), "a path for a name");
         let (_, content) = bytes(b"a");
         let too_large = AttachmentsConfig::default().max_bytes + 1;
-        assert!(matches!(attachments.create(&main, "a.txt", None, (too_large, content)).await, Err(AttachmentError::TooLarge { .. })));
+        assert!(matches!(attachments.create(&main, "a.txt", None, (too_large, content)).await, Err(AttachmentError::Content(ContentError::TooLarge { .. }))));
         let (_, content) = bytes(b"abc");
-        assert!(matches!(attachments.create(&main, "a.txt", None, (2, content)).await, Err(AttachmentError::Changed)), "other than it was said to be");
+        assert!(matches!(attachments.create(&main, "a.txt", None, (2, content)).await, Err(AttachmentError::Content(ContentError::Changed))), "other than it was said to be");
         let kept = world.files.path().join("content").join("attachments");
         assert!(!kept.exists() || walk(&kept).is_empty(), "nothing kept of any of them");
         assert!(attachments.create(&main, "a.txt", Some(Classification::PUBLIC), bytes(b"a")).await.is_ok(), "released, below the channel");

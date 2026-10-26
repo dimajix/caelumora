@@ -9,7 +9,7 @@ use crate::terminal::{write_whole, ByteStream, WriteFailure};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
-use std::io::{Error, ErrorKind};
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
@@ -60,23 +60,17 @@ impl LocalContentStorage {
     }
 }
 
-/// What a failure of the host's file system is, as an error says it: its
-/// kind, never the path.
-fn unavailable(error: Error) -> ContentError {
-    ContentError::Unavailable(error.kind().to_string())
-}
-
 #[async_trait]
 impl ContentStorage for LocalContentStorage {
     async fn put(&self, key: &str, content: ByteStream, limit: u64) -> ContentResult<u64> {
         let place = self.place(key)?;
         if let Some(dir) = place.parent() {
-            fs::create_dir_all(dir).await.map_err(unavailable)?;
+            fs::create_dir_all(dir).await.map_err(ContentError::unavailable)?;
         }
         write_whole(&place, content, limit).await.map_err(|failure| match failure {
             WriteFailure::TooLarge => ContentError::TooLarge { limit },
             WriteFailure::BrokeOff(kind) => ContentError::Unavailable(format!("what was to be kept broke off: {kind}")),
-            WriteFailure::Io(e) => unavailable(e),
+            WriteFailure::Io(e) => ContentError::unavailable(e),
         })
     }
 
@@ -84,9 +78,9 @@ impl ContentStorage for LocalContentStorage {
         let not_found = || ContentError::NotFound(key.to_string());
         let file = fs::File::open(self.place(key)?).await.map_err(|e| match e.kind() {
             ErrorKind::NotFound => not_found(),
-            _ => unavailable(e),
+            _ => ContentError::unavailable(e),
         })?;
-        let metadata = file.metadata().await.map_err(unavailable)?;
+        let metadata = file.metadata().await.map_err(ContentError::unavailable)?;
         if !metadata.is_file() {
             return Err(not_found());
         }
@@ -95,7 +89,7 @@ impl ContentStorage for LocalContentStorage {
 
     async fn delete(&self, key: &str) -> ContentResult<()> {
         match fs::remove_file(self.place(key)?).await {
-            Err(e) if e.kind() != ErrorKind::NotFound => Err(unavailable(e)),
+            Err(e) if e.kind() != ErrorKind::NotFound => Err(ContentError::unavailable(e)),
             _ => Ok(()),
         }
     }
@@ -108,7 +102,7 @@ impl ContentStorage for LocalContentStorage {
             return Err(ContentError::NotFound(from.to_string()));
         }
         if let Some(dir) = place.parent() {
-            fs::create_dir_all(dir).await.map_err(unavailable)?;
+            fs::create_dir_all(dir).await.map_err(ContentError::unavailable)?;
         }
         if fs::hard_link(&source, &place).await.is_err() {
             let (size, content) = self.get(from).await?;
@@ -120,8 +114,8 @@ impl ContentStorage for LocalContentStorage {
     async fn remove_under(&self, prefix: &str) -> ContentResult<()> {
         let dir = self.place(prefix)?;
         match fs::metadata(&dir).await {
-            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&dir).await.map_err(unavailable),
-            Err(e) if e.kind() != ErrorKind::NotFound => Err(unavailable(e)),
+            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&dir).await.map_err(ContentError::unavailable),
+            Err(e) if e.kind() != ErrorKind::NotFound => Err(ContentError::unavailable(e)),
             // A key itself lies under no key.
             _ => Ok(()),
         }

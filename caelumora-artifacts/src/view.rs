@@ -186,8 +186,7 @@ impl ArtifactView {
     ///
     /// # Errors
     /// `VersionNotFound` if it is no version they may read, or does not
-    /// exist; `UnknownStorage` or `Unavailable`; `NotJoined` without the
-    /// plugin.
+    /// exist; `UnknownStorage` or `Content`; `NotJoined` without the plugin.
     pub async fn content(&self, number: u32) -> ArtifactResult<(u64, ByteStream)> {
         if self.artifact.version(number).is_none() {
             return Err(ArtifactError::VersionNotFound { artifact: self.artifact.id, version: number });

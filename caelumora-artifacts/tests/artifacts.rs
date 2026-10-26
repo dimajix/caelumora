@@ -37,6 +37,7 @@ use caelumora_rest_server::error::ApiError;
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes::api;
 use caelumora_rest_server::state::AppState;
+use caelumora_runtime::content::ContentError;
 use caelumora_runtime::event::{EventBus, EventSubscription};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
@@ -242,8 +243,22 @@ async fn an_artifacts_errors_answer_with_status_and_code() {
     assert_eq!(answer(ArtifactError::ClassifiedOtherwise("r.csv".to_string())).await, (409, "classified_otherwise".to_string()));
     assert_eq!(answer(ArtifactError::Store(StoreError::PermissionDenied(refused))).await, (403, "artifact_forbidden".to_string()));
     assert_eq!(answer(ArtifactError::Store(StoreError::NameTaken { entity: "artifact" })).await, (409, "name_taken".to_string()));
-    assert_eq!(answer(ArtifactError::Unavailable("broken".to_string())).await.0, 500, "the storage's failure is not the client's");
+    let unavailable = (503, "storage_unavailable".to_string());
+    assert_eq!(answer(ArtifactError::Content(ContentError::Unavailable("broken".to_string()))).await, unavailable, "as an attachment's storage, and a workspace's");
+    assert_eq!(answer(ArtifactError::UnknownStorage("old".to_string())).await, unavailable, "named by what is kept, not by the request");
+    assert_eq!(answer(ArtifactError::Content(ContentError::TooLarge { limit: 1 })).await, (413, "file_too_large".to_string()));
+    assert_eq!(answer(ArtifactError::Content(ContentError::Changed)).await, (400, "changed".to_string()));
     assert_eq!(answer(ArtifactError::NotJoined).await.0, 500, "nor a runtime without the plugin");
+}
+
+/// What publishing failed of, as the artifact tool tells its model (issue 466): what a storage of
+/// content reported as everywhere else, a file that changed with what the model can do about it.
+#[test]
+fn an_artifacts_errors_are_told_the_model_as_a_storages_are() {
+    assert!(matches!(ToolError::from(ArtifactError::Content(ContentError::TooLarge { limit: 1 })), ToolError::InvalidParameter(_)));
+    assert!(matches!(ToolError::from(ArtifactError::Content(ContentError::Unavailable("broken".to_string()))), ToolError::ExecutionFailed(_)));
+    let changed = ToolError::from(ArtifactError::Content(ContentError::Changed));
+    assert!(matches!(&changed, ToolError::InvalidParameter(m) if m.contains("publish it again")), "{changed}");
 }
 
 // --- The routes -----------------------------------------------------------

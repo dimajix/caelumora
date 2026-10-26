@@ -16,7 +16,7 @@ use caelumora_model::content::ContentId;
 use caelumora_model::value::ValueError;
 
 /// What uploading, claiming or reading an attachment failed with - written to be read by users
-/// but for `Unavailable` and `UnknownStorage`, which are the log's (`error::user_message`).
+/// but for `UnknownStorage`, which is the log's (`error::user_message`).
 #[derive(Debug, thiserror::Error)]
 pub enum AttachmentError {
     #[error("no storage of content is configured for attachments")]
@@ -33,10 +33,6 @@ pub enum AttachmentError {
     /// Who puts content into a channel takes part in it.
     #[error("{0} takes no part in the channel")]
     NotAParticipant(ActorId),
-    #[error("an attachment may not be larger than {limit} bytes")]
-    TooLarge { limit: u64 },
-    #[error("the content was not as large as it was said to be")]
-    Changed,
     /// What a storage holds of an attachment is no longer what its message says - other bytes, or
     /// as many.
     #[error("the content of attachment {0} is no longer what its message says")]
@@ -46,30 +42,11 @@ pub enum AttachmentError {
     NotFound(ContentId),
     #[error(transparent)]
     Invalid(#[from] ValueError),
-    /// The storage failed: what happened, never where.
-    #[error("the storage of content failed: {0}")]
-    Unavailable(String),
-}
-
-impl AttachmentError {
-    /// Whether a storage failed rather than the request: one that could not be reached, that is no
-    /// longer configured, or that holds other bytes than were kept.
-    pub fn is_storage_failure(&self) -> bool {
-        matches!(self, Self::Unavailable(_) | Self::UnknownStorage(_) | Self::Altered(_))
-    }
+    /// What the storage of content reported: content too large, other than it was said to be, or
+    /// a storage that failed.
+    #[error(transparent)]
+    Content(#[from] ContentError),
 }
 
 /// What the `AttachmentManager` answers.
 pub type AttachmentResult<T> = Result<T, AttachmentError>;
-
-/// What a storage of content says, as an attachment's error.
-impl From<ContentError> for AttachmentError {
-    fn from(error: ContentError) -> Self {
-        match error {
-            ContentError::TooLarge { limit } => Self::TooLarge { limit },
-            ContentError::Changed => Self::Changed,
-            ContentError::Unavailable(what) => Self::Unavailable(what),
-            error @ (ContentError::InvalidKey(_) | ContentError::NotFound(_)) => Self::Unavailable(error.to_string()),
-        }
-    }
-}

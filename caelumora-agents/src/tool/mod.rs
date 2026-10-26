@@ -28,6 +28,7 @@ use caelumora_model::security::{ActionType, Enforcement, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::attachment::AttachmentError;
+use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ViewError, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceError;
@@ -75,13 +76,29 @@ impl From<ViewError> for ToolError {
 }
 
 /// What reaching an attachment failed with (issue 282), as the model is told it: a storage that
-/// failed is the tool's; an attachment that is not there, or what does not fit, the model's to
-/// correct.
+/// failed, is no longer configured, or holds other bytes than were kept is the tool's; an
+/// attachment that is not there, or what does not fit, the model's to correct.
 impl From<AttachmentError> for ToolError {
     fn from(error: AttachmentError) -> Self {
-        match error.is_storage_failure() {
-            true => ToolError::ExecutionFailed(error.to_string()),
-            false => ToolError::InvalidParameter(error.to_string()),
+        match error {
+            AttachmentError::Content(e) => e.into(),
+            AttachmentError::UnknownStorage(_) | AttachmentError::Altered(_) => ToolError::ExecutionFailed(error.to_string()),
+            AttachmentError::NotConfigured | AttachmentError::ClassificationRefused | AttachmentError::StorageNotCleared(_)
+            | AttachmentError::NotAParticipant(_) | AttachmentError::NotFound(_) | AttachmentError::Invalid(_) => {
+                ToolError::InvalidParameter(error.to_string())
+            }
+        }
+    }
+}
+
+/// What a storage of content reported (issue 466), as the model is told it: content too large,
+/// or other than it was said to be, is the model's to correct; a storage that failed, or a key it
+/// does not know, is not.
+impl From<ContentError> for ToolError {
+    fn from(error: ContentError) -> Self {
+        match error {
+            ContentError::TooLarge { .. } | ContentError::Changed => ToolError::InvalidParameter(error.to_string()),
+            ContentError::Unavailable(_) | ContentError::InvalidKey(_) | ContentError::NotFound(_) => ToolError::ExecutionFailed(error.to_string()),
         }
     }
 }
@@ -826,6 +843,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use caelumora_model::content::testing::make_content_ref;
+    use caelumora_model::content::ContentId;
     use crate::testing::{self, TestAgents};
     use caelumora_model::event::GlobalEvent;
     use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
@@ -848,6 +866,23 @@ mod tests {
     use caelumora_model::work::Work;
     use std::future;
     use tokio::time;
+
+    /// What a storage of content reported is told alike, whatever it keeps (issue 466): what the
+    /// model can correct as a parameter, a storage that failed as the tool's failure.
+    #[test]
+    fn a_storages_failure_is_the_tools_and_what_does_not_fit_the_models() {
+        let corrected = |error: ToolError| matches!(error, ToolError::InvalidParameter(_));
+        let failed = |error: ToolError| matches!(error, ToolError::ExecutionFailed(_));
+        assert!(corrected(ContentError::TooLarge { limit: 1 }.into()));
+        assert!(corrected(ContentError::Changed.into()));
+        assert!(failed(ContentError::Unavailable("permission denied".to_string()).into()));
+        assert!(failed(ContentError::NotFound("attachments/a".to_string()).into()), "a key its owner made");
+        assert!(corrected(AttachmentError::Content(ContentError::TooLarge { limit: 1 }).into()), "an attachment's, as the storage's");
+        assert!(failed(AttachmentError::Content(ContentError::Unavailable("permission denied".to_string())).into()));
+        assert!(failed(AttachmentError::UnknownStorage("old".to_string()).into()), "a storage no longer configured");
+        assert!(failed(AttachmentError::Altered(ContentId::new()).into()), "other bytes than were kept");
+        assert!(corrected(AttachmentError::NotFound(ContentId::new()).into()));
+    }
 
     #[test]
     fn arguments_are_read_as_a_struct_and_what_does_not_fit_is_the_models_to_correct() {

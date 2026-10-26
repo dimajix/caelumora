@@ -1,6 +1,6 @@
 # 466 — The same failure of a storage is answered differently over REST
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -62,3 +62,23 @@ HTTP. `WorkspaceError` instead carries the `TerminalError` of its storage
 - **2026-10-24** — Opened at the maintainer's request, from the review of step 3 of issue 282,
   where the answers of attachments were made to follow the workspace's and the artifacts' were
   found to differ.
+- **2026-10-26** — Step 1, done as recommended to the maintainer: `AttachmentError` and
+  `ArtifactError` carry the storage's error (`Content(ContentError)`, transparent) in place of
+  their copies of `TooLarge`, `Changed` and `Unavailable`, answered once by
+  `From<ContentError> for ApiError` and `From<ContentError> for ToolError`;
+  `AttachmentError::is_storage_failure` is gone. A key a storage does not know is one its owner
+  made, so `500 internal_error`, not `404`. `UnknownStorage` stays each kind's - issue 282 took it
+  out of `ContentError` -, for artifacts and attachments alike `503 storage_unavailable`, its name
+  for the log. What a storage reported is shown, as a workspace's is, since
+  `ContentError::Unavailable` says what happened, never where (`ContentError::unavailable`, which
+  the owner reading a stream now uses too); a key is not (`error::content_message`). The artifact
+  tool keeps its hint for `Changed`. REST-SERVER.md says how storage failures are answered.
+- **2026-10-26** — Step 2 decided with the maintainer, from the review of step 1: a workspace's
+  storage no longer configured is the same failure as an artifact's or an attachment's, but
+  `WorkspaceError::UnknownStorage` stands for both cases - the storage the client names when it
+  makes a workspace (`WorkspaceManager`) and the one a stored workspace names
+  (`WorkspaceController::provider`) -, so the second is answered `400 unknown_storage` with its
+  name shown. The two cases become two variants, the second answered `503 storage_unavailable`,
+  its name for the log, as an artifact's and an attachment's. And the attachment tool turns what
+  a stream of content fails with into a `ToolError` by hand, where `ContentError::unavailable` and
+  `From<ContentError> for ToolError` do it.

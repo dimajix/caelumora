@@ -10,6 +10,7 @@
 use crate::agent::AgentError;
 use crate::attachment::AttachmentError;
 use crate::command::CommandError;
+use crate::content::ContentError;
 use crate::component::ComponentError;
 use crate::session::SessionError;
 use crate::view::{AgentContextError, ViewError};
@@ -79,6 +80,8 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
         attachment_message(e)
     } else if let Some(e) = e.downcast_ref::<TerminalError>() {
         Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<ContentError>() {
+        content_message(e)
     } else if let Some(e) = e.downcast_ref::<TemplateError>() {
         Some(e.to_string())
     } else if let Some(e) = e.downcast_ref::<ValueError>() {
@@ -100,12 +103,24 @@ pub fn view_message(error: &ViewError) -> Option<String> {
     }
 }
 
-/// Attachment errors: what failed in a storage, or one no longer configured, is for the log; the
-/// rest names the attachment, its classification or a limit.
+/// Attachment errors: a storage no longer configured is named by the configuration, for the log;
+/// what a storage reported is judged as content errors are; the rest names the attachment, its
+/// classification or a limit.
 fn attachment_message(error: &AttachmentError) -> Option<String> {
     match error {
-        AttachmentError::Unavailable(_) | AttachmentError::UnknownStorage(_) => None,
+        AttachmentError::UnknownStorage(_) => None,
+        AttachmentError::Content(e) => content_message(e),
         _ => Some(error.to_string()),
+    }
+}
+
+/// Content errors: a limit, content other than it was said to be, or what failed in a storage -
+/// what happened, never where, as a workspace's storage tells it; a key is its owner's, for the
+/// log.
+fn content_message(error: &ContentError) -> Option<String> {
+    match error {
+        ContentError::TooLarge { .. } | ContentError::Changed | ContentError::Unavailable(_) => Some(error.to_string()),
+        ContentError::InvalidKey(_) | ContentError::NotFound(_) => None,
     }
 }
 
@@ -202,11 +217,14 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_storage_of_attachments_is_not_disclosed() {
-        let failed = || AttachmentError::Unavailable("/srv/content/attachments: permission denied".to_string());
-        assert_eq!(user_message(&anyhow::Error::new(failed())), None);
-        assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(failed()))), None, "nor read through a view, which repeats its text");
-        assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(AttachmentError::UnknownStorage("old".to_string())))), None);
+    fn a_storage_of_attachments_no_longer_configured_is_not_disclosed() {
+        let gone = || AttachmentError::UnknownStorage("old".to_string());
+        assert_eq!(user_message(&anyhow::Error::new(gone())), None);
+        assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(gone()))), None, "nor read through a view, which repeats its text");
+        let failed = AttachmentError::Content(ContentError::Unavailable("permission denied".to_string()));
+        assert_eq!(user_message(&anyhow::Error::new(failed)).as_deref(), Some("the storage of content failed: permission denied"), "what happened, as a workspace's storage tells it");
+        let key = AttachmentError::Content(ContentError::NotFound("attachments/a/b".to_string()));
+        assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(key))), None, "a key is its owner's");
         assert!(user_message(&anyhow::Error::new(ViewError::Attachment(AttachmentError::NotFound(ContentId::new())))).is_some(), "what it names is safe");
     }
 

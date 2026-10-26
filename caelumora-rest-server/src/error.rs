@@ -26,6 +26,7 @@ use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::attachment::AttachmentError;
+use caelumora_runtime::content::ContentError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::error::{refusal, user_message};
@@ -274,17 +275,33 @@ impl From<AttachmentError> for ApiError {
             AttachmentError::ClassificationRefused => Self::bad_request("invalid_classification", detail),
             AttachmentError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
             AttachmentError::NotAParticipant(_) => Self::forbidden("not_a_participant", detail),
-            AttachmentError::TooLarge { .. } => Self::new(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large", detail),
-            AttachmentError::Changed => Self::bad_request("changed", detail),
             AttachmentError::NotFound(_) => Self::not_found("attachment_not_found", detail),
             // What a storage holds is not what was kept: the server's, not the request's.
             altered @ AttachmentError::Altered(_) => Self::internal("attachment_altered", "reading an attachment", &Error::new(altered)),
             AttachmentError::Invalid(e) => e.into(),
-            // Names the storage and what it reported: for the log alone (`user_message`).
-            AttachmentError::UnknownStorage(_) | AttachmentError::Unavailable(_) => {
-                tracing::error!("Keeping or reading an attachment failed: {detail}");
-                Self::unavailable("storage_unavailable", "The storage of attachments is unavailable; the details are in the server log")
+            AttachmentError::Content(e) => e.into(),
+            // Named by what is kept, not by the request (issue 466): for the log alone
+            // (`user_message`).
+            AttachmentError::UnknownStorage(_) => {
+                tracing::error!("The content of an attachment could not be reached: {detail}");
+                Self::unavailable("storage_unavailable", "The storage of the attachment is unavailable; the details are in the server log")
             }
+        }
+    }
+}
+
+impl From<ContentError> for ApiError {
+    /// What a storage of content reported (issue 466), whatever it keeps the content for: content
+    /// that does not fit is the client's; a storage that failed is unavailable; a key it does not
+    /// know is one its owner made, never what the request named - the owner answers that as its
+    /// own `…NotFound` -, and so a server error.
+    fn from(error: ContentError) -> Self {
+        let detail = error.to_string();
+        match error {
+            ContentError::TooLarge { .. } => Self::new(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large", detail),
+            ContentError::Changed => Self::bad_request("changed", detail),
+            ContentError::Unavailable(_) => Self::unavailable("storage_unavailable", detail),
+            ContentError::InvalidKey(_) | ContentError::NotFound(_) => Self::internal("internal_error", "the request", &error.into()),
         }
     }
 }
@@ -708,14 +725,28 @@ mod tests {
         assert_eq!(answer(AttachmentError::NotConfigured), (400, "attachments_not_configured".to_string()));
         assert_eq!(answer(AttachmentError::ClassificationRefused), (400, "invalid_classification".to_string()));
         assert_eq!(answer(AttachmentError::NotAParticipant(ActorId::User(UserId::new()))), (403, "not_a_participant".to_string()));
-        assert_eq!(answer(AttachmentError::TooLarge { limit: 1 }), (413, "file_too_large".to_string()));
         assert_eq!(answer(Error::new(AttachmentError::NotFound(ContentId::new()))), (404, "attachment_not_found".to_string()), "also as a user's actor fails with it");
-        assert_eq!(answer(AttachmentError::Unavailable("permission denied".to_string())), (503, "storage_unavailable".to_string()));
         assert_eq!(answer(AttachmentError::Altered(ContentId::new())), (500, "attachment_altered".to_string()));
-        let failed = ApiError::from(ViewError::Attachment(AttachmentError::Unavailable("/srv/content: permission denied".to_string())));
-        assert_eq!(failed.status, StatusCode::SERVICE_UNAVAILABLE, "downloaded through a view");
-        assert!(!failed.detail.contains("/srv"), "for the log alone: {}", failed.detail);
+        let gone = ApiError::from(ViewError::Attachment(AttachmentError::UnknownStorage("old".to_string())));
+        assert_eq!((gone.status, gone.code.as_ref()), (StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable"), "named by what is kept, downloaded through a view");
+        assert!(!gone.detail.contains("old"), "for the log alone: {}", gone.detail);
         assert_eq!(answer(ClassificationError::CompartmentsWithoutLevel), (400, "invalid_classification".to_string()));
+    }
+
+    /// A storage fails the same way whatever it keeps (issue 466): an attachment's storage of
+    /// content is answered as a workspace's storage.
+    #[test]
+    fn a_storages_failure_is_answered_alike_whatever_it_keeps() {
+        let content = |error| answer(AttachmentError::Content(error));
+        let files = |error| answer(WorkspaceError::Terminal(error));
+        assert_eq!(content(ContentError::TooLarge { limit: 1 }), (413, "file_too_large".to_string()));
+        assert_eq!(content(ContentError::TooLarge { limit: 1 }), files(TerminalError::TooLarge { limit: 1 }));
+        assert_eq!(content(ContentError::Unavailable("permission denied".to_string())), (503, "storage_unavailable".to_string()));
+        assert_eq!(content(ContentError::Unavailable("permission denied".to_string())), files(TerminalError::Unavailable("permission denied".to_string())));
+        assert_eq!(content(ContentError::Changed), (400, "changed".to_string()), "the request's bytes were not what it said");
+        assert_eq!(content(ContentError::NotFound("attachments/a".to_string())), (500, "internal_error".to_string()), "a key its owner made");
+        let failed = ApiError::from(ViewError::Attachment(AttachmentError::Content(ContentError::Unavailable("permission denied".to_string()))));
+        assert_eq!(failed.detail, "the storage of content failed: permission denied", "what happened, as a workspace's storage tells it");
     }
 
     #[test]

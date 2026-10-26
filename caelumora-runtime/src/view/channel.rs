@@ -343,7 +343,7 @@ impl ChannelView {
     ///
     /// # Errors
     /// As `attachment`; `Attachment` with `NotFound` also if the storage has nothing under its
-    /// key, `UnknownStorage`, `Unavailable`.
+    /// key, `UnknownStorage`, `Content`.
     pub async fn attachment_content(&self, message: MessageId, id: ContentId) -> ViewResult<(ContentRef, u64, ByteStream)> {
         let attachment = self.attachment(message, id).await?;
         let (size, content) = self.views().attachment_manager().content_of(&attachment).await?;

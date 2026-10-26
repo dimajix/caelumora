@@ -61,18 +61,15 @@ pub enum ArtifactError {
     /// A later version from a workspace classified otherwise than the first.
     #[error("the artifact '{0}' is classified otherwise than the workspace; publish it under another name")]
     ClassifiedOtherwise(String),
-    #[error("the version is larger than the {limit} bytes an artifact may be")]
-    TooLarge { limit: u64 },
-    #[error("the file changed while it was published; publish it again once it is written")]
-    Changed,
     /// Kept in a scope an artifact cannot lie in.
     #[error("an artifact is kept in its owner's scope or the global one")]
     InvalidScope,
     #[error(transparent)]
     Invalid(#[from] ValueError),
-    /// The storage failed: what happened, never where.
-    #[error("the storage of content failed: {0}")]
-    Unavailable(String),
+    /// What the storage of content reported: a version too large, other than it was said to be,
+    /// or a storage that failed.
+    #[error(transparent)]
+    Content(#[from] ContentError),
     #[error(transparent)]
     Store(#[from] StoreError),
     /// The runtime was built without the plugin, so there is no manager to
@@ -82,19 +79,6 @@ pub enum ArtifactError {
 }
 
 pub type ArtifactResult<T> = Result<T, ArtifactError>;
-
-/// What a storage of content says, as an artifact's error: a version too
-/// large as such, anything else as the storage's failure.
-impl From<ContentError> for ArtifactError {
-    fn from(error: ContentError) -> Self {
-        match error {
-            ContentError::TooLarge { limit } => Self::TooLarge { limit },
-            ContentError::Changed => Self::Changed,
-            ContentError::Unavailable(what) => Self::Unavailable(what),
-            error @ (ContentError::InvalidKey(_) | ContentError::NotFound(_)) => Self::Unavailable(error.to_string()),
-        }
-    }
-}
 
 /// The section `artifacts` of the configuration (issue 271): which of the
 /// storages of content (`content.storage`, issue 282) new artifacts are
@@ -205,9 +189,9 @@ impl ArtifactManager {
     ///
     /// # Errors
     /// `NotConfigured`, `OwnerNotAUser`, `Invalid` for a name that is
-    /// none, `ClassifiedOtherwise`, `StorageNotCleared`, `TooLarge`,
-    /// `Changed`, `Unavailable`, or whatever the store reports -
-    /// `PermissionDenied` and `NameTaken` among it.
+    /// none, `ClassifiedOtherwise`, `StorageNotCleared`, `Content` for a version too large, other
+    /// than said, or a storage that failed, or whatever the store reports - `PermissionDenied` and
+    /// `NameTaken` among it.
     #[expect(clippy::too_many_arguments, reason = "an artifact is published with what describes it and where it goes")]
     pub async fn publish(&self, ctx: &SecurityContext, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
@@ -301,7 +285,7 @@ impl ArtifactManager {
     /// (`ArtifactView::content`, issue 292).
     ///
     /// # Errors
-    /// `VersionNotFound`, `UnknownStorage`, or `Unavailable`.
+    /// `VersionNotFound`, `UnknownStorage`, or `Content`.
     pub(crate) async fn content_of(&self, artifact: &Artifact, number: u32) -> ArtifactResult<(u64, ByteStream)> {
         if artifact.version(number).is_none() {
             return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
@@ -424,7 +408,7 @@ impl ArtifactManager {
     /// `false` if there was nothing deleted the caller could see.
     ///
     /// # Errors
-    /// `PermissionDenied`, `UnknownStorage`, `Unavailable`, or whatever
+    /// `PermissionDenied`, `UnknownStorage`, `Content`, or whatever
     /// the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
@@ -487,8 +471,8 @@ impl ScopeMember for ArtifactManager {
     /// their content first.
     ///
     /// # Errors
-    /// `UnknownStorage`, `Unavailable`, or whatever the store reports;
-    /// what was purged before stays purged.
+    /// `UnknownStorage`, `Content`, or whatever the store reports; what was purged before stays
+    /// purged.
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;

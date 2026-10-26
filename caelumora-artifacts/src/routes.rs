@@ -69,17 +69,20 @@ impl From<ArtifactError> for ApiError {
             ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => Self::not_found("artifact_not_found", detail),
             ArtifactError::VersionNotFound { .. } => Self::not_found("version_not_found", detail),
             ArtifactError::NotConfigured => Self::bad_request("artifacts_not_configured", detail),
-            ArtifactError::UnknownStorage(_) => Self::bad_request("unknown_storage", detail),
             ArtifactError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
             ArtifactError::ClassifiedOtherwise(_) => Self::conflict("classified_otherwise", detail),
-            ArtifactError::TooLarge { .. } => Self::bad_request("too_large", detail),
-            ArtifactError::Changed => Self::conflict("changed", detail),
             ArtifactError::InvalidScope => Self::bad_request("invalid_scope", detail),
             ArtifactError::Invalid(e) => e.into(),
+            ArtifactError::Content(e) => e.into(),
             ArtifactError::Store(e) => e.into(),
-            // A caller that is no user, the storage broke, a runtime without
-            // artifacts: not the client's request.
-            ArtifactError::OwnerNotAUser | ArtifactError::Unavailable(_) | ArtifactError::NotJoined => Self::internal("internal_error", "the request", &error.into()),
+            // Named by what is kept, not by the request (issue 466): for the log alone, as an
+            // attachment's.
+            ArtifactError::UnknownStorage(_) => {
+                tracing::error!("The content of an artifact could not be reached: {detail}");
+                Self::unavailable("storage_unavailable", "The storage of the artifact is unavailable; the details are in the server log")
+            }
+            // A caller that is no user, a runtime without artifacts: not the client's request.
+            ArtifactError::OwnerNotAUser | ArtifactError::NotJoined => Self::internal("internal_error", "the request", &error.into()),
         }
     }
 }

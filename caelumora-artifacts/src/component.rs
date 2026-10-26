@@ -24,6 +24,7 @@ use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibili
 use caelumora_agents::turn::Turn;
 use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
+use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::WorkspacePath;
 use caelumora_agents::tool::{arguments, described, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_model::prompt_catalogue::PromptTexts;
@@ -101,12 +102,15 @@ impl ArtifactTool {
     }
 }
 
-/// What publishing failed of, as the model is told it: what it can correct
-/// - a name, a file, a label - is a parameter; the storage failing is not.
+/// What publishing failed of, as the model is told it: what it can correct - a name, a file, a
+/// label - is a parameter; the storage failing is not. A file that changed while it was kept is the
+/// storage's `Changed`, told with what the model can do about it.
 impl From<ArtifactError> for ToolError {
     fn from(error: ArtifactError) -> Self {
         match error {
-            ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) | ArtifactError::TooLarge { .. } | ArtifactError::Changed => ToolError::InvalidParameter(error.to_string()),
+            ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) => ToolError::InvalidParameter(error.to_string()),
+            ArtifactError::Content(ContentError::Changed) => ToolError::InvalidParameter("the file changed while it was published; publish it again once it is written".to_string()),
+            ArtifactError::Content(e) => e.into(),
             ArtifactError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("an artifact of that name in this session is someone else's: publish under another name".to_string()),
             ArtifactError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("publishing an artifact here".to_string()),
             error => ToolError::ExecutionFailed(error.to_string()),

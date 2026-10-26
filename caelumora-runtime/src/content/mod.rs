@@ -23,7 +23,7 @@ use caelumora_model::digest::{ContentDigest, Digest};
 use futures::StreamExt;
 use std::sync::{Arc, Mutex, PoisonError};
 use tracing::warn;
-use std::fmt;
+use std::{fmt, io};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContentError {
@@ -42,6 +42,14 @@ pub enum ContentError {
     /// The storage failed: what happened, never where.
     #[error("the storage of content failed: {0}")]
     Unavailable(String),
+}
+
+impl ContentError {
+    /// What a failure of reading or writing is, as an error of a storage says it: its kind, never
+    /// the path.
+    pub(crate) fn unavailable(error: io::Error) -> Self {
+        Self::Unavailable(error.kind().to_string())
+    }
 }
 
 pub type ContentResult<T> = Result<T, ContentError>;
