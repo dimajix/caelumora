@@ -126,8 +126,8 @@ pub struct ArtifactManager {
     /// What may flow where (issue 304): into a storage that keeps it.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     storages: Arc<NamedBackends<dyn ContentStorage>>,
-    /// The storage new artifacts are made in.
-    keep_in: Option<String>,
+    /// The storage new artifacts are made in, with its name.
+    keep_in: Option<(String, Arc<dyn ContentStorage>)>,
     max_bytes: u64,
     /// Held while a document and its content are changed together, so that
     /// two versions of one artifact are not numbered alike.
@@ -136,7 +136,7 @@ pub struct ArtifactManager {
 
 impl fmt::Debug for ArtifactManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ArtifactManager").field("keep_in", &self.keep_in).finish_non_exhaustive()
+        f.debug_struct("ArtifactManager").field("keep_in", &self.keep_in.as_ref().map(|(name, _)| name)).finish_non_exhaustive()
     }
 }
 
@@ -149,7 +149,8 @@ impl ArtifactManager {
     /// `ComponentError::InvalidConfig` where `config` names no storage of
     /// `storages`, or none among several.
     pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn ContentStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
-        let keep_in = storages.chosen(config.keep_in.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?.map(String::from);
+        let keep_in = storages.chosen(config.keep_in.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?
+            .map(|(name, storage)| (name.to_string(), Arc::clone(storage)));
         Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, keep_in, max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
@@ -194,21 +195,21 @@ impl ArtifactManager {
         // Found whoever's it is, so that one not the caller's to add to is
         // refused as such rather than taken for a name to make anew.
         let existing = self.artifacts.find_by_name(&SecurityContext::system(), &name).await.optional()?;
-        let (id, number, storage_name) = match &existing {
+        let (id, number, (storage_name, storage)) = match &existing {
             Some(artifact) => {
                 self.access_policy.require(ctx, ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes), StoreError::PermissionDenied).await?;
                 if artifact.classification != *classification {
                     return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
                 }
-                (artifact.id, artifact.latest().map_or(1, |latest| latest.number + 1), artifact.storage.clone())
+                (artifact.id, artifact.latest().map_or(1, |latest| latest.number + 1), (&artifact.storage, self.storages.kept_in(&artifact.storage)?))
             }
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
                 self.access_policy.require(ctx, ActionType::create(Artifact::KIND, &attributes), StoreError::PermissionDenied).await?;
-                (ArtifactId::new(), 1, self.keep_in.clone().ok_or(ArtifactError::NotConfigured)?)
+                let (name, storage) = self.keep_in.as_ref().ok_or(ArtifactError::NotConfigured)?;
+                (ArtifactId::new(), 1, (name, storage))
             }
         };
-        let storage = self.storages.kept_in(&storage_name)?;
         self.confidentiality.require_storable(ctx, classification, storage.destination(), || ArtifactError::StorageNotCleared(storage_name.clone()))?;
 
         let digest = keep_digested(storage.as_ref(), &version_key(id, number), size, content, self.max_bytes).await?;

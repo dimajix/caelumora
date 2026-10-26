@@ -74,18 +74,18 @@ impl<T: ?Sized> NamedBackends<T> {
         self.0.get(name).ok_or_else(|| StorageGone(name.to_string()))
     }
 
-    /// The name of the one to use: `named`, which has to be one of them, or
-    /// the one there is - `None` where none is configured.
+    /// The one to use, with its name: `named`, which has to be one of them, or the one there is -
+    /// `None` where none is configured.
     ///
     /// # Errors
-    /// `Unknown` if `named` is none of them, `Unnamed` if nothing is named
-    /// among several.
-    pub fn chosen(&self, named: Option<&str>) -> Result<Option<&str>, Unchosen> {
-        match named {
-            Some(name) => self.0.get_key_value(name).map(|(name, _)| Some(name.as_str())).ok_or_else(|| Unchosen::Unknown(name.to_string())),
-            None if self.0.len() > 1 => Err(Unchosen::Unnamed),
-            None => Ok(self.0.keys().next().map(String::as_str)),
-        }
+    /// `Unknown` if `named` is none of them, `Unnamed` if nothing is named among several.
+    pub fn chosen(&self, named: Option<&str>) -> Result<Option<(&str, &Arc<T>)>, Unchosen> {
+        let chosen = match named {
+            Some(name) => Some(self.0.get_key_value(name).ok_or_else(|| Unchosen::Unknown(name.to_string()))?),
+            None if self.0.len() > 1 => return Err(Unchosen::Unnamed),
+            None => self.0.iter().next(),
+        };
+        Ok(chosen.map(|(name, backend)| (name.as_str(), backend)))
     }
 
     /// Every backend, by its name.
@@ -310,12 +310,14 @@ mod tests {
             let configs = names.iter().map(|name| (name.to_string(), BackendConfig::new("fixed", json!({ "greeting": "hi" })))).collect();
             greeters().make_named::<dyn Greeter>("greeter", &configs, &Services::empty()).unwrap()
         };
-        assert_eq!(named(&["front"]).chosen(None), Ok(Some("front")));
-        assert_eq!(named(&[]).chosen(None), Ok(None), "none configured");
+        let front = named(&["front"]);
+        let (name, greeter) = front.chosen(None).unwrap().expect("the one there is");
+        assert_eq!((name, greeter.greet().as_str()), ("front", "hi from front"), "with the backend itself");
+        assert!(named(&[]).chosen(None).unwrap().is_none(), "none configured");
         let several = named(&["a", "b"]);
-        assert_eq!(several.chosen(None), Err(Unchosen::Unnamed), "which one, among several, must be said");
-        assert_eq!(several.chosen(Some("b")), Ok(Some("b")));
-        assert_eq!(several.chosen(Some("c")), Err(Unchosen::Unknown("c".to_string())), "not one that is not there");
+        assert_eq!(several.chosen(None).err(), Some(Unchosen::Unnamed), "which one, among several, must be said");
+        assert_eq!(several.chosen(Some("b")).unwrap().map(|(name, _)| name), Some("b"));
+        assert_eq!(several.chosen(Some("c")).err(), Some(Unchosen::Unknown("c".to_string())), "not one that is not there");
         assert_eq!(several.iter().map(|(name, _)| name).collect::<Vec<_>>(), ["a", "b"]);
         assert_eq!(format!("{several:?}"), r#"["a", "b"]"#, "shown by their names alone");
     }

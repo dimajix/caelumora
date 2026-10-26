@@ -70,8 +70,8 @@ pub struct AttachmentManager {
     /// What may flow where (issue 304): into the channel, into the storage.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     storages: Arc<NamedBackends<dyn ContentStorage>>,
-    /// The storage uploads are kept in.
-    keep_in: Option<String>,
+    /// The storage uploads are kept in, with its name.
+    keep_in: Option<(String, Arc<dyn ContentStorage>)>,
     max_bytes: u64,
     max_per_message: usize,
     /// How long an upload waits for its message.
@@ -85,7 +85,7 @@ pub struct AttachmentManager {
 
 impl fmt::Debug for AttachmentManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AttachmentManager").field("keep_in", &self.keep_in).finish_non_exhaustive()
+        f.debug_struct("AttachmentManager").field("keep_in", &self.keep_in.as_ref().map(|(name, _)| name)).finish_non_exhaustive()
     }
 }
 
@@ -97,7 +97,8 @@ impl AttachmentManager {
     /// `ComponentError::InvalidConfig` where `config` names no storage of `storages`, or none among
     /// several.
     pub fn new(confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn ContentStorage>>, config: &AttachmentsConfig) -> ComponentResult<Self> {
-        let keep_in = storages.chosen(config.keep_in.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("attachments.keep_in {why}")))?.map(String::from);
+        let keep_in = storages.chosen(config.keep_in.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("attachments.keep_in {why}")))?
+            .map(|(name, storage)| (name.to_string(), Arc::clone(storage)));
         Ok(Self {
             confidentiality,
             storages,
@@ -128,8 +129,7 @@ impl AttachmentManager {
         let classification = classification.unwrap_or_else(|| channel.classification().clone());
         self.confidentiality.require_classifiable(&classification, || AttachmentError::ClassificationRefused)?;
         self.confidentiality.require_publish(context, &classification, channel.classification(), || AttachmentError::ClassificationRefused)?;
-        let storage_name = self.keep_in.as_deref().ok_or(AttachmentError::NotConfigured)?;
-        let storage = self.storages.kept_in(storage_name)?;
+        let (storage_name, storage) = self.keep_in.as_ref().ok_or(AttachmentError::NotConfigured)?;
         self.confidentiality.require_storable(context, &classification, storage.destination(), || AttachmentError::StorageNotCleared(storage_name.to_string()))?;
         self.forget_expired().await;
 

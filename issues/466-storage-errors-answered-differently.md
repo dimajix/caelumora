@@ -1,6 +1,6 @@
 # 466 — The same failure of a storage is answered differently over REST
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -100,3 +100,7 @@ HTTP. `WorkspaceError` instead carries the `TerminalError` of its storage
   what is kept gives, and cannot fail there, since `NamedBackends::chosen` checked the name when
   the manager was made. `chosen` answers the backend chosen with its name, and the managers keep
   both, so that new content needs no lookup.
+- **2026-10-26** — Step 3, done as decided: `NamedBackends::chosen` answers the backend chosen with
+  its name; the `AttachmentManager` and the `ArtifactManager` keep both (`keep_in`), so that an
+  upload and a new artifact go to the storage without a lookup, and `NamedBackends::kept_in` is
+  asked only for a name that what is kept gives.
