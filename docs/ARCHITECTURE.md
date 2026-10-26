@@ -128,10 +128,13 @@ registered and opened the stores of their kinds (`PersistenceBackend::open`, iss
 that cannot be made ready fails the start. The backends a section names by name are handed to their
 owners as one `NamedBackends` - the storages of workspaces, the storages of content -, of which an
 owner keeps what is new in the one its section names, or in the one there is: among several, one has
-to be named (`NamedBackends::chosen`). What a plugin keeps beyond documents it keeps in the core's
-storages of content, which it is handed when it registers (`RuntimeBuilder::content_storages`), in a
-key space of its own - the artifacts do. Unlike a component, a backend serves the whole process and
-lives in no container, which is why it is no component.
+to be named (`NamedBackends::chosen`). What is kept names the backend it lies in and finds it again
+by that name (`NamedBackends::kept_in`); one since removed from the configuration is `StorageGone`,
+the server's failure and not the request's. What a plugin keeps beyond documents it keeps in the
+core's storages of content, which it is handed when it registers
+(`RuntimeBuilder::content_storages`), in a key space of its own - the artifacts do. Unlike a
+component, a backend serves the whole process and lives in no container, which is why it is no
+component.
 
 The stores are such backends since what a backend keeps is not generic: documents of any kind and
 states, each offered by a method of its own (`PersistenceBackend`, issue 448); the runtime makes the

@@ -82,3 +82,21 @@ HTTP. `WorkspaceError` instead carries the `TerminalError` of its storage
   its name for the log, as an artifact's and an attachment's. And the attachment tool turns what
   a stream of content fails with into a `ToolError` by hand, where `ContentError::unavailable` and
   `From<ContentError> for ToolError` do it.
+- **2026-10-26** — Step 2, done as decided with the maintainer: a storage that what is kept names,
+  since removed from the configuration, is one type for every kind, `StorageGone` of
+  `caelumora_runtime::backend`, found by `NamedBackends::kept_in`; `WorkspaceError`,
+  `ArtifactError` and `AttachmentError` carry it (`StorageGone`, transparent) - the latter two in
+  place of their `UnknownStorage`, which now only `WorkspaceError` has, for the storage the client
+  names (`400 unknown_storage`). It is answered once: `503 storage_unavailable` with its name in
+  the log (`From<StorageGone> for ApiError`), hidden by `user_message`, and told the model as a
+  fixed text without the name (`From<StorageGone> for ToolError`), as the maintainer decided. What
+  a workspace fails with reaches the model through one `From<WorkspaceError> for ToolError`, in
+  place of three conversions by hand; the attachment tool reads a stream of content through
+  `ContentError::unavailable`. The managers' lookups of a storage by name (`storage`, `provider`)
+  are gone.
+- **2026-10-26** — Step 3 decided with the maintainer, from the review of step 2: the attachments
+  and the artifacts keep the storage new content goes to as its name alone and look it up again
+  at every upload and every new artifact - with `NamedBackends::kept_in`, which is for names that
+  what is kept gives, and cannot fail there, since `NamedBackends::chosen` checked the name when
+  the manager was made. `chosen` answers the backend chosen with its name, and the managers keep
+  both, so that new content needs no lookup.

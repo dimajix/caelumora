@@ -275,6 +275,8 @@ fn remember<K: Eq + Hash, C>(registry: &mut HashMap<K, Weak<C>>, id: K, controll
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::StorageGone;
+    use crate::workspace::WorkspaceError;
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
@@ -445,6 +447,21 @@ mod tests {
         eventually(|| controller.load().name.name.as_str() == "notes" && controller.load().security_attributes.acl.len() == 1).await;
         let gone = manager.workspace_controller(WorkspaceId::new()).await;
         assert!(matches!(gone, Err(StoreError::NotFound { .. })), "a workspace that does not exist has none, got {gone:?}");
+    }
+
+    /// A workspace whose storage was removed from the configuration has its controller, but no
+    /// terminal: its storage is gone, which is the server's, not that the caller named a storage
+    /// unknown (issue 466).
+    #[tokio::test]
+    async fn a_workspace_whose_storage_is_gone_has_no_terminal() {
+        let (store, _, manager) = manager();
+        let owner = UserId::new();
+        let workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(), "removed", Default::default(), owner);
+        store.entity_stores().unwrap().workspaces.create(&SecurityContext::system(), &workspace).await.unwrap();
+        let controller = manager.workspace_controller(workspace.id).await.unwrap();
+
+        let terminal = controller.terminal(&SecurityContext::system(), Grant::Read).await;
+        assert!(matches!(&terminal, Err(WorkspaceError::StorageGone(StorageGone(name))) if name == "removed"), "{:?}", terminal.err());
     }
 
     /// What is built for a user is built with their roles as they are now;

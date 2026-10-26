@@ -47,7 +47,7 @@ pub enum ContentError {
 impl ContentError {
     /// What a failure of reading or writing is, as an error of a storage says it: its kind, never
     /// the path.
-    pub(crate) fn unavailable(error: io::Error) -> Self {
+    pub fn unavailable(error: io::Error) -> Self {
         Self::Unavailable(error.kind().to_string())
     }
 }

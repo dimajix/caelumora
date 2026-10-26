@@ -18,6 +18,7 @@ use caelumora_model::security::Grant;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_runtime::attachment::AttachmentManager;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
 use caelumora_runtime::view::ChannelView;
 use caelumora_runtime::workspace::WorkspaceManager;
@@ -201,7 +202,7 @@ impl ToolProvider for AttachmentTool {
                 if !attachment.is_text() {
                     return Err(ToolError::InvalidParameter(format!("'{reference}' is no text but {}; copy it into the workspace to work on it there", attachment.media_type)));
                 }
-                let bytes: Vec<u8> = content.map_ok(|chunk| chunk.to_vec()).try_concat().await.map_err(|e| ToolError::ExecutionFailed(format!("the attachment cannot be read: {}", e.kind())))?;
+                let bytes: Vec<u8> = content.map_ok(|chunk| chunk.to_vec()).try_concat().await.map_err(ContentError::unavailable)?;
                 let mut value = page_of(&String::from_utf8_lossy(&bytes), &format!("'{reference}'"), start_line, line_count, MAX_PAGE_BYTES)?.value(&self.prompts);
                 value["ref"] = json!(reference);
                 value["name"] = json!(attachment.name.as_str());
@@ -211,7 +212,7 @@ impl ToolProvider for AttachmentTool {
                 let CopyTo { reference, path } = arguments(params)?;
                 // A workspace used in the channel takes what the channel holds: the attachment's
                 // label flows into it as the channel's does.
-                let (workspace, terminal) = turn.workspace_terminal(Grant::Write).await.map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                let (workspace, terminal) = turn.workspace_terminal(Grant::Write).await?;
                 let (attachment, content) = attachment_content(turn, &reference).await?;
                 let at = WorkspacePath::parse(&path.unwrap_or_else(|| format!("{COPIED_TO}/{}", attachment.name.as_str())))?;
                 let written = terminal.write(&at, content, self.workspaces.max_file_bytes()).await?;

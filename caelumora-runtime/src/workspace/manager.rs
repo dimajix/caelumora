@@ -69,14 +69,6 @@ impl WorkspaceManager {
         self.storages.iter().map(|(name, provider)| (name, provider.has_shell()))
     }
 
-    /// The storage `name`.
-    ///
-    /// # Errors
-    /// `UnknownStorage` if none of that name is configured.
-    fn provider(&self, name: &str) -> WorkspaceResult<&Arc<dyn TerminalProvider>> {
-        self.storages.get(name).ok_or_else(|| WorkspaceError::UnknownStorage(name.to_string()))
-    }
-
     /// Makes a workspace of the user `ctx` acts for, of `name` in `scope`,
     /// in `storage`: the document, then its place there. A place that
     /// cannot be made leaves no document. What was asked for is validated,
@@ -100,7 +92,7 @@ impl WorkspaceManager {
     /// `TerminalError` of making the place.
     pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, storage: &str, description: Option<&str>, classification: Classification) -> WorkspaceResult<Workspace> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(WorkspaceError::OwnerNotAUser) };
-        let provider = self.provider(storage)?;
+        let provider = self.storages.get(storage).ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
         let mut workspace = Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
         require_classification(self.confidentiality.as_ref(), ctx, storage, provider.as_ref(), &workspace.classification)?;
@@ -169,14 +161,13 @@ impl WorkspaceManager {
     /// deleted the caller could see.
     ///
     /// # Errors
-    /// `PermissionDenied`, `UnknownStorage` if its storage is no longer
-    /// configured, a `TerminalError` of removing the place, or whatever the
-    /// store reports.
+    /// `PermissionDenied`, `StorageGone` if its storage is no longer configured, a `TerminalError`
+    /// of removing the place, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(workspace) = self.workspaces.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.access_policy.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
-        self.provider(&workspace.storage)?.remove(id).await?;
+        self.storages.kept_in(&workspace.storage)?.remove(id).await?;
         let purged = self.workspaces.purge(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
         Ok(purged)
@@ -255,15 +246,15 @@ impl ScopeMember for WorkspaceManager {
     /// their places first.
     ///
     /// # Errors
-    /// `UnknownStorage`, a `TerminalError` of removing a place, or whatever
-    /// the store reports; what was purged before stays purged.
+    /// `StorageGone`, a `TerminalError` of removing a place, or whatever the store reports; what
+    /// was purged before stays purged.
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for workspace in self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             // Its place is its storage too.
             let unremoved = |e: &dyn fmt::Display| StoreError::Backend(format!("the place of workspace {} cannot be removed: {e}", workspace.id));
-            self.provider(&workspace.storage).map_err(|e| unremoved(&e))?.remove(workspace.id).await.map_err(|e| unremoved(&e))?;
+            self.storages.kept_in(&workspace.storage).map_err(|e| unremoved(&e))?.remove(workspace.id).await.map_err(|e| unremoved(&e))?;
             self.workspaces.purge(&system, workspace.id).await?;
         }
         Ok(())

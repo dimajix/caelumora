@@ -10,19 +10,18 @@ mod manager;
 
 pub use manager::AttachmentManager;
 
+use crate::backend::StorageGone;
 use crate::content::ContentError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::content::ContentId;
 use caelumora_model::value::ValueError;
 
 /// What uploading, claiming or reading an attachment failed with - written to be read by users
-/// but for `UnknownStorage`, which is the log's (`error::user_message`).
+/// but for `StorageGone`, which is the log's (`error::user_message`).
 #[derive(Debug, thiserror::Error)]
 pub enum AttachmentError {
     #[error("no storage of content is configured for attachments")]
     NotConfigured,
-    #[error("the storage of content '{0}' is not configured")]
-    UnknownStorage(String),
     /// What may not enter the channel so classified - above it, for an audience the channel's would
     /// not be covered by, or with a compartment not configured.
     #[error("content so classified cannot be attached in this channel")]
@@ -46,6 +45,9 @@ pub enum AttachmentError {
     /// a storage that failed.
     #[error(transparent)]
     Content(#[from] ContentError),
+    /// The storage an attachment lies in, since removed from the configuration.
+    #[error(transparent)]
+    StorageGone(#[from] StorageGone),
 }
 
 /// What the `AttachmentManager` answers.

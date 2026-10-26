@@ -32,6 +32,7 @@ pub mod testing;
 
 pub use manager::WorkspaceManager;
 
+use crate::backend::StorageGone;
 use crate::terminal::{TerminalError, TerminalProvider};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy, WRITE};
@@ -45,8 +46,12 @@ pub enum WorkspaceError {
     /// that nothing can be probed.
     #[error("there is no workspace {0}")]
     NotFound(WorkspaceId),
+    /// A storage the caller named, for a workspace to be made in, that is not configured.
     #[error("no storage named '{0}' is configured")]
     UnknownStorage(String),
+    /// The storage a workspace lies in, since removed from the configuration.
+    #[error(transparent)]
+    StorageGone(#[from] StorageGone),
     #[error("a workspace belongs to a user")]
     OwnerNotAUser,
     #[error("the classification may not be given")]

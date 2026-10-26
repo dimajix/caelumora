@@ -29,7 +29,7 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::component::{ComponentError, ComponentResult};
-use caelumora_runtime::backend::NamedBackends;
+use caelumora_runtime::backend::{NamedBackends, StorageGone};
 use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
@@ -51,8 +51,6 @@ pub enum ArtifactError {
     VersionNotFound { artifact: ArtifactId, version: u32 },
     #[error("no storage of content is configured for artifacts")]
     NotConfigured,
-    #[error("the storage of content '{0}' is not configured")]
-    UnknownStorage(String),
     #[error("an artifact is published by a user, or for one")]
     OwnerNotAUser,
     /// What is so classified may not be put into the storage.
@@ -70,6 +68,9 @@ pub enum ArtifactError {
     /// or a storage that failed.
     #[error(transparent)]
     Content(#[from] ContentError),
+    /// The storage a version lies in, since removed from the configuration.
+    #[error(transparent)]
+    StorageGone(#[from] StorageGone),
     #[error(transparent)]
     Store(#[from] StoreError),
     /// The runtime was built without the plugin, so there is no manager to
@@ -162,14 +163,6 @@ impl ArtifactManager {
         self.keep_in.is_some()
     }
 
-    /// The storage of content `name`.
-    ///
-    /// # Errors
-    /// `UnknownStorage` if none of that name is configured.
-    fn storage(&self, name: &str) -> ArtifactResult<&Arc<dyn ContentStorage>> {
-        self.storages.get(name).ok_or_else(|| ArtifactError::UnknownStorage(name.to_string()))
-    }
-
     /// Publishes `content` - its size and its bytes, as a file of a
     /// workspace is read -, classified as `classification`, as a version
     /// of the artifact `name` in the session `session`'s scope, published in
@@ -188,10 +181,10 @@ impl ArtifactManager {
     /// now, and the number of the new version.
     ///
     /// # Errors
-    /// `NotConfigured`, `OwnerNotAUser`, `Invalid` for a name that is
-    /// none, `ClassifiedOtherwise`, `StorageNotCleared`, `Content` for a version too large, other
-    /// than said, or a storage that failed, or whatever the store reports - `PermissionDenied` and
-    /// `NameTaken` among it.
+    /// `NotConfigured`, `OwnerNotAUser`, `Invalid` for a name that is none, `ClassifiedOtherwise`,
+    /// `StorageNotCleared`, `StorageGone` for an artifact whose storage is no longer configured,
+    /// `Content` for a version too large, other than said, or a storage that failed, or whatever
+    /// the store reports - `PermissionDenied` and `NameTaken` among it.
     #[expect(clippy::too_many_arguments, reason = "an artifact is published with what describes it and where it goes")]
     pub async fn publish(&self, ctx: &SecurityContext, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
@@ -215,7 +208,7 @@ impl ArtifactManager {
                 (ArtifactId::new(), 1, self.keep_in.clone().ok_or(ArtifactError::NotConfigured)?)
             }
         };
-        let storage = self.storage(&storage_name)?;
+        let storage = self.storages.kept_in(&storage_name)?;
         self.confidentiality.require_storable(ctx, classification, storage.destination(), || ArtifactError::StorageNotCleared(storage_name.clone()))?;
 
         let digest = keep_digested(storage.as_ref(), &version_key(id, number), size, content, self.max_bytes).await?;
@@ -285,12 +278,12 @@ impl ArtifactManager {
     /// (`ArtifactView::content`, issue 292).
     ///
     /// # Errors
-    /// `VersionNotFound`, `UnknownStorage`, or `Content`.
+    /// `VersionNotFound`, `StorageGone`, or `Content`.
     pub(crate) async fn content_of(&self, artifact: &Artifact, number: u32) -> ArtifactResult<(u64, ByteStream)> {
         if artifact.version(number).is_none() {
             return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
         }
-        self.storage(&artifact.storage)?.get(&version_key(artifact.id, number)).await.map_err(|e| match e {
+        self.storages.kept_in(&artifact.storage)?.get(&version_key(artifact.id, number)).await.map_err(|e| match e {
             ContentError::NotFound(_) => ArtifactError::VersionNotFound { artifact: artifact.id, version: number },
             e => e.into(),
         })
@@ -408,13 +401,12 @@ impl ArtifactManager {
     /// `false` if there was nothing deleted the caller could see.
     ///
     /// # Errors
-    /// `PermissionDenied`, `UnknownStorage`, `Content`, or whatever
-    /// the store reports.
+    /// `PermissionDenied`, `StorageGone`, `Content`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(artifact) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.access_policy.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), StoreError::PermissionDenied).await?;
-        self.storage(&artifact.storage)?.remove_under(&versions_key(id)).await?;
+        self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key(id)).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
         Ok(purged)
@@ -471,15 +463,15 @@ impl ScopeMember for ArtifactManager {
     /// their content first.
     ///
     /// # Errors
-    /// `UnknownStorage`, `Content`, or whatever the store reports; what was purged before stays
+    /// `StorageGone`, `Content`, or whatever the store reports; what was purged before stays
     /// purged.
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for artifact in self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             // Its content is its storage too.
-            let unremoved = |e: ArtifactError| StoreError::Backend(format!("the content of artifact {} cannot be removed: {e}", artifact.id));
-            self.storage(&artifact.storage).map_err(unremoved)?.remove_under(&versions_key(artifact.id)).await.map_err(|e| unremoved(e.into()))?;
+            let unremoved = |e: &dyn fmt::Display| StoreError::Backend(format!("the content of artifact {} cannot be removed: {e}", artifact.id));
+            self.storages.kept_in(&artifact.storage).map_err(|e| unremoved(&e))?.remove_under(&versions_key(artifact.id)).await.map_err(|e| unremoved(&e))?;
             self.artifacts.purge(&system, artifact.id).await?;
         }
         Ok(())

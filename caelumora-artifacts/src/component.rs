@@ -111,6 +111,7 @@ impl From<ArtifactError> for ToolError {
             ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) => ToolError::InvalidParameter(error.to_string()),
             ArtifactError::Content(ContentError::Changed) => ToolError::InvalidParameter("the file changed while it was published; publish it again once it is written".to_string()),
             ArtifactError::Content(e) => e.into(),
+            ArtifactError::StorageGone(e) => e.into(),
             ArtifactError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("an artifact of that name in this session is someone else's: publish under another name".to_string()),
             ArtifactError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("publishing an artifact here".to_string()),
             error => ToolError::ExecutionFailed(error.to_string()),
@@ -163,8 +164,7 @@ impl ToolProvider for ArtifactTool {
         };
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
         let (ctx, session, channel) = (turn.situation().security_context(), turn.situation().session_id(), turn.situation().channel_id());
-        let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await
-            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await?;
         let content = terminal.read(&at).await?;
         let (artifact, number) = self.artifacts.publish(ctx, content, &workspace.classification, &name, description, session, channel).await?;
         let version = artifact.version(number).ok_or_else(|| ToolError::ExecutionFailed(format!("version {number} of the artifact is missing")))?;

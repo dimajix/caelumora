@@ -33,7 +33,7 @@ use crate::{files, shell, NAMESPACE};
 use caelumora_agents::turn::Turn;
 use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::workspace::{WorkspaceError, WorkspaceManager};
+use caelumora_runtime::workspace::WorkspaceManager;
 use caelumora_agents::tool::{described, proposed_matcher, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use async_trait::async_trait;
@@ -135,12 +135,6 @@ pub(crate) fn next(prompts: &PromptTexts, key: &str, values: impl Serialize) -> 
         .ok()
 }
 
-/// That the workspace could not be used as a call needs it, as the model is
-/// told it.
-fn unusable(error: WorkspaceError) -> ToolError {
-    ToolError::ExecutionFailed(error.to_string())
-}
-
 /// What a call of the tool `name` needs of the workspace, both to be offered
 /// (issue 290) and to run: what its access list must grant (issue 23) -
 /// reading for the tools that only read files, changing for the others -
@@ -207,12 +201,12 @@ impl ToolProvider for TerminalTool {
         };
         let (workspace, value) = match is_shell {
             true => {
-                let (workspace, shell) = turn.workspace_shell().await.map_err(unusable)?;
+                let (workspace, shell) = turn.workspace_shell().await?;
                 let shell = shell.ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
                 (workspace, shell::execute(self, name, params, shell).await?)
             }
             false => {
-                let (workspace, terminal) = turn.workspace_terminal(need).await.map_err(unusable)?;
+                let (workspace, terminal) = turn.workspace_terminal(need).await?;
                 let value = files::execute(self, name, params, terminal.as_ref(), &workspace, turn).await?;
                 (workspace, value)
             }

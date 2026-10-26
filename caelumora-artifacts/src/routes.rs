@@ -74,13 +74,8 @@ impl From<ArtifactError> for ApiError {
             ArtifactError::InvalidScope => Self::bad_request("invalid_scope", detail),
             ArtifactError::Invalid(e) => e.into(),
             ArtifactError::Content(e) => e.into(),
+            ArtifactError::StorageGone(e) => e.into(),
             ArtifactError::Store(e) => e.into(),
-            // Named by what is kept, not by the request (issue 466): for the log alone, as an
-            // attachment's.
-            ArtifactError::UnknownStorage(_) => {
-                tracing::error!("The content of an artifact could not be reached: {detail}");
-                Self::unavailable("storage_unavailable", "The storage of the artifact is unavailable; the details are in the server log")
-            }
             // A caller that is no user, a runtime without artifacts: not the client's request.
             ArtifactError::OwnerNotAUser | ArtifactError::NotJoined => Self::internal("internal_error", "the request", &error.into()),
         }

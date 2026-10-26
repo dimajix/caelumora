@@ -26,6 +26,7 @@ use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::attachment::AttachmentError;
+use caelumora_runtime::backend::StorageGone;
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::command::CommandError;
@@ -250,6 +251,7 @@ impl From<WorkspaceError> for ApiError {
         match error {
             WorkspaceError::NotFound(_) | WorkspaceError::NotUsableInChannel | WorkspaceError::Store(StoreError::NotFound { .. }) => Self::not_found("workspace_not_found", detail),
             WorkspaceError::UnknownStorage(_) => Self::bad_request("unknown_storage", detail),
+            WorkspaceError::StorageGone(e) => e.into(),
             WorkspaceError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
             WorkspaceError::ClassificationRefused => Self::bad_request("invalid_classification", detail),
             WorkspaceError::NotCleared => Self::forbidden("not_cleared", detail),
@@ -280,13 +282,17 @@ impl From<AttachmentError> for ApiError {
             altered @ AttachmentError::Altered(_) => Self::internal("attachment_altered", "reading an attachment", &Error::new(altered)),
             AttachmentError::Invalid(e) => e.into(),
             AttachmentError::Content(e) => e.into(),
-            // Named by what is kept, not by the request (issue 466): for the log alone
-            // (`user_message`).
-            AttachmentError::UnknownStorage(_) => {
-                tracing::error!("The content of an attachment could not be reached: {detail}");
-                Self::unavailable("storage_unavailable", "The storage of the attachment is unavailable; the details are in the server log")
-            }
+            AttachmentError::StorageGone(e) => e.into(),
         }
+    }
+}
+
+impl From<StorageGone> for ApiError {
+    /// A storage that what is kept names, no longer configured (issue 466), whatever is kept there:
+    /// unavailable, not the request's; its name is the configuration's, for the log alone.
+    fn from(error: StorageGone) -> Self {
+        tracing::error!("{error}");
+        Self::unavailable("storage_unavailable", "The storage of what was asked for is unavailable; the details are in the server log")
     }
 }
 
@@ -727,7 +733,7 @@ mod tests {
         assert_eq!(answer(AttachmentError::NotAParticipant(ActorId::User(UserId::new()))), (403, "not_a_participant".to_string()));
         assert_eq!(answer(Error::new(AttachmentError::NotFound(ContentId::new()))), (404, "attachment_not_found".to_string()), "also as a user's actor fails with it");
         assert_eq!(answer(AttachmentError::Altered(ContentId::new())), (500, "attachment_altered".to_string()));
-        let gone = ApiError::from(ViewError::Attachment(AttachmentError::UnknownStorage("old".to_string())));
+        let gone = ApiError::from(ViewError::Attachment(AttachmentError::StorageGone(StorageGone("old".to_string()))));
         assert_eq!((gone.status, gone.code.as_ref()), (StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable"), "named by what is kept, downloaded through a view");
         assert!(!gone.detail.contains("old"), "for the log alone: {}", gone.detail);
         assert_eq!(answer(ClassificationError::CompartmentsWithoutLevel), (400, "invalid_classification".to_string()));
@@ -753,7 +759,10 @@ mod tests {
     fn workspaces_and_their_files_answer_with_status_and_code() {
         let id = WorkspaceId::new();
         assert_eq!(answer(WorkspaceError::NotFound(id)), (404, "workspace_not_found".to_string()));
-        assert_eq!(answer(WorkspaceError::UnknownStorage("nfs".to_string())), (400, "unknown_storage".to_string()));
+        assert_eq!(answer(WorkspaceError::UnknownStorage("nfs".to_string())), (400, "unknown_storage".to_string()), "named by the request");
+        let gone = ApiError::from(WorkspaceError::StorageGone(StorageGone("nfs".to_string())));
+        assert_eq!((gone.status, gone.code.as_ref()), (StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable"), "named by the workspace, as an attachment's storage");
+        assert!(!gone.detail.contains("nfs"), "for the log alone: {}", gone.detail);
         assert_eq!(answer(WorkspaceError::NotCleared), (403, "not_cleared".to_string()));
         assert_eq!(answer(WorkspaceError::Store(StoreError::NameTaken { entity: "workspace" })), (409, "name_taken".to_string()), "a store error inside, though transparent");
         assert_eq!(answer(WorkspaceError::Store(StoreError::PermissionDenied(refused("workspace")))), (403, "workspace_forbidden".to_string()));

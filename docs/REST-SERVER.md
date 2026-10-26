@@ -242,8 +242,9 @@ the plugin's own handlers; to the core, a plugin answers in the core's types (se
     than allowed is `413 file_too_large`, content other than the request said it was
     `400 changed`, a storage that failed `503 storage_unavailable`, telling what happened, never
     where. A storage not configured depends on who named it: the client, for a workspace made in
-    it, `400 unknown_storage`; what is kept, for content in a storage since removed from the
-    configuration, `503 storage_unavailable`, its name for the log alone.
+    it, `400 unknown_storage`; what is kept - a workspace, an artifact's version, an attachment in
+    a storage since removed from the configuration (`StorageGone`) -, `503 storage_unavailable`,
+    its name for the log alone.
 *   **An `anyhow::Error`** is answered by an invalid value anywhere in its chain, then by its
     outermost error if that is of a type the core knows, then by a name taken or a refusal anywhere
     in the chain.

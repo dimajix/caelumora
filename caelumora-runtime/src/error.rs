@@ -63,10 +63,11 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
             _ => Some(e.to_string()),
         }
     } else if let Some(e) = e.downcast_ref::<WorkspaceError>() {
-        // Its store errors are judged as store errors are; the rest name
-        // the workspace and what the caller wrote, never a place.
+        // Its store errors are judged as store errors are, a storage no longer configured is the
+        // configuration's; the rest name the workspace and what the caller wrote, never a place.
         match e {
             WorkspaceError::Store(e) => store_message(e),
+            WorkspaceError::StorageGone(_) => None,
             _ => Some(e.to_string()),
         }
     } else if let Some(e) = e.downcast_ref::<AgentError>() {
@@ -103,12 +104,12 @@ pub fn view_message(error: &ViewError) -> Option<String> {
     }
 }
 
-/// Attachment errors: a storage no longer configured is named by the configuration, for the log;
-/// what a storage reported is judged as content errors are; the rest names the attachment, its
-/// classification or a limit.
+/// Attachment errors: a storage no longer configured (`StorageGone`) is named by the
+/// configuration, for the log; what a storage reported is judged as content errors are; the rest
+/// names the attachment, its classification or a limit.
 fn attachment_message(error: &AttachmentError) -> Option<String> {
     match error {
-        AttachmentError::UnknownStorage(_) => None,
+        AttachmentError::StorageGone(_) => None,
         AttachmentError::Content(e) => content_message(e),
         _ => Some(error.to_string()),
     }
@@ -161,6 +162,7 @@ pub fn is_forbidden(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::StorageGone;
     use caelumora_model::actor::ActorId;
     use caelumora_model::channel::ChannelId;
     use caelumora_model::content::ContentId;
@@ -217,10 +219,12 @@ mod tests {
     }
 
     #[test]
-    fn a_storage_of_attachments_no_longer_configured_is_not_disclosed() {
-        let gone = || AttachmentError::UnknownStorage("old".to_string());
+    fn a_storage_no_longer_configured_is_not_disclosed() {
+        let gone = || AttachmentError::StorageGone(StorageGone("old".to_string()));
         assert_eq!(user_message(&anyhow::Error::new(gone())), None);
         assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(gone()))), None, "nor read through a view, which repeats its text");
+        assert_eq!(user_message(&anyhow::Error::new(WorkspaceError::StorageGone(StorageGone("old".to_string())))), None, "nor a workspace's");
+        assert!(user_message(&anyhow::Error::new(WorkspaceError::UnknownStorage("nfs".to_string()))).is_some(), "where the caller named it");
         let failed = AttachmentError::Content(ContentError::Unavailable("permission denied".to_string()));
         assert_eq!(user_message(&anyhow::Error::new(failed)).as_deref(), Some("the storage of content failed: permission denied"), "what happened, as a workspace's storage tells it");
         let key = AttachmentError::Content(ContentError::NotFound("attachments/a/b".to_string()));

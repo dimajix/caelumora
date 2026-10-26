@@ -42,6 +42,14 @@ use serde_json::Value;
 /// parameters may name places of the host.
 pub struct NamedBackends<T: ?Sized>(BTreeMap<String, Arc<T>>);
 
+/// A backend that something kept names as where it lies - a workspace, an artifact's version, an
+/// attachment -, since removed from the configuration (issue 466): the server's failure, not the
+/// request's, however the kept thing was reached. Its message names the backend, which is the
+/// configuration's: for the log, not for users or models.
+#[derive(Debug, thiserror::Error)]
+#[error("the storage '{0}' is no longer configured")]
+pub struct StorageGone(pub String);
+
 /// Why no backend of a `NamedBackends` could be chosen (`chosen`), as the
 /// end of a sentence about the parameter that names it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -56,6 +64,14 @@ impl<T: ?Sized> NamedBackends<T> {
     /// The backend `name`, if one is configured.
     pub fn get(&self, name: &str) -> Option<&Arc<T>> {
         self.0.get(name)
+    }
+
+    /// The backend `name` that something kept names as where it lies.
+    ///
+    /// # Errors
+    /// `StorageGone` if it is no longer configured.
+    pub fn kept_in(&self, name: &str) -> Result<&Arc<T>, StorageGone> {
+        self.0.get(name).ok_or_else(|| StorageGone(name.to_string()))
     }
 
     /// The name of the one to use: `named`, which has to be one of them, or

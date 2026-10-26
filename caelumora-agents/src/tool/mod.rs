@@ -28,6 +28,7 @@ use caelumora_model::security::{ActionType, Enforcement, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::attachment::AttachmentError;
+use caelumora_runtime::backend::StorageGone;
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ViewError, WorkspaceView};
@@ -82,12 +83,34 @@ impl From<AttachmentError> for ToolError {
     fn from(error: AttachmentError) -> Self {
         match error {
             AttachmentError::Content(e) => e.into(),
-            AttachmentError::UnknownStorage(_) | AttachmentError::Altered(_) => ToolError::ExecutionFailed(error.to_string()),
+            AttachmentError::StorageGone(e) => e.into(),
+            AttachmentError::Altered(_) => ToolError::ExecutionFailed(error.to_string()),
             AttachmentError::NotConfigured | AttachmentError::ClassificationRefused | AttachmentError::StorageNotCleared(_)
             | AttachmentError::NotAParticipant(_) | AttachmentError::NotFound(_) | AttachmentError::Invalid(_) => {
                 ToolError::InvalidParameter(error.to_string())
             }
         }
+    }
+}
+
+/// That the workspace could not be used as a call needs it, as the model is told it: the tool's
+/// failure - a storage no longer configured without its name -, and what its place reported as a
+/// terminal's error is told.
+impl From<WorkspaceError> for ToolError {
+    fn from(error: WorkspaceError) -> Self {
+        match error {
+            WorkspaceError::StorageGone(e) => e.into(),
+            WorkspaceError::Terminal(e) => e.into(),
+            error => ToolError::ExecutionFailed(error.to_string()),
+        }
+    }
+}
+
+/// A storage that what is kept names, no longer configured (issue 466), as the model is told it:
+/// the tool's failure, without the name, which is the configuration's - as a user is told it.
+impl From<StorageGone> for ToolError {
+    fn from(_: StorageGone) -> Self {
+        ToolError::ExecutionFailed("the storage of what was asked for is no longer configured".to_string())
     }
 }
 
@@ -879,7 +902,10 @@ mod tests {
         assert!(failed(ContentError::NotFound("attachments/a".to_string()).into()), "a key its owner made");
         assert!(corrected(AttachmentError::Content(ContentError::TooLarge { limit: 1 }).into()), "an attachment's, as the storage's");
         assert!(failed(AttachmentError::Content(ContentError::Unavailable("permission denied".to_string())).into()));
-        assert!(failed(AttachmentError::UnknownStorage("old".to_string()).into()), "a storage no longer configured");
+        let gone = ToolError::from(AttachmentError::StorageGone(StorageGone("old".to_string())));
+        assert!(matches!(&gone, ToolError::ExecutionFailed(m) if !m.contains("old")), "a storage no longer configured, without its name: {gone}");
+        let gone = ToolError::from(WorkspaceError::StorageGone(StorageGone("old".to_string())));
+        assert!(matches!(&gone, ToolError::ExecutionFailed(m) if !m.contains("old")), "a workspace's too: {gone}");
         assert!(failed(AttachmentError::Altered(ContentId::new()).into()), "other bytes than were kept");
         assert!(corrected(AttachmentError::NotFound(ContentId::new()).into()));
     }

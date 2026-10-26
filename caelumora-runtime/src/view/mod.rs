@@ -1523,7 +1523,7 @@ mod tests {
         assert!(matches!(secret_from_team.message(plan.id).await, Err(ViewError::NoChannelNamed(_))), "what was not released is not found");
         assert!(matches!(secret_from_team.attachment(date.id, minutes.id).await, Err(ViewError::Attachment(AttachmentError::NotFound(_)))), "not released by its own label, though its message is");
         assert_eq!(secret_from_team.attachment(date.id, agenda.id).await.unwrap(), agenda, "released");
-        assert!(matches!(secret_from_team.attachment_content(date.id, agenda.id).await, Err(ViewError::Attachment(AttachmentError::UnknownStorage(_)))), "and read from its storage");
+        assert!(matches!(secret_from_team.attachment_content(date.id, agenda.id).await, Err(ViewError::Attachment(AttachmentError::StorageGone(_)))), "and read from its storage");
         let whole_secret = manager.views(Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, secret.id))).session(session.id).await.unwrap().channel(secret.id).await.unwrap();
         assert_eq!(whole_secret.attachment(date.id, minutes.id).await.unwrap(), minutes, "read as a whole: every one");
         let notes = secret_from_team.notes().await.unwrap();

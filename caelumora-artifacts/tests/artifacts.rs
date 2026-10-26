@@ -37,6 +37,7 @@ use caelumora_rest_server::error::ApiError;
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes::api;
 use caelumora_rest_server::state::AppState;
+use caelumora_runtime::backend::StorageGone;
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::event::{EventBus, EventSubscription};
 use caelumora_runtime::runtime::RuntimeManager;
@@ -245,7 +246,7 @@ async fn an_artifacts_errors_answer_with_status_and_code() {
     assert_eq!(answer(ArtifactError::Store(StoreError::NameTaken { entity: "artifact" })).await, (409, "name_taken".to_string()));
     let unavailable = (503, "storage_unavailable".to_string());
     assert_eq!(answer(ArtifactError::Content(ContentError::Unavailable("broken".to_string()))).await, unavailable, "as an attachment's storage, and a workspace's");
-    assert_eq!(answer(ArtifactError::UnknownStorage("old".to_string())).await, unavailable, "named by what is kept, not by the request");
+    assert_eq!(answer(ArtifactError::StorageGone(StorageGone("old".to_string()))).await, unavailable, "named by what is kept, not by the request");
     assert_eq!(answer(ArtifactError::Content(ContentError::TooLarge { limit: 1 })).await, (413, "file_too_large".to_string()));
     assert_eq!(answer(ArtifactError::Content(ContentError::Changed)).await, (400, "changed".to_string()));
     assert_eq!(answer(ArtifactError::NotJoined).await.0, 500, "nor a runtime without the plugin");

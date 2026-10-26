@@ -11,6 +11,7 @@ use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResult
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
 use std::sync::Arc;
 use tracing::warn;
+use crate::backend::StorageGone;
 use crate::group::{prune_gone_groups, require_nameable};
 use crate::terminal::{Shell, Terminal, TerminalProvider};
 use crate::view::{channel_reading, ChannelReader};
@@ -83,10 +84,9 @@ impl WorkspaceController {
     /// its files, if its list lets them (`WriteWorkspace`).
     ///
     /// # Errors
-    /// `NotFound` if they do not reach it, so that nothing can be probed;
-    /// `ReadOnly` if they may not change its files where `need` asks to;
-    /// `UnknownStorage`; a `TerminalError` of reaching its place; or
-    /// whatever else the store reports.
+    /// `NotFound` if they do not reach it, so that nothing can be probed; `ReadOnly` if they may
+    /// not change its files where `need` asks to; `StorageGone`; a `TerminalError` of reaching its
+    /// place; or whatever else the store reports.
     pub async fn terminal(&self, ctx: &SecurityContext, need: Grant) -> WorkspaceResult<Arc<dyn Terminal>> {
         let workspace = self.reached(ctx).await?;
         if need == Grant::Write {
@@ -134,8 +134,7 @@ impl WorkspaceController {
     /// `usable_in_channel` asks.
     ///
     /// # Errors
-    /// What `usable_in_channel` reports, `UnknownStorage`, or a
-    /// `TerminalError` of reaching its place.
+    /// What `usable_in_channel` reports, `StorageGone`, or a `TerminalError` of reaching its place.
     pub(crate) async fn terminal_in(&self, ctx: &SecurityContext, session: &Session, channel: &Channel, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let workspace = self.usable_in_channel(ctx, session, channel, need).await?;
         let terminal = self.provider(&workspace)?.terminal_for(self.id()).await?;
@@ -274,9 +273,9 @@ impl WorkspaceController {
     /// The storage `workspace` - this one, as reached - lies in.
     ///
     /// # Errors
-    /// `UnknownStorage` if it is no longer configured.
+    /// `StorageGone` if it is no longer configured.
     fn provider(&self, workspace: &Workspace) -> WorkspaceResult<&Arc<dyn TerminalProvider>> {
-        self.provider.as_ref().ok_or_else(|| WorkspaceError::UnknownStorage(workspace.storage.clone()))
+        Ok(self.provider.as_ref().ok_or_else(|| StorageGone(workspace.storage.clone()))?)
     }
 
     /// Applies `event` to the workspace on behalf of `ctx`: reached as the
@@ -286,10 +285,9 @@ impl WorkspaceController {
     /// caller nothing of others (issue 312).
     ///
     /// # Errors
-    /// `NotFound` if the caller does not reach it, `Invalid` if what
-    /// `event` says does not fit, `UnknownStorage` if its storage is no
-    /// longer configured, `ClassificationRefused`, `StorageNotCleared` or
-    /// `NotCleared` for a classification, or whatever the store reports.
+    /// `NotFound` if the caller does not reach it, `Invalid` if what `event` says does not fit,
+    /// `StorageGone` if its storage is no longer configured, `ClassificationRefused`,
+    /// `StorageNotCleared` or `NotCleared` for a classification, or whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, event: WorkspaceUpdateEvent) -> WorkspaceResult<()> {
         let mut writing = self.workspace.write().await;
         let mut workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;

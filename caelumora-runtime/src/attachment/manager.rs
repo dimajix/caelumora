@@ -110,14 +110,6 @@ impl AttachmentManager {
         })
     }
 
-    /// The storage of content `name`.
-    ///
-    /// # Errors
-    /// `UnknownStorage` if none of that name is configured.
-    fn storage(&self, name: &str) -> AttachmentResult<&Arc<dyn ContentStorage>> {
-        self.storages.get(name).ok_or_else(|| AttachmentError::UnknownStorage(name.to_string()))
-    }
-
     /// Keeps `content` - its size and its bytes - as the file `name`, uploaded by the viewer of
     /// `channel` for a message they will say there (issue 282): classified `classification` - the
     /// channel's if `None` -, which may flow into the channel and into the storage it is kept
@@ -137,7 +129,7 @@ impl AttachmentManager {
         self.confidentiality.require_classifiable(&classification, || AttachmentError::ClassificationRefused)?;
         self.confidentiality.require_publish(context, &classification, channel.classification(), || AttachmentError::ClassificationRefused)?;
         let storage_name = self.keep_in.as_deref().ok_or(AttachmentError::NotConfigured)?;
-        let storage = self.storage(storage_name)?;
+        let storage = self.storages.kept_in(storage_name)?;
         self.confidentiality.require_storable(context, &classification, storage.destination(), || AttachmentError::StorageNotCleared(storage_name.to_string()))?;
         self.forget_expired().await;
 
@@ -197,9 +189,9 @@ impl AttachmentManager {
     /// through decided who may (`ChannelView::attachment`).
     ///
     /// # Errors
-    /// `NotFound` if its storage has nothing under its key, `UnknownStorage`, `Content`.
+    /// `NotFound` if its storage has nothing under its key, `StorageGone`, `Content`.
     pub(crate) async fn content_of(&self, content: &ContentRef) -> AttachmentResult<(u64, ByteStream)> {
-        self.storage(&content.storage)?.get(&content.key).await.map_err(|e| match e {
+        self.storages.kept_in(&content.storage)?.get(&content.key).await.map_err(|e| match e {
             ContentError::NotFound(_) => AttachmentError::NotFound(content.id),
             e => e.into(),
         })
@@ -212,7 +204,7 @@ impl AttachmentManager {
     ///
     /// # Errors
     /// `NotAParticipant`; `NotFound` for content that is none of the channel's, or that its storage
-    /// has nothing of; `UnknownStorage`, `Content`.
+    /// has nothing of; `StorageGone`, `Content`.
     pub async fn copy(&self, channel: &ChannelView, attachment: &ContentRef) -> AttachmentResult<ContentRef> {
         let by = uploader(channel)?;
         if !self.lies_in(channel.id(), attachment) {
@@ -220,7 +212,7 @@ impl AttachmentManager {
         }
         self.forget_expired().await;
         let (id, key) = new_key(channel.id());
-        self.storage(&attachment.storage)?.copy(&attachment.key, &key).await.map_err(|e| match e {
+        self.storages.kept_in(&attachment.storage)?.copy(&attachment.key, &key).await.map_err(|e| match e {
             ContentError::NotFound(_) => AttachmentError::NotFound(attachment.id),
             e => e.into(),
         })?;
@@ -244,7 +236,7 @@ impl AttachmentManager {
     ///
     /// # Errors
     /// `NotFound` if the storage has nothing under an attachment's key, `Altered` if its bytes are
-    /// not what the message says they are, `UnknownStorage`, `Content`.
+    /// not what the message says they are, `StorageGone`, `Content`.
     pub(crate) async fn load(&self, messages: &mut [Message], profile: &ModelProfile) -> AttachmentResult<Vec<Classification>> {
         // Collected first: what is held across the reads must be `Send`.
         let carried: Vec<&mut ContentRef> = messages.iter_mut().flat_map(Message::carried_mut).filter(|content| profile.gives_along(content)).collect();
@@ -303,9 +295,9 @@ impl AttachmentManager {
             ids.iter().filter_map(|id| uploads.remove(id)).map(|upload| upload.content).collect()
         };
         for content in expired {
-            let removed = match self.storage(&content.storage) {
+            let removed = match self.storages.kept_in(&content.storage) {
                 Ok(storage) => storage.delete(&content.key).await.map_err(AttachmentError::from),
-                Err(e) => Err(e),
+                Err(e) => Err(e.into()),
             };
             if let Err(e) = removed {
                 warn!(attachment = %content.id, "An upload no message claimed stays: {e}");
