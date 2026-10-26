@@ -1279,3 +1279,10 @@ leaves the step's block above a message the user wrote meanwhile.
   a model that sees is given the images. Left for later as the plan says: reclassifying one
   attachment, a bound on what is given along (465), erasing (237), media of tools (208), central
   conversion, S3 (272).
+- **2026-10-26** - An image of one's own message, sent or added by a change, was at times shown as a
+  file until a reload: the message is shown as it is sent (issue 304), and the browser fetched the
+  image before the channel had it in its history. Agreed with the maintainer: a preview whose fetch
+  fails is fetched again after 0.5, 1 and 2 seconds before it is named as a file. Not chosen:
+  showing a sent image from the draft's local preview, which would hand those previews through the
+  chat to every list of attachments and keep them alive there; showing one's own message only once
+  the channel took it in, which would undo issue 304 and change how actor and channel talk.

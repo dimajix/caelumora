@@ -3,11 +3,12 @@
 // download, each reached through the message that carries it; in the editor of a message, each
 // with a remove.
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {Download, File, X} from 'lucide-react';
 import type {ContentRef} from '../types';
 import type {ChannelAttachments} from '../api';
 import {labelOtherThan, type Classification} from '../confidentiality';
+import {cn} from '../classNames';
 import {formatSize} from '../messages';
 
 interface AttachmentListProps {
@@ -39,16 +40,36 @@ export const AttachmentList: React.FC<AttachmentListProps> = ({items, messageId,
   );
 };
 
+/**
+ * How long an image that could not be fetched is waited for before it is fetched again, once per
+ * entry: a message of one's own is shown as it is sent or changed, before the channel has it so in
+ * its history, through which its attachments are read - the first fetch may come too early.
+ */
+const REFETCH_AFTER_MS = [500, 1000, 2000];
+
 /** One attachment: its preview where it is an image that can be fetched, else its name, type and size. */
 const Attachment: React.FC<{attachment: ContentRef; url: string | null; label: string | null; onRemove?: () => void}> = ({attachment, url, label, onRemove}) => {
-  // An image that cannot be shown - not found, not readable, one the server sends only as a
-  // download - is named as any other file.
-  const [broken, setBroken] = useState(false);
+  // Which fetch of the image this is, and whether it failed. An image that cannot be shown after
+  // the last - not found, not readable, one the server sends only as a download - is named as any
+  // other file.
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!failed || attempt >= REFETCH_AFTER_MS.length) return;
+    const timer = setTimeout(() => {
+      setAttempt(attempt + 1);
+      setFailed(false);
+    }, REFETCH_AFTER_MS[attempt]);
+    return () => clearTimeout(timer);
+  }, [failed, attempt]);
+  const broken = failed && attempt >= REFETCH_AFTER_MS.length;
   const what = `${attachment.name} (${attachment.media_type}, ${formatSize(attachment.size)})`;
   if (url && !broken && attachment.media_type.startsWith('image/')) {
+    // Fetched again under another URL, so that the browser does not answer with the failure.
+    const src = attempt === 0 ? url : `${url}?attempt=${attempt}`;
     return (
       <a href={url} target="_blank" rel="noreferrer" title={what} className="block">
-        <img src={url} alt={attachment.name} onError={() => setBroken(true)} className="max-h-48 max-w-full rounded-sm border border-black/10" />
+        <img src={src} alt={attachment.name} onError={() => setFailed(true)} className={cn('max-h-48 max-w-full rounded-sm border border-black/10', failed && 'invisible')} />
         {label && <span className="text-[11px] opacity-70">{label}</span>}
       </a>
     );
