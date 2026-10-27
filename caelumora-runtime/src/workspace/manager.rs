@@ -110,7 +110,7 @@ impl WorkspaceManager {
                 self.workspaces.delete(&system, workspace.id).await?;
                 self.workspaces.purge(&system, workspace.id).await
             }.await {
-                warn!(workspace = %workspace.id, "A workspace whose place could not be made is left in the trash: {cleanup}");
+                warn!(workspace = %workspace.id, "A workspace whose place could not be made is left deleted: {cleanup}");
             }
             return Err(e.into());
         }

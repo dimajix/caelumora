@@ -2,7 +2,7 @@
 // workspaces (issue 253), skills (issue 22), artifacts (issue 291), teams
 // (issue 286): those the user may read, each with where it lies where that is not their own scope,
 // loaded again on every global event about one of them, with "+" to make
-// one where one is made here, and the trash (issue 164) folded below.
+// one where one is made here, and what was deleted (issue 164) folded below.
 
 import React from 'react';
 import {Plus, type LucideIcon} from 'lucide-react';
@@ -23,14 +23,14 @@ interface PageListProps<T extends Listed> {
   /** Makes one - opens its dialog; offered as "+" titled `newLabel`. */
   onNew?: () => void;
   newLabel?: string;
-  /** The trash: what the user deleted, loaded again whenever `trashVersion` changes. */
+  /** What the user deleted, loaded again whenever `deletedVersion` changes. */
   loadDeleted: () => Promise<Deleted[]>;
-  trashVersion: number;
+  deletedVersion: number;
   restore: (id: string) => Promise<unknown>;
   purge: (id: string) => Promise<void>;
 }
 
-export function PageList<T extends Listed>({list, title, icon: Icon, page, onSelectPage, onNew, newLabel, loadDeleted, trashVersion, restore, purge}: PageListProps<T>): React.ReactElement {
+export function PageList<T extends Listed>({list, title, icon: Icon, page, onSelectPage, onNew, newLabel, loadDeleted, deletedVersion, restore, purge}: PageListProps<T>): React.ReactElement {
   return (
     <div className="mt-4 space-y-1">
       <div className="flex items-center px-2 text-xs uppercase tracking-wider text-gray-500">
@@ -67,7 +67,7 @@ export function PageList<T extends Listed>({list, title, icon: Icon, page, onSel
       <DeletedList
         title={`Deleted ${list.what}`}
         load={loadDeleted}
-        version={trashVersion}
+        version={deletedVersion}
         onRestore={async (id) => { await restore(id); list.reload(); }}
         onPurge={purge}
       />

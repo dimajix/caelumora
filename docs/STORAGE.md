@@ -164,8 +164,8 @@ The `ArtifactManager` keeps a version under `artifacts/<artifact>/<number>` and 
 of artifact documents: a version's content is kept before the document says it exists, and removed
 again if the document cannot be stored; an artifact is purged with its content, the content first.
 It knows no workspace: where the content comes from is its caller's. Artifacts are entities, not
-state: each has its own owner, permissions, a name unique in its scope and a trash, and one that is
-kept outlives the session it was published in.
+state: each has its own owner, permissions and a name unique in its scope, and is marked when
+deleted rather than removed; one that is there outlives the session it was published in.
 
 The `AttachmentManager` keeps an attachment under `attachments/<channel>/<id>`, in the storage
 `attachments.keep_in` names. An attachment is no entity: it is part of the message that carries it,

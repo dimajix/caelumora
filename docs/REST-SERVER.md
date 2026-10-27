@@ -128,12 +128,12 @@ its handler's doc comment.
 
 Some rules hold across the endpoints:
 
-*   **Deleted things are kept.** `DELETE` marks and keeps; `?deleted=true` on a list is the trash,
-    each entry saying whether the user may restore or purge it. Restoring answers `409 name_taken`
-    if the name was taken meanwhile. Deleting a session or channel answers `409 scope_not_empty`
-    if something of its scope is left that the user may not delete; what they may is deleted.
-    Purging is as the policy allows, by default the system's alone. A channel is purged only with
-    its session.
+*   **Deleted things are kept.** `DELETE` marks and keeps; `?deleted=true` on a list lists what was
+    deleted, each entry saying whether the user may restore or purge it. Restoring answers
+    `409 name_taken` if the name was taken meanwhile. Deleting a session or channel answers
+    `409 scope_not_empty` if something of its scope is left that the user may not delete; what they
+    may is deleted. Purging is as the policy allows, by default the system's alone. A channel is
+    purged only with its session.
 *   **Files are reached by their workspace alone**, never through a channel; whoever the workspace's
     access list lets read and who is cleared for its classification reads them, whoever it lets
     change them writes (`403 read_only` otherwise).

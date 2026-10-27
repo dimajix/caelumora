@@ -116,7 +116,7 @@ a reload, the notice of its refusal stands in its place, since the message enter
     pointer or keyboard. Each takes at most two fifths of the window, so that the chat keeps room.
     The width is kept per panel in this browser's local storage, not in the user's profile: the
     right width depends on the screen.
-*   **The trash.** What the user deleted is listed folded below its list ("Deleted sessions",
+*   **What was deleted.** What the user deleted is listed folded below its list ("Deleted sessions",
     "Deleted channels", ...) until it is purged, each entry with who deleted it when, and restore
     and purge where the server allows them. A list is shown only while it holds an entry: the server
     leaves out what the user may not read, so an empty list means nothing to see, whichever the
@@ -128,8 +128,8 @@ The sidebar lists the user's sessions with their channels and follows the global
 its state from the snapshot and fetches a session again on any event that changes it, its channels
 or their participants. Starting and stopping are ignored. An event about an entity is read by its
 kind (`entityEvent` in `globalEvents.ts`): the lists of workspaces, skills, artifacts, teams and
-agents are loaded again on any event of their kind, and the trash on any deletion or restoring,
-whatever the kind.
+agents are loaded again on any event of their kind, and what was deleted on any deletion or
+restoring, whatever the kind.
 
 What is new in a channel (issue 404) is shown beside it: how many messages of others came since the
 user last read it, and an `@` where one of them mentions them; a folded session shows the sum of its
@@ -143,7 +143,7 @@ channel is on screen.
 A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDialog`). Choosing a
 policy that lets other sessions read says that it holds for what is said from then on. The session's
 approval rules are changed by its owner from its menu. Deleting a session or a channel asks once
-more, though it only goes to the trash.
+more, though it is only marked and can be restored.
 
 The user's name at the foot of the sidebar opens their profile: how they introduce themselves to the
 agents - with the note that every agent in every channel they take part in is given it - the
@@ -222,7 +222,7 @@ The agents the user may read are listed below the teams, each with where it lies
 the user's own scope - an agent of a session's scope takes part only there and goes with it. An
 agent's page shows its personality, where it lies, whose it is, and the channels it takes part in
 that the user may read, each opened from there; whoever may renames and deletes it from its menu.
-A deleted agent rests in its channels until it is restored from the trash below the list.
+A deleted agent rests in its channels until it is restored from "Deleted agents" below the list.
 
 "New agent" makes one of a personality the user may read, in their own scope: it is theirs, acts
 with their rights and keeps what it learns from session to session. A personality of a session's

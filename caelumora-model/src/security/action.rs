@@ -240,7 +240,7 @@ pub enum Verb {
     Update,
     Delete,
     /// Reading what was deleted - marked, not purged (issue 164): one
-    /// entity, or each of a listing. The trash.
+    /// entity, or each of a listing.
     ReadDeleted,
     /// Being told that an entity was deleted (issue 332): allowed to whom
     /// reading it was until then, by the groups it was read by as well,

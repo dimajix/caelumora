@@ -158,8 +158,8 @@ export interface Removal {
 }
 
 /**
- * Something deleted - a session, a channel - in the trash (issue 164): who
- * deleted it and when, and whether you may restore it or remove it for good.
+ * Something deleted - a session, a channel - as it is listed among what was deleted (issue 164):
+ * who deleted it and when, and whether you may restore it or remove it for good.
  */
 export interface Deleted {
   id: string;

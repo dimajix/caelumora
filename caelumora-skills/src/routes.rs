@@ -18,7 +18,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::store::StoreError;
-use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_server::auth::AuthenticatedUser;
 use caelumora_rest_server::error::{ApiError, Json, Path, Query};
 use caelumora_rest_server::plugin::RestPlugin;
@@ -74,7 +74,7 @@ impl From<SkillError> for ApiError {
 }
 
 /// The skills the user may read and is cleared for - or, with
-/// `?deleted=true`, those they deleted, the trash. Without their bodies.
+/// `?deleted=true`, those they deleted. Without their bodies.
 async fn list_skills(State(state): State<Skills>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state.app, &user);
     if options.deleted {

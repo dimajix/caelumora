@@ -14,7 +14,7 @@ use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::scope::ItemDescriptionRequest;
 use caelumora_rest_api::session::SessionSnapshot;
-use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::workspace::{AttachWorkspaceRequest, CommandResponse, CreateWorkspaceRequest, FileResponse, FilesQuery, RenameWorkspaceRequest, StorageResponse, UsesWorkspaceRequest, WorkspaceResponse};
 use crate::state::AppState;
 use axum::body::Body;
@@ -34,7 +34,7 @@ use crate::routes::{attachment_response, channel_view, ensure_session, open_chan
 use std::io::Error;
 
 /// The user's own workspaces - or, with `?deleted=true`, those they
-/// deleted, the trash.
+/// deleted.
 pub(super) async fn list_workspaces(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state, &user);
     if options.deleted {

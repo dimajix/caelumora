@@ -546,7 +546,7 @@ export const api = {
     return res.json();
   },
 
-  /** The agents the user deleted and may read as such, the trash. */
+  /** The agents the user deleted and may read as such. */
   async getDeletedAgents(): Promise<Deleted[]> {
     const res = await request('/agents?deleted=true');
     await ensureOk(res, 'Failed to fetch the deleted agents');
@@ -600,7 +600,7 @@ export const api = {
     return res.json();
   },
 
-  /** The sessions you deleted and may read as such: the trash (issue 164). */
+  /** The sessions you deleted and may read as such (issue 164). */
   async getDeletedSessions(): Promise<Deleted[]> {
     const res = await request('/sessions?deleted=true');
     await ensureOk(res, 'Failed to fetch the deleted sessions');
@@ -727,7 +727,7 @@ export const api = {
     return res.json();
   },
 
-  /** The user's workspaces they deleted, the trash. */
+  /** The user's workspaces they deleted. */
   async getDeletedWorkspaces(): Promise<Deleted[]> {
     const res = await request('/workspaces?deleted=true');
     await ensureOk(res, 'Failed to fetch the deleted workspaces');
@@ -814,7 +814,7 @@ export const api = {
     return res.json();
   },
 
-  /** The user's skills they deleted, the trash. */
+  /** The user's skills they deleted. */
   async getDeletedSkills(): Promise<Deleted[]> {
     const res = await request('/skills?deleted=true');
     await ensureOk(res, 'Failed to fetch the deleted skills');
@@ -904,7 +904,7 @@ export const api = {
     return res.json();
   },
 
-  /** The user's teams they deleted, the trash. */
+  /** The user's teams they deleted. */
   async getDeletedGroups(): Promise<Deleted[]> {
     const res = await request('/groups?deleted=true');
     await ensureOk(res, 'Failed to fetch the deleted teams');
@@ -1026,7 +1026,7 @@ export const api = {
     return res.json();
   },
 
-  /** The user's artifacts they deleted, the trash. */
+  /** The user's artifacts they deleted. */
   async getDeletedArtifacts(): Promise<Deleted[]> {
     const res = await request('/artifacts?deleted=true');
     await ensureOk(res, 'Failed to fetch the deleted artifacts');

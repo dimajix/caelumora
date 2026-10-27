@@ -39,8 +39,7 @@ pub trait SkillViews {
     /// `NotFound` if there is none they may reach.
     async fn skill(&self, id: SkillId) -> SkillResult<SkillView>;
 
-    /// The skills the viewer deleted and may read as such: the trash of
-    /// skills.
+    /// The skills the viewer deleted and may read as such.
     ///
     /// # Errors
     /// `Store` if the store cannot list them.

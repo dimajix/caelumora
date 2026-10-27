@@ -22,7 +22,7 @@ use caelumora_rest_api::context::{AgentComponentsResponse, AgentToolsResponse, K
 use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
 use caelumora_rest_api::stream::{ShownEnvelope, StreamOptions};
-use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_runtime::actor::Shown;
 use caelumora_runtime::actor::user::{ChannelWatch, UserActor};
 use caelumora_runtime::channel::ChannelLoop;

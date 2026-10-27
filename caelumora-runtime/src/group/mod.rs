@@ -94,11 +94,11 @@ pub async fn require_nameable(store: &dyn EntityStore<Group>, ctx: &SecurityCont
 }
 
 /// Drops from `lists` - the access lists of one entity - the entries that
-/// name a group which is gone (issue 347): purged, neither there nor in the
-/// trash, as the runtime finds it. Called wherever such an entity is
+/// name a group which is gone (issue 347): purged, neither there nor
+/// deleted, as the runtime finds it. Called wherever such an entity is
 /// stored, so that an entry for a session long purged goes as the list is
 /// next written, not as the group is purged: that would have to find every
-/// list naming it, of every kind. A group in the trash comes back with
+/// list naming it, of every kind. A deleted group comes back with
 /// what it belongs to and keeps its entries, and so does one that cannot be
 /// looked up: an entry is dropped only for certain.
 pub async fn prune_gone_groups<'a>(store: &dyn EntityStore<Group>, lists: impl IntoIterator<Item = &'a mut Vec<AclEntry>>) {
@@ -125,7 +125,7 @@ pub async fn prune_gone_groups<'a>(store: &dyn EntityStore<Group>, lists: impl I
     debug!(groups = ?gone, "Entries naming groups that are gone dropped from an access list");
 }
 
-/// Whether group `id` is neither there nor in the trash, looked for in the
+/// Whether group `id` is neither there nor deleted, looked for in the
 /// runtime's name; `false` if that cannot be told.
 async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
     let system = SecurityContext::system();
@@ -142,7 +142,7 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
 /// Stores `participants` as the group of the participants of a session or
 /// channel, in the runtime's name: its members replace those stored, and
 /// the group is made if there is none yet. Called only while the session
-/// or channel is there, so a group found in the trash is restored first
+/// or channel is there, so a group found deleted is restored first
 /// (issue 347): it goes and comes back with the session or channel (issue
 /// 348), but taking back a deletion that failed may have failed, too.
 ///
@@ -260,7 +260,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_participants_follow_again_once_their_group_was_left_in_the_trash() {
+    async fn the_participants_follow_again_once_their_group_was_left_deleted() {
         let groups = Persistence::in_memory().entity_stores().unwrap().groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
@@ -277,8 +277,8 @@ mod tests {
 
     /// Issue 348: the groups of the participants of a session and its
     /// channel go and come back with it all or none - one that fails takes
-    /// back those done before it -, so that a session kept, or left in the
-    /// trash, has them as it has itself.
+    /// back those done before it -, so that a session still there, or left
+    /// deleted, has them as it has itself.
     #[tokio::test]
     async fn the_participants_go_and_come_back_all_or_none() {
         let stores = Persistence::in_memory().entity_stores().unwrap();
@@ -324,13 +324,13 @@ mod tests {
         let owner = UserId::new();
         let team = |name: &str| Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner);
         let there = team("there");
-        let trashed = team("trashed");
+        let deleted = team("deleted");
         let purged = team("purged");
         let unreadable = team("unreadable");
-        for group in [&there, &trashed, &purged, &unreadable] {
+        for group in [&there, &deleted, &purged, &unreadable] {
             groups.create(&system, group).await.unwrap();
         }
-        groups.delete(&system, trashed.id).await.unwrap();
+        groups.delete(&system, deleted.id).await.unwrap();
         groups.delete(&system, purged.id).await.unwrap();
         groups.purge(&system, purged.id).await.unwrap();
         // Kept as something that is no group, past the store.
@@ -339,10 +339,10 @@ mod tests {
 
         let entry = |group: &Group| AclEntry { subject: Subject::Group(group.id), grant: Grant::Read };
         let everyone = AclEntry { subject: Subject::Everyone, grant: Grant::Read };
-        let mut acl = vec![entry(&there), entry(&trashed), entry(&purged), entry(&unreadable), everyone];
+        let mut acl = vec![entry(&there), entry(&deleted), entry(&purged), entry(&unreadable), everyone];
         let mut of_version = vec![entry(&purged)];
         prune_gone_groups(groups.as_ref(), [&mut acl, &mut of_version]).await;
-        assert_eq!(acl, [entry(&there), entry(&trashed), entry(&unreadable), everyone], "the one purged alone: in the trash it may come back, and one that cannot be read may be there");
+        assert_eq!(acl, [entry(&there), entry(&deleted), entry(&unreadable), everyone], "the one purged alone: deleted, it may come back, and one that cannot be read may be there");
         assert!(of_version.is_empty(), "from every list given");
     }
 }

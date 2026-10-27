@@ -1022,14 +1022,14 @@ pub async fn deleting_marks(stores: &EntityStores) {
     let changed = stores.sessions.update(&system, &marked(kept.clone())).await;
     assert!(matches!(changed, Err(StoreError::Validation(_))), "nor changed to be: {changed:?}");
 
-    // The trash.
+    // What was deleted.
     let deleted = stores.sessions.get_deleted(&system, gone.id).await.expect("read as deleted");
     let mark = deleted.deleted.expect("marked");
     assert_eq!(mark.by, system.caller_id, "by whom");
-    let trash = stores.sessions.list_deleted(&system, &Query::all()).await.map(|page| page.items).expect("list deleted");
-    assert_eq!(trash.iter().map(|s| s.id).collect::<Vec<_>>(), [gone.id], "only what was deleted");
+    let listed = stores.sessions.list_deleted(&system, &Query::all()).await.map(|page| page.items).expect("list deleted");
+    assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), [gone.id], "only what was deleted");
     let not_deleted = stores.sessions.get_deleted(&system, kept.id).await;
-    assert!(matches!(not_deleted, Err(StoreError::NotFound { .. })), "what is there is not in the trash: {not_deleted:?}");
+    assert!(matches!(not_deleted, Err(StoreError::NotFound { .. })), "what is there is not among the deleted: {not_deleted:?}");
 
     // Restored: there again, as it was.
     let restored = stores.sessions.restore(&system, gone.id).await.expect("restore");

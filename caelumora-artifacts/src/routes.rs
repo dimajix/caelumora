@@ -21,7 +21,7 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::StoreError;
 use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::scope::ItemDescriptionRequest;
-use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_server::auth::AuthenticatedUser;
 use caelumora_rest_server::error::{ApiError, Json, Path, Query};
 use caelumora_rest_server::plugin::RestPlugin;
@@ -83,8 +83,7 @@ impl From<ArtifactError> for ApiError {
 }
 
 /// The artifacts the user may read anything of - their own and those
-/// shared with them - or, with `?deleted=true`, those they deleted, the
-/// trash.
+/// shared with them - or, with `?deleted=true`, those they deleted.
 async fn list_artifacts(State(state): State<Artifacts>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state.app, &user);
     if options.deleted {

@@ -282,9 +282,8 @@ pub struct ChannelParticipantSnapshot {
     pub owner_name: Option<String>,
 }
 
-/// Something deleted - a session, a channel - as the trash shows it to the
-/// viewer (issue 164): what it was called, who deleted it and when, and
-/// what the viewer may do about it.
+/// Something deleted - a session, a channel - as it is listed to the viewer among what was deleted
+/// (issue 164): what it was called, who deleted it and when, and what the viewer may do about it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeletedSnapshot<I> {
     pub id: I,

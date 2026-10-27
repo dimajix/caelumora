@@ -460,8 +460,8 @@ impl Views {
         Ok(listed)
     }
 
-    /// The agents the viewer deleted and may read as such (issue 164): the
-    /// trash of agents. An agent is purged as the policy allows.
+    /// The agents the viewer deleted and may read as such (issue 164). An
+    /// agent is purged as the policy allows.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
@@ -594,9 +594,8 @@ impl Views {
         }
     }
 
-    /// The teams the viewer deleted and may read as such: the trash of
-    /// groups. The participants of a session or channel are deleted and
-    /// restored with it.
+    /// The teams the viewer deleted and may read as such. The participants
+    /// of a session or channel are deleted and restored with it.
     ///
     /// # Errors
     /// `Failed` if the store fails.
@@ -619,8 +618,7 @@ impl Views {
         Ok(deleted)
     }
 
-    /// The workspaces the viewer deleted and may read as such (issue 253):
-    /// the trash of workspaces.
+    /// The workspaces the viewer deleted and may read as such (issue 253).
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
@@ -644,7 +642,7 @@ impl Views {
     }
 
     /// The sessions the viewer deleted and may read as such (issue 164),
-    /// in the order the store lists them: the trash.
+    /// in the order the store lists them.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
@@ -1622,7 +1620,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_trash_shows_what_its_owner_deleted_with_what_they_may_do_about_it() {
+    async fn what_was_deleted_is_shown_to_its_owner_with_what_they_may_do_about_it() {
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
         let mut session = make_session("hers", ActorId::User(alice.id));
@@ -1641,7 +1639,7 @@ mod tests {
         assert!(channels[0].can_restore && !channels[0].can_purge, "restored by her, purged only with the session");
         assert_eq!(channels[0].deleted.by, ActorId::User(alice.id));
         let his = manager.views(as_user(bob.id));
-        assert!(his.session(session.id).await.unwrap().deleted_channels().await.unwrap().is_empty(), "not a contributor's trash");
+        assert!(his.session(session.id).await.unwrap().deleted_channels().await.unwrap().is_empty(), "not shown to a contributor");
 
         store.entity_stores().unwrap().sessions.delete(&alice_ctx, session.id).await.unwrap();
         let sessions = hers.deleted_sessions().await.unwrap();

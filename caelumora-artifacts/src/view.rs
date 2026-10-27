@@ -49,8 +49,7 @@ pub trait ArtifactViews {
     /// the same -; `Store` if the store cannot read it.
     async fn artifact(&self, id: ArtifactId) -> ArtifactResult<ArtifactView>;
 
-    /// The artifacts the viewer deleted and may read as such (issue 271):
-    /// the trash of artifacts.
+    /// The artifacts the viewer deleted and may read as such (issue 271).
     ///
     /// # Errors
     /// `Store` if the store cannot list them.

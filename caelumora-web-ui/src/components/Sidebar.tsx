@@ -93,8 +93,8 @@ const UnreadBadge: React.FC<{unread: Unread | undefined}> = ({unread}) => {
   );
 };
 
-/** Whether `event` may change what the trash holds (issue 164): a deletion or restoring of whatever kind. */
-function trashChangedBy(event: GlobalEvent): boolean {
+/** Whether `event` may change what is among the deleted (issue 164): a deletion or restoring of whatever kind. */
+function deletedChangedBy(event: GlobalEvent): boolean {
   return event.change === 'Deleted' || event.change === 'Restored';
 }
 
@@ -196,9 +196,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [timeZoneOf, setTimeZoneOf] = useState<string | null>(null);
   const timeZoneSession = sessions.find(s => s.id === timeZoneOf) ?? null;
   // Changes whenever something may have been deleted or restored, so that
-  // the trash is loaded again (issue 164).
-  const [trashVersion, setTrashVersion] = useState(0);
-  const trashChanged = () => setTrashVersion(v => v + 1);
+  // what was deleted is loaded again (issue 164).
+  const [deletedVersion, setDeletedVersion] = useState(0);
+  const deletedChanged = () => setDeletedVersion(v => v + 1);
   // Whether the browser may still be asked to show notifications (issue 404).
   const [mayAsk, setMayAsk] = useState(mayAskForNotifications);
   const me: ActorId = {User: user.id};
@@ -221,7 +221,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // The stream outlives renders; these always see the current props.
   const removeSessionFromStream = useEffectEvent((sessionId: string) => removeSession(sessionId));
-  const trashChangedFromStream = useEffectEvent(() => trashChanged());
+  const deletedChangedFromStream = useEffectEvent(() => deletedChanged());
   const workspacesChangedFromStream = useEffectEvent(() => workspaces.reload());
   const skillsChangedFromStream = useEffectEvent(() => skills.reload());
   const artifactsChangedFromStream = useEffectEvent(() => artifacts.reload());
@@ -276,7 +276,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           saidFromStream(said.sessionId, said.channelId, said.message);
           return;
         }
-        if (trashChangedBy(event)) trashChangedFromStream();
+        if (deletedChangedBy(event)) deletedChangedFromStream();
         if (isAbout(event, 'workspace')) workspacesChangedFromStream();
         if (isAbout(event, 'skill')) skillsChangedFromStream();
         if (isAbout(event, 'artifact')) artifactsChangedFromStream();
@@ -352,7 +352,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     try {
       await api.deleteSession(sessionId);
       removeSession(sessionId);
-      trashChanged();
+      deletedChanged();
     } catch (error) {
       reportError('Failed to delete session', error);
     }
@@ -372,7 +372,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setSessions(prev => prev.map(s => (s.id === sessionId
         ? { ...s, channels: s.channels.filter(c => c.id !== channelId) }
         : s)));
-      trashChanged();
+      deletedChanged();
     } catch (error) {
       reportError('Failed to delete the channel', error);
     }
@@ -506,7 +506,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <DeletedList
                     title="Deleted channels"
                     load={() => api.getDeletedChannels(session.id)}
-                    version={trashVersion}
+                    version={deletedVersion}
                     onRestore={(channelId) => handleRestoreChannel(session.id, channelId)}
                   />
                 </div>
@@ -521,7 +521,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <DeletedList
             title="Deleted sessions"
             load={() => api.getDeletedSessions()}
-            version={trashVersion}
+            version={deletedVersion}
             onRestore={handleRestoreSession}
             onPurge={(sessionId) => api.purgeSession(sessionId)}
           />
@@ -536,7 +536,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onNew={() => setIsCreatingWorkspace(true)}
           newLabel="New workspace"
           loadDeleted={() => api.getDeletedWorkspaces()}
-          trashVersion={trashVersion}
+          deletedVersion={deletedVersion}
           restore={(workspaceId) => api.restoreWorkspace(workspaceId)}
           purge={(workspaceId) => api.purgeWorkspace(workspaceId)}
         />
@@ -550,7 +550,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onNew={() => setIsCreatingSkill(true)}
           newLabel="New skill"
           loadDeleted={() => api.getDeletedSkills()}
-          trashVersion={trashVersion}
+          deletedVersion={deletedVersion}
           restore={(skillId) => api.restoreSkill(skillId)}
           purge={(skillId) => api.purgeSkill(skillId)}
         />
@@ -562,7 +562,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           page={page}
           onSelectPage={onSelectPage}
           loadDeleted={() => api.getDeletedArtifacts()}
-          trashVersion={trashVersion}
+          deletedVersion={deletedVersion}
           restore={(artifactId) => api.restoreArtifact(artifactId)}
           purge={(artifactId) => api.purgeArtifact(artifactId)}
         />
@@ -576,7 +576,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onNew={() => setIsCreatingGroup(true)}
           newLabel="New team"
           loadDeleted={() => api.getDeletedGroups()}
-          trashVersion={trashVersion}
+          deletedVersion={deletedVersion}
           restore={(groupId) => api.restoreGroup(groupId)}
           purge={(groupId) => api.purgeGroup(groupId)}
         />
@@ -590,7 +590,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onNew={() => setIsCreatingAgent(true)}
           newLabel="New agent"
           loadDeleted={() => api.getDeletedAgents()}
-          trashVersion={trashVersion}
+          deletedVersion={deletedVersion}
           restore={(agentId) => api.restoreAgent(agentId)}
           purge={(agentId) => api.purgeAgent(agentId)}
         />

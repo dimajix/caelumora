@@ -246,8 +246,7 @@ mod tests {
 
     /// Who may read a workspace but is not cleared for it does not find it
     /// (issue 322): not by its id, not in a list, not to change, delete,
-    /// restore or purge - the deleted alike, so that the trash and the
-    /// list agree.
+    /// restore or purge - the deleted alike, so that both lists agree.
     #[tokio::test]
     async fn what_the_caller_is_not_cleared_for_does_not_exist_for_them() {
         use crate::confidentiality::{Classification, Clearance, Compartments, Confidentiality};
@@ -273,7 +272,7 @@ mod tests {
         assert!(store.get(&cleared, workspace.id).await.is_ok(), "who is cleared finds it");
 
         assert!(store.delete(&cleared, workspace.id).await.unwrap());
-        assert!(store.list_deleted(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "nor in the trash");
+        assert!(store.list_deleted(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "nor among the deleted");
         assert!(matches!(store.restore(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "nor to restore");
         assert!(!store.purge(&uncleared, workspace.id).await.unwrap(), "nor to purge");
         assert_eq!(store.list_deleted(&cleared, &Query::all()).await.unwrap().items.len(), 1, "where it is, for who is cleared");
@@ -329,7 +328,7 @@ mod tests {
         assert_eq!(store.get_deleted(&alice_ctx, hers.id).await.unwrap().deleted.map(|d| d.by), Some(alice), "deleted by her");
 
         let seen = store.get_deleted(&bob_ctx, hers.id).await;
-        assert!(matches!(seen, Err(StoreError::NotFound { .. })), "a contributor does not see the trash: {seen:?}");
+        assert!(matches!(seen, Err(StoreError::NotFound { .. })), "a contributor does not see what was deleted: {seen:?}");
         assert!(store.list_deleted(&bob_ctx, &Query::all()).await.map(|page| page.items).unwrap().is_empty());
         let restored = store.restore(&bob_ctx, hers.id).await;
         assert!(matches!(restored, Err(StoreError::NotFound { .. })), "nor restores from it: {restored:?}");
@@ -337,8 +336,8 @@ mod tests {
 
         let purged = store.purge(&alice_ctx, hers.id).await;
         assert!(matches!(purged, Err(StoreError::PermissionDenied(_))), "the owner does not purge: {purged:?}");
-        assert_eq!(store.list_deleted(&alice_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "the owner sees her trash");
-        store.restore(&alice_ctx, hers.id).await.expect("and restores from it");
+        assert_eq!(store.list_deleted(&alice_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "the owner sees what she deleted");
+        store.restore(&alice_ctx, hers.id).await.expect("and restores it");
         assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
         assert!(store.purge(&SecurityContext::system(), hers.id).await.unwrap(), "the system purges");
     }

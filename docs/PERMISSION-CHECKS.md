@@ -47,7 +47,7 @@ a stored entity is decided by the verb, never by the kind (issue
 | `Reclassify` | a channel its owner; a message the channel's owner or its author (the caller); a note or memory entry its author. Whether the new classification may be given there is the flow's | 1 or 3 |
 | `ModifyMessage`, `RevokeMessage` | the author is the caller | 3: authorship, not ownership |
 | `Purge` of every kind | nobody but the system (issue 125) | 3 |
-| `List` of every kind | always; the storage narrows the list by the admission of `Get` - of `ReadDeleted` for the trash -, the store filters each item it hands out with that verb | 1 per item |
+| `List` of every kind | always; the storage narrows the list by the admission of `Get` - of `ReadDeleted` for what was deleted -, the store filters each item it hands out with that verb | 1 per item |
 | `CallTool`, `ReadSecret` | always: hooks for another `AccessPolicy`; a call is decided by the tools offered and the rules of its place, a secret has no owner yet (issue [310](../issues/310-secrets-have-no-owner.md)) | 3, decided elsewhere |
 
 Most variants are decided by the principal; `ModifyMessage`, `RevokeMessage` and `Reclassify` of a
@@ -60,7 +60,7 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 
 | Layer | Asks | Form | Refusal |
 |---|---|---|---|
-| **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for the trash) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
+| **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for what was deleted) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
 | **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ArtifactManager`, `AttachmentManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
 | **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the agent carrying out a command, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, `CommandFailed`, a left-out answer |
@@ -115,7 +115,7 @@ in the same context (issue 322), named in the rows where it is the reason of a r
 | Reach a channel to act in it (`SessionLoop::channel_for`, the REST server's way) | `channel_reading`: `GetChannel` (U,1), `cleared_for` (U,2) | reach | by the views if the client navigated | `ChannelNotFound` for absent, refused and not cleared alike |
 | Create (`SessionLoop::create_channel`) | `require_classifiable`; store `GetUserProfile`; members of the session (structural); the component bundles named: `List` + `GetComponentBundle` (U,1, issue 321), and what the channel would not take refused (issue 337); `CreateChannel` (U,1), before the others (issue 312); `require_admitted` of the founders (A `GetPersonality`, scope, U cleared with the member's roles); store `CreateChannel` (U,1), the channel empty; group in S; store `GetSession` + `UpdateSession`; components built in C (`List` + `GetComponentBundle`, `ReadSecret`); then each founder joins (`ChannelLoop::found`, issue 420): cleared again (U,2), an agent's `GetPersonality` (A,1) as built, stored in S - no `UpdateChannel`; one that cannot: the channel taken back in S | R2 + R1 | `CreateChannel` (pair); `List` + `GetComponentBundle` (U, then C); `GetPersonality` as built | `InvalidComponents`, `PermissionDenied`, `ClassificationRefused`, `NotCleared`, `OutOfScope`, `NameTaken` |
 | Delete (`SessionLoop::delete_channel`) | `channel_for`: `GetChannel` (U,1), `cleared_for` (U,2); `DeleteChannel` (U,1); store `UpdateSession` as the session drops it; store `GetChannel` + `DeleteChannel`; the scope listed in S, each item's store `Get…` + `Delete…` (U,1); its participants' group deleted in S (issue 348) - something left, or the group failing: listed and unmarked again in S; actors stopped | R2 + R1 | `GetChannel`, `DeleteChannel` (pair) | `ChannelNotFound`, `PermissionDenied`, `ScopeNotEmpty` |
-| Restore (`SessionLoop::restore_channel`) | store `ReadDeleted` (U,1), as the session's trash lists it; `Restore` (U,1), before the others (issue 312); `require_admitted` as creating; store `ReadDeleted` + `Restore`; its participants' group restored in S (issue 348); store `GetSession` + `UpdateSession` - failing, unlisted and marked again in S, with its group; the scope as for a session | R2 + R1 | `ReadDeleted` (store), `Restore` (pair) | `ChannelNotFound`, `PermissionDenied`, `NotCleared`, `NameTaken` |
+| Restore (`SessionLoop::restore_channel`) | store `ReadDeleted` (U,1), as the session lists its deleted channels; `Restore` (U,1), before the others (issue 312); `require_admitted` as creating; store `ReadDeleted` + `Restore`; its participants' group restored in S (issue 348); store `GetSession` + `UpdateSession` - failing, unlisted and marked again in S, with its group; the scope as for a session | R2 + R1 | `ReadDeleted` (store), `Restore` (pair) | `ChannelNotFound`, `PermissionDenied`, `NotCleared`, `NameTaken` |
 | Rename, language, description, workspace switch, approval rules (`ChannelLoop::update_*`) | store `GetChannel` + `UpdateChannel` (U,1) | R1 | - | `PermissionDenied` |
 | Reclassify (`ChannelLoop::reclassify`) | `Reclassify` of the channel (U,1); `require_classifiable`; per participant `require_cleared` (U,2); store `UpdateChannel`; `may_publish` of the old into the new to learn whether it was lowered | R2 + R1; the last a question | - | `Forbidden`, `ClassificationRefused`, `NotCleared` |
 | Add a participant (`add_participant`) | `UpdateChannel` (U,1); structural; `GetPersonality` (A,1); scope; `require_cleared` with the participant's roles (U,2); store `UpdateChannel`; the actor's components (A) | R2 + R1 | `UpdateChannel` (pair) | `Forbidden`, `PermissionDenied`, `OutOfScope`, `NotCleared` |
@@ -238,7 +238,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Rename (`update`) | store `GetGroup`; a participants' group refused (structural); store `UpdateGroup` | R1 | `NotFound`, `Participants`, `PermissionDenied` |
 | Delete, restore, purge | store; a participants' group refused | R1 | `NotFound`, `Participants`, `PermissionDenied` |
 | Name a group in an access list (`require_nameable`) | store `GetGroup` (U,1) per newly named group | R1 | `Validation` |
-| Drop entries for groups that are gone (`prune_gone_groups`, issue 347) | per group the lists name, read in S, also in the trash, as a workspace or an artifact is stored | - | - |
+| Drop entries for groups that are gone (`prune_gone_groups`, issue 347) | per group the lists name, read in S, also among the deleted, as a workspace or an artifact is stored | - | - |
 | The participants' groups (`keep_participants`, `delete_participants`, `restore_participants`, `purge_participants`) | in S, after the change of the participants, or the deletion, restoring or purge of their session or channel, was permitted | - | - |
 
 ### Views, snapshots and events
@@ -321,7 +321,8 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 - **A channel's components in its owner's name** are issue
   [321](../issues/321-channel-components-in-the-owners-name.md), decided below.
 - **What is listed is the store's to decide.** A view does not filter a store's list again: the
-  trashes show what `ReadDeleted` lets through, and restoring and purging reach it alike.
+  lists of what was deleted show what `ReadDeleted` lets through, and restoring and purging reach it
+  alike.
 
 ### Decided in issue 322
 

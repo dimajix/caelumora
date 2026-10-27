@@ -304,10 +304,9 @@ impl SessionLoop {
     /// of `context` (issue 164): its mark taken away, the group of its
     /// participants restored with it in the runtime's name (issue 348),
     /// listed in the session again and started from its stored state. In
-    /// the order of issue 304: the deleted channel is read as such
-    /// (`ReadDeleted`, as the session's trash lists it), then restoring it
-    /// is asked (`Restore`), then its participants' clearance, as creating
-    /// one does; the store asks again as it restores it, and to change the
+    /// the order of issue 304: the deleted channel is read as such (`ReadDeleted`, as the session
+    /// lists its deleted channels), then restoring it is asked (`Restore`), then its participants'
+    /// clearance, as creating one does; the store asks again as it restores it, and to change the
     /// session that lists it again (`UpdateSession`).
     ///
     /// # Errors

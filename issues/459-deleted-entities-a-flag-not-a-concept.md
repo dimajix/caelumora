@@ -1,6 +1,6 @@
 # 459 — What was deleted is reached by a flag and paired methods, and called a trash
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Persistence
@@ -83,3 +83,9 @@ In the code it is not one concept but a flag and pairs of methods:
   reading, changing, deleting and purging share one check of mark, verb and clearance
   (`require_reached`). `ActionType::read_deleted` went with its last caller. `Document::deleted`
   stays a `bool`: it is the stored mark, which a storage compares with `Presence::marked`.
+- **2026-10-27** — Step 2: "the trash" is gone from the code, the documents and the web UI's
+  names; what was deleted is called so, or "the deleted". The REST API's module `trash` is
+  `deleted`; its routes and their parameter (`?deleted=true`) were named so already. The web UI
+  already showed "Deleted sessions", "Deleted channels" and so on, and keeps them; only its
+  identifiers changed (`deletedVersion`). The icon `Trash2` of the delete actions stays: it is
+  lucide's name for the picture, not a concept of ours.

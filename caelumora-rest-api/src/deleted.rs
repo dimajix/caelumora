@@ -1,20 +1,19 @@
-//! What was deleted and lies in the trash (issue 164).
+//! What was deleted and is kept until it is purged (issue 164).
 
 use caelumora_model::snapshot;
 use caelumora_model::removal::Removal;
 use serde::{Deserialize, Serialize};
 
-/// Whether a listing lists what is there or what was deleted - the trash
-/// (issue 164).
+/// Whether a listing lists what is there or what was deleted (issue 164).
 #[derive(Debug, Default, Deserialize)]
 pub struct ListOptions {
     #[serde(default)]
     pub deleted: bool,
 }
 
-/// Something deleted - a session, a channel - in the trash (issue 164): who
-/// deleted it and when, and whether the requesting user may restore it or
-/// remove it for good.
+/// Something deleted - a session, a channel - as it is listed to the user among what was deleted
+/// (issue 164): who deleted it and when, and whether the requesting user may restore it or remove
+/// it for good.
 #[derive(Debug, Serialize)]
 pub struct DeletedResponse<I> {
     pub id: I,

@@ -6,7 +6,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Query};
 use caelumora_rest_api::agent::{AgentChannelResponse, AgentResponse, CreateAgentRequest, PersonalityResponse, RenameAgentRequest};
-use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::routes::views;
 
 /// The agents the user may read - or, with `?deleted=true`, those they
-/// deleted and may read as such, the trash.
+/// deleted and may read as such.
 pub(super) async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state, &user);
     if options.deleted {

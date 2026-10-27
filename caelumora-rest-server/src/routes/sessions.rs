@@ -1,7 +1,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use caelumora_rest_api::session::{AddSessionParticipantRequest, CandidateResponse, CandidatesQuery, CreateSessionRequest, DescriptionRequest, JoinSessionRequest, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
-use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, http::StatusCode};
@@ -28,7 +28,7 @@ pub(super) async fn create_session(
 }
 
 /// The sessions the user may read - or, with `?deleted=true`, those they
-/// deleted and may read as such, the trash (issue 164).
+/// deleted and may read as such (issue 164).
 pub(super) async fn list_sessions(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state, &user);
     if options.deleted {

@@ -366,9 +366,8 @@ impl SessionView {
         Ok(found)
     }
 
-    /// The channels of the session the viewer deleted and may read as such
-    /// (issue 164): the session's trash. One may be restored by whoever may
-    /// restore it and change the session (`SessionLoop::restore_channel`);
+    /// The channels of the session the viewer deleted and may read as such (issue 164). One may be
+    /// restored by whoever may restore it and change the session (`SessionLoop::restore_channel`);
     /// none is purged but with the session.
     ///
     /// # Errors

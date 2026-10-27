@@ -1070,9 +1070,9 @@ async fn deleting_a_channel_needs_owning_its_session() {
 }
 
 /// Restoring a deleted session: reading it as deleted and restoring it -
-/// its owner's alone, not a contributor's; for whoever may not read the
-/// trash, there is nothing to restore (issue 164). The manager reads it
-/// first, as whoever restores it (issue 304), and the store asks again as
+/// its owner's alone, not a contributor's; for whoever may not read what
+/// was deleted, there is nothing to restore (issue 164). The manager reads
+/// it first, as whoever restores it (issue 304), and the store asks again as
 /// it restores it (rule 2) - and returns it, so that it is not read back
 /// (issue 318). The groups of its participants and of its channel's come
 /// back with it in the runtime's name (issue 348): nothing is asked of her
@@ -1085,7 +1085,7 @@ async fn restoring_a_session_needs_owning_it() {
     let (_, asked) = world.asked(world.manager.restore(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: ReadDeletedSession(alice's) no"]));
     let (_, asked) = world.asked(world.manager.restore(&World::as_user(world.bob), session.id())).await;
-    assert_eq!(asked, checks(&["bob: ReadDeletedSession(alice's) no"]), "a contributor does not see the trash");
+    assert_eq!(asked, checks(&["bob: ReadDeletedSession(alice's) no"]), "a contributor does not see what was deleted");
     let (restored, asked) = world.asked(world.manager.restore(&World::as_user(world.alice), session.id())).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
@@ -1115,8 +1115,9 @@ async fn purging_a_session_is_not_its_owners() {
 }
 
 /// Restoring a deleted channel (issue 164), in the order of issue 304:
-/// reading it as deleted, as the session's trash lists it, restoring it -
-/// its owner's alone - before everyone's clearance is asked (issue 312),
+/// reading it as deleted, as the session lists its deleted channels,
+/// restoring it - its owner's alone - before everyone's clearance is asked
+/// (issue 312),
 /// and the store restoring the channel again and listing it in its
 /// session. The group of its participants comes back with it in the
 /// runtime's name (issue 348): nothing is asked of her for it.
@@ -1130,7 +1131,7 @@ async fn restoring_a_channel_needs_owning_its_session() {
     assert!(matches!(refused.unwrap_err().downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "a stranger finds nothing");
     assert_eq!(asked, checks(&["carol: ReadDeletedChannel(alice's) no"]));
     let (refused, asked) = world.asked(session.restore_channel(&World::as_user(world.bob), main)).await;
-    assert!(matches!(refused.unwrap_err().downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "a participant does not see the trash");
+    assert!(matches!(refused.unwrap_err().downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "a participant does not see what was deleted");
     assert_eq!(asked, checks(&["bob: ReadDeletedChannel(alice's) no"]));
     let (restored, asked) = world.asked(session.restore_channel(&World::as_user(world.alice), main)).await;
     assert!(restored.is_ok());
@@ -1277,7 +1278,7 @@ async fn a_workspace_is_its_owners_alone() {
 /// cleared for, else it is not found - before anything else is asked, so
 /// that whoever is not cleared for it learns nothing of it, not even that
 /// they may not change its files; by its id as by navigating to it (issue
-/// 312), and in the trash - all of it decided by the store (issue 322).
+/// 312), and once deleted - all of it decided by the store (issue 322).
 #[tokio::test]
 async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     let world = World::new().await;
@@ -1303,11 +1304,11 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     assert!(matches!(shared, Err(WorkspaceError::NotFound(_))), "{shared:?}");
     assert!(!workspaces.delete(&uncleared, docs.id).await.unwrap(), "nothing she reaches to delete");
 
-    // Deleted, it is reached by the store alike (issue 322): the trash and
-    // restoring agree.
+    // Deleted, it is reached by the store alike (issue 322): the list of
+    // what was deleted and restoring agree.
     workspaces.delete(&alice, docs.id).await.unwrap();
-    let trash = world.manager.views(Viewer::new(uncleared.clone())).deleted_workspaces().await.unwrap();
-    assert!(trash.is_empty(), "not in her trash");
+    let listed = world.manager.views(Viewer::new(uncleared.clone())).deleted_workspaces().await.unwrap();
+    assert!(listed.is_empty(), "not among what she deleted");
     let (restored, asked) = world.asked(workspaces.restore(&uncleared, docs.id)).await;
     assert!(matches!(restored, Err(WorkspaceError::NotFound(_))), "nor to restore");
     assert_eq!(asked, checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: JoinChannel(alice) no"]));
@@ -1715,7 +1716,7 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
 /// back with it in the runtime's name, whatever whoever deletes and
 /// restores it may do with groups: one that is not alice's to delete or
 /// restore - bob's here, as another policy might have it - neither keeps
-/// her session nor stays in the trash when it is back, and bob reaches the
+/// her session nor stays deleted when it is back, and bob reaches the
 /// session by it again.
 #[tokio::test]
 async fn the_group_of_a_sessions_participants_follows_it_whoever_may_delete_groups() {
@@ -1743,9 +1744,9 @@ async fn the_group_of_a_sessions_participants_follows_it_whoever_may_delete_grou
 
 /// G4 (issue 347): an entry naming a group that is gone - a team purged,
 /// the participants of a session purged with it - is dropped as the list is
-/// next stored, by any change of the workspace; one naming a group in the
-/// trash stays, since it may come back. Until then its owner sees it
-/// without a name.
+/// next stored, by any change of the workspace; one naming a deleted group
+/// stays, since it may come back. Until then its owner sees it without a
+/// name.
 #[tokio::test]
 async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored() {
     let world = World::new().await;
@@ -1764,7 +1765,7 @@ async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored()
 
     groups.delete(&alice, project.id).await.unwrap();
     controller.update_name(&alice, "papers").await.unwrap();
-    assert_eq!(named(&controller.load()), both, "a team in the trash keeps its entry");
+    assert_eq!(named(&controller.load()), both, "a deleted team keeps its entry");
     let shown = world.manager.views(Viewer::new(alice.clone())).workspace(docs.id).await.unwrap().snapshot().await;
     assert_eq!(shown.access.iter().map(|e| e.name.as_deref()).collect::<Vec<_>>(), [None, Some("shared")], "shown without a name meanwhile");
 

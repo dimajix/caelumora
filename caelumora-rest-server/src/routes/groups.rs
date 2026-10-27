@@ -7,7 +7,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Query};
 use caelumora_rest_api::group::{CreateGroupRequest, GroupResponse, RenameGroupRequest};
-use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::routes::views;
 
 /// The teams the user owns or belongs to - or, with `?deleted=true`, those
-/// they deleted, the trash.
+/// they deleted.
 pub(super) async fn list_groups(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = views(&state, &user);
     if options.deleted {
