@@ -1,6 +1,7 @@
 import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {
   AlertTriangle,
+  AtSign,
   Ban,
   BellRing,
   ChevronDown,
@@ -82,7 +83,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chainCutOffNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -976,6 +977,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         } else if (actorEvent.ChainCutOff) {
           const {max_agent_hops, not_asked} = actorEvent.ChainCutOff;
           showOnce(chainCutOffNotice(max_agent_hops, not_asked, envelope.timestamp, position));
+        } else if (actorEvent.ResponderUndecided) {
+          showOnce(responderUndecidedNotice(envelope.timestamp, position));
         } else if (actorEvent.PlanStepStarted) {
           // Heads the messages of the step that follow (issue 263), as the
           // history's mark of it does after a reload.
@@ -1444,6 +1447,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         <span>Chain cut off</span>
       </div>
       <div className="wrap-break-word">{chainCutOffText(msg.chainCutOff)}</div>
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.responderUndecided ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+        <AtSign size={14} />
+        <span>Nobody chosen to respond</span>
+      </div>
+      <div className="wrap-break-word">It could not be decided who should respond, so no agent was asked. Mention someone with @ to ask them.</div>
       <MessageFooter message={msg} />
     </div>
   ) : msg.givenUp?.kind === 'failed' ? (

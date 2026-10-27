@@ -418,6 +418,12 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.json(&serde_json::json!([message, max_agent_hops, not_asked]));
             e.finish()
         }
+        HistoryEntry::ResponderUndecided { message, .. } => {
+            let mut e = Encoder::new("caelumora.history-responder-undecided.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([message]));
+            e.finish()
+        }
         HistoryEntry::MessageRejected { rejected, message, reason, .. } => {
             let mut e = Encoder::new("caelumora.history-message-rejected.v1");
             e.opt_digest(previous);

@@ -697,6 +697,9 @@ export interface Message {
   // UI only: a chain between agents was cut off at its limit (issue 200);
   // `notAsked` are the agents mentioned. Part of the history (issue 417).
   chainCutOff?: {maxAgentHops: number; notAsked: ActorId[]};
+  // UI only: it could not be decided who responds, so nobody was asked
+  // (issue 441). Part of the history.
+  responderUndecided?: boolean;
   // UI only: `sender_name` asks you to respond (issue 278), part of the
   // history as the request it is (issue 417).
   nudged?: boolean;
@@ -741,7 +744,7 @@ export interface PlanStepEvent extends PlanStep {
 export type UnitActorEvent = 'WakeupRequested';
 
 /** Why someone is asked to respond (issue 439). */
-export type RequestReason = 'chosen' | 'nudged' | 'mentioned';
+export type RequestReason = 'chosen' | 'undecided' | 'nudged' | 'mentioned';
 
 export interface ActorEvent {
   /**
@@ -829,6 +832,12 @@ export interface ActorEvent {
    * `not_asked` are the agents it mentioned. Sent in the name of the system.
    */
   ChainCutOff?: { message: string; max_agent_hops: number; not_asked: ActorId[] };
+  /**
+   * The responder policy could not choose who responds to the response ending
+   * in `message` (issue 441), and nobody was asked. Sent in the name of the
+   * system, to the users.
+   */
+  ResponderUndecided?: { message: string };
   /**
    * The message `id` reads as this from now on (issue 234): its author
    * modified it; `timestamp` is when.
@@ -1219,6 +1228,8 @@ export type HistoryItemKind<M> =
   | {retry_rejected: {target: RetryTarget; reason: RetryRefused; actor: ActorId; at: string}}
   /** A chain between agents reached its limit (issue 200). */
   | {chain_cut_off: {message: string; max_agent_hops: number; not_asked: ActorId[]; at: string}}
+  /** It could not be decided who responds to `message`, and nobody was asked (issue 441). */
+  | {responder_undecided: {message: string; at: string}}
   /** What the reader sent was not let into the channel (issue 304). */
   | {message_rejected: {rejected: string; message: string | null; reason: Rejection; at: string}}
   /** The reader was asked to respond, to what `by` said or nudged, for `reason` (issues 278, 417, 439). */

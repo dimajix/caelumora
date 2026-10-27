@@ -780,16 +780,17 @@ call.
 ### Why the agent was asked
 
 Every turn records why it was asked (`Work::asked`, issue 439): the reason of the request it
-answers, the strongest of those it took in - `mentioned`, `nudged`, `chosen` by the channel's
-responder policy (see [CHANNELS.md](CHANNELS.md#moderators)) -, none for an answer given again.
-`request_reason_prompt_provider` reads it (`Situation::asked`) and tells an agent that was only
-chosen so, before the turn's input: that it is asked because what was said last might concern it,
-and that with nothing to add - nothing new, only agreement, a greeting, thanks, that it waits - it
-calls `silence` and writes nothing, or, where `silence` is not offered, writes nothing. Without it,
-a model takes every request for an order to answer, and greets back or writes that it has nothing
-to say. A mentioned or nudged agent is told nothing: told when to stay silent, a mentioned agent
-judged the message that mentioned it rather than what was its own to do, and stopped working where
-it was only cheered on ([work/quiet_agents](../work/quiet_agents/RESULTS.md)).
+answers, the strongest of those it took in - `mentioned`, `nudged`, `undecided` when the channel's
+responder policy could not choose, `chosen` by it (see [CHANNELS.md](CHANNELS.md#moderators)) -,
+none for an answer given again. `request_reason_prompt_provider` reads it (`Situation::asked`) and
+tells an agent that was only chosen so, before the turn's input: that it is asked because what was
+said last might concern it, and that with nothing to add - nothing new, only agreement, a greeting,
+thanks, that it waits - it calls `silence` and writes nothing, or, where `silence` is not offered,
+writes nothing. Without it, a model takes every request for an order to answer, and greets back or
+writes that it has nothing to say. A mentioned or nudged agent, or one asked because the policy
+could not choose, is told nothing: told when to stay silent, a mentioned agent judged the message
+that mentioned it rather than what was its own to do, and stopped working where it was only cheered
+on ([work/quiet_agents](../work/quiet_agents/RESULTS.md)).
 
 ### System messages
 

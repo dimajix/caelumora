@@ -99,9 +99,10 @@ the item it is read as later as `seq` (issue 417).
 
 What the user was shown is what the channel's history recorded for them, so a reload shows the
 same: a turn given up, the answer of a command - the channel's and an agent's, a private one to its
-issuer -, a command not carried out, a chain cut off, a nudge, a refusal to let something into the
-channel, a retry rejected (issue 417). A message of theirs that was not let in is marked live; after
-a reload, the notice of its refusal stands in its place, since the message entered nothing.
+issuer -, a command not carried out, a chain cut off, that it could not be decided who responds, a
+nudge, a refusal to let something into the channel, a retry rejected (issue 417). A message of
+theirs that was not let in is marked live; after a reload, the notice of its refusal stands in its
+place, since the message entered nothing.
 
 ## What it shows
 

@@ -2,7 +2,7 @@
 //! user wrote, and nobody to what an agent wrote (issue 175).
 
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::moderator::ResponderPolicy;
+use crate::moderator::{ResponderPolicy, Undecided};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
@@ -19,11 +19,11 @@ pub struct UserDrivenPolicy;
 
 #[async_trait]
 impl ResponderPolicy for UserDrivenPolicy {
-    async fn choose(&self, event: &Envelope, _messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
-        match event.context.sender_id {
+    async fn choose(&self, event: &Envelope, _messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+        Ok(match event.context.sender_id {
             ActorId::User(_) => candidates.into_iter().map(|candidate| candidate.id).collect(),
             _ => Vec::new(),
-        }
+        })
     }
 }
 

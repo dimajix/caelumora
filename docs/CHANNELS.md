@@ -343,10 +343,11 @@ every member at the time it concerns by the rule every channel delivers by - res
 recorded, so that who was a member then decides who reads it -, or those the moderator named. What a
 participant was shown live is what the history holds for them, in the same order - also what went
 to them alone: the answer to a request to answer again, a command's answer and a command not carried
-out, a chain cut off, a refusal, a request to respond, each notice and request recorded in the
-system's name as the channel sends it. What it delivers carries the position of its entry
-(`EventContext::position`), the `seq` of the item a client reads it as later. Not recorded: what
-streams, a beginning whose end is recorded, where an actor stands, approvals and questions.
+out, a chain cut off, that it could not be decided who responds, a refusal, a request to respond,
+each notice and request recorded in the system's name as the channel sends it. What it delivers
+carries the position of its entry (`EventContext::position`), the `seq` of the item a client reads
+it as later. Not recorded: what streams, a beginning whose end is recorded, where an actor stands,
+approvals and questions.
 
 **The channel decides what enters it.** Every event an actor sends is admitted or refused by the
 channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) - against the
@@ -919,9 +920,10 @@ which for what the history records is the rule its entry is read by (`HistoryEnt
 
 A moderator answers each event with a `Routing`: whether it goes where the rule sends it or to some
 participants alone, whom to ask to respond, and which of its own notices to tell whom - of a fixed
-few (`Notice`), today a chain cut off. The channel builds every envelope from it: the event as it
-entered, a request to respond in the event's contexts, a notice in the system's name. So a moderator
-cannot change what anyone is told, nor speak in anybody's name.
+few (`Notice`): a chain cut off, and that it could not be decided who responds. The channel builds
+every envelope from it: the event as it entered, a request to respond in the event's contexts, a
+notice in the system's name. So a moderator cannot change what anyone is told, nor speak in
+anybody's name.
 
 The built-in moderator, `policy_moderator` (the default), lets every event go where the rule sends
 it, and decides:
@@ -962,12 +964,23 @@ each other. Under `user_driven_policy` the agents answer when a person writes an
 between: an agent's message is still delivered to the other agents, but starts no turn. Loops come
 from asking to respond, not from delivering.
 
+A policy that could not choose says so (`Undecided`, issue 441) - of those above, only
+`decision_policy` can -, and the moderator asks whom its `on_undecided` says: nobody (`none`, the
+default), so that a policy that is slow or failing leaves the agents quiet rather than makes every
+one of them answer, or every agent the policy could have chosen (`all`), so that nothing said is
+left unanswered. When nobody is asked, it tells the users so (`ResponderUndecided`, in the system's
+name), recorded to them, after a user's message and an agent's alike: the channel is silent because
+nobody could be chosen, and a mention asks someone. Why the policy could not choose is logged, and
+told to nobody.
+
 A `Routing` also says why it asks (`RequestReason`, issue 439): `mentioned` - by the agent's handle
-or `@all` -, `nudged` by a user (see [Nudging someone](#nudging-someone)), or `chosen` by the
-policy. The request to respond carries it, and the history records it with the request. An agent
-whose personality has the `request_reason_prompt_provider` is told, when only chosen, that it may
-stay silent (see [AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)): what a policy chooses is
-a guess whether the agent has anything to add.
+or `@all` -, `nudged` by a user (see [Nudging someone](#nudging-someone)), `chosen` by the policy,
+or `undecided`, asked under `on_undecided: all` because the policy could not choose (issue 441). The
+request to respond carries it, and the history records it with the request. An agent whose
+personality has the `request_reason_prompt_provider` is told, when only chosen, that it may stay
+silent (see [AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)): what a policy chooses is a
+guess whether the agent has anything to add. Asked as undecided, it is told nothing, so that what
+was said is answered as `all` intends.
 
 ### Choosing by what was said
 
@@ -986,19 +999,16 @@ it asks whether each should respond, up to 64, and asks those at or above `thres
 
 The channel waits for the decision before it routes anything else, so it is bounded by the
 endpoint's timeout, 5 s unless written. What keeps the model from choosing - a timeout, an error,
-an answer naming no option, more than 64 candidates - asks whom `on_failure` says: `none` (the
-default, issue 437), so that a model that is slow or down leaves the agents quiet rather than makes
-every one of them answer, or `all`, so that nothing said is left unanswered. It is logged without
-anything that was said; the users are not told
-([441](../issues/441-nobody-is-told-when-no-responder-was-chosen.md)).
+an answer naming no option, more than 64 candidates - leaves the policy undecided, without anything
+that was said, and the moderator asks whom its `on_undecided` says (see above).
 
 What was said leaves the system where the endpoint lies outside it. The policy sends a message only
 if it may flow to the endpoint's `destination` - `public` unless configured, as for an MCP server -
 asked in the context of the event routed, in which the endpoint's credential is resolved too. What
-was said before is left out if it may not; if what is to be answered may not, it asks as on
-failure. Since its parameters say where what it is given goes, an
-operator configures it alone (`ComponentKind::operator_only`): a channel created on request names it
-only through a `ref` to a component bundle, while a template may write it.
+was said before is left out if it may not; if what is to be answered may not, it is undecided as
+on failure. Since its parameters say where what it is given goes, an operator configures it alone
+(`ComponentKind::operator_only`): a channel created on request names it only through a `ref` to a
+component bundle, while a template may write it.
 
 | Parameter | Meaning | Default |
 |---|---|---|
@@ -1007,7 +1017,6 @@ only through a `ref` to a component bundle, while a template may write it.
 | `keep_alive` | How long the model stays loaded after a decision | the server's |
 | `threshold` | How probable it must be that a candidate fits | `0.3` |
 | `max_responders` | How many are asked at most | `1` |
-| `on_failure` | Whom to ask when the model does not choose: `none` or `all` | `none` |
 | `destination` | What the server is cleared for | `public` |
 | `sender_format` | How the model is told who said what: `none`, `prefix` or `xml` | `prefix` |
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |

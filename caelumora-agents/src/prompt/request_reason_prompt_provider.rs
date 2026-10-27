@@ -109,7 +109,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_agent_asked_for_any_other_reason_is_told_nothing() {
-        for asked in [Some(RequestReason::Mentioned), Some(RequestReason::Nudged), None] {
+        for asked in [Some(RequestReason::Undecided), Some(RequestReason::Mentioned), Some(RequestReason::Nudged), None] {
             assert_eq!(told(asked, &[SILENCE_TOOL_NAME]).await, "", "{asked:?}");
         }
     }

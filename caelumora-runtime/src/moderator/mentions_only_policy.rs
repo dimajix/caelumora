@@ -2,7 +2,7 @@
 //! only when a user mentions them (issue 44).
 
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::moderator::ResponderPolicy;
+use crate::moderator::{ResponderPolicy, Undecided};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
@@ -17,8 +17,8 @@ pub struct MentionsOnlyPolicy;
 
 #[async_trait]
 impl ResponderPolicy for MentionsOnlyPolicy {
-    async fn choose(&self, _event: &Envelope, _messages: &[Message], _candidates: Vec<ActorDescription>) -> Vec<ActorId> {
-        Vec::new()
+    async fn choose(&self, _event: &Envelope, _messages: &[Message], _candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+        Ok(Vec::new())
     }
 }
 

@@ -1,12 +1,11 @@
-//! The moderators, as components of a channel (issue 174). A moderator
-//! decides whom an event goes to, whom to ask to respond and what to tell
-//! of its own - a [`Routing`] - and never what anyone is told (issue 418):
-//! the channel delivers by the rule every channel delivers by
-//! (`Envelope::concerns`) unless the moderator names whom, and builds every
-//! envelope. The built-in one, [`policy_moderator`], asks every agent a
-//! message `@`-mentions and leaves whom to ask when nobody was mentioned
-//! to its slot, a [`ResponderPolicy`] (issue 44). The policies are
-//! components of their own, one file per kind.
+//! The moderators, as components of a channel (issue 174). A moderator decides whom an event goes
+//! to, whom to ask to respond and what to tell of its own - a [`Routing`] - and never what anyone
+//! is told (issue 418): the channel delivers by the rule every channel delivers by
+//! (`Envelope::concerns`) unless the moderator names whom, and builds every envelope. The built-in
+//! one, [`policy_moderator`], asks every agent a message `@`-mentions and leaves whom to ask when
+//! nobody was mentioned to its slot, a [`ResponderPolicy`] (issue 44), and whom to ask when the
+//! policy could not choose to its own rule (issue 441). The policies are components of their own,
+//! one file per kind.
 
 pub mod broadcast_policy;
 pub mod mentions_only_policy;
@@ -70,12 +69,15 @@ pub(crate) enum Notice {
     /// A chain between agents reached its limit (issue 200): `message` made
     /// nobody respond, not even the agents `not_asked` it mentioned.
     ChainCutOff { message: MessageId, max_agent_hops: u32, not_asked: Vec<ActorId> },
+    /// The policy could not choose who responds to `message` (issue 441), and nobody was asked.
+    ResponderUndecided { message: MessageId },
 }
 
 impl From<Notice> for ActorEvent {
     fn from(notice: Notice) -> Self {
         match notice {
             Notice::ChainCutOff { message, max_agent_hops, not_asked } => ActorEvent::ChainCutOff { message, max_agent_hops, not_asked },
+            Notice::ResponderUndecided { message } => ActorEvent::ResponderUndecided { message },
         }
     }
 }
@@ -84,16 +86,24 @@ impl From<Notice> for ActorEvent {
 /// the slot of the `policy_moderator`. A channel has exactly one.
 #[async_trait]
 pub trait ResponderPolicy: Send + Sync + Debug {
-    /// The agents of `candidates` to ask to respond to what `event` said -
-    /// a message, or the messages of a turn -, by its sender and in its
-    /// context, in which whatever the policy asks is asked. `messages` is the
-    /// conversation, the oldest first: what was heard before, as far as the
-    /// moderator keeps it, as it stands (issue 414), and last what `event`
-    /// said; each names its sender. The candidates are the agents that are
-    /// awake and did not say what `event` said, in no particular order, as
-    /// they are described to everyone in the channel (issue 403).
-    async fn choose(&self, event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId>;
+    /// The agents of `candidates` to ask to respond to what `event` said - a message, or the
+    /// messages of a turn -, by its sender and in its context, in which whatever the policy asks is
+    /// asked. `messages` is the conversation, the oldest first: what was heard before, as far as
+    /// the moderator keeps it, as it stands (issue 414), and last what `event` said; each names its
+    /// sender. The candidates are the agents that are awake and did not say what `event` said, in
+    /// no particular order, as they are described to everyone in the channel (issue 403).
+    ///
+    /// # Errors
+    /// `Undecided` if the policy could not choose (issue 441), saying why without anything that was
+    /// said - whom to ask then is the moderator's to decide.
+    async fn choose(&self, event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided>;
 }
+
+/// Why a `ResponderPolicy` could not choose whom to ask (issue 441): its words for the log, at
+/// `warn!`, which no participant is told - so they hold nothing of what was said.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct Undecided(pub String);
 
 /// Registers the moderator and policy kinds with `registry`, and the
 /// moderator and its policy as facets of which a channel has exactly one,

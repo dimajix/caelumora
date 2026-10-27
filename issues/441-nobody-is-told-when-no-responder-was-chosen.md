@@ -1,6 +1,6 @@
 # 441 — Nobody is told when a responder policy could not choose who answers
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -40,3 +40,20 @@ just silent. For a chain cut off at `max_agent_hops` the users are told
 - **2026-10-20** — Opened when [437](437-mentions-of-people-and-failed-decisions-ask-agents.md)
   made a failed decision ask nobody by default; the maintainer decided that telling the users is
   an issue of its own.
+- **2026-10-27** — Decided: `ResponderPolicy::choose` answers `Result<Vec<ActorId>, Undecided>`,
+  and whom to ask when a policy could not choose is the moderator's rule for every policy - the
+  parameter `on_undecided` of `policy_moderator` (`none`, the default, or `all`), which replaces
+  `on_failure` of `decision_policy`. The notice, `ResponderUndecided`, follows every message after
+  which nobody is asked because the policy could not choose, a user's or an agent's. A component's
+  `fail_policy` does not serve instead: it skips a failing component or fails a turn, and neither
+  is "nobody" or "every candidate" - a channel has no turn to fail.
+- **2026-10-27** — Done: `decision_policy` answers `Undecided` when its model does not choose; the
+  `policy_moderator` logs it, asks whom `on_undecided` says and, when that is nobody, tells the
+  users by `ResponderUndecided`, recorded to them (`HistoryEntry::ResponderUndecided`, the REST
+  item `responder_undecided`) and shown by the web UI. The seed's `team-session` names
+  `on_undecided` at its moderator.
+- **2026-10-27** — Decided in review: agents asked under `on_undecided: all` are asked for a
+  reason of their own, `RequestReason::Undecided`, not as `Chosen` - told as chosen, an agent with
+  the `request_reason_prompt_provider` would be told it may stay silent, against what `all` is for.
+  Like a mentioned or nudged agent, it is told nothing. Making the reason a parameter was
+  rejected: a setting nobody would set.

@@ -477,7 +477,8 @@ session_templates:
 # timeout of 5 s, so it is kept loaded for an hour after each decision. The
 # server is local, so what is said may go to it up to the highest level;
 # what is classified with a compartment is not sent, and nobody is asked, as
-# when the model cannot be reached (`on_failure: none`). A template may write
+# when the model cannot be reached (the moderator's `on_undecided: none`),
+# and the users are told so. A template may write
 # the policy itself - its params are the operator's -, a channel created on
 # request only names a bundle that holds one.
 - id: b6f36657-cb30-4fac-8873-c216b46bbf2c
@@ -506,12 +507,14 @@ session_templates:
   - name: main
     components:
     # A message to alice is addressed to her and asks no agent; a decision
-    # model that does not choose in time asks nobody either (issue 437).
+    # model that does not choose in time asks nobody either (issue 437),
+    # and the users are told so (issue 441).
     - id: moderator
       kind: policy_moderator
       params:
         max_agent_hops: 3
         mentions_replace_policy: anyone
+        on_undecided: none
     - id: responders
       kind: decision_policy
       params:
@@ -520,7 +523,6 @@ session_templates:
         model: "nimble:9b"
         keep_alive: 1h
         max_responders: 2
-        on_failure: none
         destination: { level: strictly_confidential }
     internal_actors:
     - Approver:

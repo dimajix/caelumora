@@ -1,11 +1,12 @@
-//! The `policy_moderator` component: the moderator every channel has unless
-//! it is configured with another (issue 174). It lets every event go where
-//! every channel delivers it (issue 418), asks every agent a message
-//! `@`-mentions to respond, and asks the `ResponderPolicy` of its channel,
-//! its slot, whom to ask when nobody was mentioned (issue 44). Whose mention
-//! replaces the policy is `mentions_replace_policy` (parameter, default
-//! `anyone`; issue 437): a mention of any participant, so that a message to
-//! a person asks no agent the policy would choose, or of an agent alone.
+//! The `policy_moderator` component: the moderator every channel has unless it is configured with
+//! another (issue 174). It lets every event go where every channel delivers it (issue 418), asks
+//! every agent a message `@`-mentions to respond, and asks the `ResponderPolicy` of its channel,
+//! its slot, whom to ask when nobody was mentioned (issue 44). Whose mention replaces the policy is
+//! `mentions_replace_policy` (parameter, default `anyone`; issue 437): a mention of any
+//! participant, so that a message to a person asks no agent the policy would choose, or of an agent
+//! alone. Whom it asks when the policy could not choose is `on_undecided` (parameter, default
+//! `none`; issue 441): nobody, and the users are told so, or every agent the policy could have
+//! chosen.
 //!
 //! An agent's message that makes other agents respond is a hop of a chain
 //! between agents, whether they were mentioned or chosen by the policy. The
@@ -25,7 +26,7 @@
 
 use crate::actor::Actor;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
+use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing, Undecided};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_model::message::Message;
@@ -82,16 +83,45 @@ impl MentionsReplacePolicy {
     }
 }
 
-/// A moderator that delivers like every other and asks whom `policy` chooses
-/// to respond when a message mentions nobody whose mention replaces it
-/// (`mentions_replace_policy`) - in a chain between agents only up to
-/// `max_agent_hops` hops, and for no event `max_span_depth` deep -, told the
-/// last `context_messages` messages heard before the message.
+/// Whom the moderator asks when its policy could not choose (issue 441).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum OnUndecided {
+    /// Nobody, and the users are told so: a policy that is slow or failing leaves the agents quiet
+    /// rather than makes every one of them answer (issue 437).
+    #[default]
+    None,
+    /// Every agent the policy could have chosen, so that nothing said is left unanswered.
+    All,
+}
+
+impl OnUndecided {
+    /// The parameter `on_undecided` of a moderator's `params`, `None` if it has none.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if it is neither `none` nor `all`.
+    fn of_params(params: &Value) -> Result<Self, ComponentError> {
+        match params.get("on_undecided") {
+            None => Ok(Self::default()),
+            Some(value) => match value.as_str() {
+                Some("none") => Ok(Self::None),
+                Some("all") => Ok(Self::All),
+                _ => Err(ComponentError::InvalidConfig("parameter 'on_undecided' must be 'none' or 'all'".to_string())),
+            },
+        }
+    }
+}
+
+/// A moderator that delivers like every other and asks whom `policy` chooses to respond when a
+/// message mentions nobody whose mention replaces it (`mentions_replace_policy`), or whom
+/// `on_undecided` says if the policy could not choose - in a chain between agents only up to
+/// `max_agent_hops` hops, and for no event `max_span_depth` deep -, told the last
+/// `context_messages` messages heard before the message.
 #[derive(Debug)]
 pub struct PolicyModerator {
     actors: Mutex<ModeratorActors>,
     policy: ComponentImpl<dyn ResponderPolicy>,
     mentions_replace_policy: MentionsReplacePolicy,
+    on_undecided: OnUndecided,
     max_agent_hops: u32,
     max_span_depth: i32,
     /// The messages heard, the oldest first, at most `context_messages`.
@@ -105,6 +135,7 @@ impl PolicyModerator {
             actors: Mutex::new(ModeratorActors::new()),
             policy,
             mentions_replace_policy: MentionsReplacePolicy::default(),
+            on_undecided: OnUndecided::default(),
             max_agent_hops,
             max_span_depth: DEFAULT_MAX_SPAN_DEPTH,
             heard: Mutex::default(),
@@ -116,6 +147,11 @@ impl PolicyModerator {
     /// `mentions_replace_policy` says.
     pub fn with_mentions_replace_policy(self, mentions_replace_policy: MentionsReplacePolicy) -> Self {
         Self { mentions_replace_policy, ..self }
+    }
+
+    /// This moderator, asking whom `on_undecided` says when its policy could not choose.
+    fn with_on_undecided(self, on_undecided: OnUndecided) -> Self {
+        Self { on_undecided, ..self }
     }
 
     /// This moderator, asking nobody to respond to an event `max_span_depth`
@@ -177,9 +213,9 @@ impl PolicyModerator {
         }
     }
 
-    /// Whom to ask to respond to the answer `messages` of `event` - a turn
-    /// that finished, or a message said outside of any turn (issue 258) -
-    /// and, at the limit of a chain, the notice that nobody is.
+    /// Whom to ask to respond to the answer `messages` of `event` - a turn that finished, or a
+    /// message said outside of any turn (issue 258) - and, at the limit of a chain or when nobody
+    /// is asked since the policy could not choose, the notice that nobody is.
     async fn ask(&self, event: &Envelope, messages: &[Message]) -> Routing {
         // What there is to hear of it, by the rule every agent hears by
         // (issue 224): nothing, e.g. of a response of tool calls only or of
@@ -218,9 +254,31 @@ impl PolicyModerator {
         // not consulted, so a rotation is left as it is.
         let (ask, reason) = match mentioned {
             Some(mentioned) => (mentioned, RequestReason::Mentioned),
-            None => (self.policy.choose(event, &conversation, candidates).await, RequestReason::Chosen),
+            None => {
+                let candidate_ids = candidates.iter().map(|candidate| candidate.id).collect();
+                match self.policy.choose(event, &conversation, candidates).await {
+                    Ok(chosen) => (chosen, RequestReason::Chosen),
+                    Err(undecided) => return self.undecided(&undecided, messages, candidate_ids, users, agent_hops),
+                }
+            }
         };
         Routing { ask, reason, agent_hops, ..Routing::default() }
+    }
+
+    /// Whom to ask to respond to the response `messages` when the policy could not choose among
+    /// `candidates` (issue 441): whom `on_undecided` says - if nobody, the `users` are told so by a
+    /// `ResponderUndecided`.
+    fn undecided(&self, undecided: &Undecided, messages: &[Message], candidates: Vec<ActorId>, users: Vec<ActorId>, agent_hops: u32) -> Routing {
+        warn!(candidates = candidates.len(), on_undecided = ?self.on_undecided, "The responder policy could not choose who responds: {undecided}");
+        let ask = match self.on_undecided {
+            OnUndecided::All => candidates,
+            OnUndecided::None => Vec::new(),
+        };
+        let notices = match (ask.is_empty(), messages.last()) {
+            (true, Some(last)) => vec![(users, Notice::ResponderUndecided { message: last.id })],
+            _ => Vec::new(),
+        };
+        Routing { ask, reason: RequestReason::Undecided, agent_hops, notices, ..Routing::default() }
     }
 
     /// Tells that the response `messages` of `event` made nobody respond,
@@ -384,6 +442,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                     .ok_or_else(|| ComponentError::InvalidConfig("parameter 'max_span_depth' must be a number of at least 0".to_string()))?,
             };
             let mentions_replace_policy = MentionsReplacePolicy::of_params(&descriptor.params)?;
+            let on_undecided = OnUndecided::of_params(&descriptor.params)?;
             let context_messages = match descriptor.params.get("context_messages") {
                 None => DEFAULT_CONTEXT_MESSAGES,
                 Some(value) => value.as_u64().and_then(|count| usize::try_from(count).ok())
@@ -394,7 +453,8 @@ pub fn register(registry: &mut ComponentRegistry) {
             let mut facets = ComponentFacets::empty();
             let moderator = PolicyModerator::new(policy, max_agent_hops, context_messages)
                 .with_max_span_depth(max_span_depth)
-                .with_mentions_replace_policy(mentions_replace_policy);
+                .with_mentions_replace_policy(mentions_replace_policy)
+                .with_on_undecided(on_undecided);
             facets.insert::<dyn Moderator>(Arc::new(moderator));
             Ok(facets)
         },
@@ -480,10 +540,10 @@ mod tests {
 
     #[async_trait]
     impl ResponderPolicy for Recording {
-        async fn choose(&self, _event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
+        async fn choose(&self, _event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
             let said = messages.iter().filter_map(|message| message.content.clone()).collect();
             self.0.lock().unwrap().push((said, candidates));
-            Vec::new()
+            Ok(Vec::new())
         }
     }
 
@@ -750,6 +810,52 @@ mod tests {
         let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
         let cut_off = Notice::ChainCutOff { message: messages[0].id, max_agent_hops: 2, not_asked: Vec::new() };
         assert_eq!(told(&moderator.route(&event).await), [(HashSet::from([user, agents[0]]), cut_off)], "told even when nobody was mentioned");
+    }
+
+    /// A policy that cannot choose.
+    #[derive(Debug)]
+    struct Failing;
+
+    #[async_trait]
+    impl ResponderPolicy for Failing {
+        async fn choose(&self, _event: &Envelope, _messages: &[Message], _candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+            Err(Undecided("no answer".to_string()))
+        }
+    }
+
+    /// Issue 441: when its policy could not choose, the moderator asks nobody and tells the users
+    /// so - after a user's message and after an agent's alike -, or asks every candidate, for being
+    /// undecided, and tells nothing.
+    #[tokio::test]
+    async fn a_policy_that_could_not_choose_asks_nobody_and_the_users_are_told() {
+        let moderator = PolicyModerator::new(policy(Failing), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
+        let agents = add_agents(&moderator);
+        let user = ActorId::User(UserId::new());
+        moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
+
+        for sender in [user, agents[0]] {
+            let event = message_from(sender, "who knows?", Vec::new());
+            let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
+            let routing = moderator.route(&event).await;
+            assert!(routing.ask.is_empty(), "nobody by default");
+            assert_eq!(routing.notices, [(vec![user], Notice::ResponderUndecided { message: messages[0].id })], "the users, naming the message");
+        }
+
+        let moderator = PolicyModerator::new(policy(Failing), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES).with_on_undecided(OnUndecided::All);
+        let agents = add_agents(&moderator);
+        moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
+        let routing = moderator.route(&message_from(user, "who knows?", Vec::new())).await;
+        assert_eq!(routing.ask.into_iter().collect::<HashSet<_>>(), HashSet::from([agents[0], agents[2]]), "every candidate, as configured");
+        assert_eq!(routing.reason, RequestReason::Undecided, "not chosen: none of them may stay silent");
+        assert!(routing.notices.is_empty(), "somebody is asked: nothing to tell");
+    }
+
+    #[test]
+    fn whom_to_ask_when_the_policy_could_not_choose_is_configured() {
+        let of = |params| OnUndecided::of_params(&params);
+        assert_eq!(of(serde_json::json!({})).unwrap(), OnUndecided::None, "nobody by default");
+        assert_eq!(of(serde_json::json!({ "on_undecided": "all" })).unwrap(), OnUndecided::All);
+        assert!(of(serde_json::json!({ "on_undecided": "some" })).is_err());
     }
 
     #[tokio::test]

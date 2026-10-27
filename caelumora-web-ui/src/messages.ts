@@ -238,6 +238,11 @@ export function chainCutOffNotice(maxAgentHops: number, notAsked: ActorId[], at:
   return {id: entryId(position), role: 'System', content: null, chainCutOff: {maxAgentHops, notAsked}, timestamp: at};
 }
 
+/** The notice that it could not be decided who responds, so nobody was asked (issue 441). */
+export function responderUndecidedNotice(at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, responderUndecided: true, timestamp: at};
+}
+
 /** The notice that `agentName` did not answer again, for `reason` (issue 234). */
 export function retryRejectedNotice(reason: RetryRefused, agentName: string | undefined, at: string, position?: number): Message {
   return {id: entryId(position), role: 'System', content: null, sender_name: agentName, retryRejected: reason, timestamp: at};
@@ -341,6 +346,9 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
     if ('chain_cut_off' in item) {
       const {max_agent_hops, not_asked, at} = item.chain_cut_off;
       return [chainCutOffNotice(max_agent_hops, not_asked, at, item.seq)];
+    }
+    if ('responder_undecided' in item) {
+      return [responderUndecidedNotice(item.responder_undecided.at, item.seq)];
     }
     if ('message_rejected' in item) {
       const {rejected, reason, at} = item.message_rejected;

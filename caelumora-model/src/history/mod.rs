@@ -125,6 +125,10 @@ pub enum HistoryEntry {
     /// are the agents it mentioned. Told by the moderator, in the system's
     /// name, to whom it names.
     ChainCutOff { message: MessageId, max_agent_hops: u32, not_asked: Vec<ActorId>, at: DateTime<Utc> },
+    /// The responder policy could not choose who responds to the response ending in `message` at
+    /// `at` (issue 441), and nobody was asked. Told by the moderator, in the system's name, to the
+    /// users.
+    ResponderUndecided { message: MessageId, at: DateTime<Utc> },
     /// What its sender sent - an event of the kind `rejected`, about
     /// `message` if it is one - was not let into the channel at `at`, for
     /// `reason` (issues 304, 417): told to the sender alone, in the system's
@@ -630,7 +634,7 @@ impl Chain<Recorded> {
             HistoryEntry::Fitted { .. } | HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
-            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => true,
@@ -657,7 +661,7 @@ impl HistoryEntry {
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
-            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => true,
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => false,
             // Recorded to be delivered, not read (issue 223): neither an item
@@ -679,7 +683,7 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => true,
             HistoryEntry::HistoryShared { .. } | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. }
-            | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => false,
         }
@@ -697,7 +701,7 @@ impl HistoryEntry {
             HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
-            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => None,
@@ -720,7 +724,7 @@ impl HistoryEntry {
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
-            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => false,
@@ -735,7 +739,7 @@ impl HistoryEntry {
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
-            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => None,
@@ -769,7 +773,7 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => Recipients::members(true),
             HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { to: None, .. }
             | HistoryEntry::ActivityFinished { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } => Recipients::members(false),
-            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. }
+            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. } | HistoryEntry::MessageRejected { .. }
             | HistoryEntry::ResponseRequested { .. } => Recipients::NOBODY,
             HistoryEntry::CommandRequested { agent: named, .. } | HistoryEntry::RetryRequested { author: named, .. } => {
                 Recipients::only(Some(*named).filter(|named| matches!(named, ActorId::Agent(_))).into_iter().collect())
@@ -820,6 +824,7 @@ impl HistoryEntry {
             HistoryEntry::RetryAccepted { target, .. } => ActorEvent::RetryAccepted { target },
             HistoryEntry::RetryRejected { target, reason, .. } => ActorEvent::RetryRejected { target, reason },
             HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, .. } => ActorEvent::ChainCutOff { message, max_agent_hops, not_asked },
+            HistoryEntry::ResponderUndecided { message, .. } => ActorEvent::ResponderUndecided { message },
             HistoryEntry::MessageRejected { rejected, message, reason, .. } => ActorEvent::MessageRejected { rejected, message, reason },
             HistoryEntry::ResponseRequested { reason, .. } => ActorEvent::ResponseRequested { reason },
             HistoryEntry::CommandRequested { agent, command, args, .. } => ActorEvent::CommandRequested { command, args, agent },
@@ -853,7 +858,7 @@ impl HistoryEntry {
             HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. }
             | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
-            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => Some(self.clone()),
@@ -874,7 +879,7 @@ impl HistoryEntry {
             HistoryEntry::ParticipantJoined { by, .. } | HistoryEntry::ParticipantLeft { by, .. } | HistoryEntry::HistoryShared { by, .. }
             | HistoryEntry::CommandRequested { by, .. } | HistoryEntry::RetryRequested { by, .. } | HistoryEntry::ApprovalRequested { by, .. } | HistoryEntry::ApprovalDecided { by, .. }
             | HistoryEntry::ApprovalRequestWithdrawn { by, .. } | HistoryEntry::QuestionRequested { by, .. } | HistoryEntry::QuestionClosed { by, .. } => *by,
-            HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => ActorId::System,
+            HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => ActorId::System,
             HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } => ActorId::None,
         }
     }
@@ -892,7 +897,7 @@ impl HistoryEntry {
             HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
-            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => None,
@@ -992,6 +997,7 @@ mod tests {
             ActorEvent::RetryAccepted { target: RetryTarget::Turn(turn_id) },
             ActorEvent::RetryRejected { target: RetryTarget::Turn(turn_id), reason: RetryRefused::NotLast },
             ActorEvent::ChainCutOff { message: heard.id, max_agent_hops: 3, not_asked: vec![agent] },
+            ActorEvent::ResponderUndecided { message: heard.id },
             ActorEvent::MessageRejected { rejected: "MessageModified".to_string(), message: Some(heard.id), reason: Rejection::Invalid },
             ActorEvent::ResponseRequested { reason: RequestReason::Mentioned },
             ActorEvent::HistoryShared { participant: user, from: Position::new(3), by: agent, by_name: "agent".to_string() },

@@ -143,7 +143,9 @@ answers - deciding there what may be shown, what is a refusal and what is a fail
     `message::ProcessingError` - each with `Failed`, a failure in words that may be shown, and the
     view's and the store's errors, judged as those are;
 *   a `ScopeMember` answers `StoreResult`; what lies behind an entity - a workspace's place, an
-    artifact's content - is its storage too, and a failure to remove it a `StoreError::Backend`.
+    artifact's content - is its storage too, and a failure to remove it a `StoreError::Backend`;
+*   a responder policy answers `moderator::Undecided` when it could not choose, in words for the
+    log alone, without anything that was said.
 
 The skills' component turns a `SkillError` into a `ToolError` for its tools, into a `CommandError`
 for its commands, into a `CompactionError` when the context is compacted and into a `ContextError`

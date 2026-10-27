@@ -299,11 +299,12 @@ a step of a plan began, how turns ended, commands carried out with what they ans
 it (`activity_finished`), who joined or left the channel, by whose act and named as they were then
 (`participant_joined`, `participant_left`), the notices its reader was given - an answer to a
 request to answer again (`retry_accepted`, `retry_rejected`), a chain cut off (`chain_cut_off`),
-something of theirs not let in (`message_rejected`), a request to respond (`response_requested`) -,
-and - in an agent's history only - compactions of its context and what it was given to read, as
-said items. A reader is given what went to them: a private answer, a refusal, a request to the
-one it went to. Read from another channel, a history holds only the messages released, and neither
-a turn's end nor the start of a step.
+that it could not be decided who responds (`responder_undecided`), something of theirs not let in
+(`message_rejected`), a request to respond (`response_requested`) -, and - in an agent's history
+only - compactions of its context and what it was given to read, as said items. A reader is given
+what went to them: a private answer, a refusal, a request to the one it went to. Read from another
+channel, a history holds only the messages released, and neither a turn's end nor the start of a
+step.
 
 Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless asked, at most 200)
 before `?before=`, the last ones without it, as `{"items": […], "earlier": …}`. `earlier` is the

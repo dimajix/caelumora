@@ -11,16 +11,14 @@ use caelumora_model::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// An item of a history (issue 258), as the API gives it: a message said -
-/// `M`, the channel's `Message` or an agent's `HistoryMessageResponse` -,
-/// where a step of a turn's plan began (issue 263) or how a turn ended, and
-/// whose it was. Written as an object named by its kind: `{"said": …}`,
-/// `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`,
-/// `{"turn_given_up": {…}}`, `{"command_executed": {…}}`, `{"compacted": {…}}`,
-/// `{"participant_joined": {…}}`, `{"participant_left": {…}}`, and the
-/// notices a reader was given (issue 417): `{"command_failed": {…}}`,
-/// `{"retry_accepted": {…}}`, `{"retry_rejected": {…}}`,
-/// `{"chain_cut_off": {…}}`, `{"message_rejected": {…}}`,
+/// An item of a history (issue 258), as the API gives it: a message said - `M`, the channel's
+/// `Message` or an agent's `HistoryMessageResponse` -, where a step of a turn's plan began (issue
+/// 263) or how a turn ended, and whose it was. Written as an object named by its kind:
+/// `{"said": …}`, `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`, `{"turn_given_up": {…}}`,
+/// `{"command_executed": {…}}`, `{"compacted": {…}}`, `{"participant_joined": {…}}`,
+/// `{"participant_left": {…}}`, and the notices a reader was given (issue 417):
+/// `{"command_failed": {…}}`, `{"retry_accepted": {…}}`, `{"retry_rejected": {…}}`,
+/// `{"chain_cut_off": {…}}`, `{"responder_undecided": {…}}`, `{"message_rejected": {…}}`,
 /// `{"response_requested": {…}}`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +51,8 @@ pub enum HistoryItemResponse<M> {
     RetryRejected { target: RetryTarget, reason: RetryRefused, actor: ActorId, at: DateTime<Utc> },
     /// A chain between agents reached its limit (issue 200).
     ChainCutOff { message: MessageId, max_agent_hops: u32, not_asked: Vec<ActorId>, at: DateTime<Utc> },
+    /// It could not be decided who responds to `message`, and nobody was asked (issue 441).
+    ResponderUndecided { message: MessageId, at: DateTime<Utc> },
     /// What the reader sent was not let into the channel (issue 304).
     MessageRejected { rejected: String, message: Option<MessageId>, reason: Rejection, at: DateTime<Utc> },
     /// The reader was asked to respond, to what `by` said or nudged, for
@@ -92,6 +92,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::RetryAccepted { target, actor, at } => Some(Self::RetryAccepted { target, actor, at }),
             HistoryEntry::RetryRejected { target, reason, actor, at } => Some(Self::RetryRejected { target, reason, actor, at }),
             HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, at } => Some(Self::ChainCutOff { message, max_agent_hops, not_asked, at }),
+            HistoryEntry::ResponderUndecided { message, at } => Some(Self::ResponderUndecided { message, at }),
             HistoryEntry::MessageRejected { rejected, message, reason, at } => Some(Self::MessageRejected { rejected, message, reason, at }),
             HistoryEntry::ResponseRequested { by, reason, at } => Some(Self::ResponseRequested { by, reason, at }),
             // What a newcomer was given of the history records a delivery;

@@ -15,17 +15,12 @@
 //! that a sender is named as the options are. Beyond `MAX_STATE_TOKENS`
 //! the oldest is left out first.
 //!
-//! What was said leaves the system where the endpoint lies outside it: it
-//! is sent only if it may flow to the endpoint's `destination` (`public`
-//! unless configured), asked in the context of the event routed. What was
-//! said before is left out if it may not; what is to be answered keeps the
-//! model from choosing.
-//! Whatever keeps the model from choosing - that, a timeout, an error, too
-//! many candidates - asks whom `on_failure` says: nobody by default (issue
-//! 437), so that a model that is slow or down leaves the agents quiet
-//! rather than makes every one of them answer; `all` asks everyone, so that
-//! nothing said is left unanswered. It is logged, without anything that was
-//! said.
+//! What was said leaves the system where the endpoint lies outside it: it is sent only if it may
+//! flow to the endpoint's `destination` (`public` unless configured), asked in the context of the
+//! event routed. What was said before is left out if it may not; what is to be answered keeps the
+//! model from choosing. Whatever keeps the model from choosing - that, a timeout, an error, too
+//! many candidates - is answered `Undecided`, without anything that was said: whom to ask then is
+//! the moderator's to decide (issue 441).
 //!
 //! Its params say where what it is given goes, so only an operator
 //! configures it (`ComponentKind::operator_only`).
@@ -42,11 +37,10 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
-use caelumora_runtime::moderator::ResponderPolicy;
+use caelumora_runtime::moderator::{ResponderPolicy, Undecided};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
-use tracing::warn;
 
 pub const DECISION_POLICY_KIND: &str = "decision_policy";
 
@@ -60,17 +54,6 @@ const RESPONDENT: &str = "respondent";
 /// estimates them: half of the 8,192 a decision model reads, the rest left
 /// to the questions - up to 26 options, each with its introduction.
 const MAX_STATE_TOKENS: u64 = 4096;
-
-/// Whom to ask when the model does not choose.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum OnFailure {
-    /// Every candidate.
-    All,
-    /// Nobody (issue 437).
-    #[default]
-    None,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,8 +73,6 @@ struct DecisionPolicyConfig {
     threshold: f64,
     #[serde(default = "default_max_responders")]
     max_responders: usize,
-    #[serde(default)]
-    on_failure: OnFailure,
     /// What the server is cleared for: where what was said goes. Left out,
     /// public.
     #[serde(default)]
@@ -149,7 +130,7 @@ fn default_max_responders() -> usize {
 
 /// Why the model did not choose.
 #[derive(Debug, thiserror::Error)]
-enum Undecided {
+enum NoChoice {
     #[error("what was said may not be sent to the decision model at {0}")]
     NotCleared(String),
     #[error("{0} candidates are more than a decision model is asked about")]
@@ -167,7 +148,6 @@ pub struct DecisionPolicy {
     client: DecisionClient,
     threshold: f64,
     max_responders: usize,
-    on_failure: OnFailure,
     destination: Classification,
     profile: ModelProfile,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -177,21 +157,11 @@ pub struct DecisionPolicy {
 
 #[async_trait]
 impl ResponderPolicy for DecisionPolicy {
-    async fn choose(&self, event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
+    async fn choose(&self, event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
         if candidates.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        match self.decide(event, messages, &candidates).await {
-            Ok(chosen) => chosen,
-            Err(undecided) => {
-                let asked = match self.on_failure {
-                    OnFailure::All => candidates.iter().map(|candidate| candidate.id).collect(),
-                    OnFailure::None => Vec::new(),
-                };
-                warn!(candidates = candidates.len(), asked = asked.len(), "The decision model did not choose who responds: {undecided}");
-                asked
-            }
-        }
+        self.decide(event, messages, &candidates).await.map_err(|why| Undecided(why.to_string()))
     }
 }
 
@@ -203,7 +173,7 @@ impl DecisionPolicy {
     /// `NotCleared` if what `event` said may not flow to the destination;
     /// `TooMany` beyond 64 candidates; `Model` if the model gave no answer,
     /// or one that names no option.
-    async fn decide(&self, event: &Envelope, messages: &[Message], candidates: &[ActorDescription]) -> Result<Vec<ActorId>, Undecided> {
+    async fn decide(&self, event: &Envelope, messages: &[Message], candidates: &[ActorDescription]) -> Result<Vec<ActorId>, NoChoice> {
         let state = self.state(event, messages)?;
         let options = options(candidates);
         if candidates.len() < MAX_OPTIONS {
@@ -217,7 +187,7 @@ impl DecisionPolicy {
             }).collect::<Result<Vec<_>, _>>()?;
             Ok(self.above_threshold(candidates, &probabilities, None))
         } else {
-            Err(Undecided::TooMany(candidates.len()))
+            Err(NoChoice::TooMany(candidates.len()))
         }
     }
 
@@ -229,7 +199,7 @@ impl DecisionPolicy {
     ///
     /// # Errors
     /// `NotCleared` if what `event` said may not flow to the destination.
-    fn state(&self, event: &Envelope, messages: &[Message]) -> Result<String, Undecided> {
+    fn state(&self, event: &Envelope, messages: &[Message]) -> Result<String, NoChoice> {
         let answered: HashSet<MessageId> = event.event.messages().iter().map(|message| message.id).collect();
         // Each text, and whether it is to be answered.
         let mut texts = VecDeque::new();
@@ -237,7 +207,7 @@ impl DecisionPolicy {
             let to_answer = answered.contains(&message.id);
             if !self.confidentiality.may_publish(&event.security, &message.classification, &self.destination) {
                 if to_answer {
-                    return Err(Undecided::NotCleared(self.client.shown()));
+                    return Err(NoChoice::NotCleared(self.client.shown()));
                 }
                 continue;
             }
@@ -260,7 +230,7 @@ impl DecisionPolicy {
     /// Whom the `choice` `answer` chooses: nobody if it chose nobody, else
     /// the candidate it chose and those above the threshold besides, the
     /// most probable first, at most `max_responders`.
-    fn chosen_by_choice(&self, answer: Option<&Answer>, candidates: &[ActorDescription], options: &[String]) -> Result<Vec<ActorId>, Undecided> {
+    fn chosen_by_choice(&self, answer: Option<&Answer>, candidates: &[ActorDescription], options: &[String]) -> Result<Vec<ActorId>, NoChoice> {
         let Some(Answer::Choice { choice, probabilities }) = answer else {
             return Err(self.invalid(format!("the question '{RESPONDENT}' is not answered with a choice")));
         };
@@ -284,8 +254,8 @@ impl DecisionPolicy {
         first.into_iter().chain(ranked).take(self.max_responders).map(|index| candidates[index].id).collect()
     }
 
-    fn invalid(&self, reason: String) -> Undecided {
-        Undecided::Model(DecisionError::InvalidResponse { endpoint: self.client.shown(), reason })
+    fn invalid(&self, reason: String) -> NoChoice {
+        NoChoice::Model(DecisionError::InvalidResponse { endpoint: self.client.shown(), reason })
     }
 }
 
@@ -355,7 +325,6 @@ pub fn register(registry: &mut ComponentRegistry) {
                 client,
                 threshold: config.threshold,
                 max_responders: config.max_responders,
-                on_failure: config.on_failure,
                 destination: config.destination.unwrap_or(Classification::PUBLIC),
                 profile,
                 confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
@@ -438,7 +407,6 @@ mod tests {
             client: DecisionClient::new(config.endpoint, config.model, config.keep_alive, secret_manager).unwrap(),
             threshold: config.threshold,
             max_responders: config.max_responders,
-            on_failure: config.on_failure,
             destination: config.destination.unwrap_or(Classification::PUBLIC),
             profile,
             confidentiality: Arc::new(ConfidentialityRules::default()),
@@ -488,7 +456,7 @@ mod tests {
         let (coder, reviewer) = (agent("Coder", Some("Writes\nthe code.")), agent("Reviewer", None));
         let (event, messages) = said("The test fails.", Classification::PUBLIC);
 
-        let chosen = policy(&url, json!({ "keep_alive": "5m" })).choose(&event, &messages, vec![coder.clone(), reviewer]).await;
+        let chosen = policy(&url, json!({ "keep_alive": "5m" })).choose(&event, &messages, vec![coder.clone(), reviewer]).await.unwrap();
 
         assert_eq!(chosen, [coder.id]);
         assert_eq!(fake.asked(), [json!({
@@ -522,9 +490,9 @@ mod tests {
         ]);
         let candidates = vec![agent("Reviewer", None), agent("Coder", None)];
 
-        policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await;
-        policy(&url, json!({ "sender_format": "xml", "sender_style": "name" })).choose(&event, &messages, candidates.clone()).await;
-        policy(&url, json!({ "sender_format": "none" })).choose(&event, &messages, candidates).await;
+        policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await.unwrap();
+        policy(&url, json!({ "sender_format": "xml", "sender_style": "name" })).choose(&event, &messages, candidates.clone()).await.unwrap();
+        policy(&url, json!({ "sender_format": "none" })).choose(&event, &messages, candidates).await.unwrap();
 
         let states: Vec<Value> = fake.asked().iter().map(|asked| asked["state"].clone()).collect();
         assert_eq!(states, [
@@ -549,7 +517,7 @@ mod tests {
             message(alice, "Alice", MessageRole::User, "Now.", Classification::PUBLIC),
         ]);
 
-        policy(&url, json!({})).choose(&event, &messages, vec![agent("A", None)]).await;
+        policy(&url, json!({})).choose(&event, &messages, vec![agent("A", None)]).await.unwrap();
 
         assert_eq!(fake.asked()[0]["state"], "@alice: Before.\n\n@alice: Now.");
     }
@@ -562,12 +530,12 @@ mod tests {
         let probabilities = json!({ "a": 0.2, "b": 0.45, "c": 0.35, "nobody": 0.0 });
         let url = serve(FakeModel::answering(choosing("b", probabilities))).await;
 
-        assert_eq!(policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await, [b.id], "one by default");
-        assert_eq!(policy(&url, json!({ "max_responders": 3 })).choose(&event, &messages, candidates.clone()).await, [b.id, c.id], "those above the threshold");
-        assert_eq!(policy(&url, json!({ "max_responders": 3, "threshold": 0.5 })).choose(&event, &messages, candidates.clone()).await, [b.id], "the chosen one even below it");
+        assert_eq!(policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await.unwrap(), [b.id], "one by default");
+        assert_eq!(policy(&url, json!({ "max_responders": 3 })).choose(&event, &messages, candidates.clone()).await.unwrap(), [b.id, c.id], "those above the threshold");
+        assert_eq!(policy(&url, json!({ "max_responders": 3, "threshold": 0.5 })).choose(&event, &messages, candidates.clone()).await.unwrap(), [b.id], "the chosen one even below it");
 
         let url = serve(FakeModel::answering(choosing("nobody", json!({ "a": 0.3, "b": 0.3, "c": 0.0, "nobody": 0.4 })))).await;
-        assert!(policy(&url, json!({ "max_responders": 3 })).choose(&event, &messages, candidates).await.is_empty(), "nobody, if that is most probable");
+        assert!(policy(&url, json!({ "max_responders": 3 })).choose(&event, &messages, candidates).await.unwrap().is_empty(), "nobody, if that is most probable");
     }
 
     #[tokio::test]
@@ -578,24 +546,24 @@ mod tests {
         let url = serve(fake.clone()).await;
         let (event, messages) = said("Who?", Classification::PUBLIC);
 
-        assert_eq!(policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await, [candidates[7].id]);
+        assert_eq!(policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await.unwrap(), [candidates[7].id]);
         let questions = fake.asked()[0]["questions"].as_object().unwrap().clone();
         assert_eq!(questions.len(), 30);
         assert_eq!(questions["agent-7"], json!({ "type": "noul", "instructions": "Should this participant respond to the last message? Agent 7" }));
     }
 
+    /// Issue 441: a policy whose model does not choose says so - whom to ask then is the
+    /// moderator's to decide.
     #[tokio::test]
-    async fn a_model_that_fails_asks_whom_the_configuration_says() {
+    async fn a_model_that_fails_leaves_it_undecided() {
         let url = serve(FakeModel::failing(StatusCode::INTERNAL_SERVER_ERROR)).await;
         let (a, b) = (agent("A", None), agent("B", None));
         let (event, messages) = said("Who?", Classification::PUBLIC);
 
-        assert!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone(), b.clone()]).await.is_empty(), "nobody by default");
-        assert_eq!(policy(&url, json!({ "on_failure": "all" })).choose(&event, &messages, vec![a, b]).await.len(), 2, "everyone, as configured");
+        assert!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone(), b.clone()]).await.is_err(), "a model that fails");
 
         let url = serve(FakeModel::answering(choosing("someone", json!({})))).await;
-        let (a, b) = (agent("A", None), agent("B", None));
-        assert_eq!(policy(&url, json!({ "on_failure": "all" })).choose(&event, &messages, vec![a.clone(), b.clone()]).await, [a.id, b.id], "an answer that names no option");
+        assert!(policy(&url, json!({})).choose(&event, &messages, vec![a, b]).await.is_err(), "an answer that names no option");
     }
 
     #[tokio::test]
@@ -605,9 +573,9 @@ mod tests {
         let a = agent("A", None);
         let (event, messages) = said("Internal matters.", Classification::general(Confidentiality::Internal));
 
-        assert!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone()]).await.is_empty(), "asked as on failure: nobody");
+        assert!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone()]).await.is_err(), "undecided");
         assert!(fake.asked().is_empty(), "nothing sent to a public endpoint");
-        assert_eq!(policy(&url, json!({ "destination": { "level": "internal" } })).choose(&event, &messages, vec![a.clone()]).await, [a.id]);
+        assert_eq!(policy(&url, json!({ "destination": { "level": "internal" } })).choose(&event, &messages, vec![a.clone()]).await.unwrap(), [a.id]);
         assert_eq!(fake.asked().len(), 1, "sent where it is cleared");
     }
 
@@ -623,7 +591,6 @@ mod tests {
         assert!(checked(json!({})).is_ok(), "every one has a default");
         assert!(checked(json!({ "threshold": 1.5 })).is_err());
         assert!(checked(json!({ "max_responders": 0 })).is_err());
-        assert!(checked(json!({ "on_failure": "some" })).is_err());
         assert!(checked(json!({ "sender_format": "xml", "sender_style": "name" })).is_ok());
         assert!(checked(json!({ "sender_format": "header" })).is_err());
         assert!(checked(json!({ "endpoint": { "url": "http://decide.example", "auth": { "type": "bearer", "secret": "DECIDE" } } })).is_ok());

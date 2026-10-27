@@ -342,6 +342,16 @@ pub enum ActorEvent {
         max_agent_hops: u32,
         not_asked: Vec<ActorId>,
     },
+    /// The responder policy could not choose who responds to the response ending in `message`
+    /// (issue 441), and nobody was asked: the response was delivered, but nobody answers it unless
+    /// someone is mentioned. Sent by the moderator in the name of `ActorId::System`, to the users
+    /// of the channel.
+    ///
+    /// Recorded by the channel to whom it was told (`HistoryEntry::ResponderUndecided`); an agent
+    /// takes no note of it.
+    ResponderUndecided {
+        message: MessageId,
+    },
     /// The message `0.id` reads as `0` from now on (issue 234): sent by its
     /// author alone, with the id, sender and role of the message it
     /// modifies and the time it was modified as its `timestamp`. The channel
@@ -434,6 +444,9 @@ pub enum RequestReason {
     /// has anything to add is the policy's guess.
     #[default]
     Chosen,
+    /// Its `ResponderPolicy` could not choose, and the moderator asks every agent the policy could
+    /// have chosen, so that what was said is not left unanswered (issue 441).
+    Undecided,
     /// A user nudged it to go on (issue 278).
     Nudged,
     /// What it responds to mentions it, by its handle or with `@all`.
@@ -502,7 +515,7 @@ impl ActorEvent {
             | ActorEvent::CommandRequested { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::CommandFailed { .. } | ActorEvent::ActivityFinished { .. }
             | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } | ActorEvent::HistoryShared { .. } | ActorEvent::MessageModified(_)
             | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::RetryAccepted { .. }
-            | ActorEvent::RetryRejected { .. } | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. } | ActorEvent::MessageGiven { .. }
+            | ActorEvent::RetryRejected { .. } | ActorEvent::ChainCutOff { .. } | ActorEvent::ResponderUndecided { .. } | ActorEvent::MessageRejected { .. } | ActorEvent::MessageGiven { .. }
             | ActorEvent::ContextCompacted { .. } => false,
         }
     }
@@ -590,6 +603,7 @@ impl ActorEvent {
             ActorEvent::ParticipantLeft { .. } => "ParticipantLeft",
             ActorEvent::HistoryShared { .. } => "HistoryShared",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
+            ActorEvent::ResponderUndecided { .. } => "ResponderUndecided",
             ActorEvent::MessageModified(_) => "MessageModified",
             ActorEvent::MessageRevoked { .. } => "MessageRevoked",
             ActorEvent::MessageReclassified { .. } => "MessageReclassified",
@@ -784,6 +798,7 @@ impl Envelope {
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 HistoryEntry::ChainCutOff { message: *message, max_agent_hops: *max_agent_hops, not_asked: not_asked.clone(), at }
             }
+            ActorEvent::ResponderUndecided { message } => HistoryEntry::ResponderUndecided { message: *message, at },
             ActorEvent::MessageRejected { rejected, message, reason } => HistoryEntry::MessageRejected { rejected: rejected.clone(), message: *message, reason: *reason, at },
             ActorEvent::ResponseRequested { reason } => HistoryEntry::ResponseRequested { by: actor, reason: *reason, at },
             ActorEvent::ActivityFinished { turn_id, activity, output } => HistoryEntry::ActivityFinished { turn_id: *turn_id, actor, activity: activity.clone(), output: output.clone(), at },
@@ -917,6 +932,9 @@ impl Envelope {
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 format!("ChainCutOff(sender_id={}, message={}, max_agent_hops={}, not_asked={})", ctx.sender_id, message, max_agent_hops, not_asked.len())
+            }
+            ActorEvent::ResponderUndecided { message } => {
+                format!("ResponderUndecided(sender_id={}, message={})", ctx.sender_id, message)
             }
             ActorEvent::MessageModified(m) => {
                 format!("MessageModified(sender_id={}, sender_name={}, mid={})", ctx.sender_id, ctx.sender_name, m.id)
@@ -1329,6 +1347,7 @@ mod tests {
             ActorEvent::WakeupRequested,
             ActorEvent::NudgeRequested { participant: present.agents[0] },
             ActorEvent::ChainCutOff { message: MessageId::new(), max_agent_hops: 3, not_asked: Vec::new() },
+            ActorEvent::ResponderUndecided { message: MessageId::new() },
             ActorEvent::MessageRejected { rejected: "CompleteMessageGenerated".to_string(), message: None, reason: Rejection::Forbidden },
         ] {
             let kind = event.kind();
