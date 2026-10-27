@@ -134,6 +134,10 @@ Some rules hold across the endpoints:
     `409 scope_not_empty` if something of its scope is left that the user may not delete; what they
     may is deleted. Purging is as the policy allows, by default the system's alone. A channel is
     purged only with its session.
+*   **A channel can be unavailable.** One whose components cannot be read does not run, though its
+    session does (see [CHANNELS.md](CHANNELS.md#running-channels)): it is listed, read and deleted
+    as any other, says why in `unavailable`, and whatever is to be done in it answers
+    `409 channel_unavailable`.
 *   **Files are reached by their workspace alone**, never through a channel; whoever the workspace's
     access list lets read and who is cleared for its classification reads them, whoever it lets
     change them writes (`403 read_only` otherwise).

@@ -171,6 +171,12 @@ pub struct ChannelResponse {
     /// Whether the requesting user may rename the channel, add or remove
     /// its participants (issue 46) and set its approval rules.
     pub can_change: bool,
+    /// Why the channel does not run though its session does (issue 463): its
+    /// components cannot be read. Whatever is done in the session tries it
+    /// again; until it runs, what is done in it is refused
+    /// (`channel_unavailable`). Absent if it runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
     /// Who took part and left (issue 164), in the order they left, each
     /// with `left`: who removed them and when.
     pub former_participants: Vec<ChannelParticipantResponse>,
@@ -225,6 +231,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             uses_workspace: view.uses_workspace,
             workspace_id: view.workspace_id,
             can_change: view.can_change,
+            unavailable: view.unavailable,
             former_participants: view.former_participants.into_iter().filter_map(ChannelParticipantResponse::of).collect(),
             unread: view.unread.map(UnreadResponse::from),
         }
@@ -435,7 +442,7 @@ mod tests {
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
         let participant = |id, name: Option<&str>| snapshot::ChannelParticipantSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None,
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -458,7 +465,7 @@ mod tests {
 
     #[test]
     fn what_a_place_is_for_is_left_out_where_nothing_was_said_or_read() {
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, id: ChannelId::new(), name: "main".to_string(),
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None, id: ChannelId::new(), name: "main".to_string(),
             uses_workspace: true,
             moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, effective_language: None, can_change: false, participants: Vec::new(), former_participants: Vec::new(), unread: None };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
@@ -491,7 +498,7 @@ mod tests {
             left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(),
             introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
         };
-        let channel = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None,
+        let channel = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -519,7 +526,7 @@ mod tests {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
         let left = Removal::now(alice);
         let participant = |id, left| snapshot::ChannelParticipantSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None,
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),

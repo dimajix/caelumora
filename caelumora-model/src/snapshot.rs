@@ -150,6 +150,9 @@ pub struct ChannelSnapshot {
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
+    /// Why the channel does not run though its session does (issue 463): its
+    /// components cannot be read. `None` if it runs, or its session does not.
+    pub unavailable: Option<String>,
     /// Its participants, in the order of the channel - with
     /// `Detail::PARTICIPANTS`.
     pub participants: Vec<ChannelParticipantSnapshot>,

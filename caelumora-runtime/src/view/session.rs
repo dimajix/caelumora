@@ -3,8 +3,7 @@
 
 use caelumora_model::store::query::{Filter, Query};
 use super::{ChannelView, ViewError, ViewResult, Views};
-use crate::channel::ChannelLoop;
-use crate::session::{Found, SessionLoop};
+use crate::session::{ChannelRun, Found, SessionLoop};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{Channel, ChannelField, Participant};
@@ -68,8 +67,8 @@ fn refusal_of(error: &Error) -> Option<CandidateRefusal> {
     }
 }
 
-/// A channel document of the session, with its loop if it runs.
-type Document = (Arc<Channel>, Option<Arc<ChannelLoop>>);
+/// A channel document of the session, with whether it runs.
+type Document = (Arc<Channel>, Option<ChannelRun>);
 
 impl SessionView {
     pub(super) fn of(views: Views, found: Found) -> Self {
@@ -196,9 +195,9 @@ impl SessionView {
     /// is left out, so that one broken channel does not hide its session.
     pub async fn channels(&self) -> Vec<ChannelView> {
         let mut readable = Vec::new();
-        for (channel, running) in self.channel_documents().await {
+        for (channel, run) in self.channel_documents().await {
             if self.reading(&channel).await == Some(Reading::Whole) {
-                readable.push(ChannelView::of(self.clone(), channel, running, Reading::Whole));
+                readable.push(ChannelView::of(self.clone(), channel, run, Reading::Whole));
             }
         }
         readable
@@ -210,9 +209,9 @@ impl SessionView {
     /// the same as `channels()`.
     pub async fn all_channels(&self) -> Vec<ChannelView> {
         let mut reachable = Vec::new();
-        for (channel, running) in self.channel_documents().await {
+        for (channel, run) in self.channel_documents().await {
             if let Some(reading) = self.reading(&channel).await {
-                reachable.push(ChannelView::of(self.clone(), channel, running, reading));
+                reachable.push(ChannelView::of(self.clone(), channel, run, reading));
             }
         }
         reachable
@@ -226,9 +225,9 @@ impl SessionView {
     /// the viewer may not read it, so that channels cannot be probed.
     pub async fn channel(&self, id: ChannelId) -> ViewResult<ChannelView> {
         let not_found = || ViewError::ChannelNotFound { session: self.id(), channel: id };
-        let (channel, running) = self.document(id).await?.ok_or_else(not_found)?;
+        let (channel, run) = self.document(id).await?.ok_or_else(not_found)?;
         let reading = self.reading(&channel).await.ok_or_else(not_found)?;
-        Ok(ChannelView::of(self.clone(), channel, running, reading))
+        Ok(ChannelView::of(self.clone(), channel, run, reading))
     }
 
     /// The channel named `name`, as an agent's tools ask for one: if the
@@ -239,9 +238,9 @@ impl SessionView {
     /// viewer may not read it.
     pub async fn channel_named(&self, name: &str) -> ViewResult<ChannelView> {
         let not_found = || ViewError::NoChannelNamed(name.to_string());
-        let (channel, running) = self.channel_documents().await.into_iter().find(|(c, _)| c.name == name).ok_or_else(not_found)?;
+        let (channel, run) = self.channel_documents().await.into_iter().find(|(c, _)| c.name == name).ok_or_else(not_found)?;
         let reading = self.reading(&channel).await.ok_or_else(not_found)?;
-        Ok(ChannelView::of(self.clone(), channel, running, reading))
+        Ok(ChannelView::of(self.clone(), channel, run, reading))
     }
 
     /// How the viewer may read `channel`: as a whole, entry by entry, or
@@ -264,7 +263,7 @@ impl SessionView {
     /// permitted, and whether the channel may be read is asked of it.
     async fn document(&self, id: ChannelId) -> ViewResult<Option<Document>> {
         match &self.running {
-            Some(session_loop) => Ok(session_loop.channel(id).map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))),
+            Some(session_loop) => Ok(session_loop.listed_channel(id).map(|(channel, run)| (channel, Some(run)))),
             None if self.session.channels.contains(&id) => {
                 let channel = self.views.stores().channels.get(&SecurityContext::system(), id).await
                     .map_err(|e| ViewError::failed(e, format!("reading channel {id}")))?;
@@ -278,8 +277,8 @@ impl SessionView {
     /// it runs. A channel whose document cannot be read is left out.
     async fn channel_documents(&self) -> Vec<Document> {
         match &self.running {
-            Some(session_loop) => session_loop.channels().into_iter()
-                .map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))
+            Some(session_loop) => session_loop.listed_channels().into_iter()
+                .map(|(channel, run)| (channel, Some(run)))
                 .collect(),
             None => {
                 let store = &self.views.stores().channels;

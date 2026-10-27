@@ -370,6 +370,9 @@ impl From<SessionError> for ApiError {
             SessionError::NotFound(_) => Self::not_found("session_not_found", detail),
             SessionError::TemplateNotFound(_) => Self::not_found("template_not_found", detail),
             SessionError::ChannelNotFound { .. } => Self::not_found("channel_not_found", detail),
+            // Its components cannot be read until their owner shares them again, or the channel is
+            // deleted (issue 463).
+            SessionError::ChannelUnavailable { .. } => Self::conflict("channel_unavailable", detail),
             // The request's fault where the runtime may show why; a store that failed while a
             // bundle was looked for is the server's, and withheld (issue 457).
             SessionError::InvalidComponents(_) => {
@@ -556,6 +559,7 @@ mod tests {
     use std::fmt;
     use axum::body;
     use std::error;
+    use std::sync::Arc;
 
     async fn body_of(error: ApiError) -> (StatusCode, String, Value) {
         let response = REQUEST_ID.scope(Uuid::nil(), async { error.into_response() }).await;
@@ -674,6 +678,8 @@ mod tests {
     fn the_core_s_errors_answer_with_status_and_code() {
         let (session, channel, someone) = (SessionId::new(), ChannelId::new(), ActorId::None);
         assert_eq!(answer(SessionError::ChannelNotFound { session, channel }), (404, "channel_not_found".to_string()));
+        let gone = ComponentError::Bundle { name: "shared".to_string(), cause: StoreError::NotFound { entity: "component_bundle", id: "shared".to_string() } };
+        assert_eq!(answer(SessionError::ChannelUnavailable { session, channel, cause: Arc::new(gone) }), (409, "channel_unavailable".to_string()));
         assert_eq!(answer(Error::new(StoreError::NameTaken { entity: "agent" }).context("renaming")), (409, "name_taken".to_string()), "of every kind, also below a context");
         let channel_error = |e: ChannelError| answer(e).1;
         assert_eq!(channel_error(ChannelError::AlreadyParticipant { participant: someone, channel }), "already_participant");

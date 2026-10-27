@@ -14,14 +14,15 @@ use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::store::{StoreError, StoreResultExt, Stored};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::ChannelId;
 use caelumora_model::group::Group;
 use crate::group::keep_participants;
 use std::sync::Arc;
-use super::{ChannelEntry, SessionError, SessionLoop, purge_channel_document, require_classification};
+use super::{ChannelEntry, ChannelRun, Listed, SessionError, SessionLoop, purge_channel_document, require_classification};
 use futures::future;
+use crate::component::ComponentError;
 
 /// What a new channel should be (issue 09), as it was asked: its name and
 /// language are made from it by `create_channel` (issue 248).
@@ -51,11 +52,34 @@ pub struct ChannelSpec {
     pub internal_actors: Vec<InternalActorTemplate>,
 }
 
+/// What `error` of building a channel's loop says if its components cannot be read
+/// (`ComponentError::is_unavailable`, issue 463); `error` itself otherwise - a store that failed
+/// among it.
+fn unavailable_components(error: Error) -> Result<ComponentError, Error> {
+    match error.downcast::<SessionError>() {
+        Ok(SessionError::InvalidComponents(cause)) if cause.is_unavailable() => Ok(cause),
+        Ok(other) => Err(other.into()),
+        Err(error) => Err(error),
+    }
+}
+
 impl SessionLoop {
     /// The running channels, in the order of the session: those from its
     /// template first, then those created later, oldest first.
     pub fn channels(&self) -> Vec<Arc<ChannelLoop>> {
         self.session().channels.iter().filter_map(|c| self.channel(*c)).collect()
+    }
+
+    /// Every channel the session lists, in its order, with its loop if it
+    /// runs or why it does not (issue 463).
+    pub(crate) fn listed_channels(&self) -> Vec<Listed> {
+        self.session().channels.iter().filter_map(|c| self.listed_channel(*c)).collect()
+    }
+
+    /// The channel `channel_id` with its loop if it runs, or why it does not
+    /// (issue 463); `None` if the session lists no such channel.
+    pub(crate) fn listed_channel(&self, channel_id: ChannelId) -> Option<Listed> {
+        self.channels.get(&channel_id).map(|entry| entry.listed())
     }
 
     /// Has every channel of the session follow whether its agents exist
@@ -83,8 +107,9 @@ impl SessionLoop {
         future::join_all(self.channels().iter().map(|channel| channel.leave_actors())).await;
     }
 
+    /// The channel `channel_id` if it runs.
     pub fn channel(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
-        self.channels.get(&channel_id).map(|entry| Arc::clone(&entry.channel))
+        self.channels.get(&channel_id).and_then(|entry| entry.running().map(Arc::clone))
     }
 
     /// The channel `channel_id`, if the user `context` acts for may read it,
@@ -93,20 +118,68 @@ impl SessionLoop {
     /// issue 304), by `GetChannel` and their clearance for it as a whole.
     ///
     /// # Errors
-    /// `SessionError::ChannelNotFound` if there is no such channel, and
-    /// equally if `context` may not read it, so that channels cannot be
-    /// probed.
+    /// - `SessionError::ChannelNotFound` if there is no such channel, and
+    ///   equally if `context` may not read it, so that channels cannot be
+    ///   probed.
+    /// - `SessionError::ChannelUnavailable` if they may read it, but it does
+    ///   not run: its components cannot be read (issue 463).
     pub async fn channel_for(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
-        let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
-        let channel = self.channel(channel_id).ok_or_else(not_found)?;
-        let at = Place { channel: channel_id, classification: channel.classification(), session: self.privacy() };
-        channel_reading(self.access_policy.as_ref(), self.confidentiality.as_ref(), context, &channel.security_attributes(), &at, ChannelReader::Cleared).await
-            .ok_or_else(not_found)?;
-        Ok(channel)
+        let (_, run) = self.listed_channel_for(context, channel_id).await?;
+        self.running(channel_id, run)
     }
 
+    /// The loop of the channel `channel_id` if `run` says it runs.
+    ///
+    /// # Errors
+    /// `SessionError::ChannelUnavailable` if it does not (issue 463).
+    fn running(&self, channel_id: ChannelId, run: ChannelRun) -> Result<Arc<ChannelLoop>> {
+        match run {
+            ChannelRun::Running(channel_loop) => Ok(channel_loop),
+            ChannelRun::Unavailable(cause) => Err(SessionError::ChannelUnavailable { session: self.id, channel: channel_id, cause }.into()),
+        }
+    }
+
+    /// The channel `channel_id` with whether it runs, if `context` may read
+    /// it - asked as `channel_for` asks it.
+    ///
+    /// # Errors
+    /// `SessionError::ChannelNotFound` if there is no such channel, and
+    /// equally if `context` may not read it.
+    async fn listed_channel_for(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<Listed> {
+        let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
+        let (channel, run) = self.listed_channel(channel_id).ok_or_else(not_found)?;
+        let at = Place { channel: channel_id, classification: channel.classification.clone(), session: self.privacy() };
+        channel_reading(self.access_policy.as_ref(), self.confidentiality.as_ref(), context, &channel.security_attributes, &at, ChannelReader::Cleared).await
+            .ok_or_else(not_found)?;
+        Ok((channel, run))
+    }
+
+    /// Nothing if every channel the session lists runs.
+    ///
+    /// # Errors
+    /// `SessionError::ChannelUnavailable` for the first that does not (issue
+    /// 463).
+    pub(super) fn require_running(&self) -> Result<()> {
+        for (channel, run) in self.listed_channels() {
+            self.running(channel.id, run)?;
+        }
+        Ok(())
+    }
+
+    /// The channel `channel_id` if it runs, for whoever joins it: not asked
+    /// whether they may read it - joining it decides (`join`).
+    ///
+    /// # Errors
+    /// `SessionError::ChannelNotFound` if the session lists no such channel,
+    /// `SessionError::ChannelUnavailable` if it does not run (issue 463).
+    pub(super) fn channel_to_join(&self, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
+        let (_, run) = self.listed_channel(channel_id).ok_or(SessionError::ChannelNotFound { session: self.id, channel: channel_id })?;
+        self.running(channel_id, run)
+    }
+
+    /// The running channel named `name`.
     pub fn channel_named(&self, name: &str) -> Option<Arc<ChannelLoop>> {
-        self.channels.iter().find(|entry| entry.channel.name() == name).map(|entry| Arc::clone(&entry.channel))
+        self.channels.iter().filter_map(|entry| entry.running().map(Arc::clone)).find(|channel| channel.name() == name)
     }
 
     /// Creates a channel in the running session on behalf of `context` and
@@ -216,7 +289,10 @@ impl SessionLoop {
     /// purged - as if it had never been made.
     async fn abandon_channel(&self, context: &SecurityContext, channel_loop: &Arc<ChannelLoop>) {
         let id = channel_loop.id();
-        let task = self.channels.remove(&id).and_then(|(_, entry)| entry.task);
+        let task = match self.channels.remove(&id) {
+            Some((_, ChannelEntry::Running { task, .. })) => task,
+            _ => None,
+        };
         channel_loop.leave_actors().await;
         if let Some(task) = task {
             task.abort();
@@ -228,12 +304,62 @@ impl SessionLoop {
     }
 
     /// Builds the loop of `channel`, which the session lists, and has the
-    /// session run it: the one place a channel's loop is built.
+    /// session run it.
     pub(super) async fn add_channel_loop(self: &Arc<Self>, channel: &Channel) -> Result<Arc<ChannelLoop>> {
         let channel_loop = ChannelLoop::new(self.channel_runtime(channel.clone())).await?;
-        self.channels.insert(channel.id, ChannelEntry { channel: Arc::clone(&channel_loop), task: None });
+        self.channels.insert(channel.id, ChannelEntry::Running { channel: Arc::clone(&channel_loop), task: None });
         let _ = self.start_tx.send(channel.id);
         Ok(channel_loop)
+    }
+
+    /// Has the session run `channel`, which it lists, as it opens
+    /// (`add_channel_loop`) - or holds it left out, with a warning, if its
+    /// components cannot be read (issue 463): a bundle it names is gone, or
+    /// no longer its owner's to read. The owner of a bundle, a third party,
+    /// must not keep a session from opening, as the owner of an agent's
+    /// personality must not keep its channel from starting.
+    ///
+    /// # Errors
+    /// Whatever else building it reports - a store that failed among it.
+    pub(super) async fn add_listed_channel(self: &Arc<Self>, channel: Channel) -> Result<()> {
+        let Err(error) = self.add_channel_loop(&channel).await else { return Ok(()) };
+        let cause = unavailable_components(error)?;
+        warn!("Channel {} of session {} cannot be run and is left out: {}", channel.id, self.id, cause);
+        self.channels.insert(channel.id, ChannelEntry::Unavailable { channel: Arc::new(channel), cause: Arc::new(cause) });
+        Ok(())
+    }
+
+    /// Builds again the channels left out as the session opened (issue 463),
+    /// as someone opens it while it runs: those whose components can be read
+    /// again run from now on, the others stay left out, with why they still
+    /// cannot run - also one whose store failed, for the session runs
+    /// already. Asked on every request in the session, so logged at
+    /// `debug!`. One deleted while it was built is not started.
+    pub(crate) async fn retry_unavailable(self: &Arc<Self>) {
+        let unavailable: Vec<Arc<Channel>> = self.channels.iter()
+            .filter_map(|entry| match entry.value() {
+                ChannelEntry::Unavailable { channel, .. } => Some(Arc::clone(channel)),
+                ChannelEntry::Running { .. } => None,
+            })
+            .collect();
+        for channel in unavailable {
+            let built = ChannelLoop::new(self.channel_runtime(Channel::clone(&channel))).await;
+            let Some(mut entry) = self.channels.get_mut(&channel.id) else { continue };
+            let ChannelEntry::Unavailable { cause, .. } = &mut *entry else { continue };
+            match built.map_err(unavailable_components) {
+                Ok(channel_loop) => {
+                    *entry = ChannelEntry::Running { channel: channel_loop, task: None };
+                    drop(entry);
+                    info!("Channel {} of session {} can be run again", channel.id, self.id);
+                    let _ = self.start_tx.send(channel.id);
+                }
+                Err(Ok(now)) => {
+                    debug!("Channel {} of session {} still cannot be run: {}", channel.id, self.id, now);
+                    *cause = Arc::new(now);
+                }
+                Err(Err(error)) => debug!("Channel {} of session {} could not be built again: {:#}", channel.id, self.id, error),
+            }
+        }
     }
 
     /// Stops and deletes the channel `channel_id` on behalf of `context`.
@@ -242,10 +368,11 @@ impl SessionLoop {
     /// be restored (`restore_channel`) - until it is purged with its session
     /// (`SessionManager::purge`). Asked about first, in the order
     /// of issue 304 - whether `context` reaches the channel as the views
-    /// reach it (`channel_for`), then may delete it (`DeleteChannel`), then,
+    /// reach it (`listed_channel_for`), then may delete it (`DeleteChannel`), then,
     /// as it is taken out of the session, change the session
     /// (`UpdateSession`, by the store) - so that a refused deletion leaves
-    /// the channel running and listed.
+    /// the channel running and listed. A channel that does not run, its
+    /// components unreadable (issue 463), is deleted alike.
     ///
     /// # Errors
     /// - `SessionError::ChannelNotFound` if the session has no such channel,
@@ -259,9 +386,8 @@ impl SessionLoop {
     ///   failing to go among it (issue 348); the channel is kept then too,
     ///   with its group.
     pub async fn delete_channel(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<()> {
-        let running = self.channel_for(context, channel_id).await?;
-        // Not the guard itself: it would be held across the awaits below.
-        let channel = Arc::clone(&running.channel());
+        // Also one that does not run (issue 463): its owner removes it so.
+        let (channel, _) = self.listed_channel_for(context, channel_id).await?;
         self.access_policy.require(context, ActionType::delete(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         self.session_controller.remove_channel(context, channel_id).await?;
@@ -285,11 +411,18 @@ impl SessionLoop {
             return Err(error);
         }
 
-        let task = self.channels.remove(&channel_id).and_then(|(_, entry)| entry.task);
-        // Given the time to end by themselves before the channel's task -
-        // and with it whoever did not - is aborted (issue 187): they store
-        // their state on their way out, which stays.
-        running.leave_actors().await;
+        // Whether it runs as it is taken out, not as it was reached: it may
+        // have been built again meanwhile (`retry_unavailable`).
+        let task = match self.channels.remove(&channel_id) {
+            Some((_, ChannelEntry::Running { channel: running, task })) => {
+                // Given the time to end by themselves before the channel's
+                // task - and with it whoever did not - is aborted (issue
+                // 187): they store their state on their way out, which stays.
+                running.leave_actors().await;
+                task
+            }
+            _ => None,
+        };
         let event_bus = &self.events;
         if let Some(task) = task {
             task.abort();
@@ -418,10 +551,28 @@ mod tests {
     
     use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
     use crate::session::testing::*;
+    use crate::component::ComponentError;
+    use super::unavailable_components;
+    use anyhow::Error;
     use caelumora_model::user::UserId;
     use crate::error::is_forbidden;
     use std::time::Duration;
     use tokio::time;
+
+    /// Only a bundle gone or not the owner's to read leaves a channel out as
+    /// its session opens (issue 463); a store that failed among it, or any
+    /// other error, keeps the session from opening.
+    #[test]
+    fn only_unreadable_components_leave_a_channel_out() {
+        let built = |cause: StoreError| Error::new(SessionError::InvalidComponents(ComponentError::Build {
+            component: "policy".to_string(),
+            kind: "ref".to_string(),
+            cause: Box::new(ComponentError::Bundle { name: "shared".to_string(), cause }),
+        }));
+        assert!(unavailable_components(built(StoreError::NotFound { entity: "component_bundle", id: "shared".to_string() })).is_ok(), "gone");
+        assert!(unavailable_components(built(StoreError::Backend("unreachable".to_string()))).is_err(), "the store failed");
+        assert!(unavailable_components(Error::new(StoreError::Backend("unreachable".to_string()))).is_err(), "nor any other error");
+    }
 
     #[tokio::test]
     async fn a_channel_created_in_a_running_session_is_stored_announced_and_runs() {

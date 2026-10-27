@@ -101,6 +101,15 @@ export function joinedOrLeftChannel(event: GlobalEvent): string | null {
 }
 
 /**
+ * The channel that started running, for a channel's `started` - also one that
+ * was unavailable and can be run again (issue 463); `null` for any other event.
+ */
+export function startedChannel(event: GlobalEvent): string | null {
+  const channel = channelEvent(event);
+  return channel && dataOf(channel.change, 'started') !== undefined ? channel.channelId : null;
+}
+
+/**
  * What was said where, for a channel's `said` (issue 404): a message others
  * hear, as it was said, sent to whoever reads the channel once it is stored;
  * `null` for any other event.

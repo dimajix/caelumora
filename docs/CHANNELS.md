@@ -234,7 +234,8 @@ may use it. How a session comes to its workspace and who reaches the files is in
 
 ### Running channels
 
-`SessionLoop::run` runs every channel, those the session had and those created later.
+`SessionLoop::run` runs every channel, those the session had and those created later - but for one
+whose components cannot be read (see below).
 
 Every actor of a channel is started the one way (`ChannelLoop::start_participant`): built, taken
 in (`adopt`) and handed to `run` (`ActorChange::Start`), which starts its task - as the channel is
@@ -255,6 +256,18 @@ joins. What waits when `run` begins is started before anything is routed.
     personality or components were withdrawn or deleted. A third party - the owner of a personality
     or a component - must not keep someone's channel from starting. Such an agent is still a
     participant; adding it to another channel is refused.
+*   A channel whose own components cannot be read - a bundle it names gone, or no longer its
+    owner's to read - is left out as its session opens, with a warning, and the session opens with
+    its other channels: by the same rule, one level up, a bundle's owner must not keep someone's
+    session closed. The channel stays listed and is shown as unavailable, with why; it is read and
+    deleted as any other, and whatever is to be done in it is refused with why
+    (`SessionError::ChannelUnavailable`) - to whoever may read it; to anyone else it is not there.
+    Its components are not changed after it was made: it runs again once they can be read, as
+    the session is opened again - also while it runs, as every request in it does
+    (`SessionLoop::retry_unavailable`, outside the lock that starts the session). A store
+    that fails keeps the session from opening, as it does for a participant. Creating or restoring
+    a channel, or a session from a template, is its owner's own request, and is refused instead
+    (`SessionError::ChannelUnavailable`); a session from a template is rolled back.
 
 ### Who may see a channel
 

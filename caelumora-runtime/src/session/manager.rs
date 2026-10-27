@@ -198,7 +198,9 @@ impl SessionManager {
     /// `language` no language tag or `time_zone` no time zone; a
     /// `TemplateError` if the template cannot be made into a session;
     /// what attaching an existing workspace or making one reports;
-    /// whatever creating the session reports.
+    /// `SessionError::ChannelUnavailable` if the components of one of its
+    /// channels cannot be read in the owner's name (issue 463); whatever
+    /// creating the session reports.
     pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<&str>, language: Option<&str>, time_zone: Option<&str>, workspace: Option<WorkspaceChoice>) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
         let owner = context.principal_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
@@ -238,7 +240,14 @@ impl SessionManager {
         // `context` may put it (issue 344).
         session.workspace = existing.map(|(chosen, _)| chosen);
         let session_loop = self.establish(context, session, channels).await?;
-        if let Err(e) = self.complete(context, owner, &template, &session_loop, wanted.as_ref(), (users, agents)).await {
+        // A channel whose components the owner cannot read is left out as a
+        // session opens (issue 463), but making it is the owner's own request,
+        // refused as `create_channel` refuses it.
+        let completed = async {
+            session_loop.require_running()?;
+            self.complete(context, owner, &template, &session_loop, wanted.as_ref(), (users, agents)).await
+        }.await;
+        if let Err(e) = completed {
             self.roll_back_creation(id).await;
             return Err(e);
         }
@@ -381,7 +390,10 @@ impl SessionManager {
 
     /// The session `id` for `context`: the running one, or loaded from the
     /// store and started - which announces it as `session::STARTED`, not
-    /// as created, as the session exists already.
+    /// as created, as the session exists already. A channel whose components
+    /// cannot be read is left out as the session starts, and built again
+    /// whenever the running session is opened (`SessionLoop::retry_unavailable`,
+    /// issue 463).
     ///
     /// Started once, however many ask at the same time (issue 62): whoever
     /// comes second waits for the first and gets the session it started -
@@ -392,14 +404,20 @@ impl SessionManager {
     /// not read it; whatever loading or starting it reports otherwise.
     pub async fn open(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
         let start = self.start_lock(id);
-        let _starting = start.lock().await;
-        match self.find(context, id).await? {
-            Found::Running(session_loop) => Ok(session_loop),
+        let starting = start.lock().await;
+        let session_loop = match self.find(context, id).await? {
+            Found::Running(session_loop) => session_loop,
             Found::Stored(session) => {
                 let channels = self.load_channels(&session).await?;
-                self.spawn_session(session, channels).await
+                return self.spawn_session(session, channels).await;
             }
-        }
+        };
+        // Not under the lock: building a channel takes its time, and the
+        // session runs already - whoever else opens, stops or deletes it does
+        // not wait for it.
+        drop(starting);
+        session_loop.retry_unavailable().await;
+        Ok(session_loop)
     }
 
     /// Takes `participant` - whom `context` acts for: themselves, or their
@@ -1084,6 +1102,8 @@ mod tests {
         use caelumora_model::channel::InternalActor;
         use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
         use caelumora_model::user::{User, UserId};
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use crate::component::BUNDLE_REF_KIND;
 
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
@@ -1148,6 +1168,17 @@ mod tests {
         assert_eq!(zoned.session().time_zone, Some(TimeZone::new("Europe/Berlin").unwrap()), "issue 424");
         let no_zone = manager.create_from_template(&hers, template.id, Some("nowhere"), None, Some("Europe/Atlantis"), None).await.expect_err("no time zone");
         assert!(no_zone.downcast_ref::<ValueError>().is_some(), "{no_zone}");
+
+        // A channel whose bundle she cannot read is refused, not left out
+        // (issue 463): making it is her own request. Nothing of it stays.
+        let gone = ComponentDescriptor { params: serde_json::json!({ "name": "gone" }), ..ComponentDescriptor::new("policy", BUNDLE_REF_KIND) };
+        let channel = ChannelTemplate { components: ComponentConfig { component_nodes: vec![gone] }, ..template.channels[0].clone() };
+        let broken = SessionTemplate { id: SessionTemplateId::new(), name: ScopedName::new("broken", Default::default()).unwrap(), channels: vec![channel], ..template };
+        runtime.entity_stores().session_templates.create(&SecurityContext::system(), &broken).await.unwrap();
+        let refused = manager.create_from_template(&hers, broken.id, None, None, None, None).await.expect_err("a bundle she cannot read");
+        let Some(&SessionError::ChannelUnavailable { session, .. }) = refused.downcast_ref::<SessionError>() else { panic!("unavailable: {refused}") };
+        let system = SecurityContext::system();
+        assert!(runtime.entity_stores().sessions.get(&system, session).await.is_err() && runtime.entity_stores().sessions.get_deleted(&system, session).await.is_err(), "rolled back");
     }
 
     #[tokio::test]

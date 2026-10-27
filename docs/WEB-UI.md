@@ -233,7 +233,9 @@ from the dialog that adds someone to a channel (see below).
 
 `ChatView` shows one channel. Only a participant follows it live, over the channel's stream; anyone
 else who may read it - the session's owner, say - is shown its history and no input, and what
-others say in it as the global stream announces it.
+others say in it as the global stream announces it. A channel that does not run, its components
+unreadable, says so and why above the input (`unavailable`); what is done there tries it again, and
+it is fetched anew as it starts.
 
 *   **What was read.** The chat marks the channel read up to the newest message of someone else it
     shows, while the tab is visible - as the channel is opened, as messages arrive and as the tab

@@ -73,7 +73,7 @@ import {useAttachmentDraft} from '../attachmentDraft';
 import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
-import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, languageChangedSession, joinedOrLeftChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel} from '../globalEvents';
+import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, languageChangedSession, joinedOrLeftChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel, startedChannel} from '../globalEvents';
 import {isOthers, markRead} from '../unread';
 import {api} from '../api';
 import type {Page} from '../page';
@@ -517,10 +517,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   // The participants follow the global stream as well: someone joined or left, and
   // the channel is fetched again (issue 46). Whoever was removed can no
-  // longer fetch it and keeps what they saw until they leave the channel.
+  // longer fetch it and keeps what they saw until they leave the channel. So
+  // is a channel that starts - one that was unavailable runs again (issue 463).
   useEffect(() => {
     return onGlobalEvent(event => {
-      if (joinedOrLeftChannel(event) !== channelId) return;
+      if (joinedOrLeftChannel(event) !== channelId && startedChannel(event) !== channelId) return;
       api.getChannel(sessionId, channelId)
         .then(setChannel)
         .catch(error => {
@@ -1868,6 +1869,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         )}
 
         <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
+          {channel?.unavailable && (
+            <p className="text-sm text-amber-700 dark:text-amber-400 text-center p-2">
+              This channel does not run: {channel.unavailable}. It runs again once its components can be read - whatever you do here tries again -; its owner can delete it.
+            </p>
+          )}
           {takesPart === false ? (
             <p className="text-sm text-gray-500 dark:text-gray-400 text-center p-2">
               You do not take part in this channel: its history is shown as it is, not followed live, and you cannot write here.

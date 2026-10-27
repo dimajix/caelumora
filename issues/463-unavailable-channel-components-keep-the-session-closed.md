@@ -1,6 +1,6 @@
 # 463 — A channel whose components cannot be read keeps its whole session from opening
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -73,3 +73,20 @@ includes it, by deleting it or withdrawing the share.
 - **2026-10-23** — Opened from a finding of the review of the follow-up of
   [457](457-store-answers-misread-by-seed-and-ref.md), which made a failing store tell itself
   apart from a bundle that cannot be read.
+- **2026-10-27** — Resolved as the first consideration: the channel is left out as a participant
+  is. `SessionLoop::new` holds a channel whose components are unavailable as such
+  (`ChannelEntry::Unavailable`) with a warning, and the session opens with its other channels; a
+  store that fails still keeps it closed. The channel stays listed: the views read it from its
+  document, and its snapshot says why it does not run (`unavailable`, shown by the web UI above
+  the field to write in). `SessionLoop::channel_for` answers it with
+  `SessionError::ChannelUnavailable` (REST `409 channel_unavailable`) to whoever may read it, as
+  does joining it, and `delete_channel` deletes it as any other - which before needed it to run, so
+  that its owner could only delete the whole session. It runs again once its components can be
+  read: whenever the session is opened, also while it runs - every request in it does, outside the
+  lock that starts it (`SessionLoop::retry_unavailable`) -, since a user cannot stop a session; the
+  web UI fetches the channel anew as it starts. Changing a channel's components, the other way out
+  the issue names, does not exist; it is not added - a channel's components stay as they were
+  made. Creating and restoring a channel, the owner's own request, is refused as before; so is
+  making a session from a template one of whose channels names a bundle its owner cannot read
+  (`SessionLoop::require_running`, rolled back) - before, it failed with the session left stored
+  and never opening, or with a misleading `ChannelNotFound` once its founders were taken in. Done.

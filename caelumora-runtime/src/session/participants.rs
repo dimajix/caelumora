@@ -56,11 +56,11 @@ impl SessionLoop {
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if they may not join the session or the channel;
-    /// `SessionError::ChannelNotFound` if there is no such channel; as `add_participant`
-    /// otherwise.
+    /// `SessionError::ChannelNotFound` if there is no such channel, `ChannelUnavailable` if it does
+    /// not run (issue 463); as `add_participant` otherwise.
     pub async fn join(&self, context: &SecurityContext, participant: ActorId, into: Option<ChannelId>) -> Result<()> {
         let channel = match into {
-            Some(id) => Some(self.channel(id).ok_or(SessionError::ChannelNotFound { session: self.id, channel: id })?),
+            Some(id) => Some(self.channel_to_join(id)?),
             None => None,
         };
         self.take_in(context, participant, channel.as_ref(), true).await?;

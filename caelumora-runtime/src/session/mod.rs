@@ -76,6 +76,10 @@ pub enum SessionError {
     TemplateNotFound(SessionTemplateId),
     #[error("Session {session} has no channel {channel}")]
     ChannelNotFound { session: SessionId, channel: ChannelId },
+    /// The session lists the channel, but it does not run (issue 463): its components cannot be
+    /// read - a bundle it names is gone, or no longer its owner's to read.
+    #[error("Channel {channel} of session {session} does not run: {cause}")]
+    ChannelUnavailable { session: SessionId, channel: ChannelId, #[source] cause: Arc<ComponentError> },
     /// No classification that can be given (`require_classifiable`, issue
     /// 304): it names a compartment that is not configured.
     #[error("A channel cannot be classified {0}: a compartment is not configured or may not be given")]
@@ -119,11 +123,42 @@ fn require_classification(runtime_manager: &RuntimeManager, classification: &Cla
     Ok(())
 }
 
-/// A channel of the session and, once `run` started it, its task.
+/// A channel the session lists, as the running session holds it.
 #[derive(Debug)]
-struct ChannelEntry {
-    channel: Arc<ChannelLoop>,
-    task: Option<AbortHandle>,
+enum ChannelEntry {
+    /// Built, and once `run` started it, with its task.
+    Running { channel: Arc<ChannelLoop>, task: Option<AbortHandle> },
+    /// Left out as the session opened (issue 463): its components cannot be read. Held with its
+    /// document as it was then - a channel that does not run is not changed.
+    Unavailable { channel: Arc<Channel>, cause: Arc<ComponentError> },
+}
+
+/// Whether a channel the running session lists runs (issue 463).
+#[derive(Debug, Clone)]
+pub(crate) enum ChannelRun {
+    /// It runs: its loop is where an operation goes.
+    Running(Arc<ChannelLoop>),
+    /// It was left out as the session opened: its components cannot be read.
+    Unavailable(Arc<ComponentError>),
+}
+
+/// A channel the running session lists: its document, and whether it runs.
+pub(crate) type Listed = (Arc<Channel>, ChannelRun);
+
+impl ChannelEntry {
+    fn listed(&self) -> Listed {
+        match self {
+            Self::Running { channel, .. } => (Arc::clone(&channel.channel()), ChannelRun::Running(Arc::clone(channel))),
+            Self::Unavailable { channel, cause } => (Arc::clone(channel), ChannelRun::Unavailable(Arc::clone(cause))),
+        }
+    }
+
+    fn running(&self) -> Option<&Arc<ChannelLoop>> {
+        match self {
+            Self::Running { channel, .. } => Some(channel),
+            Self::Unavailable { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -152,9 +187,9 @@ pub struct SessionLoop {
     groups: Arc<GroupManager>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
-    /// The session's channels, and which of them run (issue 116). A channel
-    /// deleted while it waits to be started has no entry any more, so `run`
-    /// never starts it.
+    /// The session's channels, and which of them run (issues 116, 463). A
+    /// channel deleted while it waits to be started has no entry any more, so
+    /// `run` never starts it.
     channels: DashMap<ChannelId, ChannelEntry>,
     /// Channels to start. `run` starts them, those of the session as well as
     /// those created later, so that all of them run in its `JoinSet` - and
@@ -222,7 +257,14 @@ impl SessionLoop {
     /// The loop of `session`, with its `channels` - documents of their own
     /// (issue 70), in the order the session lists them - each built when
     /// the session exists and given it, so that a channel reaches the
-    /// others of its session (issues 17, 123, 361).
+    /// others of its session (issues 17, 123, 361). A channel whose
+    /// components cannot be read is left out (`add_listed_channel`, issue
+    /// 463).
+    ///
+    /// # Errors
+    /// Whatever building a channel reports otherwise - a store that failed
+    /// among it -, and whatever making the session's commands or reading its
+    /// workspace reports.
     pub async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Arc<Self>> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
@@ -248,8 +290,8 @@ impl SessionLoop {
             start_tx,
             start_rx: Mutex::new(start_rx),
         });
-        for channel in &channels {
-            session_loop.add_channel_loop(channel).await?;
+        for channel in channels {
+            session_loop.add_listed_channel(channel).await?;
         }
         Ok(session_loop)
     }
@@ -318,9 +360,12 @@ impl SessionLoop {
                     match res {
                         Ok(channel_id) => {
                             let stopped = self.channels.get_mut(&channel_id)
-                                .map(|mut entry| {
-                                    entry.task = None;
-                                    Arc::clone(&entry.channel.channel())
+                                .and_then(|mut entry| match &mut *entry {
+                                    ChannelEntry::Running { channel, task } => {
+                                        *task = None;
+                                        Some(Arc::clone(&channel.channel()))
+                                    }
+                                    ChannelEntry::Unavailable { .. } => None,
                                 });
                             // Gone: a deleted channel, whose actors all
                             // stopped in time; `delete_channel` announces it.
@@ -375,9 +420,10 @@ impl SessionLoop {
     /// set, so that `delete_channel` either finds the task or no channel.
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<ChannelId>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
-        let channel = Arc::clone(&entry.channel);
+        let ChannelEntry::Running { channel, task } = &mut *entry else { return };
+        let channel = Arc::clone(channel);
         self.events.announce(GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()), &**channel.channel());
-        entry.task = Some(join_set.spawn(async move {
+        *task = Some(join_set.spawn(async move {
             let _ = channel.run().await;
             channel.id()
         }));

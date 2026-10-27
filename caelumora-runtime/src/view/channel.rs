@@ -6,6 +6,8 @@ use crate::actor::user::ChannelWatch;
 use crate::attachment::AttachmentError;
 use crate::terminal::ByteStream;
 use crate::channel::ChannelLoop;
+use crate::error::component_message;
+use crate::session::ChannelRun;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use caelumora_model::chain::Position;
@@ -44,15 +46,15 @@ pub struct ChannelView {
     session: SessionView,
     /// The document as it was when the channel was reached.
     channel: Arc<Channel>,
-    /// Its loop, if it runs.
-    running: Option<Arc<ChannelLoop>>,
+    /// Whether it runs; `None` if its session does not.
+    run: Option<ChannelRun>,
     /// How far the viewer reads it (`channel_reading`).
     reading: Reading,
 }
 
 impl ChannelView {
-    pub(super) fn of(session: SessionView, channel: Arc<Channel>, running: Option<Arc<ChannelLoop>>, reading: Reading) -> Self {
-        Self { session, channel, running, reading }
+    pub(super) fn of(session: SessionView, channel: Arc<Channel>, run: Option<ChannelRun>, reading: Reading) -> Self {
+        Self { session, channel, run, reading }
     }
 
     /// The views the channel was reached through - what a plugin's
@@ -153,7 +155,20 @@ impl ChannelView {
 
     /// Whether the channel runs: its loop is where an operation goes.
     pub fn running(&self) -> Option<&Arc<ChannelLoop>> {
-        self.running.as_ref()
+        match &self.run {
+            Some(ChannelRun::Running(channel_loop)) => Some(channel_loop),
+            Some(ChannelRun::Unavailable(_)) | None => None,
+        }
+    }
+
+    /// Why the channel does not run though its session does (issue 463), as
+    /// it may be shown: its components cannot be read. `None` if it runs, or
+    /// its session does not.
+    fn unavailable(&self) -> Option<String> {
+        match &self.run {
+            Some(ChannelRun::Unavailable(cause)) => component_message(cause),
+            Some(ChannelRun::Running(_)) | None => None,
+        }
     }
 
     /// The channel as the viewer follows it, from now on (`ChannelWatch`,
@@ -472,6 +487,7 @@ impl ChannelView {
             uses_workspace: self.channel.uses_workspace,
             workspace_id: self.readable_workspace().await,
             can_change: self.may_change().await,
+            unavailable: self.unavailable(),
             participants,
             former_participants,
             unread: match detail.contains(Detail::UNREAD) {

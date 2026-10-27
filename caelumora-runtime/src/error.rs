@@ -60,6 +60,7 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
         // As a component error, whose message it repeats.
         match e {
             SessionError::InvalidComponents(cause) => component_message(cause).map(|_| e.to_string()),
+            SessionError::ChannelUnavailable { cause, .. } => component_message(cause).map(|_| e.to_string()),
             _ => Some(e.to_string()),
         }
     } else if let Some(e) = e.downcast_ref::<WorkspaceError>() {
@@ -128,7 +129,7 @@ fn content_message(error: &ContentError) -> Option<String> {
 /// Component errors name the component, the bundle and what was written - except where a bundle
 /// was looked for in a store that failed (issue 457), whose failure is judged as store errors are:
 /// then none of it is shown, the components that wrap it included.
-fn component_message(error: &ComponentError) -> Option<String> {
+pub(crate) fn component_message(error: &ComponentError) -> Option<String> {
     match error {
         ComponentError::Bundle { cause, .. } => store_message(cause).map(|_| error.to_string()),
         ComponentError::Build { cause, .. } | ComponentError::Backend { cause, .. } => component_message(cause).map(|_| error.to_string()),

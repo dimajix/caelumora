@@ -200,6 +200,12 @@ export interface ChannelResponse {
   workspace_id?: string;
   /** Whether you may rename it, add or remove participants (issue 46) and set its approval rules. */
   can_change: boolean;
+  /**
+   * Why the channel does not run though its session does (issue 463): its components cannot be
+   * read. Whatever is done in the session tries it again; until it runs, what is done in it is
+   * refused (`channel_unavailable`). Absent if it runs.
+   */
+  unavailable?: string;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
   former_participants: ChannelParticipant[];
   /** What is new in it to you (issue 404), as you open or list it. */

@@ -30,6 +30,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::snapshot::Detail;
 use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::{UserId, UserProfile, User};
 use caelumora_runtime::agent::AgentError;
@@ -978,6 +979,63 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     assert_eq!(asked, checks(&["alice: List(component_bundle) yes", "alice: GetComponentBundle(bob's) no"]));
     assert!(session.channel_named("other").is_none(), "nothing is created");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A channel whose bundle is withdrawn after it was made is left out as its
+/// session opens, and the session opens with its other channels (issue
+/// 463): the bundle's owner - a third party - cannot keep it closed. The
+/// channel is listed and shown as unavailable, what is sent to it is
+/// refused with why, its owner may delete it, and it runs again once the
+/// session is opened after the share came back.
+#[tokio::test]
+async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
+    let world = World::new().await;
+    let shared = ComponentBundle::new(ScopedName::new("bobs-policy", Scope::GlobalScope).unwrap(), ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")] }, attributes(Some(world.bob), &[world.alice]));
+    let bundles = world.store.entity_stores().unwrap().component_bundles;
+    bundles.create(&World::as_user(world.bob), &shared).await.expect("bob keeps his policy");
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    let spec = ChannelSpec {
+        name: "side".to_string(),
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "name": "bobs-policy" }), ..ComponentDescriptor::new("policy", BUNDLE_REF_KIND) }] },
+        participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
+    };
+    let side = session.create_channel(&alice, spec).await.expect("shared with her").id();
+    let main = session.channel_named("main").expect("runs").id();
+    let withdrawn = ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..shared.clone() };
+    bundles.update(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+
+    let (opened, asked) = world.asked(world.manager.open(&alice, session.id())).await;
+    let session = opened.expect("opens without the channel");
+    assert!(asked.contains(&"alice: GetComponentBundle(bob's) no".to_string()), "read in its owner's name: {asked:?}");
+    assert!(session.channel(main).is_some(), "the other channel runs");
+    assert!(session.channel(side).is_none(), "this one does not");
+    let refused = session.channel_for(&alice, side).await.expect_err("does not run");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ChannelUnavailable { .. })), "{refused}");
+    assert!(refused.to_string().contains("bobs-policy"), "names what cannot be read: {refused}");
+    let bob = World::as_user(world.bob);
+    let joining = world.manager.join(&bob, session.id(), ActorId::User(world.bob), Some(side)).await.expect_err("does not run");
+    assert!(matches!(joining.downcast_ref::<SessionError>(), Some(SessionError::ChannelUnavailable { .. })), "nor is it joined: {joining}");
+    let carol = World::as_user(UserId::new());
+    let hidden = session.channel_for(&carol, side).await.expect_err("not hers to read");
+    assert!(matches!(hidden.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "nor that it is unavailable: {hidden}");
+    let views = world.manager.views(Viewer::new(alice.clone())).session(session.id()).await.unwrap();
+    let listed = views.channel(side).await.expect("listed").snapshot(Detail::empty()).await;
+    assert!(listed.unavailable.is_some_and(|why| why.contains("bobs-policy")), "shown as unavailable, with why");
+    assert_eq!(views.channel(main).await.unwrap().snapshot(Detail::empty()).await.unavailable, None);
+
+    bundles.update(&World::as_user(world.bob), &shared).await.expect("shared again");
+    let session = world.manager.open(&alice, session.id()).await.unwrap();
+    assert!(session.channel(side).is_some(), "built again as the running session is opened");
+    session.channel_for(&alice, side).await.expect("and reached");
+
+    bundles.update(&World::as_user(world.bob), &withdrawn).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
+    let session = world.manager.open(&alice, session.id()).await.unwrap();
+    session.delete_channel(&alice, side).await.expect("its owner deletes it though it does not run");
+    assert!(world.manager.views(Viewer::new(alice.clone())).session(session.id()).await.unwrap().channel(side).await.is_err(), "gone");
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Components a channel would not take - a tool, which it never calls - are
