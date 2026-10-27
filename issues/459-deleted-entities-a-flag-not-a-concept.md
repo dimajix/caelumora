@@ -1,6 +1,6 @@
 # 459 — What was deleted is reached by a flag and paired methods, and called a trash
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Persistence
@@ -77,3 +77,9 @@ In the code it is not one concept but a flag and pairs of methods:
   `CheckedStore::page`. The maintainer pointed out that the deleted are kept for auditability and
   restoring them is a side effect, so reaching them is always something particular - and not a
   trash.
+- **2026-10-27** — Decided: two steps, `Presence { Present, Deleted }` first, then "trash" renamed.
+  Step 1: `Presence` (`store/mod.rs`) takes the place of the `bool` in `CheckedStore::page` and
+  `DocumentStorage::scan`; `Access` has one `read`, `readable` and `admission` taking it, and
+  reading, changing, deleting and purging share one check of mark, verb and clearance
+  (`require_reached`). `ActionType::read_deleted` went with its last caller. `Document::deleted`
+  stays a `bool`: it is the stored mark, which a storage compares with `Presence::marked`.

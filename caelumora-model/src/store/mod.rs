@@ -23,7 +23,7 @@ use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentBundle;
 use crate::removal::Removal;
 use crate::confidentiality::{Classification, ConfidentialityPolicy};
-use crate::security::{Refused, Secured, SecurityContext, AccessPolicy};
+use crate::security::{Refused, Secured, SecurityContext, AccessPolicy, Verb};
 use crate::session::Session;
 use crate::template::SessionTemplate;
 use crate::user::{User, UserChannelState, UserId, UserProfile};
@@ -228,6 +228,36 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
     /// must be cleared for it (issue 322).
     fn classification(&self) -> Option<&Classification> {
         None
+    }
+}
+
+/// Which of a kind's entities an operation of a store is about (issue 459): those there, or those
+/// deleted - kept marked so that it can be told later that they were there, who deleted them and
+/// when (issue 164). Reading the deleted is asked by a verb of its own (`Presence::verb`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    Present,
+    Deleted,
+}
+
+impl Presence {
+    /// Whether `value` is among them, by its mark (`Stored::deleted`).
+    pub(crate) fn holds<T: Stored>(self, value: &T) -> bool {
+        self.marked() == value.deleted().is_some()
+    }
+
+    /// Whether they carry the mark of a deletion: what a storage compares the marks of its
+    /// documents with (`Document::deleted`).
+    pub fn marked(self) -> bool {
+        self == Self::Deleted
+    }
+
+    /// What reading one of them asks: `Get`, or `ReadDeleted`.
+    pub(crate) fn verb(self) -> Verb {
+        match self {
+            Self::Present => Verb::Get,
+            Self::Deleted => Verb::ReadDeleted,
+        }
     }
 }
 

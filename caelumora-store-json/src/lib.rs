@@ -11,7 +11,7 @@ use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::{load_named_by_turn, TranscriptStore};
-use caelumora_model::store::{EntityKind, Journaled, PersistenceBackend, StateStore, StoreError, StoreResult};
+use caelumora_model::store::{EntityKind, Journaled, PersistenceBackend, Presence, StateStore, StoreError, StoreResult};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -473,7 +473,7 @@ impl DocumentStorage for JsonDocuments {
     /// deleted, and whether it is admitted, it leaves to the store, which
     /// would read it as its type to tell. A file that is not JSON is left
     /// out and logged.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, _deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, _presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         let mut found = Vec::new();
         for (id, path) in ordered_after(documents_in_dir(&self.dir).await?, after) {
             if found.len() >= limit {

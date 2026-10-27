@@ -26,7 +26,9 @@
 //! - **Reading what was deleted** asks `ReadDeleted` with the stored
 //!   attributes, and answers "not found" alike; **restoring** it asks that
 //!   and then `Restore`, **purging** it that and then `Purge`. What is not
-//!   marked is neither restored nor purged.
+//!   marked is neither restored nor purged. Reading and listing are the
+//!   same check for both, told apart by the `Presence` they are about
+//!   (issue 459), which names the verb.
 //! - **Names** (issue 250): what is `Scoped` is created, renamed and
 //!   restored only under a name that no other one of its kind has in its
 //!   scope - kept by the storage in the step that writes
@@ -39,8 +41,8 @@
 //! except filtering a list, which is a question.
 
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
-use crate::security::{ActionType, Admission, Enforcement, Refused, SecurityContext, AccessPolicy, Verb};
-use crate::store::{StoreError, StoreResult, Stored};
+use crate::security::{ActionType, Admission, Enforcement, Refused, SecurityContext, AccessPolicy};
+use crate::store::{Presence, StoreError, StoreResult, Stored};
 use std::slice;
 
 
@@ -80,31 +82,37 @@ impl<'a> Access<'a> {
         self.access_policy.require(self.ctx, action, StoreError::PermissionDenied).await
     }
 
-    /// `found`, if it exists and the caller may read it; not found otherwise.
-    pub(crate) async fn read<T: Stored>(&self, found: Option<T>, id: String) -> StoreResult<T> {
-        let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
-        let Some(value) = found.filter(present) else { return Err(not_found()) };
-        self.require(ActionType::get(T::KIND, value.security_attributes()), |_| not_found.clone()()).await?;
-        self.require_cleared(&value, not_found)?;
+    /// Nothing if `value` is among `presence`, the caller may read it as such
+    /// (`Presence::verb`) and is cleared for it; `refusal()` otherwise.
+    async fn require_reached<T: Stored, E: Send>(&self, value: &T, presence: Presence, refusal: impl Fn() -> E + Send + Sync) -> Result<(), E> {
+        if !presence.holds(value) {
+            return Err(refusal());
+        }
+        self.require(ActionType::entity(T::KIND, presence.verb(), value.security_attributes()), |_| refusal()).await?;
+        self.require_cleared(value, refusal)
+    }
+
+    /// `found`, if it exists, is among `presence` and the caller may read it
+    /// as such; not found otherwise.
+    pub(crate) async fn read<T: Stored>(&self, found: Option<T>, id: String, presence: Presence) -> StoreResult<T> {
+        let not_found = || StoreError::NotFound { entity: T::KIND.name(), id: id.clone() };
+        let Some(value) = found else { return Err(not_found()) };
+        self.require_reached(&value, presence, not_found).await?;
         Ok(value)
     }
 
-    /// Whether the caller may read `value` among a list: it is present,
-    /// they may read it (`Get`) and are cleared for it.
-    pub(crate) async fn readable<T: Stored>(&self, value: &T) -> bool {
-        present(value) && self.reachable(value, ActionType::get(T::KIND, value.security_attributes())).await
+    /// Whether the caller may read `value` among a list of `presence`: it is
+    /// among them, they may read it as such (`Presence::verb`) and are
+    /// cleared for it.
+    pub(crate) async fn readable<T: Stored>(&self, value: &T, presence: Presence) -> bool {
+        presence.holds(value) && self.reachable(value, ActionType::entity(T::KIND, presence.verb(), value.security_attributes())).await
     }
 
-    /// What the policy admits the caller to among a list, by the attributes
-    /// alone (issue 332): the admission of what `readable` asks.
-    pub(crate) fn admission<T: Stored>(&self) -> Option<Admission> {
-        self.access_policy.admission(self.ctx, T::KIND, Verb::Get)
-    }
-
-    /// What the policy admits the caller to among a list of what was
-    /// deleted: the admission of what `readable_deleted` asks.
-    pub(crate) fn admission_deleted<T: Stored>(&self) -> Option<Admission> {
-        self.access_policy.admission(self.ctx, T::KIND, Verb::ReadDeleted)
+    /// What the policy admits the caller to among a list of `presence`, by
+    /// the attributes alone (issue 332): the admission of what `readable`
+    /// asks.
+    pub(crate) fn admission<T: Stored>(&self, presence: Presence) -> Option<Admission> {
+        self.access_policy.admission(self.ctx, T::KIND, presence.verb())
     }
 
     /// Whether the caller reaches `value`, asked as `read`: `may_reach`,
@@ -124,10 +132,9 @@ impl<'a> Access<'a> {
     /// Whether the caller may change `stored`, the entity as it is now, to
     /// `value`.
     pub(crate) async fn change<T: Stored>(&self, stored: Option<&T>, value: &T, id: String) -> StoreResult<()> {
-        let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
-        let Some(stored) = stored.filter(|s| present(*s)) else { return Err(not_found()) };
-        self.require(ActionType::get(T::KIND, stored.security_attributes()), |_| not_found.clone()()).await?;
-        self.require_cleared(stored, not_found)?;
+        let not_found = || StoreError::NotFound { entity: T::KIND.name(), id: id.clone() };
+        let Some(stored) = stored else { return Err(not_found()) };
+        self.require_reached(stored, Presence::Present, not_found).await?;
         self.allow(ActionType::update(T::KIND, stored.security_attributes())).await?;
         unmarked(value)?;
         valid(value)
@@ -136,35 +143,18 @@ impl<'a> Access<'a> {
     /// Whether to delete `stored`: `false` if there is nothing the caller
     /// could see to delete, an error if they may see but not delete it.
     pub(crate) async fn delete<T: Stored>(&self, stored: Option<&T>) -> StoreResult<bool> {
-        let Some(stored) = stored.filter(|s| present(*s)) else { return Ok(false) };
-        if self.require(ActionType::get(T::KIND, stored.security_attributes()), |_| ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
+        let Some(stored) = stored else { return Ok(false) };
+        if self.require_reached(stored, Presence::Present, || ()).await.is_err() {
             return Ok(false);
         }
         self.allow(ActionType::delete(T::KIND, stored.security_attributes())).await.map(|_| true)
-    }
-
-    /// `found`, if it is marked deleted and the caller may read what was
-    /// deleted of its T::KIND; not found otherwise.
-    pub(crate) async fn read_deleted<T: Stored>(&self, found: Option<T>, id: String) -> StoreResult<T> {
-        let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
-        let Some(value) = found.filter(|v| !present(v)) else { return Err(not_found()) };
-        self.require(ActionType::read_deleted(T::KIND, value.security_attributes()), |_| not_found.clone()()).await?;
-        self.require_cleared(&value, not_found)?;
-        Ok(value)
-    }
-
-    /// Whether the caller may read `value` among a list of what was
-    /// deleted: it is marked deleted, they may read it as such
-    /// (`ReadDeleted`) and are cleared for it.
-    pub(crate) async fn readable_deleted<T: Stored>(&self, value: &T) -> bool {
-        !present(value) && self.reachable(value, ActionType::read_deleted(T::KIND, value.security_attributes())).await
     }
 
     /// `stored`, if the caller may take its mark away: not found if it is
     /// not marked or they may not read it as deleted, refused if they may
     /// but not restore it.
     pub(crate) async fn restore<T: Stored>(&self, stored: Option<T>, id: String) -> StoreResult<T> {
-        let stored = self.read_deleted(stored, id).await?;
+        let stored = self.read(stored, id, Presence::Deleted).await?;
         self.allow(ActionType::restore(T::KIND, stored.security_attributes())).await?;
         Ok(stored)
     }
@@ -174,18 +164,12 @@ impl<'a> Access<'a> {
     /// may but not purge it. Only what was deleted is purged, so that a
     /// purge never removes what was restored meanwhile.
     pub(crate) async fn purge<T: Stored>(&self, stored: Option<&T>) -> StoreResult<bool> {
-        let Some(stored) = stored.filter(|s| !present(*s)) else { return Ok(false) };
-        let attributes = stored.security_attributes();
-        if self.require(ActionType::read_deleted(T::KIND, attributes), |_| ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
+        let Some(stored) = stored else { return Ok(false) };
+        if self.require_reached(stored, Presence::Deleted, || ()).await.is_err() {
             return Ok(false);
         }
-        self.allow(ActionType::purge(T::KIND, attributes)).await.map(|_| true)
+        self.allow(ActionType::purge(T::KIND, stored.security_attributes())).await.map(|_| true)
     }
-}
-
-/// Whether `value` is there for the five operations: not marked deleted.
-fn present<T: Stored>(value: &T) -> bool {
-    value.deleted().is_none()
 }
 
 /// Refuses `value` if it carries the mark of a deletion: only deleting

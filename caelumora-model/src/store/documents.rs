@@ -12,7 +12,7 @@ use crate::removal::Removal;
 use crate::security::{ActionType, Admission, SecurityAttributes, SecurityContext};
 use crate::store::access::Access;
 use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
-use crate::store::{EntityStore, Policies, StoreError, StoreResult, Stored};
+use crate::store::{EntityStore, Policies, Presence, StoreError, StoreResult, Stored};
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -79,13 +79,13 @@ pub trait DocumentStorage: Debug + Send + Sync {
     async fn get(&self, id: Uuid) -> StoreResult<Option<Value>>;
 
     /// The documents after the id `after`, in the order of their ids - as `Uuid` orders them,
-    /// bytewise -, at most `limit`, each with its id (issue 447): every one that is marked deleted
-    /// if `deleted`, not marked otherwise, meets `filter` and is admitted by `admission`, if one is
-    /// given (issue 332) - and others besides, if the storage cannot tell: a scan may hand out more
-    /// than it is asked for, never less, since the store judges every document again. It hands out
-    /// fewer than `limit` only where none follow. A document a storage cannot read as it is kept is
-    /// left out and logged; any other failure fails the scan.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>>;
+    /// bytewise -, at most `limit`, each with its id (issue 447): every one among `presence` - its
+    /// mark compared with `Presence::marked` -, meeting `filter` and admitted by `admission`, if
+    /// one is given (issue 332) - and others besides, if the storage cannot tell: a scan may hand
+    /// out more than it is asked for, never less, since the store judges every document again. It
+    /// hands out fewer than `limit` only where none follow. A document a storage cannot read as it
+    /// is kept is left out and logged; any other failure fails the scan.
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>>;
 
     /// The body of the document of `name` that is not marked deleted, if
     /// there is one - there is at most one (issue 250).
@@ -174,7 +174,7 @@ impl<T: Stored> CheckedStore<T> {
 
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
         let found = self.stored(&id).await?;
-        self.access(ctx).read(found, id.to_string()).await
+        self.access(ctx).read(found, id.to_string(), Presence::Present).await
     }
 
     async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
@@ -184,35 +184,28 @@ impl<T: Stored> CheckedStore<T> {
         self.storage.replace(Document::of(value)?).await
     }
 
-    /// The page `query` asks for, among what is deleted if `deleted`: read
+    /// The page `query` asks for, among the entities of `presence`: read
     /// from the storage in batches (issue 447), narrowed to what the policy
     /// admits the caller to (issue 332), each document judged against the
     /// whole filter and asked about, until the limit counts what the caller
     /// may read (issue 293). A page that stops at its limit hands out the
     /// cursor after its last entity unless the storage showed that nothing
     /// follows.
-    async fn page(&self, ctx: &SecurityContext, query: &Query<T::Field>, deleted: bool) -> StoreResult<Page<T>> {
+    async fn page(&self, ctx: &SecurityContext, query: &Query<T::Field>, presence: Presence) -> StoreResult<Page<T>> {
         let access = self.access(ctx);
         access.allow(ActionType::List(T::KIND)).await?;
         let filter = query.filter.as_ref();
         let by_path = filter.map(Filter::by_path);
-        let admission = match deleted {
-            true => access.admission_deleted::<T>(),
-            false => access.admission::<T>(),
-        };
+        let admission = access.admission::<T>(presence);
         let mut after = query.after.as_ref().map(Cursor::id);
         let mut items = Vec::new();
         loop {
-            let batch = self.storage.scan(by_path.as_ref(), admission.as_ref(), deleted, after, SCAN_BATCH).await?;
+            let batch = self.storage.scan(by_path.as_ref(), admission.as_ref(), presence, after, SCAN_BATCH).await?;
             let more = batch.len() == SCAN_BATCH;
             let mut rest = batch.into_iter().peekable();
             while let Some((id, body)) = rest.next() {
                 if let Some(candidate) = Self::meeting(id, body, filter) {
-                    let readable = match deleted {
-                        true => access.readable_deleted(&candidate).await,
-                        false => access.readable(&candidate).await,
-                    };
-                    if readable {
+                    if access.readable(&candidate, presence).await {
                         items.push(candidate);
                         if query.limit.is_some_and(|limit| items.len() >= limit) {
                             let next = (more || rest.peek().is_some()).then(|| Cursor::after(id));
@@ -256,7 +249,7 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
     }
 
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
-        self.page(ctx, query, false).await
+        self.page(ctx, query, Presence::Present).await
     }
 
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
@@ -279,11 +272,11 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
 
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
         let found = self.stored(&id).await?;
-        self.access(ctx).read_deleted(found, id.to_string()).await
+        self.access(ctx).read(found, id.to_string(), Presence::Deleted).await
     }
 
     async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
-        self.page(ctx, query, true).await
+        self.page(ctx, query, Presence::Deleted).await
     }
 
     /// Asked as a list is (`List`), and the one found as an entity of a list
@@ -294,7 +287,7 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
         let not_found = || StoreError::NotFound { entity: T::KIND.name(), id: name.to_string() };
         let Some(body) = self.storage.named(name).await? else { return Err(not_found()) };
         match Self::meeting(name, body, None) {
-            Some(value) if access.readable(&value).await => Ok(value),
+            Some(value) if access.readable(&value, Presence::Present).await => Ok(value),
             _ => Err(not_found()),
         }
     }
@@ -327,7 +320,7 @@ mod tests {
             Ok(self.documents.lock().unwrap().iter().find(|(found, _)| *found == id).map(|(_, body)| body.clone()))
         }
 
-        async fn scan(&self, _filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, _deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+        async fn scan(&self, _filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, _presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
             self.scans.fetch_add(1, Ordering::SeqCst);
             let documents = self.documents.lock().unwrap().clone();
             Ok(ordered_after(documents, after).take(limit).collect())

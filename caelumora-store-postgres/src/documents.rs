@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use caelumora_model::store::documents::{Document, DocumentStorage};
 use caelumora_model::security::Admission;
 use caelumora_model::store::query::{FieldPath, Filter};
-use caelumora_model::store::{EntityKind, StoreError, StoreResult};
+use caelumora_model::store::{EntityKind, Presence, StoreError, StoreResult};
 use caelumora_model::value::name::ScopedName;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
@@ -179,7 +179,7 @@ impl DocumentStorage for PgDocuments {
     /// What of `filter` SQL can judge is judged by the database
     /// (`Condition`), the rest by the store; the admission by the access
     /// entries (`Admitted`).
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         let pool = self.ready().await?;
         let groups = self.groups();
         if admission.is_some() {
@@ -192,7 +192,7 @@ impl DocumentStorage for PgDocuments {
         let admitted = admission.map(|admission| Admitted::of(admission, &self.access, &groups.table, first));
         let admitting = admitted.as_ref().map_or("true", |admitted| admitted.sql.as_str());
         let statement = format!("SELECT id, body FROM {} WHERE deleted = $1 AND ($2::uuid IS NULL OR id > $2) AND {meeting} AND {admitting} ORDER BY id LIMIT $3", self.table);
-        let query = sqlx::query_as(sql(statement)).bind(deleted).bind(after).bind(limit);
+        let query = sqlx::query_as(sql(statement)).bind(presence.marked()).bind(after).bind(limit);
         let query = match &condition {
             Some(condition) => condition.bound(query),
             None => query,

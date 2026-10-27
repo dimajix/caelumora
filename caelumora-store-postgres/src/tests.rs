@@ -31,7 +31,7 @@ use caelumora_model::store::documents::Document;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
 use caelumora_model::store::suite;
-use caelumora_model::store::{EntityStoreFactory, Persistence, StoreError};
+use caelumora_model::store::{EntityStoreFactory, Persistence, Presence, StoreError};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_runtime::backend::Backends;
@@ -358,7 +358,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     }
     let scanned = |admission: Admission| {
         let storage = &storage;
-        async move { storage.scan(None, Some(&admission), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect::<Vec<_>>() }
+        async move { storage.scan(None, Some(&admission), Presence::Present, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect::<Vec<_>>() }
     };
     let reading = Admission { actors: vec![his], unowned: true, grant: Some(Grant::Read), roles: vec![role], everyone: true, deleted_groups: false };
     let at = |indexes: &[usize]| indexes.iter().map(|index| id_of(*index)).collect::<Vec<_>>();
@@ -371,7 +371,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     // for: each read by its members through its own list, its parameters
     // numbered after the filter's.
     let teams = Filter::teams_of(his).by_path();
-    let found: Vec<Uuid> = groups.scan(Some(&teams), Some(&reading), false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
+    let found: Vec<Uuid> = groups.scan(Some(&teams), Some(&reading), Presence::Present, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
     assert_eq!(found, [Uuid::from(team.id)], "his team, by its own list - not the one he is no member of, nor the deleted one");
 
     storage.replace(Document { id: id_of(1), name: None, deleted: false, security_attributes: SecurityAttributes::owned_by(hers), body: json!({}) }).await.unwrap();
@@ -442,7 +442,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         Filter::any(LIST, Filter::within(B, 5..10)),
     ];
     for filter in filters {
-        let scanned: Vec<Uuid> = storage.scan(Some(&filter), None, false, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
+        let scanned: Vec<Uuid> = storage.scan(Some(&filter), None, Presence::Present, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
         let meeting: Vec<Uuid> = bodies.iter().enumerate().filter(|(_, body)| filter.matches(body)).map(|(at, _)| id_of(at)).collect();
         assert!(meeting.iter().all(|id| scanned.contains(id)), "{filter:?}: meets {meeting:?}, scanned {scanned:?}");
         if !folded(&filter) {

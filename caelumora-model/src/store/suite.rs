@@ -17,11 +17,11 @@ use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::scope::{Scoped, Scope};
-use crate::security::{AccessPolicy, AclEntry, ActionType, Grant, OwnershipPolicy, Secured, SecurityAttributes, SecurityContext, Subject};
+use crate::security::{AccessPolicy, AclEntry, ActionType, Grant, OwnershipPolicy, Secured, SecurityAttributes, SecurityContext, Subject, Verb};
 use crate::store::memberships::StoreMemberships;
 use std::sync::Arc;
 use crate::session::{Session, SessionId};
-use crate::store::{EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
+use crate::store::{EntityKind, EntityStore, EntityStores, Journaled, NoEntity, Presence, StateStore, StoreError, Stored};
 use crate::store::history::HistoryStore;
 use crate::store::transcript::TranscriptStore;
 use crate::actor::{ActorEvent, Envelope, EventContext};
@@ -1106,8 +1106,8 @@ pub async fn lists_admit_what_check_decides(stores: &EntityStores, folders: &dyn
             assert!(folders.delete(&system, folder.id).await.expect("delete folder"));
         }
     }
-    let there = all_folders(folders, &system, false).await;
-    let deleted = all_folders(folders, &system, true).await;
+    let there = all_folders(folders, &system, Presence::Present).await;
+    let deleted = all_folders(folders, &system, Presence::Deleted).await;
 
     let contexts = [
         SecurityContext::new(hers, SessionId::new(), ChannelId::new()),
@@ -1119,35 +1119,27 @@ pub async fn lists_admit_what_check_decides(stores: &EntityStores, folders: &dyn
         SecurityContext::default(),
     ];
     for context in &contexts {
-        let mut readable = Vec::new();
-        for folder in &there {
-            if access_policy.check(context, ActionType::get(Folder::KIND, &folder.security_attributes)).await {
-                readable.push(folder.id);
+        for (presence, verb, stored) in [(Presence::Present, Verb::Get, &there), (Presence::Deleted, Verb::ReadDeleted, &deleted)] {
+            let mut readable = Vec::new();
+            for folder in stored {
+                if access_policy.check(context, ActionType::entity(Folder::KIND, verb, &folder.security_attributes)).await {
+                    readable.push(folder.id);
+                }
             }
+            let listed: Vec<FolderId> = all_folders(folders, context, presence).await.iter().map(|folder| folder.id).collect();
+            assert_eq!(listed, readable, "listed what is read one by one, among {presence:?}, for {context:?}");
         }
-        let listed: Vec<FolderId> = all_folders(folders, context, false).await.iter().map(|folder| folder.id).collect();
-        assert_eq!(listed, readable, "listed what is read one by one, for {context:?}");
-
-        let mut readable_deleted = Vec::new();
-        for folder in &deleted {
-            if access_policy.check(context, ActionType::read_deleted(Folder::KIND, &folder.security_attributes)).await {
-                readable_deleted.push(folder.id);
-            }
-        }
-        let listed: Vec<FolderId> = all_folders(folders, context, true).await.iter().map(|folder| folder.id).collect();
-        assert_eq!(listed, readable_deleted, "and of what was deleted, for {context:?}");
     }
 }
 
-/// Every folder `context` lists - those deleted if `deleted` -, in pages
-/// of a few.
-async fn all_folders(folders: &dyn EntityStore<Folder>, context: &SecurityContext, deleted: bool) -> Vec<Folder> {
+/// Every folder of `presence` that `context` lists, in pages of a few.
+async fn all_folders(folders: &dyn EntityStore<Folder>, context: &SecurityContext, presence: Presence) -> Vec<Folder> {
     let mut query = Query::all().limited(7);
     let mut all = Vec::new();
     loop {
-        let page = match deleted {
-            true => folders.list_deleted(context, &query).await,
-            false => folders.list(context, &query).await,
+        let page = match presence {
+            Presence::Present => folders.list(context, &query).await,
+            Presence::Deleted => folders.list_deleted(context, &query).await,
         }.expect("list folders");
         all.extend(page.items);
         let Some(next) = page.next else { return all };

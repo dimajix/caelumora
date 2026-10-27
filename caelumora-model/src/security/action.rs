@@ -141,11 +141,6 @@ impl<'a> ActionType<'a> {
         Self::entity(kind, Verb::Delete, attributes)
     }
 
-    /// Reading a deleted entity of `kind` that has `attributes`.
-    pub const fn read_deleted(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
-        Self::entity(kind, Verb::ReadDeleted, attributes)
-    }
-
     /// Being told that an entity of `kind` with `attributes` was deleted.
     pub const fn hear_deleted(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
         Self::entity(kind, Verb::HearDeleted, attributes)

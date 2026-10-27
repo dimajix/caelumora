@@ -15,7 +15,7 @@ use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStor
 use crate::transcript::{known, Transcript, TranscriptEntry};
 use crate::store::query::{ordered_after, FieldPath, Filter};
 use crate::value::name::ScopedName;
-use crate::store::{EntityKind, Journaled, PersistenceBackend, StateStore, StoreError, StoreResult};
+use crate::store::{EntityKind, Journaled, PersistenceBackend, Presence, StateStore, StoreError, StoreResult};
 use crate::tool::ToolSet;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -245,10 +245,10 @@ impl DocumentStorage for MemoryDocuments {
     /// Narrowed by the admission as far as told without the groups
     /// (`Admission::may_admit`): an entry for a group lets a document
     /// through, for the store to decide.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, deleted: bool, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         Ok(read_lock(&self.documents, |all| {
             let meeting = all.values()
-                .filter(|document| document.deleted == deleted && filter.is_none_or(|filter| filter.matches(&document.body)))
+                .filter(|document| document.deleted == presence.marked() && filter.is_none_or(|filter| filter.matches(&document.body)))
                 .filter(|document| admission.is_none_or(|admission| admission.may_admit(&document.security_attributes)))
                 .map(|document| (document.id, document))
                 .collect();
@@ -507,12 +507,12 @@ mod tests {
             ids.push(id);
         }
         let bobs = Admission { actors: vec![bob], grant: Some(Grant::Read), ..Admission::default() };
-        let mut scanned: Vec<Uuid> = documents.scan(None, Some(&bobs), false, None, 10).await.unwrap().into_iter().map(|(id, _)| id).collect();
+        let mut scanned: Vec<Uuid> = documents.scan(None, Some(&bobs), Presence::Present, None, 10).await.unwrap().into_iter().map(|(id, _)| id).collect();
         let mut admitted = ids[..3].to_vec();
         scanned.sort();
         admitted.sort();
         assert_eq!(scanned, admitted, "his own, shared with him, shared with a group - not hers, nor what lets him join");
-        assert_eq!(documents.scan(None, None, false, None, 10).await.unwrap().len(), 5, "without an admission, all of them");
+        assert_eq!(documents.scan(None, None, Presence::Present, None, 10).await.unwrap().len(), 5, "without an admission, all of them");
     }
 
     #[tokio::test]
