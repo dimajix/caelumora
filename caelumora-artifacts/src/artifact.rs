@@ -180,10 +180,7 @@ impl Artifact {
     /// The project it lies in (issue 467); `None` only for a document that could not be stored
     /// (`Stored::validate`).
     pub fn project(&self) -> Option<ProjectId> {
-        match self.name.scope {
-            Scope::ProjectScope { project_id } => Some(project_id),
-            _ => None,
-        }
+        self.name.scope.project()
     }
 
     /// Its version `number`, if it has one.

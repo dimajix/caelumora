@@ -2,6 +2,7 @@
 //! them.
 
 use crate::channel::ChannelResponse;
+use crate::project::ProjectResponse;
 use crate::workspace::WorkspaceResponse;
 use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
@@ -11,8 +12,9 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
 use caelumora_model::privacy::PrivacyConfig;
+use caelumora_model::project::ProjectId;
 use caelumora_model::security::Grant;
-use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::value::language::Language;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::value::text::{Briefing, Summary};
@@ -36,6 +38,9 @@ pub struct CreateSessionRequest {
     /// template's if absent.
     #[serde(default)]
     pub workspace: Option<SessionWorkspaceRequest>,
+    /// The shared project it lies in (issue 467); a project of its own if absent.
+    #[serde(default)]
+    pub project_id: Option<ProjectId>,
 }
 
 /// The workspace a new session is given in place of its template's (issue
@@ -87,17 +92,15 @@ pub struct SessionResponse {
     pub time_zone: Option<TimeZone>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
-}
-
-impl From<&Session> for SessionResponse {
-    fn from(session: &Session) -> Self {
-        Self { id: session.id, name: session.name.to_string(), summary: session.summary.clone(), language: session.language.clone(), time_zone: session.time_zone, privacy: session.privacy }
-    }
+    /// The project its results go to (issue 467) - its own, or the shared one it lies in -, if
+    /// you may read it: its participants do. Every answer of a session is made so.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
 }
 
 impl From<snapshot::SessionSnapshot> for SessionResponse {
     fn from(view: snapshot::SessionSnapshot) -> Self {
-        Self { id: view.id, name: view.name, summary: view.summary, language: view.language, time_zone: view.time_zone, privacy: view.privacy }
+        Self { id: view.id, name: view.name, summary: view.summary, language: view.language, time_zone: view.time_zone, privacy: view.privacy, project_id: view.project.map(|project| project.id) }
     }
 }
 
@@ -222,6 +225,9 @@ pub struct SessionSnapshot {
     /// owner; absent otherwise. Who uses it learns of it in a channel.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<WorkspaceResponse>,
+    /// The project its results go to (issue 467), if you may read it: its participants do.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<ProjectResponse>,
 }
 
 impl From<snapshot::SessionSnapshot> for SessionSnapshot {
@@ -240,6 +246,7 @@ impl From<snapshot::SessionSnapshot> for SessionSnapshot {
             // Every participant is a user or an agent.
             participants: view.participants.into_iter().filter_map(ParticipantResponse::of).collect(),
             workspace: view.workspace.map(Into::into),
+            project: view.project.map(Into::into),
         }
     }
 }

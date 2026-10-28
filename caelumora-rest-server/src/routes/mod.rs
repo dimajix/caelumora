@@ -1,3 +1,6 @@
+//! The routes of the API (issue 323): the core's, behind the login, with the plugins', and what
+//! the handlers share to reach the runtime as the user who asks.
+
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser, router};
 use crate::error::ApiError;
 use crate::plugin::RestPlugin;
@@ -33,6 +36,7 @@ mod sessions;
 mod templates;
 mod workspaces;
 mod groups;
+mod projects;
 
 pub async fn ensure_session(
     state: &Arc<AppState>,
@@ -157,6 +161,14 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/groups/{id}/members", routing::put(groups::set_members))
         .route("/groups/{id}/restore", post(groups::restore_group))
         .route("/groups/{id}/purge", post(groups::purge_group))
+        .route("/projects", get(projects::list_projects).post(projects::create_project))
+        .route("/projects/{id}", get(projects::get_project).patch(projects::rename_project).delete(projects::delete_project))
+        .route("/projects/{id}/description", routing::put(projects::describe_project))
+        .route("/projects/{id}/members", routing::put(projects::set_members))
+        .route("/projects/{id}/access", routing::put(projects::set_access))
+        .route("/projects/{id}/lift", post(projects::lift_project))
+        .route("/projects/{id}/restore", post(projects::restore_project))
+        .route("/projects/{id}/purge", post(projects::purge_project))
         .route("/workspaces", get(workspaces::list_workspaces).post(workspaces::create_workspace))
         .route("/workspaces/storages", get(workspaces::list_storages))
         .route("/workspaces/{id}", get(workspaces::get_workspace).patch(workspaces::rename_workspace).delete(workspaces::delete_workspace))
@@ -170,6 +182,31 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
             "/workspaces/{id}/files/{*path}",
             get(workspaces::download_file).put(workspaces::upload_file).delete(workspaces::delete_file),
         )
+        .merge(session_routes())
+        .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth))
+        .with_state(Arc::clone(&state));
+
+    // The event streams authenticate like everything else, but do not renew
+    // the session they run on - see `require_stream_auth` (issue 33).
+    let streams = Router::new()
+        .route("/sessions/{id}/channels/{cid}/events", get(channels::join_channel))
+        .route("/events", get(events::global_events))
+        .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_stream_auth))
+        .with_state(Arc::clone(&state));
+
+    let mut api = router(Arc::clone(&state.auth)).merge(protected).merge(streams);
+    for plugin in plugins {
+        let routes = plugin.routes(Arc::clone(&state))
+            .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth));
+        api = api.merge(routes);
+    }
+    api
+}
+
+/// The routes of sessions, their channels and what is reached through them - the participants,
+/// the messages, the commands -, which `api` serves behind the login.
+fn session_routes() -> Router<Arc<AppState>> {
+    Router::new()
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",
@@ -186,6 +223,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/sessions/{id}/restore", post(sessions::restore_session))
         .route("/sessions/{id}/purge", post(sessions::purge_session))
         .route("/sessions/{id}/workspace", routing::put(workspaces::attach_workspace).delete(workspaces::detach_workspace))
+        .route("/sessions/{id}/project", routing::put(projects::put_into_project).delete(projects::take_out_of_project))
         .route("/sessions/{id}/actors/{aid}/private_notes", get(sessions::agent_private_notes))
         .route("/sessions/{id}/channels", get(channels::list_channels).post(channels::create_channel))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel).delete(channels::delete_channel))
@@ -227,24 +265,6 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
             "/sessions/{id}/channels/{cid}/commands",
             get(channels::list_commands).post(channels::execute_command),
         )
-        .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth))
-        .with_state(Arc::clone(&state));
-
-    // The event streams authenticate like everything else, but do not renew
-    // the session they run on - see `require_stream_auth` (issue 33).
-    let streams = Router::new()
-        .route("/sessions/{id}/channels/{cid}/events", get(channels::join_channel))
-        .route("/events", get(events::global_events))
-        .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_stream_auth))
-        .with_state(Arc::clone(&state));
-
-    let mut api = router(Arc::clone(&state.auth)).merge(protected).merge(streams);
-    for plugin in plugins {
-        let routes = plugin.routes(Arc::clone(&state))
-            .route_layer(middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth));
-        api = api.merge(routes);
-    }
-    api
 }
 
 #[cfg(test)]
@@ -260,8 +280,17 @@ pub(crate) mod tests {
     use caelumora_runtime::plugin::Plugin;
     use caelumora_runtime::runtime::RuntimeBuilder;
     use caelumora_runtime::session::SessionManager;
+    use caelumora_runtime::project::ProjectManager;
     use caelumora_runtime::testing::TestRuntime;
     use tower::ServiceExt;
+    use axum::body::{to_bytes, Body};
+    use serde_json::{json, Value};
+    use uuid::Uuid;
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::scope::Scope;
+    use caelumora_model::security::SecurityContext;
+    use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
+    use caelumora_model::value::name::{Name, ScopedName};
     use anyhow::Result;
 
     /// A plugin answering who asks.
@@ -304,7 +333,8 @@ pub(crate) mod tests {
             controllers: Arc::clone(runtime.controller_manager()),
         });
         let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        Arc::new(AppState { auth, runtime_manager: runtime, session_manager, compartments: Default::default(), shutdown: Default::default() })
+        let project_manager = Arc::new(ProjectManager::new(Arc::clone(&session_manager)));
+        Arc::new(AppState { auth, runtime_manager: runtime, session_manager, project_manager, compartments: Default::default(), shutdown: Default::default() })
     }
 
     /// The cookie `api` answers `username` logging in with.
@@ -313,6 +343,16 @@ pub(crate) mod tests {
         let login = Request::post("/auth/login").header("content-type", "application/json").body(Body::from(body)).unwrap();
         let logged_in = api.clone().oneshot(login).await.unwrap();
         logged_in.headers().get(SET_COOKIE).and_then(|v| v.to_str().ok()).and_then(|v| v.split(';').next()).unwrap().to_string()
+    }
+
+    /// What `api` answers `method` on `uri` with the JSON `body` - none for `null` - for whoever
+    /// is logged in by `cookie`: its status and its body as JSON, `null` for none.
+    async fn send(api: &Router, cookie: &str, method: &str, uri: &str, body: Value) -> (StatusCode, Value) {
+        let body = if body.is_null() { Body::empty() } else { Body::from(body.to_string()) };
+        let request = Request::builder().method(method).uri(uri).header(COOKIE, cookie).header("content-type", "application/json").body(body).unwrap();
+        let answer = api.clone().oneshot(request).await.unwrap();
+        let status = answer.status();
+        (status, serde_json::from_slice(&to_bytes(answer.into_body(), usize::MAX).await.unwrap()).unwrap_or(Value::Null))
     }
 
     #[tokio::test]
@@ -325,6 +365,62 @@ pub(crate) mod tests {
         assert!(cookie.starts_with(SESSION_COOKIE), "{cookie}");
         let asked = api.oneshot(Request::get("/hello").header(COOKIE, cookie).body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(asked.status(), StatusCode::OK);
+    }
+
+    /// Issue 467: a user makes a shared project, finds, renames, describes, deletes and restores
+    /// it; a session's own scope is no place to make one in.
+    #[tokio::test]
+    async fn the_routes_serve_projects() {
+        let api = api_with(&[]);
+        let cookie = login(&api, "alice").await;
+        let (status, made) = send(&api, &cookie, "POST", "/projects", json!({ "name": "report", "description": "The yearly report" })).await;
+        assert_eq!((status, made["scope"].clone(), made["can_change"].clone()), (StatusCode::CREATED, json!("user"), json!(true)), "{made}");
+        let id = made["id"].as_str().unwrap().to_string();
+        let (_, listed) = send(&api, &cookie, "GET", "/projects", Value::Null).await;
+        assert_eq!(listed[0]["id"], json!(id), "{listed}");
+        let (status, renamed) = send(&api, &cookie, "PATCH", &format!("/projects/{id}"), json!({ "name": "annual" })).await;
+        assert_eq!((status, renamed["name"].clone()), (StatusCode::OK, json!("annual")));
+        let (_, described) = send(&api, &cookie, "PUT", &format!("/projects/{id}/description"), json!({ "description": "The annual report" })).await;
+        assert_eq!(described["description"], json!("The annual report"));
+        let (status, refused) = send(&api, &cookie, "POST", "/projects", json!({ "name": "own", "scope": "session" })).await;
+        assert_eq!((status, refused["code"].clone()), (StatusCode::BAD_REQUEST, json!("invalid_scope")));
+        let (status, _) = send(&api, &cookie, "DELETE", &format!("/projects/{id}"), Value::Null).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, deleted) = send(&api, &cookie, "GET", "/projects?deleted=true", Value::Null).await;
+        assert_eq!(deleted[0]["id"], json!(id), "{deleted}");
+        let (status, restored) = send(&api, &cookie, "POST", &format!("/projects/{id}/restore"), Value::Null).await;
+        assert_eq!((status, restored["name"].clone()), (StatusCode::OK, json!("annual")));
+        let (status, missing) = send(&api, &cookie, "GET", &format!("/projects/{}", Uuid::new_v4()), Value::Null).await;
+        assert_eq!((status, missing["code"].clone()), (StatusCode::NOT_FOUND, json!("project_not_found")));
+    }
+
+    /// Issue 467: a session asked for in a shared project is made in its own and put into that
+    /// one; one that cannot be put there is not made.
+    #[tokio::test]
+    async fn a_session_is_made_in_the_project_asked_for_or_not_at_all() {
+        let state = state();
+        let template = SessionTemplate {
+            access: Vec::new(), summary: None, briefing: None, language: None, time_zone: None, approval_rules: Vec::new(), workspace: None,
+            id: SessionTemplateId::new(), name: ScopedName::new("alone", Scope::GlobalScope).unwrap(), description: None,
+            participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
+            channels: vec![ChannelTemplate {
+                access: Vec::new(), summary: None, briefing: None, language: None, approval_rules: Vec::new(), uses_workspace: false,
+                name: Name::new("main").unwrap(), components: Default::default(), classification: Classification::CHANNEL_DEFAULT,
+                participants: vec!["user".to_string()], internal_actors: Vec::new(),
+            }],
+            security_attributes: Default::default(), commands: Default::default(), privacy: Default::default(), deleted: None,
+        };
+        state.runtime_manager.entity_stores().session_templates.create(&SecurityContext::system(), &template).await.unwrap();
+        let api = api(Arc::clone(&state), &[]);
+        let cookie = login(&api, "alice").await;
+        let (_, project) = send(&api, &cookie, "POST", "/projects", json!({ "name": "report" })).await;
+        let (status, made) = send(&api, &cookie, "POST", "/sessions", json!({ "template_id": template.id, "project_id": project["id"] })).await;
+        assert_eq!((status, made["project_id"].clone()), (StatusCode::OK, project["id"].clone()), "{made}");
+
+        let (status, refused) = send(&api, &cookie, "POST", "/sessions", json!({ "template_id": template.id, "project_id": Uuid::new_v4() })).await;
+        assert_eq!((status, refused["code"].clone()), (StatusCode::NOT_FOUND, json!("project_not_found")), "{refused}");
+        let (_, listed) = send(&api, &cookie, "GET", "/sessions", Value::Null).await;
+        assert_eq!(listed.as_array().map(Vec::len), Some(1), "the session that could not be put there is not made: {listed}");
     }
 
     #[test]

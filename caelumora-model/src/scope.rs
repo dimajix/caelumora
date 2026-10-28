@@ -43,6 +43,14 @@ pub enum Scope {
 }
 
 impl Scope {
+    /// The project whose scope this is, if it is one (issue 467).
+    pub fn project(&self) -> Option<ProjectId> {
+        match self {
+            Scope::ProjectScope { project_id } => Some(*project_id),
+            Scope::GlobalScope | Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::SessionScope { .. } | Scope::ChannelScope { .. } => None,
+        }
+    }
+
     /// Whether `other` is this scope or lies within it.
     pub fn contains(&self, other: &Scope) -> bool {
         match (self, other) {
@@ -303,6 +311,7 @@ mod tests {
     fn a_project_scope_contains_itself_alone() {
         let project_id = ProjectId::new();
         let project = Scope::ProjectScope { project_id };
+        assert_eq!((project.project(), Scope::GlobalScope.project()), (Some(project_id), None), "the project whose it is");
         assert!(project.contains(&Scope::ProjectScope { project_id }));
         assert!(!project.contains(&Scope::ProjectScope { project_id: ProjectId::new() }));
         let session_id = SessionId::new();

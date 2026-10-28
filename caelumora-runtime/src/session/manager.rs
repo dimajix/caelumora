@@ -298,11 +298,11 @@ impl SessionManager {
         completed
     }
 
-    /// Rolls back creating the session `id`, just made and not yet
-    /// complete, in the runtime's name - making it was permitted: deleted
-    /// and purged, with what was made in its scope. What cannot be is
-    /// logged.
-    async fn roll_back_creation(&self, id: SessionId) {
+    /// Rolls back creating the session `id`, just made and not to be kept -
+    /// not complete, or not put into the project it was made for (issue
+    /// 467) -, in the runtime's name - making it was permitted: deleted and
+    /// purged, with what was made in its scope. What cannot be is logged.
+    pub async fn roll_back_creation(&self, id: SessionId) {
         let system = SecurityContext::system();
         if let Err(undo) = async { self.delete(&system, id).await?; self.purge(&system, id).await }.await {
             warn!(session = %id, "The session that could not be completed stays: {undo}");

@@ -857,3 +857,34 @@ none lies in a project's scope.
   need a conversion that can fail, or an artifact that holds its project apart from its name -
   which the store's queries by `scope` and the uniqueness of names would have to be served for -,
   for a case only a document that could not be stored reaches.
+- **2026-10-28** — Step 4 split in two: 4a, the REST API, and 4b, the web UI. Decided with the
+  maintainer before 4a: a session asked for in a shared project is made in its own and put there
+  by `update_project`, rolled back if that fails (`SessionManager::roll_back_creation`, public
+  now), so that `create_from_template` keeps its parameters and a session has one way into a
+  project; a session's own project is answered as it is stored - `name: own`, `scope: session`,
+  its `session_id` -, the client names it by its session; the events of an artifact reach whoever
+  reads the version, as before.
+
+  Step 4a done: `caelumora-rest-api` - `ProjectResponse` with `ProjectMemberResponse`,
+  `CreateProjectRequest`, `RenameProjectRequest`, `LiftProjectRequest`, `SessionProjectRequest`
+  (`src/project.rs`); `ScopeKind::Project`, `ScopeKind::of` exhaustive (a channel's names its
+  session, a group's is shown as the global one); `AccessKind::Project`;
+  `GroupResponse::project_id`; `CreateSessionRequest::project_id`, `SessionResponse::project_id`
+  (where the viewer reads it) and `SessionSnapshot::project`. `caelumora-rest-server` -
+  `AppState::project_manager`, made by the program (`caelumora-app`); the routes of
+  `routes/projects.rs` as the plan lists them; `impl From<ProjectError> for ApiError`
+  (`project_not_found`, `invalid_scope` - also for the name `own` or another's scope -,
+  `unknown_member`, `scope_not_empty`, a session's error as that session's) and its `answer_as!`
+  entry; `ViewError::ProjectNotFound` (`404`), `SessionError::ProjectDeleted` (`409`).
+  REST-SERVER.md lists the routes.
+  `routes::api` grew past the hundred lines a function may have; the routes of sessions and their
+  channels moved into `routes::session_routes`, which it merges.
+
+  Different from the plan: `ScopeKind::placed` keeps its three places; `GroupResponse::project_id`
+  is read by `Scope::project`, which `Artifact::project` uses too. `ScopeKind::Project` is answered
+  alone, never read from a request. There is no `400 needs_name`, which no error raises since step
+  1; a name or a scope a project may not have, or an access list naming whom it may not, is
+  `400 validation_failed`, as a workspace's. The request names `project_id`, a `ProjectId`.
+  `SessionResponse` is answered from the views wherever it is made - creating and renaming too -,
+  so that `project_id` is there exactly where the user reads the project.
+
