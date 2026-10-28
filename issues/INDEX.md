@@ -130,6 +130,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [458](458-deleted-while-it-runs.md) | open | Deleting a session or a channel marks it, deletes what lies in its scope and the groups of its participants while it still runs, and stops it only afterwards, so what its agents write into its scope meanwhile is left behind, and what it announces as it stops reaches its owner alone. |
 | [463](463-unavailable-channel-components-keep-the-session-closed.md) | done | A channel whose own components name a bundle that is gone or no longer its owner's to read fails to be built, and with it the session it belongs to, all its other channels included - though a third party must not keep someone's channel from starting. |
 | [467](467-projects-hold-what-outlasts-a-session.md) | done | An artifact lies in the scope of the session it was published in and goes with it, because nothing above a session holds what is meant to outlast one piece of work. |
+| [476](476-making-a-session-in-a-project-is-the-handlers.md) | open | A session asked for in a shared project is made, put into the project and, if that fails, rolled back by the REST handler, so that every other client would have to repeat the sequence. |
 
 ## Identity and access management
 
