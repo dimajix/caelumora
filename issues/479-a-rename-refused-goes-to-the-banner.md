@@ -1,6 +1,6 @@
 # 479 — A rename the server refuses is reported in the banner, not where it is typed
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** User interaction
@@ -60,3 +60,10 @@ banner (B for it alone).
 - **2026-10-28** — Step 2 done: the nine fields of six pages are `EditInPlace`, which trims the
   text, stores nothing unchanged and reports a failure; each page says only whether an empty text
   is stored, and how.
+- **2026-10-28** — Step 3 done: `EditInPlace` stays open until the server answered and shows a
+  refusal under the field; what else fails is reported, and the field stays open too, so that the
+  text is kept. A blur while a save is under way, or as the field closes, saves nothing - also after
+  Escape, which saved the text before. An answer that comes once the field is closed - given up, or
+  gone with its page - closes nothing, and its refusal goes to the banner. `Refusal` has `on`,
+  `'dialog'` or `'page'`; the form "keep the project" uses it, in red-600, or red-400 in the dark
+  theme, as the login shows its errors.

@@ -41,11 +41,13 @@ The UI shows what the server says and repeats no rule of its own:
     the crate `caelumora-rest-api`; a change to the REST API changes them too. The form serde
     gives an `ActorId` is read and made only in `actor.ts`, so that a change of it is met in one
     place.
-*   **What the server refuses is shown where it can be corrected.** A dialog shows the server's
-    refusal - a name taken, a classification the user is not cleared for - next to the field; it
-    does not check beforehand what the server decides. A refusal is an error the request is at
-    fault for, any status below 500 but a `401`; `reportUnlessRefused` in `errors.ts` tells it
-    apart, and reports anything else. A dialog draws it with `Refusal`.
+*   **What the server refuses is shown where it can be corrected.** A dialog, or a text edited in
+    place, shows the server's refusal - a name taken, a classification the user is not cleared
+    for - next to the field; it does not check beforehand what the server decides. A refusal is an
+    error the request is at fault for, any status below 500 but a `401`; `reportUnlessRefused` in
+    `errors.ts` tells it apart, and reports anything else. `Refusal` draws it, for a dialog or a
+    page. The one exception is a session's name in the sidebar: its field stands in a row of the
+    list, inside a button, with no room below it, so that a refusal of it goes to the banner.
 
 ## Structure
 
@@ -115,9 +117,12 @@ place, since the message entered nothing.
 
 *   **Dialogs are dark** whatever the theme, while a page follows the system's (a media query, so
     a component cannot tell where it stands). What dialogs share is drawn for them: their fields
-    (`LanguageField`, `ClassificationFields`, ...) and a refusal (`Refusal`).
+    (`LanguageField`, `ClassificationFields`, ...), and a refusal (`Refusal`, which draws one on a
+    page too).
 *   **Texts edited in place.** The name or description a page shows is edited where it stands
-    (`EditInPlace`): saved on Enter or on leaving the field, given up with Escape.
+    (`EditInPlace`): saved on Enter or on leaving the field, given up with Escape. The field stays
+    open until the server answered; a refusal stays under it with the text, to be corrected or given
+    up.
 *   **Menus.** What can be done with something in a list is in a menu behind three dots
     (`ActionMenu`). It lists only what may be done, and there is no menu where nothing may; it is
     reached with the keyboard too. An entry that cannot be undone asks once more in its place.

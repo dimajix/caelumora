@@ -15,6 +15,7 @@ import {AccessList} from './AccessList';
 import {ActionMenu} from './ActionMenu';
 import {AddUser} from './AddUser';
 import {EditInPlace} from './EditInPlace';
+import {Refusal} from './Refusal';
 
 interface ProjectPageProps {
   projectId: string;
@@ -273,8 +274,6 @@ const LiftProject: React.FC<LiftProjectProps> = ({project, onLifted, onCancel}) 
     }
   };
 
-  // This form lies on the page and follows its theme, unlike a dialog; so
-  // does its refusal, which is therefore drawn here and not by `Refusal`.
   const fieldClass = "rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-sm";
   return (
     <form onSubmit={(e) => void lift(e)} className="space-y-2 rounded-md border border-gray-200 dark:border-gray-700 p-3 text-sm">
@@ -287,7 +286,7 @@ const LiftProject: React.FC<LiftProjectProps> = ({project, onLifted, onCancel}) 
         <button type="submit" disabled={!name.trim()} className="rounded-md bg-blue-600 px-3 py-1 text-white hover:bg-blue-700 disabled:opacity-50">Keep</button>
         <button type="button" onClick={onCancel} className="rounded-md px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">Cancel</button>
       </div>
-      {refusal && <div role="alert" className="text-xs text-red-500">{refusal}</div>}
+      <Refusal message={refusal} on="page" />
     </form>
   );
 };
