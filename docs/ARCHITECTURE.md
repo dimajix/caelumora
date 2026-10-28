@@ -39,7 +39,8 @@ The project is a Rust workspace, with a web UI next to it:
     manager, component, views and routes, in layers by Cargo features.
 *   **`caelumora-artifacts`** - artifacts, a plugin built as `caelumora-skills` is, which keeps
     their content in the core's storages of content (issue 282) and extends the view of a channel
-    with what was published in it (issue 328). See [TOOLS.md](TOOLS.md#artifacts).
+    with what was published in it (issue 328), and the view of a project with what lies in it
+    (issue 467). See [TOOLS.md](TOOLS.md#artifacts).
 *   **`caelumora-mcp`** - the tools of MCP servers, a plugin that brings nothing but its component
     kind `mcp_tool`, and with it `rmcp` (issue 325). See [TOOLS.md](TOOLS.md#mcp-servers).
 *   **`caelumora-compaction`** - compaction of an agent's context (issue 464), a plugin that brings

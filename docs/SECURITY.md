@@ -141,7 +141,8 @@ This is the one place ownership and access are recorded; see [Access lists](#acc
     granted as reading: what the owner may read, the agent may follow. A user is shown one only if
     cleared for its classification; see [SKILLS.md](SKILLS.md#who-may-do-what).
 *   An artifact is owned by the user the agent that published it acts for, always a user; only its
-    owner keeps, describes, shares and deletes it. Its own list grants reading it - its name, its
+    owner describes, shares and deletes it. It lies in a project, and lives as long as the project
+    (issue 467). Its own list grants reading it - its name, its
     description, which versions it has - and adding to it; each version has a list of its own,
     which grants reading that version. Reading a version needs both, as a file in HDFS or ADLS
     needs its directory (issue [316](../issues/316-store-checks-artifact-without-versions.md)),
@@ -212,13 +213,14 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     them, and that its actors stop there - and start again once it is restored - is done in the
     runtime's name, a consequence of the deletion, not a change of channels owned by others.
 *   What lies in a session's or a channel's scope - personalities, session templates, component
-    bundles, agents, workspaces, skills, artifacts - is deleted and restored with it in the name of
-    whoever deletes or restores it (issue 320); only finding it is done in the runtime's name.
-    Whoever deletes a session deletes what of its scope they may; if something is left - an artifact
-    another participant published there, a contributor's agent -, the session is kept, and they are
-    told what is left, by kind and count (`ScopeNotEmpty`, raised by what holds the scope). What
-    they may is deleted all the same, so that what is left to do is plain: its owners keep it
-    elsewhere or delete it.
+    bundles, agents, workspaces, skills - is deleted and restored with it in the name of whoever
+    deletes or restores it (issue 320), and so is what lies in a project's - artifacts - with the
+    project, or with the session whose own it is (issue 467); only finding it is done in the
+    runtime's name. Whoever deletes a session deletes what of its scope they may; if something is
+    left - a contributor's agent, an artifact another participant published into its own project -,
+    the session is kept, and they are told what is left, by kind and count (`ScopeNotEmpty`, raised
+    by what holds the scope). What they may is deleted all the same, so that what is left to do is
+    plain: its owners delete it.
     Whoever restores a session restores it and what of its scope they may; the rest stays deleted
     for its owner to restore. Purging is the system's anyway and done in the runtime's name.
 *   The groups of the participants of a session and its channels are not among it: they go and come

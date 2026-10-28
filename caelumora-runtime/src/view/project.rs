@@ -23,6 +23,11 @@ impl ProjectView {
         self.project.id
     }
 
+    /// The views it was reached through, which an extension of a plugin reads from (issue 328).
+    pub fn views(&self) -> &Views {
+        &self.views
+    }
+
     /// Whether the viewer may change it (`UpdateProject`): its owner.
     pub async fn may_change(&self) -> bool {
         self.views.access_policy().may_change_project(self.views.context(), &self.project.security_attributes).await

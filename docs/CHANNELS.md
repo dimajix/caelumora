@@ -17,7 +17,7 @@ reached only through its session -, purging it removes them. A session is loaded
 name, since starting a session the caller may read must not fail on a channel the caller is not in.
 
 What lies in a session's scope - its personalities, session templates and agents, those of its
-channels' scopes, its workspace if made for it, the artifacts published in it and not kept - goes
+channels' scopes, its workspace if made for it - goes
 with it (`ScopedEntities`, `caelumora-runtime/src/scoped.rs`): deleting the session deletes them,
 restoring it restores those deleted with it - not one deleted by hand before, nor one whose name was
 taken meanwhile -, purging it purges them. They are found in the runtime's name, but deleted and

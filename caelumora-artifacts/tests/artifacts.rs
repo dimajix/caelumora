@@ -15,7 +15,7 @@ use caelumora_artifacts::artifact::{Artifact, ArtifactId, PublicationSnapshot};
 use caelumora_artifacts::component::{ArtifactTool, ARTIFACT_PUBLISH_PRESENTATION, ARTIFACT_TOOL_KIND, PUBLISH_ARTIFACT};
 use caelumora_artifacts::manager::{ArtifactError, ArtifactManager};
 use caelumora_artifacts::plugin::ArtifactsPlugin;
-use caelumora_artifacts::view::{ArtifactChannelViews, ArtifactViews};
+use caelumora_artifacts::view::{ArtifactChannelViews, ArtifactProjectViews, ArtifactViews};
 use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -31,6 +31,8 @@ use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError, Stored
 use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
 use caelumora_model::user_provider::UserManager;
 use caelumora_model::user::UserId;
+use caelumora_model::project::Project;
+use caelumora_model::value::name::ScopedName;
 use caelumora_model::workspace::Workspace;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::ApiError;
@@ -195,12 +197,16 @@ async fn a_storage_of_content_takes_nothing_above_its_destination() {
     let config = AppConfig { content: ContentConfig { storage }, ..Default::default() };
     let runtime = TestRuntime { config, plugins: vec![&TestAgents, &ArtifactsPlugin], ..Default::default() }.build();
     let manager = Arc::clone(runtime.services().get::<ArtifactManager>().unwrap());
-    let alice = SecurityContext::new(ActorId::User(UserId::new()), SessionId::new(), ChannelId::new());
+    let owner = UserId::new();
+    let alice = SecurityContext::new(ActorId::User(owner), SessionId::new(), ChannelId::new());
+    let project = Project::new(ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(), owner);
+    runtime.entity_stores().projects.create(&SecurityContext::system(), &project).await.unwrap();
+    let name = ScopedName::new("r.csv", project.holds()).unwrap();
     let internal = Classification::general(Confidentiality::Internal);
-    let refused = manager.publish(&alice, (SessionId::new(), ChannelId::new()), (3, file("a,b")), &internal, "r.csv", None).await;
+    let refused = manager.publish(&alice, (SessionId::new(), ChannelId::new()), (3, file("a,b")), &internal, &name, None).await;
     assert!(matches!(refused, Err(ArtifactError::StorageNotCleared(ref name)) if name == "kept"), "{refused:?}");
     assert!(fs::read_dir(files.path()).unwrap().next().is_none(), "nothing kept");
-    let public = manager.publish(&alice, (SessionId::new(), ChannelId::new()), (3, file("a,b")), &Classification::PUBLIC, "r.csv", None).await;
+    let public = manager.publish(&alice, (SessionId::new(), ChannelId::new()), (3, file("a,b")), &Classification::PUBLIC, &name, None).await;
     assert!(public.is_ok(), "what it may hold it takes: {public:?}");
 }
 
@@ -331,6 +337,9 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
     let (status, body) = get(&api, &his, &format!("/sessions/{session_id}/channels/{main}/artifacts")).await;
     let in_channel: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!((status, in_channel[0]["id"].clone(), in_channel[0]["can_change"].clone()), (StatusCode::OK, json!(artifact.id), json!(false)), "{in_channel}");
+    let (status, body) = get(&api, &cookie, &format!("/projects/{}/artifacts", session.session().project)).await;
+    let in_project: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((status, in_project[0]["id"].clone(), in_project[0]["project_id"].clone()), (StatusCode::OK, json!(artifact.id), json!(session.session().project)), "{in_project}");
     let (status, body) = get(&api, &his, &format!("/artifacts/{}", ArtifactId::new())).await;
     let problem: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!((status, problem["code"].clone()), (StatusCode::NOT_FOUND, json!("artifact_not_found")));
@@ -342,12 +351,14 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
 /// Publishes the file `at` of the workspace of channel `channel` as a
 /// version of the artifact `name`, in `ctx`'s name, as `artifact_tool` does
 /// (issue 296): the workspace reached there for reading, the file read, and
-/// what was read handed to the `ArtifactManager`.
+/// what was read handed to the `ArtifactManager`, named in the scope of the
+/// session's project (issue 467).
 async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, channel: ChannelId, at: &WorkspacePath, name: &str, description: Option<&str>) -> Result<(Artifact, u32), ArtifactError> {
     let running = world.manager.open(&World::system(), session).await.expect("the session");
+    let name = ScopedName::new(name, Scope::ProjectScope { project_id: running.session().project })?;
     let (workspace, terminal) = running.channel(channel).expect("the channel").workspace_terminal(ctx, Grant::Read).await.expect("the workspace, to read");
     let content = terminal.read(at).await.expect("the file");
-    manager(world).publish(ctx, (session, channel), content, &workspace.classification, name, description).await
+    manager(world).publish(ctx, (session, channel), content, &workspace.classification, &name, description).await
 }
 
 /// G4 (issue 308): an artifact shared with a team is among the artifacts
@@ -430,11 +441,11 @@ async fn read_version(world: &World, ctx: &SecurityContext, id: ArtifactId, numb
 /// An artifact (issue 271) is published from the workspace of a channel,
 /// in the name of whoever publishes - its owner, who makes it
 /// (`CreateArtifact`), or whom its list lets add a version
-/// (`WriteArtifact`, issue 23) -, into the session's scope. Its owner reads
-/// every version; a version is read by the participants of the channel it was
-/// published in, by the artifact, wherever they act; only its owner shares
-/// and keeps it beyond the session, and what is not kept goes with the
-/// session, its content too.
+/// (`WriteArtifact`, issue 23) -, into the scope of its session's project
+/// (issue 467). Its owner reads every version; a version is read by the
+/// participants of the channel it was published in, by the artifact,
+/// wherever they act; only its owner shares it; and what lies in a
+/// session's own project goes with the session, its content too.
 #[tokio::test]
 async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who_reads_the_channel() {
     let world = world().await;
@@ -454,8 +465,11 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
 
     let (published, asked) = world.asked(publish(&world, &alice, session_id, main, &at, "report.csv", Some("The figures"))).await;
     let (artifact, first) = published.expect("published");
-    assert_eq!((first, &artifact.name.scope, artifact.owner()), (1, &Scope::SessionScope { session_id }, Some(world.alice)));
-    assert!(asked.contains(&"alice: CreateArtifact(alice's) yes".to_string()), "made in her name: {asked:?}");
+    let own = session.session().project;
+    assert_eq!((first, &artifact.name.scope, artifact.owner()), (1, &Scope::ProjectScope { project_id: own }, Some(world.alice)), "in its session's own project");
+    assert!(asked.contains(&"alice: GetProject(alice's) yes".to_string()) && asked.contains(&"alice: CreateArtifact(alice's) yes".to_string()), "the project reached, the artifact made, in her name: {asked:?}");
+    let members = AclEntry { subject: Subject::Group(GroupId::of_project(own)), grant: Grant::Read };
+    assert!(artifact.security_attributes.acl.contains(&members) && !artifact.versions[0].acl.contains(&members), "the project's members read the artifact, not the version");
     terminal.write(&at, file("a,b\n1,2"), 100).await.unwrap();
     let (published, asked) = world.asked(publish(&world, &alice, session_id, main, &at, "report.csv", None)).await;
     assert_eq!(published.expect("a second version").1, 2);
@@ -489,19 +503,15 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert_eq!(listed(&bob).await, [artifact.id], "shared with him by name, it is among his");
     let (added, third) = publish(&world, &bob, session_id, main, &at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
     assert_eq!((third, added.owner()), (3, Some(world.alice)), "hers still");
-    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::InvalidScope)), "not in his scope, whose it is not");
-    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::GlobalScope).await, Err(ArtifactError::Store(StoreError::PermissionDenied(_)))), "nor keeps it at all");
-    let kept_one = artifacts.keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("its owner keeps it");
-    assert_eq!(kept_one.name.scope, Scope::UserScope { user_id: world.alice });
-    let (left, _) = publish(&world, &alice, session_id, main, &at, "draft.csv", None).await.unwrap();
+    let (draft, _) = publish(&world, &alice, session_id, main, &at, "draft.csv", None).await.unwrap();
 
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
     world.manager.purge(&World::system(), session_id).await.unwrap();
-    assert!(store(&world).get(&alice, artifact.id).await.is_ok(), "what was kept stays");
-    assert!(world.files.path().join("content").join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
-    assert!(store(&world).get_deleted(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
-    assert!(!world.files.path().join("content").join("artifacts").join(left.id.to_string()).exists(), "its content too");
+    for gone in [artifact.id, draft.id] {
+        assert!(store(&world).get_deleted(&World::system(), gone).await.is_err(), "what lay in its own project went with the session");
+        assert!(!world.files.path().join("content").join("artifacts").join(gone.to_string()).exists(), "its content too");
+    }
 }
 
 /// A session of alice's with her workspace attached for writing and a file
@@ -525,9 +535,9 @@ async fn session_with_artifacts(world: &World) -> (Arc<SessionLoop>, Artifact, A
 
 /// Issue 320: what lies in a session's scope goes with it in the name of
 /// whoever deletes it, as far as they may. An artifact another participant
-/// published in the session is his: deleting the session deletes hers, in
-/// her name, and keeps the session, telling her what is left - until he
-/// keeps his elsewhere.
+/// published in the session is his: deleting the session deletes hers - in
+/// its own project (issue 467) -, in her name, and keeps the session,
+/// telling her what is left - until he deletes his.
 #[tokio::test]
 async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may() {
     let world = world().await;
@@ -560,9 +570,8 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
     let removal = store(&world).get_deleted(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");
     assert_eq!(removal.by, ActorId::User(world.alice), "in her name");
 
-    manager(&world).keep(&bob, his.id, Scope::UserScope { user_id: world.bob }).await.expect("bob keeps his");
+    assert!(manager(&world).delete(&bob, his.id).await.expect("bob deletes his"));
     assert!(world.manager.delete(&alice, session_id).await.expect("nothing of anybody else's is left"));
-    assert!(store(&world).get(&bob, his.id).await.is_ok(), "what bob kept stays");
 }
 
 /// Issue 320: what went with a session comes back with it in the name of
@@ -604,7 +613,9 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.csv", None).await.unwrap();
     let id = artifact.id;
     let (of_session, of_channel) = (GroupId::of_session(session_id), GroupId::of_channel(main));
-    assert_eq!(artifact.security_attributes.acl, [AclEntry { subject: Subject::Group(of_channel), grant: Grant::Read }], "bob reads it as a member of the channel");
+    let of_project = GroupId::of_project(session.session().project);
+    let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
+    assert_eq!(artifact.security_attributes.acl, [read_by(of_channel), read_by(of_project)], "bob reads it as a member of the channel");
 
     let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
     world.manager.stop(&alice, session_id).await.unwrap();
@@ -669,12 +680,13 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     world.manager.stop(&alice, session_id).await.unwrap();
 }
 
-/// An artifact kept beyond its session (issue 347) names the channel it was
-/// published in, in its list and in its version's, until the session is
-/// purged: then the entries go as the artifact is next stored, since they
-/// name nobody.
+/// An artifact of a lifted project (issues 347, 467) outlives the session
+/// it was published in, and names the channel, in its list and in its
+/// version's, until the session is purged: then the entries go as the
+/// artifact is next stored, since they name nobody; the project's members
+/// read it still.
 #[tokio::test]
-async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purged() {
+async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_purged() {
     let world = world().await;
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
@@ -686,15 +698,74 @@ async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purg
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.unwrap();
-    let kept = manager(&world).keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("kept as hers");
-    let members = AclEntry { subject: Subject::Group(GroupId::of_channel(main)), grant: Grant::Read };
-    assert_eq!((kept.security_attributes.acl.as_slice(), kept.versions[0].acl.as_slice()), ([members].as_slice(), [members].as_slice()), "read by the channel's members");
+    let project = session.session().project;
+    world.runtime.controller_manager().project_controller(project).await.unwrap().lift(&alice, "reports", Scope::UserScope { user_id: world.alice }).await.expect("kept as hers");
+    let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
+    let (channel, members) = (read_by(GroupId::of_channel(main)), read_by(GroupId::of_project(project)));
+    assert_eq!((artifact.security_attributes.acl.as_slice(), artifact.versions[0].acl.as_slice()), ([channel, members].as_slice(), [channel].as_slice()), "read by the channel's members, and the project's");
 
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
     world.manager.purge(&World::system(), session_id).await.unwrap();
-    let described = manager(&world).describe(&alice, artifact.id, Some("The report")).await.expect("still hers");
-    assert!(described.security_attributes.acl.is_empty() && described.versions[0].acl.is_empty(), "the entries go as it is stored: {described:?}");
+    let described = manager(&world).describe(&alice, artifact.id, Some("The report")).await.expect("still hers, in the lifted project");
+    assert_eq!((described.security_attributes.acl.as_slice(), described.versions[0].acl.as_slice()), ([members].as_slice(), [].as_slice()), "the channel's entries go as it is stored: {described:?}");
+}
+
+/// Issue 467: what is published in a session that lies in a shared project lies in the project
+/// and outlives the session. A member of the project who took part in none of its channels finds
+/// the artifact through the project, and reads no version: those are the channels'; a member who
+/// took part in the channel reads the version published there.
+#[tokio::test]
+async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_in() {
+    let world = world().await;
+    let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
+    let project = world.projects.create(&alice, "report", Scope::UserScope { user_id: world.alice }, None).await.unwrap();
+    world.runtime.controller_manager().project_controller(project.id).await.unwrap().update_members(&alice, vec![world.bob, world.carol]).await.unwrap();
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_project(&alice, Some(project.id)).await.unwrap();
+    let (session_id, main) = (session.id(), session.channels()[0].id());
+    let (_, terminal) = session.channel(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
+    let at = WorkspacePath::parse("report.md").unwrap();
+    terminal.write(&at, file("final"), 100).await.unwrap();
+    let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.unwrap();
+    assert_eq!(artifact.project(), Some(project.id), "in the shared project");
+
+    let in_project = |ctx: &SecurityContext| {
+        let views = world.manager.views(Viewer::new(ctx.clone()));
+        async move { views.project(project.id).await.unwrap().artifacts().await.unwrap() }
+    };
+    let hers = in_project(&carol).await;
+    assert_eq!(hers.iter().map(|a| a.artifact().id).collect::<Vec<_>>(), [artifact.id], "a member finds it through the project");
+    assert!(hers[0].artifact().versions.is_empty(), "but reads no version of a channel she was not in");
+    assert_eq!(read_version(&world, &carol, artifact.id, 1).await, Read::NoVersion);
+    let his = in_project(&World::as_user(world.bob)).await;
+    assert_eq!(his[0].artifact().versions.iter().map(|v| v.number).collect::<Vec<_>>(), [1], "a member who took part reads the version of his channel");
+
+    world.manager.stop(&alice, session_id).await.unwrap();
+    world.manager.delete(&alice, session_id).await.unwrap();
+    world.manager.purge(&World::system(), session_id).await.unwrap();
+    assert!(store(&world).get(&alice, artifact.id).await.is_ok(), "it outlives the session");
+    assert_eq!(read_version(&world, &alice, artifact.id, 1).await, Read::Content(5, "final".to_string()), "with its content");
+    assert_eq!(in_project(&alice).await.len(), 1, "found through the project still");
+}
+
+/// Issue 467: an artifact is published into a project its publisher reads - asked in their name
+/// -, and under a name in a project's scope alone, which the caller vouches for.
+#[tokio::test]
+async fn publishing_into_a_project_needs_reading_it() {
+    let world = world().await;
+    let alice = World::as_user(world.alice);
+    let carols = world.projects.create(&World::as_user(world.carol), "hers", Scope::UserScope { user_id: world.carol }, None).await.unwrap();
+    let internal = Classification::general(Confidentiality::Internal);
+    let channel = (SessionId::new(), ChannelId::new());
+    let into = |scope: Scope| ScopedName::new("r.csv", scope).unwrap();
+    let (refused, asked) = world.asked(manager(&world).publish(&alice, channel, (3, file("a,b")), &internal, &into(carols.holds()), None)).await;
+    assert!(matches!(refused, Err(ArtifactError::Store(StoreError::NotFound { .. }))), "not into a project she does not read: {refused:?}");
+    assert_eq!(asked, checks(&["alice: GetProject(carol's) no"]), "asked in her name, before anything else");
+    let refused = manager(&world).publish(&alice, channel, (3, file("a,b")), &internal, &into(Scope::SessionScope { session_id: channel.0 }), None).await;
+    assert!(matches!(refused, Err(ArtifactError::InvalidScope)), "nor anywhere but in a project: {refused:?}");
 }
 
 /// An agent's publication of an artifact (issue 271) asks what a call on

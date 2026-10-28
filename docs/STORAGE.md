@@ -204,7 +204,8 @@ A template asks for each agent in exactly the scope it names and reuses it only 
 personality it names, so an agent's scope decides whether it is reused - one per user, with its
 memory - or made anew for every session. A session template lies in no session's or channel's
 scope. A workspace lies in a session's scope, its owner's or the global one - never a channel's,
-since a session's channels share one - and belongs to a user wherever it lies; so does an artifact.
+since a session's channels share one - and belongs to a user wherever it lies. An artifact belongs
+to a user too, and lies in a project's scope alone (issue 467).
 
 **Of one kind, a name is unique in its name space**, and the store keeps it so: nothing is created,
 renamed, moved or restored under a name another of its kind has there, compared as names are

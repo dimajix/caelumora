@@ -1,18 +1,17 @@
-//! An artifact (issue 271): a result an agent published, kept as fixed
-//! versions beyond the workspace it was copied from. It belongs to the user
-//! the agent acts for and lies in a scope - the session's, made with the
-//! session and gone with it, until its owner keeps it in their own scope or
-//! the global one. One classification holds for all its versions: the one
-//! its first version was published with. Its content lies in the storage
-//! the artifact names - configured, not stored -, one piece per version;
-//! the document holds what is known of them.
+//! An artifact (issue 271): a result an agent published, kept as fixed versions beyond the
+//! workspace it was copied from. It belongs to the user the agent acts for and lies in the scope of
+//! the project its session's results go to (issue 467), as long as the project: a session's own
+//! goes with the session, a shared one outlives it. One classification holds for all its versions:
+//! the one its first version was published with. Its content lies in the storage the artifact
+//! names, configured, not stored, one piece per version; the document holds what is known of them.
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::define_id;
 use caelumora_model::digest::Digest;
+use caelumora_model::project::ProjectId;
 use caelumora_model::removal::Removal;
-use caelumora_model::scope::{validate_users_own, Scope, Scoped, ScopedField};
+use caelumora_model::scope::{Scope, Scoped, ScopedField};
 use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::AccessSnapshot;
@@ -35,8 +34,6 @@ pub enum ArtifactUpdateEvent {
     VersionPublished(u32),
     /// Its access list changed. Without the list: only its owner sees it.
     AccessChanged,
-    /// Kept in another scope, beyond the session it was published in.
-    ScopeChanged(Scope),
     /// What it is, as its owner describes it, as it now stands; `None`
     /// takes the description away.
     DescriptionChanged(Option<String>),
@@ -87,9 +84,9 @@ impl Field for ArtifactField {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {
     pub id: ArtifactId,
-    /// What it is found by and where it lies: a file name, unique in its
-    /// scope (issue 250). The scope says how long it is kept, not whose it
-    /// is: it is its owner's wherever it lies.
+    /// What it is found by and where it lies: a file name, unique in its project (issue 250), in
+    /// the project's scope (issue 467). The project says how long it is kept, not whose it is: it
+    /// is its owner's.
     #[serde(flatten)]
     pub name: ScopedName,
     /// The name of the storage its content lies in, as the configuration
@@ -180,6 +177,15 @@ impl Artifact {
         }
     }
 
+    /// The project it lies in (issue 467); `None` only for a document that could not be stored
+    /// (`Stored::validate`).
+    pub fn project(&self) -> Option<ProjectId> {
+        match self.name.scope {
+            Scope::ProjectScope { project_id } => Some(project_id),
+            _ => None,
+        }
+    }
+
     /// Its version `number`, if it has one.
     pub fn version(&self, number: u32) -> Option<&ArtifactVersion> {
         self.versions.iter().find(|v| v.number == number)
@@ -244,12 +250,16 @@ impl Stored for Artifact {
         self.deleted = deleted;
     }
 
-    /// An artifact is a user's own, as a workspace is, and has its versions
-    /// numbered from 1 without gaps; a version's list names whom an
-    /// artifact's may (issue 23) and grants reading alone - reading the
-    /// version, of those who read the artifact (issue 316).
+    /// An artifact is a user's and lies in a project's scope (issue 467), and has its versions
+    /// numbered from 1 without gaps; a version's list names whom an artifact's may (issue 23) and
+    /// grants reading alone - reading the version, of those who read the artifact (issue 316).
     fn validate(&self) -> Result<(), String> {
-        validate_users_own("artifact", &self.security_attributes, &self.name.scope)?;
+        if self.owner().is_none() {
+            return Err("an artifact belongs to a user".to_string());
+        }
+        if !matches!(self.name.scope, Scope::ProjectScope { .. }) {
+            return Err("an artifact lies in a project's scope".to_string());
+        }
         for version in &self.versions {
             self.version_attributes(version).validate()?;
             if version.acl.iter().any(|entry| entry.grant != Grant::Read) {
@@ -303,8 +313,8 @@ impl Scoped for Artifact {
 pub struct ArtifactSnapshot {
     /// With the versions the viewer may read alone (issue 23).
     pub artifact: Artifact,
-    /// Whether the viewer may change it - keep it, describe it, share it,
-    /// delete it (`UpdateArtifact`): its owner.
+    /// Whether the viewer may change it - describe it, share it, delete it (`UpdateArtifact`): its
+    /// owner.
     pub can_change: bool,
     /// Whether the viewer may add a version (`WriteArtifact`, issue 23).
     pub can_write: bool,
@@ -357,24 +367,26 @@ mod tests {
         Artifact::new(ArtifactId::new(), ScopedName::new("report.csv", scope).unwrap(), "files", Classification::CHANNEL_DEFAULT, owner, version(b"a,b", SessionId::new()))
     }
 
+    /// Issue 467: an artifact lies in a project's scope and nowhere else, and belongs to a user.
     #[test]
-    fn an_artifact_lies_where_a_workspace_may_and_belongs_to_a_user() {
+    fn an_artifact_lies_in_a_project_and_belongs_to_a_user() {
         let alice = UserId::new();
         let session_id = SessionId::new();
-        for scope in [Scope::SessionScope { session_id }, Scope::UserScope { user_id: alice }, Scope::GlobalScope] {
-            assert!(artifact(scope.clone(), alice).validate().is_ok(), "{scope:?}");
-        }
-        for scope in [Scope::UserScope { user_id: UserId::new() }, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }] {
+        let project_id = ProjectId::new();
+        let project = Scope::ProjectScope { project_id };
+        assert!(artifact(project.clone(), alice).validate().is_ok());
+        assert_eq!(artifact(project.clone(), alice).project(), Some(project_id), "the project it lies in");
+        for scope in [Scope::SessionScope { session_id }, Scope::UserScope { user_id: alice }, Scope::GlobalScope, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }] {
             assert!(artifact(scope.clone(), alice).validate().is_err(), "not in {scope:?}");
         }
-        let systems = Artifact { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..artifact(Scope::GlobalScope, alice) };
+        let systems = Artifact { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..artifact(project, alice) };
         assert!(systems.validate().is_err(), "nobody's");
     }
 
     #[test]
     fn versions_are_numbered_from_one_and_kept() {
         let session_id = SessionId::new();
-        let mut kept = artifact(Scope::SessionScope { session_id }, UserId::new());
+        let mut kept = artifact(Scope::ProjectScope { project_id: ProjectId::new() }, UserId::new());
         assert_eq!(kept.latest().map(|v| v.number), Some(1));
         assert_eq!(kept.add_version(version(b"a,b\n1,2", session_id)), 2);
         assert_eq!((kept.version(1).map(|v| v.size), kept.version(2).map(|v| v.size)), (Some(3), Some(7)));
@@ -392,7 +404,7 @@ mod tests {
         let session_id = SessionId::new();
         let (drafts, team) = (GroupId::of_channel(ChannelId::new()), GroupId::of_channel(ChannelId::new()));
         let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
-        let mut shared = artifact(Scope::SessionScope { session_id }, alice);
+        let mut shared = artifact(Scope::ProjectScope { project_id: ProjectId::new() }, alice);
         shared.versions[0].acl = vec![read_by(drafts)];
         shared.add_version(ArtifactVersion { acl: vec![read_by(team)], ..version(b"final", session_id) });
         shared.security_attributes = shared.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
@@ -415,7 +427,7 @@ mod tests {
 
     #[test]
     fn an_artifact_is_written_without_what_it_does_not_have() {
-        let made = artifact(Scope::GlobalScope, UserId::new());
+        let made = artifact(Scope::ProjectScope { project_id: ProjectId::new() }, UserId::new());
         let written = serde_json::to_value(&made).unwrap();
         assert!(written.get("description").is_none() && written.get("deleted").is_none(), "{written}");
         assert!(written["versions"][0].get("media_type").is_none());

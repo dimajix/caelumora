@@ -1,17 +1,15 @@
-//! The one owner of "an artifact and its content" (issue 271): it publishes
-//! versions - their content kept first, then the document, then announced -,
-//! keeps artifacts in another scope, deletes, restores and purges them -
-//! also with what holds their scope (`…_lying_in`, called by `scoped`) -,
-//! and is the only code that keeps content in the key space `artifacts` of
-//! the storages of content (issue 282): a version under
-//! `artifacts/<artifact>/<number>`, an artifact's versions under
+//! The one owner of "an artifact and its content" (issue 271): it publishes versions - their
+//! content kept first, then the document, then announced -, deletes, restores and purges them -
+//! also with the project that holds their scope (`…_lying_in`, called by `scoped`) -, and is the
+//! only code that keeps content in the key space `artifacts` of the storages of content (issue
+//! 282): a version under `artifacts/<artifact>/<number>`, an artifact's versions under
 //! `artifacts/<artifact>`.
 //!
-//! An artifact is published into its session's scope, made with the first
-//! version of its name there and gone with the session, until its owner
-//! keeps it in their own scope or the global one (`keep`). Its
-//! classification is the workspace's its first version was copied from;
-//! a later version from a workspace classified otherwise is refused.
+//! An artifact is published into the scope of the project its session's results go to (issue 467),
+//! made with the first version of its name there and gone with the project: with the session where
+//! the project is the session's own, beyond it where it is shared. Its classification is the
+//! workspace's its first version was copied from; a later version from a workspace classified
+//! otherwise is refused.
 
 use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
 use async_trait::async_trait;
@@ -24,7 +22,8 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, WRITE};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{Address, EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::project::Project;
+use caelumora_model::store::{Address, EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -59,8 +58,9 @@ pub enum ArtifactError {
     /// A later version from a workspace classified otherwise than the first.
     #[error("the artifact '{0}' is classified otherwise than the workspace; publish it under another name")]
     ClassifiedOtherwise(String),
-    /// Kept in a scope an artifact cannot lie in.
-    #[error("an artifact is kept in its owner's scope or the global one")]
+    /// Published under a name in a scope an artifact does not lie in: the caller vouches for a
+    /// project's (issue 467).
+    #[error("an artifact lies in a project's scope")]
     InvalidScope,
     #[error(transparent)]
     Invalid(#[from] ValueError),
@@ -120,6 +120,8 @@ fn store_error(id: ArtifactId) -> impl FnOnce(StoreError) -> ArtifactError {
 
 pub struct ArtifactManager {
     artifacts: Arc<dyn EntityStore<Artifact>>,
+    /// The projects artifacts are published into (issue 467), reached in the publisher's name.
+    projects: Arc<dyn EntityStore<Project>>,
     groups: Arc<dyn EntityStore<Group>>,
     events: Arc<EventBus>,
     access_policy: Arc<dyn AccessPolicy>,
@@ -141,17 +143,18 @@ impl fmt::Debug for ArtifactManager {
 }
 
 impl ArtifactManager {
-    /// The manager of the artifacts of `artifacts`, naming the groups of
-    /// `groups` in their lists, whose content lies in `storages` by their
+    /// The manager of the artifacts of `artifacts`, published into the projects of `projects`,
+    /// naming the groups of `groups` in their lists, whose content lies in `storages` by their
     /// names, new ones in the storage `config` says.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` where `config` names no storage of
-    /// `storages`, or none among several.
-    pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn ContentStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+    /// `ComponentError::InvalidConfig` where `config` names no storage of `storages`, or none among
+    /// several.
+    pub fn new(stores: &EntityStores, artifacts: Arc<dyn EntityStore<Artifact>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn ContentStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
         let keep_in = storages.chosen(config.keep_in.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?
             .map(|(name, storage)| (name.to_string(), Arc::clone(storage)));
-        Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, keep_in, max_bytes: config.max_bytes, writing: Mutex::new(()) })
+        let (projects, groups) = (Arc::clone(&stores.projects), Arc::clone(&stores.groups));
+        Ok(Self { artifacts, projects, groups, events, access_policy, confidentiality, storages, keep_in, max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
     /// The store of artifacts, which the views read in the viewer's name.
@@ -164,37 +167,41 @@ impl ArtifactManager {
         self.keep_in.is_some()
     }
 
-    /// Publishes `content` - its size and its bytes, as a file of a
-    /// workspace is read -, classified as `classification`, as a version
-    /// of the artifact `name` in the scope of the session `channel` lies
-    /// in, published in the channel at `channel` - its `Address` - by the
-    /// agent `ctx` names as its caller, for the user it acts for: the
-    /// artifact of that name there gains a version, or is made with its
-    /// first. Its owner may change it, or make it (`UpdateArtifact`,
-    /// `CreateArtifact`), asked before anything is kept; its storage may hold
-    /// what is so classified. Where the content comes from is the caller's
-    /// (issue 296): read before the artifact's own permission is asked, it
-    /// gives nothing away to one who could read it. The caller vouches for
-    /// `classification` and `channel`: the workspace the content was read
-    /// from, and the channel it was reached through (`artifact_tool` reads it
-    /// through `Turn::workspace_terminal`) - never what a client names. The
-    /// content is kept first, its digest taken as it is; a document that
-    /// cannot be stored leaves no content. Answers the artifact as it is
-    /// now, and the number of the new version.
+    /// Publishes `content` - its size and its bytes, as a file of a workspace is read -, classified
+    /// as `classification`, as a version of the artifact `name` - in the scope of the project the
+    /// session's results go to (issue 467) -, published in the channel at `channel` (its `Address`)
+    /// by the agent `ctx` names as its caller, for the user it acts for: the artifact of that name
+    /// there gains a version, or is made with its first. The project is reached in their name
+    /// (`GetProject`) - who reads it publishes into it -, first, unlike a session a workspace is
+    /// made in, which is asked after the caller's own verb: whether the caller may add to an
+    /// artifact found by name tells whether one of that name lies in the project, which who does
+    /// not read it must not learn. Then its owner may change the artifact, or make it
+    /// (`UpdateArtifact`, `CreateArtifact`), asked before anything is kept; its storage may hold
+    /// what is so classified. Where the content comes from is the caller's (issue 296): read before
+    /// the artifact's own permission is asked, it gives nothing away to one who could read it. The
+    /// caller vouches for `classification`, `channel` and the project of `name`: the workspace the
+    /// content was read from, the channel it was reached through and its session's project
+    /// (`artifact_tool` reads them through the turn) - never what a client names. The artifact is
+    /// read by the members of the project, a version by the participants of the channel alone. The
+    /// content is kept first, its digest taken as it is; a document that cannot be stored leaves no
+    /// content. Answers the artifact as it is now, and the number of the new version.
     ///
     /// # Errors
-    /// `NotConfigured`, `OwnerNotAUser`, `Invalid` for a name that is none, `ClassifiedOtherwise`,
+    /// `NotConfigured`, `OwnerNotAUser`, `InvalidScope` for a name in another scope than a
+    /// project's, `Invalid` for a description that does not fit, `ClassifiedOtherwise`,
     /// `StorageNotCleared`, `StorageGone` for an artifact whose storage is no longer configured,
     /// `Content` for a version too large, other than said, or a storage that failed, or whatever
-    /// the store reports - `PermissionDenied` and `NameTaken` among it.
-    pub async fn publish(&self, ctx: &SecurityContext, (session, channel): Address<Channel>, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>) -> ArtifactResult<(Artifact, u32)> {
+    /// the store reports - `NotFound` for a project the caller does not read, `PermissionDenied`
+    /// and `NameTaken` among it.
+    pub async fn publish(&self, ctx: &SecurityContext, (session, channel): Address<Channel>, (size, content): (u64, ByteStream), classification: &Classification, name: &ScopedName, description: Option<&str>) -> ArtifactResult<(Artifact, u32)> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
-        let name = ScopedName::new(name, Scope::SessionScope { session_id: session })?;
+        let Scope::ProjectScope { project_id } = name.scope else { return Err(ArtifactError::InvalidScope) };
         let description = Description::optional(description)?;
+        self.projects.get(ctx, project_id).await?;
         let _writing = self.writing.lock().await;
         // Found whoever's it is, so that one not the caller's to add to is
         // refused as such rather than taken for a name to make anew.
-        let existing = self.artifacts.find_by_name(&SecurityContext::system(), &name).await.optional()?;
+        let existing = self.artifacts.find_by_name(&SecurityContext::system(), name).await.optional()?;
         let (id, number, (storage_name, storage)) = match &existing {
             Some(artifact) => {
                 self.access_policy.require(ctx, ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes), StoreError::PermissionDenied).await?;
@@ -214,24 +221,28 @@ impl ArtifactManager {
 
         let digest = keep_digested(storage.as_ref(), &version_key(id, number), size, content, self.max_bytes).await?;
 
-        // Read by the participants of the channel it is published in (issues 23,
-        // 316) - the group of its participants (issue 286) -, who read the
-        // artifact for it: a draft published where few are reaches nobody
-        // who reads a later version published where many are.
-        let members = Subject::Group(GroupId::of_channel(channel));
+        // Read by the participants of the channel it is published in (issues 23, 316) - the group
+        // of its participants (issue 286) -, who read the artifact for it: a draft published where
+        // few are reaches nobody who reads a later version published where many are. The members of
+        // the project read the artifact alone, granted as it is made (issue 467): that it is there,
+        // and the versions published where they took part; an owner who takes that back keeps it
+        // so.
+        let participants = Subject::Group(GroupId::of_channel(channel));
+        let members = Subject::Group(GroupId::of_project(project_id));
         let mut version = ArtifactVersion { number, size, digest, media_type: None, description, session_id: session, channel_id: channel, published_by: ctx.caller_id, published_at: Utc::now(), acl: Vec::new() };
-        version.grant_reading(members);
+        version.grant_reading(participants);
         let stored = match existing {
             Some(mut artifact) => {
                 artifact.add_version(version);
-                artifact.grant_reading(members);
+                artifact.grant_reading(participants);
                 // Changed in the runtime's name: whoever may add a version
                 // need not own the artifact (`WriteArtifact`, asked above),
                 // and lets the channel they publish it in read it.
                 self.update(&SecurityContext::system(), &mut artifact).await.map(|()| artifact)
             }
             None => {
-                let mut artifact = Artifact::new(id, name, storage_name, classification.clone(), owner, version);
+                let mut artifact = Artifact::new(id, name.clone(), storage_name, classification.clone(), owner, version);
+                artifact.grant_reading(participants);
                 artifact.grant_reading(members);
                 self.artifacts.create(ctx, &artifact).await.map(|()| artifact)
             }
@@ -322,31 +333,6 @@ impl ArtifactManager {
         self.update(ctx, &mut artifact).await?;
         self.events.announce(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged), &artifact);
         info!(artifact = %id, by = %ctx.caller_id, "Artifact's access changed");
-        Ok(artifact)
-    }
-
-    /// Keeps artifact `id` in `scope` - its owner's or the global one -,
-    /// beyond the session it was published in (`UpdateArtifact`, its
-    /// owner's act, asked by the store). The scope is compared with the
-    /// artifact's owner before: that tells the caller nothing of others
-    /// (issue 312).
-    ///
-    /// # Errors
-    /// `NotFound`, `InvalidScope` for another scope, or whatever the store
-    /// reports - `PermissionDenied` and `NameTaken` among it.
-    pub async fn keep(&self, ctx: &SecurityContext, id: ArtifactId, scope: Scope) -> ArtifactResult<Artifact> {
-        let _writing = self.writing.lock().await;
-        let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
-        match (&scope, artifact.owner()) {
-            (Scope::GlobalScope, _) => {}
-            (Scope::UserScope { user_id }, Some(owner)) if *user_id == owner => {}
-            _ => return Err(ArtifactError::InvalidScope),
-        }
-        artifact.name.scope = scope;
-        artifact.updated_at = Utc::now();
-        self.update(ctx, &mut artifact).await?;
-        self.events.announce(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::ScopeChanged(artifact.name.scope.clone())), &artifact);
-        info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
         Ok(artifact)
     }
 

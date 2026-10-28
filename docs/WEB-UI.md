@@ -204,7 +204,7 @@ participant of the channel it was published in is not listed, but opened from it
 
 An artifact's page shows what it is, where it lies, its classification, and its versions the user
 may read, each with where and by whom it was published - by name for whoever may read that channel,
-"a channel you do not read" otherwise. Its owner describes, keeps, shares and deletes it - sharing
+"a channel you do not read" otherwise. Its owner describes, shares and deletes it - sharing
 hands whom the list newly names every version there is (issue 316) -, and sees whom each version
 reaches; whoever may add versions without owning it is told so.
 

@@ -18,8 +18,10 @@ use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use crate::manager::{ArtifactError, ArtifactManager};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
+use caelumora_model::scope::Scope;
 use caelumora_model::security::Grant;
 use caelumora_model::store::StoreError;
+use caelumora_model::value::name::ScopedName;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_agents::turn::Turn;
 use caelumora_agents::situation::Situation;
@@ -112,7 +114,7 @@ impl From<ArtifactError> for ToolError {
             ArtifactError::Content(ContentError::Changed) => ToolError::InvalidParameter("the file changed while it was published; publish it again once it is written".to_string()),
             ArtifactError::Content(e) => e.into(),
             ArtifactError::StorageGone(e) => e.into(),
-            ArtifactError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("an artifact of that name in this session is someone else's: publish under another name".to_string()),
+            ArtifactError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("an artifact of that name in this project is someone else's: publish under another name".to_string()),
             ArtifactError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("publishing an artifact here".to_string()),
             error => ToolError::ExecutionFailed(error.to_string()),
         }
@@ -164,6 +166,9 @@ impl ToolProvider for ArtifactTool {
         };
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
         let (ctx, channel) = (turn.situation().security_context(), (turn.situation().session_id(), turn.situation().channel_id()));
+        // Into the project its session's results go to (issue 467), as the session is now.
+        let session = turn.situation().session().await?.ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session to publish in".to_string()))?;
+        let name = ScopedName::new(name, Scope::ProjectScope { project_id: session.project() }).map_err(ArtifactError::from)?;
         let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await?;
         let content = terminal.read(&at).await?;
         let (artifact, number) = self.artifacts.publish(ctx, channel, content, &workspace.classification, &name, description).await?;

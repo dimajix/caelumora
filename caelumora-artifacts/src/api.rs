@@ -8,7 +8,7 @@ use caelumora_model::digest::Digest;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::value::text::Description;
 use caelumora_rest_api::access::AccessEntry;
-use caelumora_rest_api::scope::ScopeKind;
+use caelumora_model::project::ProjectId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -19,18 +19,17 @@ use serde::{Deserialize, Serialize};
 pub struct ArtifactResponse {
     pub id: ArtifactId,
     pub name: String,
-    /// Where it lies: `session` - published in it and gone with it unless
-    /// kept, which `session_id` names -, `user` or `global`.
-    pub scope: ScopeKind,
+    /// The project it lies in (issue 467): gone with it - with its session where that is the
+    /// session's own -, kept beyond the session where it is shared. Absent only for an artifact
+    /// that could not be stored.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
+    pub project_id: Option<ProjectId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Description>,
     pub classification: Classification,
     /// Oldest first; those you may read alone (issue 23).
     pub versions: Vec<ArtifactVersionResponse>,
-    /// Whether you may change it - keep it, describe it, share it, delete
-    /// it: its owner.
+    /// Whether you may change it - describe it, share it, delete it: its owner.
     pub can_change: bool,
     /// Whether you may add a version to it (issue 23).
     pub can_write: bool,
@@ -72,7 +71,7 @@ pub struct ArtifactVersionResponse {
 impl From<ArtifactSnapshot> for ArtifactResponse {
     fn from(view: ArtifactSnapshot) -> Self {
         let artifact = view.artifact;
-        let (scope, session_id) = ScopeKind::of(&artifact.name.scope);
+        let project_id = artifact.project();
         let (mut version_access, mut publications) = (view.version_access, view.publications);
         let versions = artifact.versions.into_iter().map(|v| {
             let (session_name, channel_name, published_by_name) = match publications.remove(&v.number) {
@@ -88,16 +87,10 @@ impl From<ArtifactSnapshot> for ArtifactResponse {
         }).collect();
         let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
         Self {
-            id: artifact.id, name: artifact.name.name.to_string(), scope, session_id, description: artifact.description, classification: artifact.classification, versions,
+            id: artifact.id, name: artifact.name.name.to_string(), project_id, description: artifact.description, classification: artifact.classification, versions,
             can_change: view.can_change, can_write: view.can_write, access,
         }
     }
-}
-
-/// Where to keep an artifact beyond its session: `user` or `global`.
-#[derive(Debug, Deserialize)]
-pub struct KeepArtifactRequest {
-    pub scope: ScopeKind,
 }
 
 /// How an artifact is shared (issue 316): by default, whom its list newly

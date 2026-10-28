@@ -823,3 +823,37 @@ none lies in a project's scope.
   (`Views::name_of`).
   How a session's own project is named to a client - `own`, as stored, or by its session, as the
   group of its members is - is decided in step 4, with the REST API.
+- **2026-10-28** — Step 3 done: artifacts lie in projects. `Artifact::validate` takes a project's
+  scope alone, and an owner who is a user; `Artifact::project` names it. `ArtifactManager::publish`
+  takes the name as a `ScopedName` in its session's project's scope, which `artifact_tool` builds
+  from the turn's session (`SessionView::project`); the manager reaches the project in the
+  publisher's name (`GetProject`), and the artifact's list names the members of the project for
+  reading beside the channel's participants, the version's the channel's alone. `keep`,
+  `ArtifactUpdateEvent::ScopeChanged`, `KeepArtifactRequest` and `PUT /artifacts/{id}/scope` are
+  gone; `ArtifactProjectViews::artifacts` on `ProjectView` (with `ProjectView::views`) and `GET
+  /projects/{id}/artifacts` list what lies in a project. `ArtifactResponse` carries `project_id` in
+  place of `scope` and `session_id`. The documents that described keeping (TOOLS.md, CHANNELS.md,
+  PERMISSION-CHECKS.md, REST-SERVER.md) say what holds now.
+
+  Different from the plan: `ArtifactError::InvalidScope` stays, for a name the publisher gave in
+  another scope than a project's - the plan had `Invalid`, which is a value's error; the REST API
+  answers it as the server's, since only a publisher vouches for the name. `ArtifactManager::new`
+  takes the `EntityStores`, from which it holds the projects and the groups, instead of one more
+  store as a parameter. `ArtifactResponse::project_id` is optional, absent only for an artifact
+  that could not be stored, as `Artifact::owner` is. The web UI still offers to keep an artifact,
+  which the API no longer serves, until step 4. Stored artifacts are to be deleted: they lie in a
+  session's scope, which an artifact no longer may.
+
+  After the review: the members of the project are granted reading as the artifact is made, not at
+  every publication, so that an owner who takes that back keeps it so; the channel's participants
+  are granted at every one, as before. A project the publisher does not read is the store's
+  `NotFound`, passed on as a workspace's session is - not `PermissionDenied` as the plan had; the
+  tool tells the model it failed. The plan's test of a member reading the versions of the channels
+  they took part in is part of `an_artifact_of_a_shared_project_outlives_the_session_it_was_
+  published_in`. `validate_users_own`, left with the workspace alone, is `Workspace::validate`.
+  What the documents said of keeping an artifact - SECURITY.md, STORAGE.md, WEB-UI.md,
+  ARCHITECTURE.md, PLUGINS.md and PERMISSION-CHECKS.md too - says what holds now.
+  Decided with the maintainer: `ArtifactResponse::project_id` stays optional. A required one would
+  need a conversion that can fail, or an artifact that holds its project apart from its name -
+  which the store's queries by `scope` and the uniqueness of names would have to be served for -,
+  for a case only a document that could not be stored reaches.

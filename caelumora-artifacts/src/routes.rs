@@ -1,21 +1,20 @@
-//! Artifacts (issue 271) in the API: their owner keeps, describes,
-//! shares, deletes and restores theirs; whoever the artifact's list lets
-//! read it reads the versions whose own list lets them as well (issues 23,
-//! 316), by the artifact, never through a channel - a channel lists what
-//! was published in it. A version is downloaded as an attachment
-//! (`routes::attachment_response`), named as its artifact. Served behind
-//! the core's login (`RestPlugin`, issue 328), each handler with the
-//! `ArtifactManager` in its state.
+//! Artifacts (issue 271) in the API: their owner describes, shares, deletes and restores theirs;
+//! whoever the artifact's list lets read it reads the versions whose own list lets them as well
+//! (issues 23, 316), by the artifact, never through a channel - a channel lists what was published
+//! in it, a project what lies in it (issue 467). A version is downloaded as an attachment
+//! (`routes::attachment_response`), named as its artifact. Served behind the core's login
+//! (`RestPlugin`, issue 328), each handler with the `ArtifactManager` in its state.
 
-use crate::api::{ArtifactResponse, KeepArtifactRequest, ShareOptions};
+use crate::api::{ArtifactResponse, ShareOptions};
 use crate::artifact::ArtifactId;
 use crate::manager::{ArtifactError, ArtifactManager};
 use crate::plugin::ArtifactsPlugin;
-use crate::view::{ArtifactChannelViews, ArtifactViews};
+use crate::view::{ArtifactChannelViews, ArtifactProjectViews, ArtifactView, ArtifactViews};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
+use caelumora_model::project::ProjectId;
 use axum::Router;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::StoreError;
@@ -50,13 +49,13 @@ impl RestPlugin for ArtifactsPlugin {
         Router::new()
             .route("/artifacts", get(list_artifacts))
             .route("/artifacts/{id}", get(get_artifact).delete(delete_artifact))
-            .route("/artifacts/{id}/scope", put(keep_artifact))
             .route("/artifacts/{id}/description", put(describe_artifact))
             .route("/artifacts/{id}/restore", post(restore_artifact))
             .route("/artifacts/{id}/purge", post(purge_artifact))
             .route("/artifacts/{id}/access", put(set_access))
             .route("/artifacts/{id}/versions/{n}/content", get(download_version))
             .route("/sessions/{id}/channels/{cid}/artifacts", get(channel_artifacts))
+            .route("/projects/{id}/artifacts", get(project_artifacts))
             .with_state(Artifacts { app, manager })
     }
 }
@@ -71,13 +70,13 @@ impl From<ArtifactError> for ApiError {
             ArtifactError::NotConfigured => Self::bad_request("artifacts_not_configured", detail),
             ArtifactError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
             ArtifactError::ClassifiedOtherwise(_) => Self::conflict("classified_otherwise", detail),
-            ArtifactError::InvalidScope => Self::bad_request("invalid_scope", detail),
             ArtifactError::Invalid(e) => e.into(),
             ArtifactError::Content(e) => e.into(),
             ArtifactError::StorageGone(e) => e.into(),
             ArtifactError::Store(e) => e.into(),
-            // A caller that is no user, a runtime without artifacts: not the client's request.
-            ArtifactError::OwnerNotAUser | ArtifactError::NotJoined => Self::internal("internal_error", "the request", &error.into()),
+            // A caller that is no user, a name not in a project's scope - which the publisher
+            // vouches for -, a runtime without artifacts: not the client's request.
+            ArtifactError::OwnerNotAUser | ArtifactError::InvalidScope | ArtifactError::NotJoined => Self::internal("internal_error", "the request", &error.into()),
         }
     }
 }
@@ -90,12 +89,7 @@ async fn list_artifacts(State(state): State<Artifacts>, Query(options): Query<Li
         let deleted = views.deleted_artifacts().await?;
         return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
     }
-    let artifacts = views.artifacts().await?;
-    let mut listed = Vec::with_capacity(artifacts.len());
-    for artifact in artifacts {
-        listed.push(ArtifactResponse::from(artifact.snapshot().await));
-    }
-    Ok(Json(listed).into_response())
+    Ok(Json(listed(views.artifacts().await?).await).into_response())
 }
 
 /// Artifact `id`, with the versions the user may read.
@@ -110,16 +104,6 @@ async fn download_version(State(state): State<Artifacts>, Path((id, number)): Pa
     let artifact = views(&state.app, &user).artifact(id).await?;
     let (size, content) = artifact.content(number).await?;
     Ok(attachment_response(size, content, artifact.artifact().name.as_str()))
-}
-
-/// Keeps the artifact beyond its session, in the user's scope or the
-/// global one.
-async fn keep_artifact(State(state): State<Artifacts>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<KeepArtifactRequest>) -> Result<Json<ArtifactResponse>, ApiError> {
-    let id = ArtifactId(id);
-    let scope = request.scope.of_user(user.id)
-        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "An artifact is kept in its owner's scope or the global one"))?;
-    state.manager.keep(&user.security_context(), id, scope).await?;
-    Ok(Json(owned(&state, &user, id).await?))
 }
 
 /// Says what the artifact is; `null` or empty takes it away.
@@ -161,12 +145,15 @@ async fn purge_artifact(State(state): State<Artifacts>, Path(id): Path<Uuid>, us
 /// versions, as a reader of the channel sees them.
 async fn channel_artifacts(State(state): State<Artifacts>, Path((id, cid)): Path<(Uuid, Uuid)>, user: AuthenticatedUser) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
     let channel = channel_of(&state.app, &user, SessionId(id), ChannelId(cid)).await?;
-    let artifacts = channel.artifacts().await?;
-    let mut listed = Vec::with_capacity(artifacts.len());
-    for artifact in artifacts {
-        listed.push(ArtifactResponse::from(artifact.snapshot().await));
-    }
-    Ok(Json(listed))
+    Ok(Json(listed(channel.artifacts().await?).await))
+}
+
+/// The artifacts that lie in project `id` and the user may read (issue 467), each with the
+/// versions they may read: a member reads every artifact, and the versions published where they
+/// took part.
+async fn project_artifacts(State(state): State<Artifacts>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
+    let project = views(&state.app, &user).project(ProjectId(id)).await?;
+    Ok(Json(listed(project.artifacts().await?).await))
 }
 
 /// Gives the artifact the access list in the body (issues 23, 316),
@@ -177,6 +164,15 @@ async fn set_access(State(state): State<Artifacts>, Path(id): Path<Uuid>, Query(
     let acl = AccessEntry::acl_of(entries).map_err(|e| ApiError::bad_request("invalid_access", e))?;
     state.manager.set_access(&user.security_context(), id, acl, options.versions).await?;
     Ok(Json(owned(&state, &user, id).await?))
+}
+
+/// `artifacts` as listed: each as the user sees it, without where its versions were published.
+async fn listed(artifacts: Vec<ArtifactView>) -> Vec<ArtifactResponse> {
+    let mut listed = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        listed.push(ArtifactResponse::from(artifact.snapshot().await));
+    }
+    listed
 }
 
 /// Artifact `id`, as the user sees it, with where its versions were

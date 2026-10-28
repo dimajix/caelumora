@@ -1,6 +1,7 @@
 //! A session as its viewer reached it: its document, and its loop if it
 //! runs.
 
+use caelumora_model::project::ProjectId;
 use caelumora_model::store::query::{Filter, Query};
 use super::{ChannelView, ViewError, ViewResult, Views};
 use crate::session::{ChannelRun, Found, SessionLoop};
@@ -96,6 +97,11 @@ impl SessionView {
 
     pub fn name(&self) -> &str {
         self.session.name.as_str()
+    }
+
+    /// The project its results go to (issue 467): its own, or the shared one it lies in.
+    pub fn project(&self) -> ProjectId {
+        self.session.project
     }
 
     /// What the session is for, in a line (issue 245); `None` if nobody said.
@@ -416,7 +422,7 @@ impl SessionView {
             None => None,
         };
         // Absent where it is gone or the viewer may not read it, as the workspace.
-        let project = match self.views.project(self.session.project).await {
+        let project = match self.views.project(self.project()).await {
             Ok(project) => Some(project.snapshot().await),
             Err(_) => None,
         };

@@ -1,37 +1,30 @@
-//! What lies in a scope goes with what holds it (issue 178): the
-//! personalities, session templates, component bundles, agents, workspaces,
-//! skills and artifacts of a session's scope - and of the scopes of its channels - are
-//! deleted with the session, restored with it and purged with it, a
-//! workspace with its place (issue 251), an artifact with its content
-//! (issue 271); those of a channel's scope are deleted and restored with the
-//! channel. `SessionManager` and `SessionLoop` are the callers, through
-//! `ScopedEntities`. The group of the participants of a session or channel
-//! lies in its scope too, but is not among it: it belongs to the session or
-//! channel itself, which deletes and restores it with its own mark (issue
-//! 348, `GroupManager::delete_participants`).
+//! What lies in a scope goes with what holds it (issue 178): the personalities, session templates,
+//! component bundles, agents, workspaces and skills of a session's scope - and of the scopes of its
+//! channels - are deleted with the session, restored with it and purged with it, a workspace with
+//! its place (issue 251); those of a channel's scope are deleted and restored with the channel; the
+//! artifacts of a project's scope, with their content (issue 271), go with the project - with the
+//! session whose own it is (issue 467). `SessionManager`, `SessionLoop` and `ProjectManager` are
+//! the callers, through `ScopedEntities`. The group of the participants of a session or channel
+//! lies in its scope too, but is not among it: it belongs to the session or channel itself, which
+//! deletes and restores it with its own mark (issue 348, `GroupManager::delete_participants`).
 //!
-//! Each kind that may lie in a scope is a `ScopeMember` (issue 323), kept
-//! by `ScopedEntities` in the order it was registered. What has an owner of
-//! its own - agents, workspaces, skills and artifacts - is a member
-//! by its owner (`…_lying_in`, issue 319): it announces what it deletes and
-//! restores as it announces its own deletions, and holds its lock of
-//! writing as it does. Personalities, session templates and component
-//! bundles, which have none, are members by their store (`Unowned`), which
-//! marks them alone.
+//! Each kind that may lie in a scope is a `ScopeMember` (issue 323), kept by `ScopedEntities` in
+//! the order it was registered. What has an owner of its own - agents, workspaces, skills and
+//! artifacts - is a member by its owner (`…_lying_in`, issue 319): it announces what it deletes and
+//! restores as it announces its own deletions, and holds its lock of writing as it does.
+//! Personalities, session templates and component bundles, which have none, are members by their
+//! store (`Unowned`), which marks them alone.
 //!
-//! What lies in the scope is listed in the runtime's name, so that all of
-//! it is found, whatever the caller may read; nothing of the list reaches
-//! the caller. It is deleted and restored in the caller's name (issue 320):
-//! the store asks each as it asks of anything deleted or restored alone,
-//! and marks it as deleted by the caller. What may lie in a session's scope
-//! is not always its owner's - an artifact another participant published
-//! there, a contributor's agent -, so deleting deletes what the caller may
-//! and answers what is left; the holder refuses its deletion if anything is
-//! (`ScopeNotEmpty`): it is kept, and what is left is plain to see until
-//! its owners take it elsewhere or delete it. Restoring restores what the
-//! caller may and leaves the rest deleted, for its owners to restore: the
-//! holder comes back all the same. Purging, the system's or an
-//! administrator's, is done in the runtime's name.
+//! What lies in the scope is listed in the runtime's name, so that all of it is found, whatever the
+//! caller may read; nothing of the list reaches the caller. It is deleted and restored in the
+//! caller's name (issue 320): the store asks each as it asks of anything deleted or restored alone,
+//! and marks it as deleted by the caller. What may lie in a scope is not always its holder's
+//! owner's - a contributor's agent in a session's, an artifact another participant published into a
+//! project's -, so deleting deletes what the caller may and answers what is left; the holder
+//! refuses its deletion if anything is (`ScopeNotEmpty`): it is kept, and what is left is plain to
+//! see until its owners delete it. Restoring restores what the caller may and leaves the rest
+//! deleted, for its owners to restore: the holder comes back all the same. Purging, the system's or
+//! an administrator's, is done in the runtime's name.
 
 use async_trait::async_trait;
 use caelumora_model::scope::{Scope, ScopedField};

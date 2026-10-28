@@ -209,11 +209,10 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
-| List, reach (`ArtifactViews::artifacts`, `artifact`, `ArtifactChannelViews::artifacts` of the plugin `caelumora-artifacts`) | listing: the teams the viewer belongs to, found as `Views::groups` finds them (V,1), named besides them and their roles (`Views::subjects`); store `GetArtifact` (V,1), `cleared_for` (V,2); the versions cut: per version `may_read_artifact` (`ArtifactAccess`) with the version's list (V,1) | R1 + reach (store) | - | left out; `ArtifactError::NotFound` |
+| List, reach (`ArtifactViews::artifacts`, `artifact`, `ArtifactChannelViews::artifacts`, `ArtifactProjectViews::artifacts` of the plugin `caelumora-artifacts`) | listing: the teams the viewer belongs to, found as `Views::groups` finds them (V,1), named besides them and their roles (`Views::subjects`); store `GetArtifact` (V,1), `cleared_for` (V,2); the versions cut: per version `may_read_artifact` (`ArtifactAccess`) with the version's list (V,1) | R1 + reach (store) | - | left out; `ArtifactError::NotFound` |
 | Where a version was published (`ArtifactView::publication`) | `Views::channel_of`: the session, then `channel_reading`; gone, as a live one would be reached | reach | - | not named |
-| Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_storable` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
+| Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); the project of the name reached, store `GetProject` (T,1); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_storable` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `NotFound` (the project), `InvalidScope`, `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
 | Share (`set_access`) | store `GetArtifact` (U,1), `cleared_for` (U,2); `require_nameable`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
-| Keep in a scope (`keep`) | store `GetArtifact`, `cleared_for`; the scope compared with the owner (structural); store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `InvalidScope`, `PermissionDenied` |
 | Describe (`describe`) | store `GetArtifact`, `cleared_for`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Invalid` |
 | Delete, restore (`ArtifactManager`) | the store: `GetArtifact` or `ReadDeleted`, `cleared_for`, then the verb; a deletion reads first to announce it | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); content removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
@@ -270,8 +269,8 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 ### Decided to stay
 
 - **Pairs (rule 2).** An operation that does something before it stores asks its verb, and the
-  store asks again: deleting a session, a channel or an agent, sharing, purging, keeping an
-  artifact. No token tells the store it was asked already.
+  store asks again: deleting a session, a channel or an agent, sharing, purging. No token tells
+  the store it was asked already.
 - **The agents' own flow.** An agent asks the flow of what it gives up or brings in its own name -
   its turn still flows into the channel (`AgentActor::lowered`), an external agent's remote side,
   what a request brings, a lowered channel (`ExternalAgentActor`). That is the agent's act of
@@ -310,8 +309,8 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 - **Validation and the actor's own flow before the verb.** What tells the actor only about their
   own request - its form, the structure of the reached object, the flow of what they ask for,
   whether they may read a group they name - may come before their permission, which the store
-  then asks alone: the workspace, skill and artifact managers, `require_nameable`, `keep`. The
-  group manager's `Participants` and `remove_participant`'s `NotAParticipant` are structure, seen
+  then asks alone: the workspace, skill and artifact managers, `require_nameable`. The
+  group manager's `NotATeam` and `remove_participant`'s `NotAParticipant` are structure, seen
   by whoever reached the object.
 - **Three `ApproveToolCall` for an answer by a rule.** Whether the person's rule answers at all
   (offering, so that no refusal is sent in their name), whether the channel admits the answer,

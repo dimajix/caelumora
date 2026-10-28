@@ -306,15 +306,19 @@ It is offered where a file can be published: where the turn may use a workspace 
 storage of content is configured. The file is read from the workspace as the file tools read it and
 handed to the `ArtifactManager`. It publishes in the name of whoever the agent acts for: its owner,
 who makes the artifact (`CreateArtifact`) or adds a version where the artifact's list lets them
-(`WriteArtifact`), asked before anything is kept. The members of the channel it is published in read
-the version, and the artifact, which reading a version needs as well (issue 316). An artifact is
-published into the session's scope under its name, made with its first version and given one more by
-every later publication under that name. It is classified as the workspace, fixed with its first
-version; a later version from a workspace classified otherwise is refused. A storage takes nothing
-above its `destination`. Publishing changes what is kept, so it is approved where changes are; the
-approver reads which file is published as which artifact.
+(`WriteArtifact`), asked before anything is kept - and who reads the project it goes into
+(`GetProject`), which the session's participants do. The participants of the channel it is published
+in read the version, and the artifact, which reading a version needs as well (issue 316); the
+members of the project read the artifact alone. An artifact is published into the scope of the
+project the session's results go to (issue 467) under its name, made with its first version and
+given one more by every later publication under that name. It is classified as the workspace, fixed
+with its first version; a later version from a workspace classified otherwise is refused. A storage
+takes nothing above its `destination`. Publishing changes what is kept, so it is approved where
+changes are; the approver reads which file is published as which artifact.
 
-The members of the channel download the version published there, wherever they act; whom the owner
-shares the artifact with read the versions there are as they share it; its owner reads every
-version, shares it and keeps it beyond the session. One that is not kept goes with the session, its
-content too (see [STORAGE.md](STORAGE.md) and [SECURITY.md](SECURITY.md#ownership)).
+The participants of the channel download the version published there, wherever they act; whom the
+owner shares the artifact with read the versions there are as they share it; its owner reads every
+version and shares it. An artifact lives as long as its project: with the session where the project
+is the session's own, beyond it where it is shared - kept by lifting the session's own project,
+never by moving an artifact (see [CHANNELS.md](CHANNELS.md#sessions), [STORAGE.md](STORAGE.md) and
+[SECURITY.md](SECURITY.md#ownership)).
