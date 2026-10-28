@@ -1,6 +1,6 @@
 # 488 — The sidebar offers to rename a session whoever may change it
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** User interaction
@@ -33,3 +33,8 @@ lists what may not, and the user learns it only after typing. Found in the revie
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of issue 483.
+- **2026-10-28** — Done as A: the session's menu lists "Rename" under `can_change`, at its place
+  before the other entries. The other entries listed for everyone - "Description", "Privacy",
+  "Approval rules", "Workspace", "Project" - open what everyone reads and only who may change the
+  session changes; "Rename" changes alone, as "Language" and "Time zone" do. A refusal of a rename
+  stands under the field since issue 483, done meanwhile.
