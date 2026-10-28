@@ -10,11 +10,10 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::scope::{found_from, Scope, Scoped};
-use caelumora_model::security::AccessQuestions;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::DeletedSnapshot;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreResultExt, Stored};
+use caelumora_model::store::StoreResultExt;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::Description;
 use caelumora_runtime::view::Views;
@@ -88,21 +87,7 @@ impl SkillViews for Views {
     }
 
     async fn deleted_skills(&self) -> SkillResult<Vec<DeletedSnapshot<SkillId>>> {
-        let skills = self.skill_manager()?.store().list_deleted(self.context(), &Query::all()).await?.items;
-        let access_policy = self.access_policy();
-        let mut deleted = Vec::with_capacity(skills.len());
-        for skill in skills {
-            let Some(removal) = skill.deleted.clone() else { continue };
-            let attributes = &skill.security_attributes;
-            deleted.push(DeletedSnapshot {
-                id: skill.id,
-                name: skill.name.to_string(),
-                deleted: removal,
-                can_restore: access_policy.may_restore(self.context(), Skill::KIND, attributes).await,
-                can_purge: access_policy.may_purge(self.context(), Skill::KIND, attributes).await,
-            });
-        }
-        Ok(deleted)
+        Ok(self.deleted_of(self.skill_manager()?.store().as_ref(), &Query::all(), |skill| skill.name.to_string()).await?)
     }
 
     async fn usable_skills(&self) -> SkillResult<Vec<SkillView>> {

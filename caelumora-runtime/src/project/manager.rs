@@ -16,7 +16,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityStores, StoreError, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, EntityStores, StoreError, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use std::fmt;
@@ -150,12 +150,11 @@ impl ProjectManager {
     /// own, or whatever else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<Project> {
         let _writing = self.writing.lock().await;
-        let deleted = self.stores.projects.get_deleted(ctx, id).await.map_err(store_error(id))?;
+        // What went with it carries its mark (issue 469).
+        let Deleted { entity: deleted, removal } = self.stores.projects.get_deleted(ctx, id).await.map_err(store_error(id))?;
         if deleted.is_own() {
             return Err(ProjectError::InvalidScope);
         }
-        // What went with it carries its mark (issue 469).
-        let Some(removal) = deleted.deleted else { return Err(ProjectError::NotFound(id)) };
         let project = self.stores.projects.restore(ctx, id).await.map_err(store_error(id))?;
         let holder = project.holds();
         // If its members cannot come back, it is marked again as it was, so that a restoring tried
@@ -189,13 +188,13 @@ impl ProjectManager {
     /// failed, or whatever the store reports; what was purged before stays purged.
     pub async fn purge(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(deleted) = self.stores.projects.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(Deleted { entity: deleted, .. }) = self.stores.projects.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         if deleted.is_own() {
             return Err(ProjectError::InvalidScope);
         }
         self.access_policy.require(ctx, ActionType::purge(Project::KIND, &deleted.security_attributes), StoreError::PermissionDenied).await?;
         let system = SecurityContext::system();
-        for session in self.deleted_sessions_in(id).await? {
+        for Deleted { entity: session, .. } in self.deleted_sessions_in(id).await? {
             self.sessions.purge(&system, session.id).await.map_err(ProjectError::Session)?;
         }
         self.scoped.purge_lying_in(slice::from_ref(&deleted.holds())).await?;
@@ -212,7 +211,7 @@ impl ProjectManager {
     }
 
     /// The deleted sessions that lie in project `id`, read in the runtime's name.
-    async fn deleted_sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Session>> {
+    async fn deleted_sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Deleted<Session>>> {
         Ok(self.stores.sessions.list_deleted(&SecurityContext::system(), &Query::filtered(Filter::in_project(id))).await?.items)
     }
 
@@ -259,11 +258,11 @@ mod tests {
         let bundle = ComponentBundle::new(ScopedName::new("tools", project.holds()).unwrap(), Default::default(), Default::default());
         stores.component_bundles.create(&system, &bundle).await.unwrap();
         projects.delete(&ctx, project.id).await.unwrap();
-        let mark = stores.projects.get_deleted(&system, project.id).await.unwrap().deleted;
+        let mark = stores.projects.get_deleted(&system, project.id).await.unwrap().removal;
 
         passing.store(0, Ordering::SeqCst);
         projects.restore(&ctx, project.id).await.expect_err("its members cannot come back");
-        assert_eq!(stores.projects.get_deleted(&system, project.id).await.unwrap().deleted, mark, "it stays deleted, marked as it was");
+        assert_eq!(stores.projects.get_deleted(&system, project.id).await.unwrap().removal, mark, "it stays deleted, marked as it was");
 
         passing.store(usize::MAX, Ordering::SeqCst);
         projects.restore(&ctx, project.id).await.expect("restored when tried again");

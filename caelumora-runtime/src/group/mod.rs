@@ -185,7 +185,7 @@ mod tests {
     use caelumora_model::store::documents::Document;
     use serde_json::Value;
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::{PersistenceBackend, Stored};
+    use caelumora_model::store::{Deleted, PersistenceBackend, Stored};
     use caelumora_model::store::Persistence;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::channel::ChannelId;
@@ -238,10 +238,10 @@ mod tests {
         async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
             self.inner.purge(ctx, id).await
         }
-        async fn get_deleted(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
+        async fn get_deleted(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Deleted<Group>> {
             self.inner.get_deleted(ctx, id).await
         }
-        async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
+        async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Deleted<Group>>> {
             self.inner.list_deleted(ctx, query).await
         }
         async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
@@ -306,8 +306,8 @@ mod tests {
         failing.passing.store(usize::MAX, Ordering::SeqCst);
         manager.delete_participants(&holders, &removal).await.expect("all deleted");
         assert_eq!(how_many_there().await, 0);
-        let marked = stores.groups.get_deleted(&system, of_session.id).await.unwrap().deleted;
-        assert_eq!(marked, Some(removal.clone()), "with the mark of what holds them, in the runtime's name");
+        let marked = stores.groups.get_deleted(&system, of_session.id).await.unwrap().removal;
+        assert_eq!(marked, removal, "with the mark of what holds them, in the runtime's name");
 
         failing.passing.store(2, Ordering::SeqCst);
         manager.restore_participants(&holders, &removal).await.expect_err("the third fails");

@@ -14,7 +14,7 @@ use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use crate::view::{channel_reading, ChannelReader};
-use caelumora_model::store::{StoreError, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, StoreError, StoreResultExt, Stored};
 use tracing::{debug, info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::ChannelId;
@@ -455,18 +455,16 @@ impl SessionLoop {
     ///   failing to come back among it (issue 348); the channel stays
     ///   deleted then.
     pub async fn restore_channel(self: &Arc<Self>, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
-        let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
-        let channel = match self.stores.channels.get_deleted(context, channel_id).await.optional()? {
-            Some(channel) if channel.session_id == self.id => channel,
-            _ => return Err(not_found().into()),
+        // What went with it carries its mark (issue 469).
+        let of_this = self.stores.channels.get_deleted(context, channel_id).await.optional()?.filter(|deleted| deleted.entity.session_id == self.id);
+        let Some(Deleted { entity: channel, removal }) = of_this else {
+            return Err(SessionError::ChannelNotFound { session: self.id, channel: channel_id }.into());
         };
         self.access_policy
             .require(context, ActionType::restore(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
         self.participation.require_admitted(context, &channel, &channel.participants).await?;
-        // What went with it carries its mark (issue 469).
-        let Some(removal) = channel.deleted.clone() else { return Err(not_found().into()) };
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         let channel = self.stores.channels.restore(context, channel_id).await?;
         // The group of its participants first, with it, in the runtime's
@@ -863,12 +861,12 @@ mod tests {
         let bundle = ComponentBundle::new(ScopedName::new("tools", scope).unwrap(), Default::default(), Default::default());
         stores.component_bundles.create(&system, &bundle).await.unwrap();
         session.delete_channel(&ctx, side).await.unwrap();
-        let mark = stores.channels.get_deleted(&system, side).await.unwrap().deleted;
+        let mark = stores.channels.get_deleted(&system, side).await.unwrap().removal;
 
         passing.store(0, Ordering::SeqCst);
         session.restore_channel(&ctx, side).await.expect_err("the session cannot list it again");
-        assert_eq!(stores.channels.get_deleted(&system, side).await.unwrap().deleted, mark, "it stays deleted, marked as it was");
-        assert_eq!(stores.groups.get_deleted(&system, GroupId::of_channel(side)).await.unwrap().deleted, mark, "with its group");
+        assert_eq!(stores.channels.get_deleted(&system, side).await.unwrap().removal, mark, "it stays deleted, marked as it was");
+        assert_eq!(stores.groups.get_deleted(&system, GroupId::of_channel(side)).await.unwrap().removal, mark, "with its group");
 
         passing.store(usize::MAX, Ordering::SeqCst);
         session.restore_channel(&ctx, side).await.expect("restored when tried again");

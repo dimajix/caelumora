@@ -321,7 +321,7 @@ its own, each with a permission of its own:
 
 | Operation | asks | does |
 |---|---|---|
-| `get_deleted`, `list_deleted` | `ReadDeleted` | read the marked documents; what is not marked is not found |
+| `get_deleted`, `list_deleted` | `ReadDeleted` | read the marked documents, each with its mark (`Deleted`); what is not marked is not found |
 | `restore` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
 | `purge` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 

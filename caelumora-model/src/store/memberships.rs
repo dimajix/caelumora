@@ -47,7 +47,7 @@ impl StoreMemberships {
         let system = SecurityContext::system();
         match store.get(&system, id).await.optional()? {
             Some(group) => Ok(Some(group)),
-            None => store.get_deleted(&system, id).await.optional(),
+            None => Ok(store.get_deleted(&system, id).await.optional()?.map(|deleted| deleted.entity)),
         }
     }
 }

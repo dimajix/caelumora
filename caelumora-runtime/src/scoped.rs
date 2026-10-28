@@ -33,7 +33,7 @@ use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -229,7 +229,7 @@ where
 
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for entity in self.0.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity, .. } in self.0.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             self.0.purge(&system, entity.id()).await?;
         }
         Ok(())
@@ -277,8 +277,8 @@ pub(crate) async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T:
     store.purge(&system, id).await
 }
 
-/// Those of `deleted` that were deleted with `removal` - that carry its mark (issue 469), which
-/// a query does not compare yet.
-pub fn deleted_with<D: Stored>(deleted: Vec<D>, removal: &Removal) -> Vec<D> {
-    deleted.into_iter().filter(|d| d.deleted() == Some(removal)).collect()
+/// The entities of `deleted` that were deleted with `removal` - that carry its mark (issue 469),
+/// which a query does not compare yet.
+pub fn deleted_with<T>(deleted: Vec<Deleted<T>>, removal: &Removal) -> Vec<T> {
+    deleted.into_iter().filter(|d| d.removal == *removal).map(|d| d.entity).collect()
 }

@@ -14,11 +14,10 @@ use crate::access::ArtifactAccess;
 use crate::artifact::{Artifact, ArtifactField, ArtifactId, ArtifactSnapshot, ArtifactVersion, PublicationSnapshot};
 use crate::manager::{ArtifactError, ArtifactManager, ArtifactResult};
 use async_trait::async_trait;
-use caelumora_model::security::AccessQuestions;
 use caelumora_model::snapshot::DeletedSnapshot;
 use caelumora_model::confidentiality::Reading;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreResultExt, Stored};
+use caelumora_model::store::StoreResultExt;
 use caelumora_runtime::terminal::ByteStream;
 use caelumora_model::scope::Scope;
 use caelumora_runtime::view::{ChannelView, ProjectView, Views};
@@ -87,21 +86,7 @@ impl ArtifactViews for Views {
     }
 
     async fn deleted_artifacts(&self) -> ArtifactResult<Vec<DeletedSnapshot<ArtifactId>>> {
-        let artifacts = self.artifact_manager()?.store().list_deleted(self.context(), &Query::all()).await?.items;
-        let access_policy = self.access_policy();
-        let mut deleted = Vec::with_capacity(artifacts.len());
-        for artifact in artifacts {
-            let Some(removal) = artifact.deleted.clone() else { continue };
-            let attributes = &artifact.security_attributes;
-            deleted.push(DeletedSnapshot {
-                id: artifact.id,
-                name: artifact.name.to_string(),
-                deleted: removal,
-                can_restore: access_policy.may_restore(self.context(), Artifact::KIND, attributes).await,
-                can_purge: access_policy.may_purge(self.context(), Artifact::KIND, attributes).await,
-            });
-        }
-        Ok(deleted)
+        Ok(self.deleted_of(self.artifact_manager()?.store().as_ref(), &Query::all(), |artifact| artifact.name.to_string()).await?)
     }
 
     fn artifact_manager(&self) -> ArtifactResult<&Arc<ArtifactManager>> {

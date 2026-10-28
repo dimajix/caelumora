@@ -26,7 +26,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use std::fmt;
 use std::sync::Arc;
@@ -238,7 +238,7 @@ impl ScopeMember for AgentManager {
     /// Whatever the stores report; what was purged before stays purged.
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for agent in self.agents.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity: agent, .. } in self.agents.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             self.agents.purge(&system, agent.id).await?;
             self.states.delete_agent_state(agent.id).await?;
         }

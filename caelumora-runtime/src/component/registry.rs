@@ -558,7 +558,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::scope::ScopeField;
     use caelumora_model::store::query::{Page, Query};
-    use caelumora_model::store::{Persistence, StoreError, StoreResult};
+    use caelumora_model::store::{Deleted, Persistence, StoreError, StoreResult};
     use async_trait::async_trait;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -707,10 +707,10 @@ mod tests {
             async fn purge(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<bool> {
                 Self::failed()
             }
-            async fn get_deleted(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<ComponentBundle> {
+            async fn get_deleted(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<Deleted<ComponentBundle>> {
                 Self::failed()
             }
-            async fn list_deleted(&self, _: &SecurityContext, _: &Query<ScopeField>) -> StoreResult<Page<ComponentBundle>> {
+            async fn list_deleted(&self, _: &SecurityContext, _: &Query<ScopeField>) -> StoreResult<Page<Deleted<ComponentBundle>>> {
                 Self::failed()
             }
             async fn find_by_name(&self, _: &SecurityContext, _: &ScopedName) -> StoreResult<ComponentBundle> {

@@ -17,7 +17,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
@@ -165,7 +165,7 @@ impl WorkspaceManager {
     /// of removing the place, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(workspace) = self.workspaces.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(Deleted { entity: workspace, .. }) = self.workspaces.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.access_policy.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
         self.storages.kept_in(&workspace.storage)?.remove(id).await?;
         let purged = self.workspaces.purge(ctx, id).await?;
@@ -250,7 +250,7 @@ impl ScopeMember for WorkspaceManager {
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity: workspace, .. } in self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             // Its place is its storage too.
             let unremoved = |e: &dyn fmt::Display| StoreError::Backend(format!("the place of workspace {} cannot be removed: {e}", workspace.id));
             self.storages.kept_in(&workspace.storage).map_err(|e| unremoved(&e))?.remove(workspace.id).await.map_err(|e| unremoved(&e))?;

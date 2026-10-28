@@ -6,7 +6,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::history::testing::items_of;
-use crate::store::query::{Field, Filter, Query};
+use crate::store::query::{Field, Filter, Page, Query};
 use crate::actor::{ActorId, ActorState};
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
@@ -1063,10 +1063,11 @@ pub async fn deleting_marks(stores: &EntityStores) {
 
     // What was deleted.
     let deleted = stores.sessions.get_deleted(&system, gone.id).await.expect("read as deleted");
-    let mark = deleted.deleted.expect("marked");
-    assert_eq!(mark.by, system.caller_id, "by whom");
+    assert_eq!(deleted.removal.by, system.caller_id, "by whom");
     let listed = stores.sessions.list_deleted(&system, &Query::all()).await.map(|page| page.items).expect("list deleted");
-    assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), [gone.id], "only what was deleted");
+    assert_eq!(listed.iter().map(|s| s.entity.id).collect::<Vec<_>>(), [gone.id], "only what was deleted");
+    assert_eq!(listed[0].removal, deleted.removal, "with its mark (issue 472)");
+    assert_eq!(deleted.entity.deleted(), Some(&deleted.removal), "the one it is stored with");
     let not_deleted = stores.sessions.get_deleted(&system, kept.id).await;
     assert!(matches!(not_deleted, Err(StoreError::NotFound { .. })), "what is there is not among the deleted: {not_deleted:?}");
 
@@ -1178,7 +1179,8 @@ async fn all_folders(folders: &dyn EntityStore<Folder>, context: &SecurityContex
     loop {
         let page = match presence {
             Presence::Present => folders.list(context, &query).await,
-            Presence::Deleted => folders.list_deleted(context, &query).await,
+            Presence::Deleted => folders.list_deleted(context, &query).await
+                .map(|Page { items, next }| Page { items: items.into_iter().map(|deleted| deleted.entity).collect(), next }),
         }.expect("list folders");
         all.extend(page.items);
         let Some(next) = page.next else { return all };

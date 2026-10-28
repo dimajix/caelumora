@@ -12,7 +12,7 @@ use crate::removal::Removal;
 use crate::security::{ActionType, Admission, SecurityAttributes, SecurityContext};
 use crate::store::access::Access;
 use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
-use crate::store::{EntityStore, Policies, Presence, StoreError, StoreResult, Stored};
+use crate::store::{Deleted, EntityStore, Policies, Presence, StoreError, StoreResult, Stored};
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -270,13 +270,16 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
         self.storage.remove_deleted(id.into()).await
     }
 
-    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+    /// Read as deleted, it carries the mark (`Presence::Deleted`).
+    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>> {
         let found = self.stored(&id).await?;
-        self.access(ctx).read(found, id.to_string(), Presence::Deleted).await
+        let entity = self.access(ctx).read(found, id.to_string(), Presence::Deleted).await?;
+        Deleted::of(entity).ok_or_else(|| StoreError::NotFound { entity: T::KIND.name(), id: id.to_string() })
     }
 
-    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
-        self.page(ctx, query, Presence::Deleted).await
+    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<Deleted<T>>> {
+        let Page { items, next } = self.page(ctx, query, Presence::Deleted).await?;
+        Ok(Page { items: items.into_iter().filter_map(Deleted::of).collect(), next })
     }
 
     /// Asked as a list is (`List`), and the one found as an entity of a list

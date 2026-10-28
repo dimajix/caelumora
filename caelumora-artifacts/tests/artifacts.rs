@@ -567,7 +567,7 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
     assert!(world.runtime.entity_stores().sessions.get(&alice, session_id).await.is_ok(), "the session is kept");
     assert!(world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(), "and runs on");
     assert!(store(&world).get(&bob, his.id).await.is_ok(), "bob's artifact stays");
-    let removal = store(&world).get_deleted(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");
+    let removal = store(&world).get_deleted(&World::system(), hers.id).await.expect("hers went").removal;
     assert_eq!(removal.by, ActorId::User(world.alice), "in her name");
 
     assert!(manager(&world).delete(&bob, his.id).await.expect("bob deletes his"));
