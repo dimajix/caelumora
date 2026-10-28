@@ -37,7 +37,7 @@ use async_trait::async_trait;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, Stored};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
@@ -142,22 +142,25 @@ impl ScopedEntities {
         Self { members }
     }
 
-    /// Deletes what lies in `holder` or within it on behalf of `ctx`, as
-    /// far as they may delete it, and announces it as its owner announces a
-    /// deletion. Answers what is left, by kind - empty if nothing is -,
-    /// which the holder refuses its deletion for (`ScopeNotEmpty`).
+    /// Deletes what lies in `holders` or within them - the scopes of what is deleted: a session's
+    /// and its own project's (issue 467), or a channel's - on behalf of `ctx`, as far as they may
+    /// delete it, and announces it as its owner announces a deletion. Answers what is left, by
+    /// kind, counted over all of them - empty if nothing is -, which the holder refuses its
+    /// deletion for (`ScopeNotEmpty`).
     ///
-    /// Called once the holder is marked deleted, so that what goes is
-    /// deleted with it, not before it, and comes back with it
-    /// (`restore_lying_in`); if something is left, the caller takes the
+    /// Called once the holder is marked deleted, so that what goes is deleted with it, not before
+    /// it, and comes back with it (`restore_lying_in`); if something is left, the caller takes the
     /// mark away again.
     ///
     /// # Errors
     /// Whatever the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<Vec<(EntityKind, usize)>> {
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holders: &[Scope]) -> StoreResult<Vec<(EntityKind, usize)>> {
         let mut left = Vec::new();
         for member in &self.members {
-            let count = member.delete_lying_in(ctx, holder).await?;
+            let mut count = 0;
+            for holder in holders {
+                count += member.delete_lying_in(ctx, holder).await?;
+            }
             if count > 0 {
                 left.push((member.kind(), count));
             }
@@ -165,35 +168,34 @@ impl ScopedEntities {
         Ok(left)
     }
 
-    /// Restores what lies in `holder` or within it and was deleted with it -
-    /// at `since`, when `holder` was deleted, or later - on behalf of `ctx`,
-    /// and announces it as its owner announces a restoring. What was
-    /// deleted before stays deleted, as a channel deleted before its
-    /// session does; so does one whose name was taken meanwhile (issue 250)
-    /// and one `ctx` may not restore (issue 320), and the others are
-    /// restored all the same.
+    /// Restores what lies in `holders` or within them and was deleted with them - at `since`, when
+    /// they were deleted, or later - on behalf of `ctx`, and announces it as its owner announces a
+    /// restoring. What was deleted before stays deleted, as a channel deleted before its session
+    /// does; so does one whose name was taken meanwhile (issue 250) and one `ctx` may not restore
+    /// (issue 320), and the others are restored all the same.
     ///
     /// # Errors
-    /// Whatever else the store reports; what was restored before stays
-    /// restored.
-    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    /// Whatever else the store reports; what was restored before stays restored.
+    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holders: &[Scope], since: DateTime<Utc>) -> StoreResult<()> {
         for member in &self.members {
-            member.restore_lying_in(ctx, holder, since).await?;
+            for holder in holders {
+                member.restore_lying_in(ctx, holder, since).await?;
+            }
         }
         Ok(())
     }
 
-    /// Purges what lies in `holder` or within it and is deleted, with what
-    /// its owner purges with it: the agents' state, the workspaces' places,
-    /// the artifacts' content.
+    /// Purges what lies in `holders` or within them and is deleted, with what its owner purges with
+    /// it: the agents' state, the workspaces' places, the artifacts' content.
     ///
     /// # Errors
-    /// Whatever the store reports, a place or a content that cannot be
-    /// removed among it (`ScopeMember::purge_lying_in`); what was purged
-    /// before stays purged.
-    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
+    /// Whatever the store reports, a place or a content that cannot be removed among it
+    /// (`ScopeMember::purge_lying_in`); what was purged before stays purged.
+    pub(crate) async fn purge_lying_in(&self, holders: &[Scope]) -> StoreResult<()> {
         for member in &self.members {
-            member.purge_lying_in(holder).await?;
+            for holder in holders {
+                member.purge_lying_in(holder).await?;
+            }
         }
         Ok(())
     }
@@ -263,6 +265,20 @@ pub fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: 
         }
         Err(e) => Err(e),
     }
+}
+
+/// Removes `id` of `store` for good, in the runtime's name: marked deleted first if it is not,
+/// since only what was deleted is purged (issue 164) - for what goes with something purged, or was
+/// made for something whose making failed. `false` if there is none.
+///
+/// # Errors
+/// Whatever else the store reports.
+pub(crate) async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T::Id) -> StoreResult<bool> {
+    let system = SecurityContext::system();
+    if store.delete(&system, id.clone()).await.optional()?.is_none() {
+        return Ok(false);
+    }
+    store.purge(&system, id).await
 }
 
 /// Those of `deleted` that were deleted at `since` or later - a comparison

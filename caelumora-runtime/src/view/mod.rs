@@ -1835,7 +1835,7 @@ mod tests {
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let mut session = make_session("thinking", ActorId::None);
+        let mut session = make_session("thinking", ActorId::User(UserId::new()));
         session.participants = participants;
         session.participants.push(SessionParticipant::Agent(thinker.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();

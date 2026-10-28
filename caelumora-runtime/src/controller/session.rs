@@ -198,6 +198,7 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::project::ProjectId;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Persistence;
     use caelumora_model::confidentiality::Classification;
@@ -210,6 +211,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId::new(),

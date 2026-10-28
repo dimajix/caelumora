@@ -859,6 +859,38 @@ async fn deleting_a_session_needs_owning_it() {
     assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
 }
 
+/// A session's own project (issue 467) is read by who reads the session:
+/// its owner and its participants, nobody else. What lies in its scope goes
+/// with the session as what lies in the session's does, in the deleter's
+/// name: a bundle of bob's she may not delete keeps the session, the
+/// project and their groups, and she is told what is left of the session.
+#[tokio::test]
+async fn a_session_s_own_project_is_read_by_its_participants_and_goes_with_it() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let (alice, project) = (World::as_user(world.alice), session.session().project);
+    let stores = world.runtime.entity_stores();
+    for (user, reads) in [(world.alice, true), (world.bob, true), (world.carol, false)] {
+        assert_eq!(stores.projects.get(&World::as_user(user), project).await.is_ok(), reads, "{user}");
+    }
+    let holder = Scope::ProjectScope { project_id: project };
+    let bobs = ComponentBundle::new(ScopedName::new("tools", holder).unwrap(), quiet(), attributes(Some(world.bob), &[]));
+    stores.component_bundles.create(&World::system(), &bobs).await.unwrap();
+
+    let (refused, asked) = world.asked(world.manager.delete(&alice, session.id())).await;
+    let refused = refused.expect_err("bob's bundle is left");
+    let session_scope = Scope::SessionScope { session_id: session.id() };
+    let left = [(ComponentBundle::KIND, 1)];
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { holder, left: l })) if *holder == session_scope && *l == left), "{refused}");
+    assert!(asked.contains(&"alice: GetComponentBundle(bob's) no".to_string()), "asked in her name: {asked:?}");
+    assert!(stores.projects.get(&alice, project).await.is_ok(), "the project is kept");
+    assert!(stores.groups.get(&World::system(), GroupId::of_project(project)).await.is_ok(), "with its group");
+
+    stores.component_bundles.delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
+    assert!(world.manager.delete(&alice, session.id()).await.unwrap(), "nothing of anybody else's is left");
+    assert!(stores.projects.get(&World::system(), project).await.is_err(), "the project goes with it");
+}
+
 /// Deleting a channel is refused as deleting its session is (issue 320):
 /// an agent of somebody else's in its scope, which she may not delete,
 /// keeps the channel, running, and she is told what is left of which
@@ -884,8 +916,9 @@ async fn a_channel_is_kept_with_what_of_its_scope_is_not_the_deleters() {
 
 /// Issue 320: what went with a session comes back with it in the name of
 /// whoever restores it, as far as they may; the session comes back all the
-/// same, and what they may not restore - an agent of bob's in its scope -
-/// stays deleted for its owner to restore.
+/// same, and what they may not restore - an agent of bob's in its scope, a
+/// bundle of his in its own project's (issue 467) - stays deleted for its
+/// owner to restore.
 #[tokio::test]
 async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it_may() {
     let world = World::new().await;
@@ -894,12 +927,17 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
     let personality = world.personality("plain", None, &[]).await;
     let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), personality.id, ActorId::User(world.bob));
     world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
+    let project = Scope::ProjectScope { project_id: session.session().project };
+    let bundle = ComponentBundle::new(ScopedName::new("tools", project).unwrap(), quiet(), attributes(Some(world.bob), &[]));
+    world.runtime.entity_stores().component_bundles.create(&World::system(), &bundle).await.unwrap();
     world.manager.delete(&World::system(), session.id()).await.expect("the system's to delete, all of it");
 
     let (restored, asked) = world.asked(world.manager.restore(&alice, session.id())).await;
     restored.expect("restored all the same");
     assert!(asked.contains(&"alice: ReadDeletedAgent(bob's) no".to_string()), "asked in her name: {asked:?}");
+    assert!(asked.contains(&"alice: ReadDeletedComponentBundle(bob's) no".to_string()), "for its project's too: {asked:?}");
     assert!(world.runtime.entity_stores().agents.get_deleted(&World::system(), bobs.id).await.is_ok(), "bob's agent stays deleted: not hers to restore");
+    assert!(world.runtime.entity_stores().component_bundles.get_deleted(&World::system(), bundle.id).await.is_ok(), "and his bundle");
     world.runtime.agent_manager().restore(&World::as_user(world.bob), bobs.id).await.expect("bob restores his");
 }
 

@@ -124,6 +124,7 @@ impl PrivacyPolicy for SharedAudience {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::ProjectId;
     use crate::security::SecurityAttributes;
     use crate::value::name::Name;
 
@@ -168,6 +169,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             id: Default::default(),
             name: Name::new("s").unwrap(),
             participants: vec![Participant::User(bob), Participant::Agent(Default::default())],

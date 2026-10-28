@@ -89,8 +89,13 @@ impl Project {
     /// the session read its results - and by the group of its members,
     /// none until it is lifted.
     pub fn own_of(session_id: SessionId, owner: UserId) -> Self {
-        let name = ScopedName { name: Name::fixed(Self::OWN), scope: Scope::SessionScope { session_id } };
-        Self::of(name, owner, &[Subject::Group(GroupId::of_session(session_id))])
+        Self::of(Self::own_name(session_id), owner, &[Subject::Group(GroupId::of_session(session_id))])
+    }
+
+    /// What the own project of session `session_id` is found by: `OWN`, in
+    /// the session's scope.
+    pub fn own_name(session_id: SessionId) -> ScopedName {
+        ScopedName { name: Name::fixed(Self::OWN), scope: Scope::SessionScope { session_id } }
     }
 
     /// A new project of `owner`, of `name`, read by the group of its members
@@ -100,6 +105,11 @@ impl Project {
         let members = SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::Group(GroupId::of_project(id)), Grant::Read);
         let security_attributes = readers.iter().fold(members, |attributes, reader| attributes.granting(*reader, Grant::Read));
         Self { id, name, description: None, members: Vec::new(), security_attributes, created_at: now, updated_at: now, deleted: None }
+    }
+
+    /// The scope it holds: what lies in it belongs to the project.
+    pub fn holds(&self) -> Scope {
+        Scope::ProjectScope { project_id: self.id }
     }
 
     /// Whether it is a session's own: it lies in the session's scope.

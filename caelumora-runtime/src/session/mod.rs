@@ -4,7 +4,7 @@ use caelumora_model::value::name::Name;
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
-use crate::scoped::{ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::event::{EventBus, SubscriptionTopic};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
@@ -19,7 +19,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::group::GroupId;
-use crate::group::{GroupManager, purge_participants};
+use crate::group::GroupManager;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use crate::workspace::WorkspaceManager;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
@@ -65,7 +65,7 @@ pub enum SessionError {
     /// (issue 221); an approver is made with it.
     #[error("{0} cannot be taken into a session: only a user or an agent can")]
     CannotTakeIn(ActorId),
-    /// Only a user owns a session made from a template (issue 88).
+    /// Only a user owns a session (issue 88), and the project of its own with it (issue 467).
     #[error("{0} cannot own a session: only a user can")]
     OwnerNotAUser(ActorId),
     /// There is no such session, or none the caller may see (issue 323).
@@ -189,10 +189,8 @@ pub struct SessionLoop {
 /// session, or one whose creation failed - since only what was deleted is
 /// purged (issue 164).
 async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) -> StoreResult<bool> {
-    let system = SecurityContext::system();
-    purge_participants(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await?;
-    stores.channels.delete(&system, channel_id).await?;
-    stores.channels.purge(&system, channel_id).await
+    purge_for_good(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await?;
+    purge_for_good(stores.channels.as_ref(), channel_id).await
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session

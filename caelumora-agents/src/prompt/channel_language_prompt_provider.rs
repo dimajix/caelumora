@@ -123,6 +123,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::project::ProjectId;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::turn::Turn;
     use crate::testing::{self, TestAgents};
@@ -194,6 +195,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,

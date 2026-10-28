@@ -192,6 +192,7 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 #[cfg(test)]
 mod tests {
     use crate::actor::ActorId;
+    use crate::project::ProjectId;
     use crate::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb, Grant};
     use crate::session::{Session, SessionId};
     use crate::store::{StoreError, Stored};
@@ -231,6 +232,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             id: SessionId::new(),
             name: Name::new("s").unwrap(),
             participants: Vec::new(),

@@ -43,6 +43,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::project::Project;
 use caelumora_model::store::{EntityKind, Persistence, StoreError};
 use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
@@ -413,7 +414,8 @@ impl World {
 
     /// A session of alice with `others` in it, and a channel "main" of
     /// them all and `agents`; the session also has `waiting`, in no
-    /// channel. Stored as a setup would, then opened by alice.
+    /// channel, and a project of its own. Stored as a setup would, then
+    /// opened by alice.
     pub async fn session_of(&self, others: &[UserId], agents: &[AgentId], waiting: &[AgentId]) -> Arc<SessionLoop> {
         let alice = ActorId::User(self.alice);
         let users: Vec<Participant> = iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
@@ -422,10 +424,12 @@ impl World {
         let mut channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None);
         channel.participants = in_channel;
         channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
+        let own = Project::own_of(channel.session_id, self.alice);
         let session = Session {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: own.id,
             id: channel.session_id,
             name: Name::new("shared").unwrap(),
             commands: Default::default(),
@@ -438,9 +442,10 @@ impl World {
             deleted: None,
         };
         // Each with the group of its participants, as the runtime stores them
-        // (issue 286).
+        // (issue 286), the session with its own project (issue 467).
         self.runtime.entity_stores().sessions.create(&Self::system(), &session).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
+        self.manager.make_own(&own).await.unwrap();
         self.runtime.entity_stores().channels.create(&Self::system(), &channel).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
         self.runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();

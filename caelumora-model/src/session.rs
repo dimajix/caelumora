@@ -13,6 +13,7 @@ use crate::value::name::Name;
 use crate::value::time_zone::TimeZone;
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
+use crate::project::ProjectId;
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use crate::removal::Removal;
@@ -97,6 +98,9 @@ pub struct Session {
     /// of its channels may use it, the workspace's classification decides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<WorkspaceId>,
+    /// The project its results go to (issue 467): its own, lying in its
+    /// scope, or a shared one it lies in.
+    pub project: ProjectId,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub security_attributes: SecurityAttributes,
@@ -248,7 +252,7 @@ mod tests {
         let now = Utc::now();
         let mut session = Session {
             id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &access), deleted: None,
         };
         session.take_in(Participant::User(bob));
@@ -270,7 +274,7 @@ mod tests {
         let session = Session {
             id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None,
             participants: vec![Participant::User(alice), Participant::Agent(agent)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
         };
         let document = serde_json::to_value(&session).unwrap();
@@ -284,7 +288,7 @@ mod tests {
         let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
         let mut session = Session {
             id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
         };
         session.apply(&SessionUpdateEvent::NameChanged("planning".to_string())).unwrap();

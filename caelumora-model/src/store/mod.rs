@@ -686,6 +686,7 @@ pub trait StateStore : Debug + Sync + Send {
 #[cfg(test)]
 mod tests {
     use crate::session::SessionId;
+    use crate::project::ProjectId;
     use crate::store::query::NoField;
     use super::*;
     use crate::security::{SecurityAttributes, SecurityContext};
@@ -714,6 +715,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
@@ -729,6 +731,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),

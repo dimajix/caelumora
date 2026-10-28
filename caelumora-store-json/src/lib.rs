@@ -706,6 +706,7 @@ impl StateStore for JsonFileStore {
 mod tests {
     use caelumora_model::chain::Position;
     use caelumora_model::turn::TurnState;
+    use caelumora_model::project::ProjectId;
     use caelumora_model::session::{Session, SessionId};
     use super::*;
     use chrono::Utc;
@@ -741,6 +742,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             id: SessionId(Uuid::new_v4()), name: Name::new(name).unwrap(), participants: Vec::new(), channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(), deleted: None,

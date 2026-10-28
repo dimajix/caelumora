@@ -21,6 +21,7 @@ use caelumora_model::group::Group;
 use crate::group::keep_participants;
 use crate::scoped::ScopeNotEmpty;
 use std::sync::Arc;
+use std::slice;
 use super::{ChannelEntry, ChannelRun, Listed, SessionError, SessionLoop, purge_channel_document, require_classification};
 use futures::future;
 use crate::component::ComponentError;
@@ -403,9 +404,9 @@ impl SessionLoop {
         // with its group.
         let deleted = async {
             self.stores.channels.delete(context, channel_id).await?;
-            let left = self.scoped.delete_lying_in(context, &scope).await?;
+            let left = self.scoped.delete_lying_in(context, slice::from_ref(&scope)).await?;
             ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
-            self.groups.delete_participants(&scope).await?;
+            self.groups.delete_participants(slice::from_ref(&scope)).await?;
             Ok::<_, Error>(())
         }.await;
         if let Err(error) = deleted {
@@ -471,7 +472,7 @@ impl SessionLoop {
         // name (issue 348): whatever fails later, its participants reach it.
         let listed = async {
             if let Some(since) = deleted_at {
-                self.groups.restore_participants(&scope, since).await?;
+                self.groups.restore_participants(slice::from_ref(&scope), since).await?;
             }
             self.session_controller.add_channel(context, channel_id).await?;
             self.add_channel_loop(&channel).await
@@ -482,7 +483,7 @@ impl SessionLoop {
                 // Rolled back: deleted again, with its group, so that it is
                 // neither half back nor lost.
                 let _ = self.session_controller.remove_channel(context, channel_id).await;
-                if let Err(undo) = self.groups.delete_participants(&scope).await {
+                if let Err(undo) = self.groups.delete_participants(slice::from_ref(&scope)).await {
                     warn!("Channel {} of session {} could not be restored and its group not be deleted again: {}", channel_id, self.id, undo);
                 }
                 if let Err(undo) = self.stores.channels.delete(&SecurityContext::system(), channel_id).await {
@@ -493,7 +494,7 @@ impl SessionLoop {
         };
         if let Some(since) = deleted_at {
             // What was deleted with it comes back with it (issue 178).
-            if let Err(e) = self.scoped.restore_lying_in(context, &scope, since).await {
+            if let Err(e) = self.scoped.restore_lying_in(context, slice::from_ref(&scope), since).await {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }
@@ -781,7 +782,7 @@ mod tests {
     async fn a_channel_deleted_before_the_session_runs_is_never_started() {
         let runtime = test_runtime();
         let ctx = SecurityContext::default();
-        let session = make_session("waiting", ActorId::None);
+        let session = make_session("waiting", ActorId::User(UserId::new()));
         let channel_id = session.channels[0];
         persist(&runtime, &ctx, &session).await;
         let session_loop = SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&runtime)).await.unwrap();

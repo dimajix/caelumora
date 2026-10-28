@@ -267,6 +267,7 @@ mod tests {
     use caelumora_model::value::name::Name;
 
     use caelumora_model::actor::ActorId;
+    use caelumora_model::user::UserId;
     use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::security::{SecurityContext, Grant, Subject};
@@ -381,7 +382,7 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
-        let mut session = make_session("scoped", ActorId::None);
+        let mut session = make_session("scoped", ActorId::User(UserId::new()));
         let id = session.id;
         let elsewhere = [
             Agent::new(ScopedName::new("aside", Scope::ChannelScope { session_id: id, channel_id: ChannelId::new() }).unwrap(), personality.id, ActorId::None),

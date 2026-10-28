@@ -738,3 +738,34 @@ none lies in a project's scope.
   of where a user's own thing lies. The doc comments of `event.rs` and `security/action.rs` on what
   reading a project covers, and `STORAGE.md` on where a project lies, come with step 5, where what
   a project is read for is settled.
+- **2026-10-28** — Step 2 split in two, to be reviewed apart: 2a, every session has a project of
+  its own, and 2b, shared projects - the `ProjectManager`, the `ProjectController`, putting a
+  session into a project, the views and `ProjectError`.
+
+  Step 2a done: `Session::project`, and `SessionTemplate::build` builds the session's own project
+  with it (`Project::own_of`, found by `Project::own_name`; `Project::holds` gives the scope it
+  holds). The `SessionManager` keeps it as it keeps the group of its participants: made with the
+  session in the runtime's name (`make_own`); deleted and restored with its mark after the groups,
+  all of them or none, each announced (`delete_kept`, `restore_kept`); purged with it (`purge_own`).
+  What lies in its scope is deleted and restored in the name of whoever deletes or restores the
+  session, together with what lies in the session's: `ScopedEntities` and the `GroupManager`'s
+  `…_participants` take several holders now, and count what is left over all of them, which keeps
+  the session as `ScopeNotEmpty` of its scope. Marking deleted and purging, which four places did
+  alike, is `scoped::purge_for_good`.
+
+  Different from the plan: the functions over the stores of `caelumora_runtime::project` the plan
+  agreed are private methods of the `SessionManager`, at the reviewer's finding - it is their one
+  caller and holds what they would be handed; `project/` comes with the `ProjectManager` in 2b. The
+  plan's `establish` is `make_own`, for a session's own alone. `build` takes no project and returns
+  the own project beside the session and its channels, a tuple of three: with the project as a
+  parameter it would take eight, and every session is made with its own, also one made in a shared
+  project in 2b, which then takes the shared one as the workspace is taken after `build`; the
+  maintainer kept the tuple, and CODING-GUIDELINES.md names it as the exception to small return
+  values. A session
+  whose owner is no user is no longer made, since its project needs a user as owner; the tests that
+  made sessions of nobody give them a user. Restoring takes the session's own project back however
+  long ago it was deleted, since it goes only with the session, whose mark a restoring that failed
+  renews. `World::session_of` makes the own project as `establish` does; that it does not go through
+  `SessionManager::create` stays a finding. Nothing reads `Session::project` yet but the tests: the
+  views (`SessionView::project`, naming an own project's group by its session) come with 2b, the
+  artifacts with step 3. Stored sessions are to be deleted: `project` has no default.

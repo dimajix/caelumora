@@ -143,6 +143,7 @@ fn session() -> Session {
         summary: None, briefing: None, language: None, time_zone: None,
         approval_rules: Vec::new(),
         workspace: None,
+        project: ProjectId::new(),
         commands: Default::default(),
         privacy: Default::default(),
         id: SessionId(Uuid::new_v4()),

@@ -52,6 +52,16 @@ used wherever the permissions allow: that scope only says where its name is foun
 template lies only in a user's scope or everywhere; one of a session's or a channel's would make
 sessions it can never lie in, and is not stored.
 
+A session is made with a **project** of its own (issue 467), which its results go to
+(`Session::project`): named `own` in the session's scope, owned by the session's owner, read by its
+participants, with the group of its members, empty. A session is a user's, so that its project has
+an owner. The session keeps its own project as it keeps the group of its participants
+(`SessionManager`): made with it, in the runtime's name; deleted and restored with its mark, the
+project after the groups, all of them or none, each announced; and purged with it. What lies in the
+project's scope goes with the session as what lies in the session's does, in the name of whoever
+deletes or restores it, and what is left of it they may not delete keeps the session as well -
+counted with what is left of the session's scope (`ScopeNotEmpty`).
+
 Every session has a privacy policy: whom it lets read what was said in it from other sessions. It is
 taken over from its template (private unless the template says otherwise), changed only by the
 session's owner, and shown to everyone who takes part. What it decides is described in
