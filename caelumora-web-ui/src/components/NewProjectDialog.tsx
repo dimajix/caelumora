@@ -7,6 +7,7 @@ import {X} from 'lucide-react';
 import type {ProjectResponse} from '../types';
 import {api} from '../api';
 import {reportUnlessRefused} from '../errors';
+import {Refusal} from './Refusal';
 
 interface NewProjectDialogProps {
   onCreated: (project: ProjectResponse) => void;
@@ -17,7 +18,7 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({onCreated, on
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [scope, setScope] = useState<'user' | 'global'>('user');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const complete = name.trim();
 
@@ -25,13 +26,13 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({onCreated, on
     e.preventDefault();
     if (!complete || isCreating) return;
     setIsCreating(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       onCreated(await api.createProject({name: name.trim(), scope, description: description.trim() || undefined}));
     } catch (error) {
       // What the server says about the request - a taken name, say - is
       // shown here.
-      reportUnlessRefused('Failed to create the project', error, setProblem);
+      reportUnlessRefused('Failed to create the project', error, setRefusal);
     } finally {
       setIsCreating(false);
     }
@@ -88,7 +89,7 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({onCreated, on
             Nobody works on it yet: you choose its members on its page. Put sessions into it, and what they publish outlives them.
           </div>
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

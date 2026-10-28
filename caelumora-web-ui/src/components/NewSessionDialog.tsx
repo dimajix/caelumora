@@ -24,6 +24,7 @@ import {LanguageField} from './LanguageField';
 import {languageLabel} from '../language';
 import {TimeZoneField} from './TimeZoneField';
 import {browserTimeZone} from '../timeZone';
+import {Refusal} from './Refusal';
 
 /** What the workspace select offers besides the user's workspaces, which it names by their id. */
 const AS_TEMPLATE = 'template';
@@ -60,7 +61,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
   const [timeZone, setTimeZone] = useState<string | null>(null);
   // The shared project it lies in; empty for one of its own.
   const [projectId, setProjectId] = useState('');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
@@ -110,7 +111,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
     e.preventDefault();
     if (!template || !canCreate) return;
     setIsCreating(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       const session = await api.createSession({
         template_id: template.id,
@@ -125,7 +126,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
     } catch (error) {
       // What the server says about the request - a workspace not the user's, a classification
       // they are not cleared for - is shown here.
-      reportUnlessRefused('Failed to create session', error, setProblem);
+      reportUnlessRefused('Failed to create session', error, setRefusal);
     } finally {
       setIsCreating(false);
     }
@@ -270,7 +271,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
             </>
           )}
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

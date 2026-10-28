@@ -14,6 +14,7 @@ import {
   sameClassification,
 } from '../confidentiality';
 import {reportUnlessRefused} from '../errors';
+import {Refusal} from './Refusal';
 
 interface ClassificationDialogProps {
   title: string;
@@ -31,7 +32,7 @@ interface ClassificationDialogProps {
 export const ClassificationDialog: React.FC<ClassificationDialogProps> = ({title, current, levels, compartments, releaseWarning, onSubmit, onClose}) => {
   const [level, setLevel] = useState<ConfidentialityLevel>(current.level);
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(current.compartments ?? []));
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   // Public takes no compartment.
   const next: Classification = level === 'public' ? {level} : {level, compartments: [...chosen]};
@@ -49,14 +50,14 @@ export const ClassificationDialog: React.FC<ClassificationDialogProps> = ({title
     e.preventDefault();
     if (unchanged || isSaving) return;
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await onSubmit(next);
       onClose();
     } catch (error) {
-      // What the server says about the request - a refusal, say - is shown
-      // here; anything else as usual.
-      reportUnlessRefused('Failed to change the classification', error, setProblem);
+      // What the server says about the request - a level the user is not
+      // cleared for, say - is shown here; anything else as usual.
+      reportUnlessRefused('Failed to change the classification', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -114,7 +115,7 @@ export const ClassificationDialog: React.FC<ClassificationDialogProps> = ({title
           {!unchanged && releases(current, next) && (
             <div role="alert" className="rounded-md border border-amber-600 p-2 text-xs text-amber-400">{releaseWarning}</div>
           )}
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

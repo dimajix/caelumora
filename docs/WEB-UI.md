@@ -45,7 +45,7 @@ The UI shows what the server says and repeats no rule of its own:
     refusal - a name taken, a classification the user is not cleared for - next to the field; it
     does not check beforehand what the server decides. A refusal is an error the request is at
     fault for, any status below 500 but a `401`; `reportUnlessRefused` in `errors.ts` tells it
-    apart, and reports anything else.
+    apart, and reports anything else. A dialog draws it with `Refusal`.
 
 ## Structure
 
@@ -113,6 +113,9 @@ place, since the message entered nothing.
 
 ### Common elements
 
+*   **Dialogs are dark** whatever the theme, while a page follows the system's (a media query, so
+    a component cannot tell where it stands). What dialogs share is drawn for them: their fields
+    (`LanguageField`, `ClassificationFields`, ...) and a refusal (`Refusal`).
 *   **Menus.** What can be done with something in a list is in a menu behind three dots
     (`ActionMenu`). It lists only what may be done, and there is no menu where nothing may; it is
     reached with the keyboard too. An entry that cannot be undone asks once more in its place.

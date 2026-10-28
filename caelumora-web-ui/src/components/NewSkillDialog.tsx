@@ -9,6 +9,7 @@ import {api} from '../api';
 import {reportUnlessRefused} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {ClassificationFields} from './ClassificationFields';
+import {Refusal} from './Refusal';
 
 interface NewSkillDialogProps {
   onCreated: (skill: SkillResponse) => void;
@@ -21,7 +22,7 @@ export const NewSkillDialog: React.FC<NewSkillDialogProps> = ({onCreated, onClos
   const [description, setDescription] = useState('');
   const [body, setBody] = useState('');
   const [classification, setClassification] = useState<Classification>(DEFAULT_CLASSIFICATION);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const complete = name.trim() && description.trim() && body.trim();
 
@@ -29,13 +30,13 @@ export const NewSkillDialog: React.FC<NewSkillDialogProps> = ({onCreated, onClos
     e.preventDefault();
     if (!complete || isCreating) return;
     setIsCreating(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       onCreated(await api.createSkill({name: name.trim(), scope, description: description.trim(), body, classification}));
     } catch (error) {
       // What the server says about the request - a taken name, a text too
       // long, a classification the user is not cleared for - is shown here.
-      reportUnlessRefused('Failed to create the skill', error, setProblem);
+      reportUnlessRefused('Failed to create the skill', error, setRefusal);
     } finally {
       setIsCreating(false);
     }
@@ -103,7 +104,7 @@ export const NewSkillDialog: React.FC<NewSkillDialogProps> = ({onCreated, onClos
             <span className="block text-xs text-gray-500">Markdown: the steps an agent follows when it loads the skill.</span>
           </label>
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">
