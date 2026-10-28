@@ -2,7 +2,8 @@
 //! the results of a session they read go to. It is read alone: whoever changes it asks again
 //! (`ProjectController`).
 
-use super::Views;
+use super::{SessionView, ViewResult, Views};
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::actor::ActorId;
 use caelumora_model::security::AccessQuestions;
@@ -26,6 +27,15 @@ impl ProjectView {
     /// The views it was reached through, which an extension of a plugin reads from (issue 328).
     pub fn views(&self) -> &Views {
         &self.views
+    }
+
+    /// The sessions that lie in it - whose results go to it - that the viewer may read, in the
+    /// order the store lists them.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn sessions(&self) -> ViewResult<Vec<SessionView>> {
+        self.views.sessions_of(&Query::filtered(Filter::in_project(self.project.id))).await
     }
 
     /// Whether the viewer may change it (`UpdateProject`): its owner.

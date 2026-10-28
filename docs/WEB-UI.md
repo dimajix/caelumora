@@ -128,9 +128,9 @@ place, since the message entered nothing.
 The sidebar lists the user's sessions with their channels and follows the global stream: it takes
 its state from the snapshot and fetches a session again on any event that changes it, its channels
 or their participants. Starting and stopping are ignored. An event about an entity is read by its
-kind (`entityEvent` in `globalEvents.ts`): the lists of workspaces, skills, artifacts, teams and
-agents are loaded again on any event of their kind, and what was deleted on any deletion or
-restoring, whatever the kind.
+kind (`entityEvent` in `globalEvents.ts`): the lists of workspaces, projects, skills, artifacts,
+teams and agents are loaded again on any event of their kind, and what was deleted on any deletion
+or restoring, whatever the kind.
 
 What is new in a channel (issue 404) is shown beside it: how many messages of others came since the
 user last read it, and an `@` where one of them mentions them; a folded session shows the sum of its
@@ -172,8 +172,8 @@ with (`AccessList`), and its files - wherever it lies.
 session the user may read, or of one of its channels, or a team the user reads. Users and roles are
 not offered: the REST API lists neither.
 
-The lists of workspaces, skills, artifacts, teams and agents in the sidebar are one component
-(`PageList`).
+The lists of workspaces, projects, skills, artifacts, teams and agents in the sidebar are one
+component (`PageList`).
 A page shown in the place of a channel is closed when the list it was listed in loses its entry; one
 the list never had - an artifact read only as a participant of a channel, opened from the chat -
 stays.
@@ -187,9 +187,26 @@ A session's workspace is attached or taken away from its menu by whoever may cha
 of their own workspaces, not one made for another session, shared with the session's members as
 chosen.
 
+### Projects
+
+The shared projects the user reads (issue 467) - their own, those they work on and those shared with
+them - are listed below the workspaces; a session's own is reached through its session. A project's
+page (`ProjectPage`) shows what it is, its members, whom it is shared with, the sessions that lie in
+it of those the user reads, and its artifacts. Its owner renames, describes, deletes it - with its
+sessions - and chooses its members as a team's are chosen (`AddUser`). Whom the server keeps in its
+access list - its members, the participants of its sessions - is shown there, not changed (`kept`).
+A session's own project is called by its session (`projectLabel`, since every own one is named
+`own`); its owner keeps it by lifting it into their name space or the global one under a name of its
+own, while the session publishes into it.
+
+A session's project is shown and changed from its menu (`SessionProjectDialog`) by whoever may
+change the session: put into one of the shared projects the user reads, or taken out into its own. A
+new session may be made in a shared project as well. Nothing moves: what was published stays where
+it went.
+
 ### Skills
 
-The skills the user may read and is cleared for are listed below the workspaces. A skill opens on a
+The skills the user may read and is cleared for are listed below the projects. A skill opens on a
 page of its own, its text shown as Markdown; its owner renames, describes, reclassifies, deletes it
 and edits its text in place. In the chat, `/skill` is shown as every command of an agent, and the
 skill's text stands in the agent's history panel as what the issuer gave it. An agent's calls of the
@@ -202,11 +219,12 @@ The artifacts the user may read - their own and those shared with them by name -
 the skills. Nothing is made there: an artifact is published by an agent. One read only as a
 participant of the channel it was published in is not listed, but opened from its card in the chat.
 
-An artifact's page shows what it is, where it lies, its classification, and its versions the user
-may read, each with where and by whom it was published - by name for whoever may read that channel,
-"a channel you do not read" otherwise. Its owner describes, shares and deletes it - sharing
-hands whom the list newly names every version there is (issue 316) -, and sees whom each version
-reaches; whoever may add versions without owning it is told so.
+An artifact's page shows what it is, the project it lies in - linked to the project's page -, its
+classification, and its versions the user may read, each with where and by whom it was published -
+by name for whoever may read that channel, "a channel you do not read" otherwise. Its owner
+describes, shares and deletes it - sharing hands whom the list newly names every version there is
+(issue 316) -, and sees whom each version reaches; whoever may add versions without owning it is
+told so.
 
 ### Teams
 

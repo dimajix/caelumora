@@ -165,6 +165,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/projects/{id}", get(projects::get_project).patch(projects::rename_project).delete(projects::delete_project))
         .route("/projects/{id}/description", routing::put(projects::describe_project))
         .route("/projects/{id}/members", routing::put(projects::set_members))
+        .route("/projects/{id}/sessions", get(projects::project_sessions))
         .route("/projects/{id}/access", routing::put(projects::set_access))
         .route("/projects/{id}/lift", post(projects::lift_project))
         .route("/projects/{id}/restore", post(projects::restore_project))
@@ -416,6 +417,8 @@ pub(crate) mod tests {
         let (_, project) = send(&api, &cookie, "POST", "/projects", json!({ "name": "report" })).await;
         let (status, made) = send(&api, &cookie, "POST", "/sessions", json!({ "template_id": template.id, "project_id": project["id"] })).await;
         assert_eq!((status, made["project_id"].clone()), (StatusCode::OK, project["id"].clone()), "{made}");
+        let (_, in_project) = send(&api, &cookie, "GET", &format!("/projects/{}/sessions", project["id"].as_str().unwrap()), Value::Null).await;
+        assert_eq!(in_project[0]["id"], made["id"], "listed in its project: {in_project}");
 
         let (status, refused) = send(&api, &cookie, "POST", "/sessions", json!({ "template_id": template.id, "project_id": Uuid::new_v4() })).await;
         assert_eq!((status, refused["code"].clone()), (StatusCode::NOT_FOUND, json!("project_not_found")), "{refused}");

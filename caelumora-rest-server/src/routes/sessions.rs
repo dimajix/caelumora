@@ -15,6 +15,7 @@ use caelumora_model::snapshot::Detail;
 use caelumora_model::session::SessionId;
 use caelumora_model::template::SessionTemplateId;
 use std::sync::Arc;
+use caelumora_runtime::view::SessionView;
 use uuid::Uuid;
 use crate::routes::{change_error, ensure_session, session_view, views};
 
@@ -50,11 +51,17 @@ pub(super) async fn list_sessions(State(state): State<Arc<AppState>>, Query(opti
     }
     let sessions = views.sessions().await
         .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
+    Ok(Json(all_listed(sessions).await).into_response())
+}
+
+/// `sessions` as a list shows them: without their channels, the project their results go to where
+/// the user reads it.
+pub(super) async fn all_listed(sessions: Vec<SessionView>) -> Vec<SessionResponse> {
     let mut listed = Vec::with_capacity(sessions.len());
     for session in sessions {
         listed.push(SessionResponse::from(session.snapshot(Detail::empty()).await));
     }
-    Ok(Json(listed).into_response())
+    listed
 }
 
 /// One session with its channels, in the form the global snapshot uses - so

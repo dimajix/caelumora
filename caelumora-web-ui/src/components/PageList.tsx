@@ -1,6 +1,7 @@
 // A list in the sidebar of what opens as a page in the place of a channel -
-// workspaces (issue 253), skills (issue 22), artifacts (issue 291), teams
-// (issue 286): those the user may read, each with where it lies where that is not their own scope,
+// workspaces (issue 253), projects (issue 467), skills (issue 22), artifacts
+// (issue 291), teams (issue 286), agents (issue 227): those the user may read,
+// each with where it lies where that is not their own scope,
 // loaded again on every global event about one of them, with "+" to make
 // one where one is made here, and what was deleted (issue 164) folded below.
 
@@ -54,11 +55,11 @@ export function PageList<T extends Listed>({list, title, icon: Icon, page, onSel
             "w-full flex items-center p-2 rounded-md hover:bg-gray-800 transition-colors text-sm text-gray-300",
             isPageOf(page, list.kind, item.id) && "bg-gray-800 text-white font-medium"
           )}
-          title={item.description || `${item.name} (${scopeLabel(item)})`}
+          title={item.description || (item.scope ? `${item.name} (${scopeLabel({scope: item.scope})})` : item.name)}
         >
           <Icon size={14} className="mr-2 shrink-0" />
           <span className="truncate">{item.name}</span>
-          {item.scope !== 'user' && <span className="ml-1 shrink-0 text-xs text-gray-500">{scopeLabel(item)}</span>}
+          {item.scope && item.scope !== 'user' && <span className="ml-1 shrink-0 text-xs text-gray-500">{scopeLabel({scope: item.scope})}</span>}
         </button>
       ))}
       {list.items.length === 0 && (

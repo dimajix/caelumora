@@ -11,7 +11,8 @@ import type {Page, PageKind} from './page';
 export interface Listed {
   id: string;
   name: string;
-  scope: ScopeKind;
+  /** Where it lies; absent for what lies in a project (issue 467), which the list does not name. */
+  scope?: ScopeKind;
   description?: string;
 }
 

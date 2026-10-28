@@ -971,6 +971,26 @@ async fn a_project_is_seen_by_who_reads_it() {
     assert!(hers.can_change && hers.access.iter().any(|e| e.name.as_deref() == Some("report")), "she sees its list, its members by its name: {:?}", hers.access);
     assert!(matches!(views(&carol).project(project.id).await, Err(ViewError::ProjectNotFound(_))), "a stranger does not find it");
 
+    let hers = world.session_of(&[], &[], &[]).await;
+    for lying_there in [&session, &hers] {
+        lying_there.update_project(&alice, Some(project.id)).await.unwrap();
+    }
+    let in_it = |ctx: SecurityContext| {
+        let views = views(&ctx);
+        async move {
+            let mut ids: Vec<SessionId> = views.project(project.id).await.unwrap().sessions().await.unwrap().iter().map(|s| s.id()).collect();
+            ids.sort();
+            ids
+        }
+    };
+    let mut both = vec![session.id(), hers.id()];
+    both.sort();
+    assert_eq!(in_it(alice.clone()).await, both, "its owner reads both sessions in it");
+    assert_eq!(in_it(bob.clone()).await, [session.id()], "a member those he reads alone");
+    for lying_there in [&session, &hers] {
+        lying_there.update_project(&alice, None).await.unwrap();
+    }
+
     let shown = views(&bob).session(session.id()).await.unwrap().snapshot(Detail::empty()).await.project.expect("a participant sees the session's project");
     assert_eq!(shown.id, session.session().project);
     let own = views(&alice).project(shown.id).await.unwrap().snapshot().await;

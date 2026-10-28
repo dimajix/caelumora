@@ -1,19 +1,20 @@
 // An artifact the user may read (issue 291), in the place of a channel: what
-// it is - its name, where it lies, its classification and what its owner
-// says of it - with what its owner may do to it, whom it is shared with
+// it is - its name, the project it lies in (issue 467), its classification and
+// what its owner says of it - with what its owner may do to it, whom it is shared with
 // (issues 23, 316), and the versions the user may read, newest first: where
 // each was published and by whom, as far as they may read that channel, its
 // download, and for the owner whom the version reaches of those who read
 // the artifact.
 
 import React, {useEffect, useState} from 'react';
-import {Download, FileText, Package, PackageCheck, Shield, Trash2} from 'lucide-react';
+import {Download, FileText, FolderKanban, Package, Shield, Trash2} from 'lucide-react';
 import type {AccessEntry, ArtifactResponse, ArtifactVersion} from '../types';
 import {api} from '../api';
 import {reportError} from '../errors';
 import {classificationDescription, classificationLabel} from '../confidentiality';
 import {formatSize, formatTimestamp} from '../messages';
-import {scopeLabel} from '../scope';
+import {useProject} from '../project';
+import type {Page} from '../page';
 import {AccessList} from './AccessList';
 import {ActionMenu} from './ActionMenu';
 
@@ -22,11 +23,14 @@ interface ArtifactPageProps {
   onDeleted: (artifactId: string) => void;
   /** Opens the channel a version was published in. */
   onSelectChannel: (sessionId: string, channelId: string) => void;
+  /** Opens the page of the project it lies in. */
+  onSelectPage: (page: Page) => void;
 }
 
 /** The sidebar learns of a change from the global stream. */
-export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted, onSelectChannel}) => {
+export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted, onSelectChannel, onSelectPage}) => {
   const [artifact, setArtifact] = useState<ArtifactResponse | null>(null);
+  const project = useProject(artifact?.project_id);
   const [isDescribing, setIsDescribing] = useState(false);
   const [text, setText] = useState('');
 
@@ -52,14 +56,6 @@ export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted
       setArtifact(await api.describeArtifact(artifact.id, text.trim() || null));
     } catch (error) {
       reportError('Failed to describe the artifact', error);
-    }
-  };
-
-  const keep = async (scope: 'user' | 'global') => {
-    try {
-      setArtifact(await api.keepArtifact(artifact.id, scope));
-    } catch (error) {
-      reportError('Failed to keep the artifact', error);
     }
   };
 
@@ -103,7 +99,16 @@ export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted
               <p className="text-sm text-gray-600 dark:text-gray-400">{artifact.description || <span className="italic">No description</span>}</p>
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-              <span>Name space: {scopeLabel(artifact)}{artifact.scope === 'session' && ', gone with it unless kept'}</span>
+              {project && (
+                <button
+                  type="button"
+                  onClick={() => onSelectPage({kind: 'project', id: project.project.id})}
+                  className="flex items-center gap-1 hover:underline"
+                  title="Its project, which it lives as long as"
+                >
+                  <FolderKanban size={12} /> {project.label}
+                </button>
+              )}
               <span className="flex items-center gap-1" title={classificationDescription(artifact.classification)}>
                 <Shield size={12} /> {classificationLabel(artifact.classification)}
               </span>
@@ -116,10 +121,6 @@ export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted
               className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
               actions={[
                 {label: 'Description', icon: FileText, onSelect: describe},
-                ...(artifact.scope === 'session' ? [
-                  {label: 'Keep among your artifacts', icon: PackageCheck, onSelect: () => void keep('user')},
-                  {label: 'Keep for everyone', icon: PackageCheck, onSelect: () => void keep('global')},
-                ] : []),
                 {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete artifact?', onSelect: () => void remove()},
               ]}
             />

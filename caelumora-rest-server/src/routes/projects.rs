@@ -7,6 +7,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Query};
 use crate::routes::{ensure_session, session_view, views};
+use crate::routes::sessions::all_listed;
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -18,7 +19,7 @@ use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::project::{CreateProjectRequest, LiftProjectRequest, ProjectResponse, RenameProjectRequest, SessionProjectRequest};
 use caelumora_rest_api::scope::ItemDescriptionRequest;
-use caelumora_rest_api::session::SessionSnapshot;
+use caelumora_rest_api::session::{SessionResponse, SessionSnapshot};
 use caelumora_runtime::controller::ProjectController;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -116,6 +117,12 @@ pub(super) async fn purge_project(State(state): State<Arc<AppState>>, Path(id): 
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("project_not_found", format!("There is no deleted project {id}"))),
     }
+}
+
+/// The sessions that lie in project `id` and the user may read, as `GET /sessions` lists them.
+pub(super) async fn project_sessions(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, ApiError> {
+    let sessions = views(&state, &user).project(ProjectId(id)).await?.sessions().await?;
+    Ok(Json(all_listed(sessions).await))
 }
 
 /// Puts the session into the shared project the body names: whoever may change the session and

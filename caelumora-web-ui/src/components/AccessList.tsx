@@ -1,4 +1,4 @@
-// Whom a workspace or an artifact is shared with (issue 23), for its owner:
+// Whom a workspace, an artifact or a project (issue 467) is shared with (issue 23), for its owner:
 // the entries of its access list, each with what it grants, and adding the
 // members of a session or of one of its channels (issue 291) - picked from
 // the sessions the user may read, a session's channels loaded once it is
@@ -16,15 +16,17 @@ const KIND_LABELS: Record<AccessEntry['kind'], string> = {
   role: 'Role',
   session: 'Members of the session',
   channel: 'Members of the channel',
+  project: 'Members of the project',
   group: 'Team',
   everyone: 'Everyone',
 };
 
 /**
- * What each grant lets whom an entry names do, as a reader is told; joining (issue 221) only where
- * what is shared is a session or channel - elsewhere an entry that grants it is shown as it is.
+ * What each grant lets whom an entry names do, as a reader is told; changing only where what is
+ * shared has a change to grant - not a project (issue 467) -, joining (issue 221) only where it is a
+ * session or channel. Elsewhere an entry that grants one is shown as it is.
  */
-export type GrantLabels = Record<Exclude<Grant, 'join'>, string> & {join?: string};
+export type GrantLabels = {read: string; write?: string; join?: string};
 
 interface AccessListProps {
   access: AccessEntry[];
@@ -33,6 +35,11 @@ interface AccessListProps {
   nobody: string;
   /** What each grant means for what is shared - a workspace's `write` changes its files. */
   grants: GrantLabels;
+  /**
+   * Whether `entry` is kept by the server, not by the owner - the members of a project, the
+   * participants of a session that lies in it (issue 467): shown, neither changed nor taken away.
+   */
+  kept?: (entry: AccessEntry) => boolean;
 }
 
 /**
@@ -40,7 +47,7 @@ interface AccessListProps {
  * what it grants, which can be changed, or taken away, and below them the
  * members of a session or channel (issue 291) or a team (issue 286) to add.
  */
-export const AccessList: React.FC<AccessListProps> = ({access, onChange, nobody, grants}) => (
+export const AccessList: React.FC<AccessListProps> = ({access, onChange, nobody, grants, kept = () => false}) => (
   <div className="space-y-1">
     <h3 className="text-sm font-medium text-gray-800 dark:text-gray-100">Shared with</h3>
     {access.length === 0 ? (
@@ -55,21 +62,25 @@ export const AccessList: React.FC<AccessListProps> = ({access, onChange, nobody,
                 {entry.name ?? <span className="italic text-gray-500">gone</span>}
               </>)}
             </span>
-            <GrantSelect
-              value={entry.grant}
-              grants={grants}
-              onChange={(grant) => onChange(access.map((other, i) => i === index ? {...other, grant} : other))}
-              label={`What ${entry.name ?? 'it'} may do`}
-            />
-            <button
-              type="button"
-              onClick={() => onChange(access.filter((_, i) => i !== index))}
-              className="p-1 rounded-md text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800"
-              title="No longer share with them"
-              aria-label={`No longer share with ${entry.name ?? 'them'}`}
-            >
-              <Trash2 size={12} />
-            </button>
+            {kept(entry) ? (
+              <span className="text-xs text-gray-500" title="Kept as they take part, not changed here">{entry.grant === 'read' ? grants.read : entry.grant}</span>
+            ) : (<>
+              <GrantSelect
+                value={entry.grant}
+                grants={grants}
+                onChange={(grant) => onChange(access.map((other, i) => i === index ? {...other, grant} : other))}
+                label={`What ${entry.name ?? 'it'} may do`}
+              />
+              <button
+                type="button"
+                onClick={() => onChange(access.filter((_, i) => i !== index))}
+                className="p-1 rounded-md text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="No longer share with them"
+                aria-label={`No longer share with ${entry.name ?? 'them'}`}
+              >
+                <Trash2 size={12} />
+              </button>
+            </>)}
           </li>
         ))}
       </ul>
@@ -99,7 +110,7 @@ const GrantSelect: React.FC<GrantSelectProps> = ({value, grants, onChange, label
     aria-label={label}
   >
     <option value="read">{grants.read}</option>
-    <option value="write">{grants.write}</option>
+    {(grants.write !== undefined || value === 'write') && <option value="write">{grants.write ?? 'May change'}</option>}
     {(grants.join !== undefined || value === 'join') && <option value="join">{grants.join ?? 'May join'}</option>}
   </select>
 );

@@ -887,4 +887,34 @@ none lies in a project's scope.
   `400 validation_failed`, as a workspace's. The request names `project_id`, a `ProjectId`.
   `SessionResponse` is answered from the views wherever it is made - creating and renaming too -,
   so that `project_id` is there exactly where the user reads the project.
+- **2026-10-28** — Step 4b done: the web UI. `types/index.ts`: `ProjectResponse`,
+  `ProjectMemberResponse`, `CreateProjectRequest`, `ScopeKind` with `project`, `AccessEntry.kind`
+  with `project`, `project_id` on `SessionResponse`, `GroupResponse` and `CreateSessionRequest`,
+  `project` on `SessionSnapshot`, `ArtifactResponse` with `project_id` in place of `scope` and
+  `session_id`. `api/index.ts`: the calls of projects, `getProjectArtifacts`, `setSessionProject`,
+  `liftProject`; `keepArtifact` gone. `project.ts`: `projectLabel` and `useProject` - a session's
+  own called by its session, as decided before 4a. `ProjectPage` (what it is, its members, whom it
+  is shared with, its sessions, its artifacts; rename, describe, delete, and keep a session's own by
+  lifting it), `NewProjectDialog`, `SessionProjectDialog` (from the session's menu), the project
+  in `NewSessionDialog`, the list "Projects" in the sidebar after the workspaces, loaded again on
+  its events; `ArtifactPage` names its project and links to it, the buttons to keep an artifact are
+  gone there and in `ToolCallView`. WEB-UI.md describes it. Checked with `npm run build` and `npm
+  run lint`.
 
+  Different from the plan: picking a user for the members of a team or a project is one component,
+  `AddUser`, taken out of `GroupPage`, and `userIdOf` stands in `actor.ts`. An
+  access list's grants need not offer changing (`GrantLabels.write` optional): a project's list
+  grants reading alone. Lifting is a small form on the project's page, not a dialog of its own.
+
+  After the review: a project's event reloads the sessions whose results go to it, so that a
+  project renamed or lifted is not shown as it was; a session's own is called by its session in one
+  place (`labelOf`), and offered for keeping only while its session publishes into it; a project of
+  a user's scope is not called "yours" (`placeOf`, `optionLabel`), since the API names no owner and
+  one may work on another's.
+
+  Decided with the maintainer, still in 4b: `GET /projects/{id}/sessions` lists the sessions that
+  lie in a project and the user reads (`ProjectView::sessions`, by `Filter::in_project`; the
+  listing shared with `GET /sessions`, `routes::sessions::all_listed`), so that the project's page
+  no longer fetches every session and filters them; and the entries of a project's access list the
+  runtime keeps - its members, the participants of its sessions - are shown fixed
+  (`AccessList.kept`), so that the owner cannot take a session's share away by hand.
