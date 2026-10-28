@@ -369,7 +369,7 @@ impl SessionManager {
     /// # Errors
     /// `SessionError::ClassificationRefused` for a classification no channel may be given;
     /// whatever the store reports.
-    async fn persist(&self, context: &SecurityContext, session: &Session, own: &Project, channels: &[Channel]) -> Result<()> {
+    pub(super) async fn persist(&self, context: &SecurityContext, session: &Session, own: &Project, channels: &[Channel]) -> Result<()> {
         for channel in channels {
             require_classification(&self.runtime_manager, &channel.classification)?;
         }
@@ -999,7 +999,8 @@ mod tests {
         // Persist a session directly, without going through `create`.
         let session = make_session("s3", ActorId::User(UserId::new()));
         let session_id = session.id;
-        persist(&runtime, &ctx, &session).await;
+        let channels = [main_channel(&session)];
+        persist(&manager, &ctx, session, &channels).await;
 
         let mut rx = runtime.event_bus().subscribe_all();
         manager.open(&ctx, session_id).await.unwrap();
@@ -1024,7 +1025,8 @@ mod tests {
         let ctx = SecurityContext::default();
         let session = make_session("concurrent", ActorId::User(UserId::new()));
         let session_id = session.id;
-        persist(&runtime, &ctx, &session).await;
+        let channels = [main_channel(&session)];
+        persist(&manager, &ctx, session, &channels).await;
 
         let mut rx = runtime.event_bus().subscribe_all();
         let (first, second, third) = tokio::join!(
@@ -1047,7 +1049,8 @@ mod tests {
         let ctx = SecurityContext::default();
         let session = make_session("stopped", ActorId::User(UserId::new()));
         let session_id = session.id;
-        persist(&runtime, &ctx, &session).await;
+        let channels = [main_channel(&session)];
+        let session = persist(&manager, &ctx, session, &channels).await;
 
         // A start under way holds the lock ...
         let start = manager.start_lock(session_id);
@@ -1061,8 +1064,7 @@ mod tests {
 
         // ... and registers the session before it lets go: the stop then
         // finds it, and nothing keeps running.
-        let channels = vec![main_channel(&session)];
-        manager.spawn_session(session, channels).await.unwrap();
+        manager.spawn_session(session, channels.to_vec()).await.unwrap();
         drop(starting);
         assert!(stopping.await.unwrap(), "the stop stopped what the start started");
         assert!(!manager.sessions.contains_key(&session_id));
@@ -1110,7 +1112,6 @@ mod tests {
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let agents = runtime.agent_manager();
-        let sessions = &runtime.entity_stores().sessions;
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
@@ -1129,8 +1130,8 @@ mod tests {
         let talk = running.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
         let mut stopped = make_session("stopped", ActorId::User(UserId::new()));
         stopped.participants = vec![Participant::Agent(helper.id)];
-        sessions.create(&system, &stopped).await.unwrap();
-        runtime.entity_stores().channels.create(&system, &Channel { participants: vec![Participant::Agent(helper.id)], ..main_channel(&stopped) }).await.unwrap();
+        let channels = [main_channel(&stopped)];
+        let stopped = persist(&manager, &system, stopped, &channels).await;
 
         assert!(agents.delete(&ctx, helper.id).await.expect("deleted"));
         until(|| !talk.participant_ids().contains(&actor), "its actor stops in the running channel").await;
@@ -1694,7 +1695,7 @@ mod tests {
         let ctx = SecurityContext::default();
         let sessions = ["interrupted", "waiting", "idle", "deleted"].map(|name| make_session(name, ActorId::User(UserId::new())));
         for session in &sessions {
-            persist(&runtime, &ctx, session).await;
+            persist(&manager, &ctx, session.clone(), &[main_channel(session)]).await;
         }
         let [interrupted, waiting, idle, deleted] = sessions.map(|session| (session.id, session.channels[0]));
         let in_turn = |processing_state| AgentChannelState { processing_state, turn: Some(TurnState::default()), ..AgentChannelState::default() };

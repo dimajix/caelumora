@@ -1,6 +1,6 @@
 # 471 — The test world stores its sessions by hand instead of making them as the runtime does
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -77,3 +77,10 @@ they test.
   added to the issue.
 - **2026-10-28** — Step 2, the restructuring for D, without a change of behaviour: storing a new
   session is `SessionManager::persist`, which `establish` runs before announcing and starting it.
+- **2026-10-28** — Step 3, done: `session::testing::persist` stores a session with its channels
+  through `SessionManager::persist`, with a project of its own, and returns it as stored; the tests
+  of the views store theirs with it (`stored`, which also records the founders' joins), as do the
+  tests of the manager and of the channels that stored a session and its main channel by hand.
+  Tests of other modules still store sessions without their groups or own project - the
+  controllers', the workspaces' (`workspace::testing`), the templates', and those of the agents'
+  prompt parts, memory and external agents -; they were left as they are.

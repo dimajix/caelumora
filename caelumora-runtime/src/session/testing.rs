@@ -34,7 +34,7 @@ use caelumora_model::channel::{Channel, ChannelState, moderation_components};
 use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
-use caelumora_model::project::ProjectId;
+use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::actor::{ActorEvent, Rejection};
 use caelumora_model::message::{MessageId, Message};
@@ -222,10 +222,16 @@ pub async fn create(manager: &SessionManager, ctx: &SecurityContext, session: Se
     manager.create(ctx, session, channels).await
 }
 
-/// Stores `session` and its main channel without starting it.
-pub async fn persist(runtime: &Arc<RuntimeManager>, ctx: &SecurityContext, session: &Session) {
-    runtime.entity_stores().sessions.create(ctx, session).await.unwrap();
-    runtime.entity_stores().channels.create(ctx, &main_channel(session)).await.unwrap();
+/// Stores `session` with `channels` on behalf of `ctx` as the runtime stores a brand-new one
+/// (`SessionManager::persist`) - with a project of its own -, without announcing or starting it:
+/// the session as stored. The channels keep the participants they name, without their joins in
+/// their histories (`founded`).
+pub async fn persist(manager: &SessionManager, ctx: &SecurityContext, session: Session, channels: &[Channel]) -> Session {
+    let owner = session.security_attributes.owner_id.as_user_id().expect("a session of a user");
+    let own = Project::own_of(session.id, owner);
+    let session = Session { project: own.id, ..session };
+    manager.persist(ctx, &session, &own, channels).await.expect("the session is stored");
+    session
 }
 
 /// Drain every event currently buffered on the receiver.
