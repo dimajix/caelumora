@@ -20,7 +20,7 @@ use super::{channel_reading, ChannelReader};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
 use caelumora_model::scope::ScopeField;
-use caelumora_model::store::{Deleted, StoreError, Stored};
+use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::UserField;
 use crate::channel::ChannelError;
 use std::sync::Arc;
@@ -379,20 +379,14 @@ impl SessionView {
     /// `Failed` if the store cannot list them.
     pub async fn deleted_channels(&self) -> ViewResult<Vec<DeletedSnapshot<ChannelId>>> {
         let views = self.views();
-        let context = views.context();
-        let failed = |e| ViewError::failed(e, format!("listing the deleted channels of session {}", self.id()));
         let of_this = Query::filtered(Filter::eq(ChannelField::Session, self.id()));
-        let channels = views.stores().channels.list_deleted(context, &of_this).await.map_err(failed)?.items;
+        let mut deleted = views.deleted_of(views.stores().channels.as_ref(), &of_this, |channel| channel.name.to_string()).await
+            .map_err(|e| ViewError::failed(e, format!("listing the deleted channels of session {}", self.id())))?;
+        // Restoring one changes the session, and none is purged alone.
         let may_change = self.may_change().await;
-        let mut deleted = Vec::new();
-        for Deleted { entity: channel, removal } in channels {
-            deleted.push(DeletedSnapshot {
-                id: channel.id,
-                name: channel.name.to_string(),
-                deleted: removal,
-                can_restore: may_change && views.access_policy().may_restore(context, Channel::KIND, &channel.security_attributes).await,
-                can_purge: false,
-            });
+        for entry in &mut deleted {
+            entry.can_restore &= may_change;
+            entry.can_purge = false;
         }
         Ok(deleted)
     }

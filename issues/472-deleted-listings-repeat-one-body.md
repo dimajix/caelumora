@@ -1,6 +1,6 @@
 # 472 — Every listing of what was deleted repeats one body
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -70,3 +70,10 @@ A, with the finding of issue 469 recorded below, in two steps:
   `CheckedStore`). The let-else of the three restorings and the `else { continue }` of the seven
   listings are gone; the restorings, purges and listings take the entity and the mark apart where
   they read them. `scoped::deleted_with` answers the entities that carry a mark.
+- **2026-10-28** — Step 2 done: `Views::deleted_of(store, query, name)` makes the entries of what
+  was deleted, for every kind; the five listings of the core's views, the deleted channels and the
+  plugins' `deleted_artifacts` and `deleted_skills` call it, each with its own error. The deleted
+  channels narrow what it answers by their reason. They now ask `may_restore` also where the
+  session may not be changed, and `may_purge`, whose answer they drop - questions more, the same
+  answers; the security suite records them
+  (`deleted_channels_are_restored_only_by_who_may_change_their_session`).

@@ -63,8 +63,8 @@ store of the users - with `service_of`. While it registers, a plugin
     one that no plugin claims is an error, so that a misspelt section is found.
 
 Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's `context`,
-the `access_policy` and `confidentiality` policies, its manager as a `service`, and
-`channel_reading`.
+the `access_policy` and `confidentiality` policies, its manager as a `service`, `channel_reading`,
+and `deleted_of`, by which it lists what of its kind was deleted, as every kind is listed.
 What a channel's view lists of its kind - the artifacts published in it, say - is an extension trait
 on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`): whether the
 viewer reads the channel stays the channel's to decide (issue 328). What lies in a project is listed

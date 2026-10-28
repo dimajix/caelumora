@@ -61,13 +61,11 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessQuestions, AclEntry, Refused, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
-use caelumora_model::session::Session;
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnapshot};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{Deleted, EntityStores, StateStore, StoreResult, StoreResultExt, Stored};
-use caelumora_model::workspace::Workspace;
-use caelumora_model::project::{Project, ProjectId};
+use caelumora_model::store::{Deleted, EntityStore, EntityStores, StateStore, StoreResult, StoreResultExt, Stored};
+use caelumora_model::project::ProjectId;
 use caelumora_model::workspace::WorkspaceId;
 use std::sync::Arc;
 use anyhow::Error;
@@ -471,21 +469,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_agents(&self) -> ViewResult<Vec<DeletedSnapshot<AgentId>>> {
-        let agents = self.stores.agents.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the deleted agents"))?;
-        let access_policy = &self.access_policy;
-        let mut deleted = Vec::with_capacity(agents.len());
-        for Deleted { entity: agent, removal } in agents {
-            let attributes = &agent.security_attributes;
-            deleted.push(DeletedSnapshot {
-                id: agent.id,
-                name: agent.name.to_string(),
-                deleted: removal,
-                can_restore: access_policy.may_restore(self.viewer.context(), Agent::KIND, attributes).await,
-                can_purge: access_policy.may_purge(self.viewer.context(), Agent::KIND, attributes).await,
-            });
-        }
-        Ok(deleted)
+        self.deleted_of(self.stores.agents.as_ref(), &Query::all(), |agent| agent.name.to_string()).await
+            .map_err(|e| ViewError::failed(e, "listing the deleted agents"))
     }
 
     /// The workspaces the store lists for the viewer (issues 23, 322) -
@@ -636,21 +621,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn deleted_groups(&self) -> ViewResult<Vec<DeletedSnapshot<GroupId>>> {
-        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::filtered(Filter::teams())).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
-        let access_policy = &self.access_policy;
-        let mut deleted = Vec::with_capacity(groups.len());
-        for Deleted { entity: group, removal } in groups {
-            let attributes = &group.security_attributes;
-            deleted.push(DeletedSnapshot {
-                id: group.id,
-                name: group.name.to_string(),
-                deleted: removal,
-                can_restore: access_policy.may_restore(self.viewer.context(), Group::KIND, attributes).await,
-                can_purge: access_policy.may_purge(self.viewer.context(), Group::KIND, attributes).await,
-            });
-        }
-        Ok(deleted)
+        self.deleted_of(self.stores.groups.as_ref(), &Query::filtered(Filter::teams()), |group| group.name.to_string()).await
+            .map_err(|e| ViewError::failed(e, "listing the deleted groups"))
     }
 
     /// The workspaces the viewer deleted and may read as such (issue 253).
@@ -658,21 +630,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_workspaces(&self) -> ViewResult<Vec<DeletedSnapshot<WorkspaceId>>> {
-        let workspaces = self.stores.workspaces.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the deleted workspaces"))?;
-        let access_policy = &self.access_policy;
-        let mut deleted = Vec::with_capacity(workspaces.len());
-        for Deleted { entity: workspace, removal } in workspaces {
-            let attributes = &workspace.security_attributes;
-            deleted.push(DeletedSnapshot {
-                id: workspace.id,
-                name: workspace.name.to_string(),
-                deleted: removal,
-                can_restore: access_policy.may_restore(self.viewer.context(), Workspace::KIND, attributes).await,
-                can_purge: access_policy.may_purge(self.viewer.context(), Workspace::KIND, attributes).await,
-            });
-        }
-        Ok(deleted)
+        self.deleted_of(self.stores.workspaces.as_ref(), &Query::all(), |workspace| workspace.name.to_string()).await
+            .map_err(|e| ViewError::failed(e, "listing the deleted workspaces"))
     }
 
     /// The shared projects deleted that the viewer may read as such (issue 467); a session's own
@@ -681,21 +640,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_projects(&self) -> ViewResult<Vec<DeletedSnapshot<ProjectId>>> {
-        let projects = self.stores.projects.list_deleted(self.viewer.context(), &Query::filtered(Filter::shared_projects())).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the deleted projects"))?;
-        let access_policy = &self.access_policy;
-        let mut deleted = Vec::with_capacity(projects.len());
-        for Deleted { entity: project, removal } in projects {
-            let attributes = &project.security_attributes;
-            deleted.push(DeletedSnapshot {
-                id: project.id,
-                name: project.name.to_string(),
-                deleted: removal,
-                can_restore: access_policy.may_restore(self.viewer.context(), Project::KIND, attributes).await,
-                can_purge: access_policy.may_purge(self.viewer.context(), Project::KIND, attributes).await,
-            });
-        }
-        Ok(deleted)
+        self.deleted_of(self.stores.projects.as_ref(), &Query::filtered(Filter::shared_projects()), |project| project.name.to_string()).await
+            .map_err(|e| ViewError::failed(e, "listing the deleted projects"))
     }
 
     /// The sessions the viewer deleted and may read as such (issue 164),
@@ -704,18 +650,28 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_sessions(&self) -> ViewResult<Vec<DeletedSnapshot<SessionId>>> {
-        let sessions = self.stores.sessions.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the deleted sessions"))?;
-        let access_policy = &self.access_policy;
-        let mut deleted = Vec::with_capacity(sessions.len());
-        for Deleted { entity: session, removal } in sessions {
-            let attributes = &session.security_attributes;
+        self.deleted_of(self.stores.sessions.as_ref(), &Query::all(), |session| session.name.to_string()).await
+            .map_err(|e| ViewError::failed(e, "listing the deleted sessions"))
+    }
+
+    /// The deleted of kind `T` that `query` lists for the viewer in `store` (issues 164, 472), each
+    /// as an entry called by `name`, with whether they may restore and purge it, in the order the
+    /// store lists them: the one place an entry of what was deleted is made, for every kind - the
+    /// plugins' too.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub async fn deleted_of<T: Stored>(&self, store: &dyn EntityStore<T>, query: &Query<T::Field>, name: impl Fn(&T) -> String + Send) -> StoreResult<Vec<DeletedSnapshot<T::Id>>> {
+        let context = self.viewer.context();
+        let mut deleted = Vec::new();
+        for Deleted { entity, removal } in store.list_deleted(context, query).await?.items {
+            let attributes = entity.security_attributes();
             deleted.push(DeletedSnapshot {
-                id: session.id,
-                name: session.name.to_string(),
+                id: entity.id(),
+                name: name(&entity),
                 deleted: removal,
-                can_restore: access_policy.may_restore(self.viewer.context(), Session::KIND, attributes).await,
-                can_purge: access_policy.may_purge(self.viewer.context(), Session::KIND, attributes).await,
+                can_restore: self.access_policy.may_restore(context, T::KIND, attributes).await,
+                can_purge: self.access_policy.may_purge(context, T::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -872,7 +828,7 @@ mod tests {
     use caelumora_model::work::TurnId;
     use chrono::Utc;
     use std::time::Duration;
-    use caelumora_model::session::Participant as SessionParticipant;
+    use caelumora_model::session::{Participant as SessionParticipant, Session};
     use tokio::time;
 
     /// All of the history `view` shows, as one page.

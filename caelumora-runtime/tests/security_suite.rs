@@ -1468,6 +1468,38 @@ async fn purging_a_session_is_not_its_owners() {
     ]), "only what was deleted, asked by the agent manager and again by the store");
 }
 
+/// The deleted channels of a session (issues 164, 472): listed to whoever may read them as deleted,
+/// each with whether they may restore it - only with changing the session, which restoring it
+/// does - and none purged alone. A channel's owner who may not change the session sees it, and may
+/// not restore it.
+#[tokio::test]
+async fn deleted_channels_are_restored_only_by_who_may_change_their_session() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = session.channels()[0].id();
+    let stores = world.runtime.entity_stores();
+    let mut his = stores.channels.get(&World::system(), main).await.unwrap();
+    his.security_attributes.owner_id = ActorId::User(world.bob);
+    stores.channels.update(&World::system(), &his).await.unwrap();
+    session.delete_channel(&World::system(), main).await.unwrap();
+    let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
+
+    let (listed, asked) = world.asked(async { views(world.bob).session(session.id()).await.unwrap().deleted_channels().await.unwrap() }).await;
+    assert_eq!(listed.iter().map(|entry| (entry.id, entry.can_restore, entry.can_purge)).collect::<Vec<_>>(), [(main, false, false)], "his, not his to restore");
+    assert_eq!(asked, checks(&[
+        "bob: GetSession(alice's) yes",
+        "bob: List(channel) yes",
+        "bob: ReadDeletedChannel(bob's) yes",
+        "bob: JoinChannel(bob) yes",
+        "bob: RestoreChannel(bob's) yes",
+        "bob: PurgeChannel(bob's) no",
+        "bob: UpdateSession(alice's) no",
+    ]), "each channel asked as every deleted entry is, the session once");
+    let (listed, asked) = world.asked(async { views(world.alice).session(session.id()).await.unwrap().deleted_channels().await.unwrap() }).await;
+    assert!(listed.is_empty(), "not shown to who may not read it as deleted, though she may change the session");
+    assert_eq!(asked, checks(&["alice: GetSession(alice's) yes", "alice: List(channel) yes", "alice: UpdateSession(alice's) yes"]));
+}
+
 /// Restoring a deleted channel (issue 164), in the order of issue 304:
 /// reading it as deleted, as the session lists its deleted channels,
 /// restoring it - its owner's alone - before everyone's clearance is asked
