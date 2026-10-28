@@ -138,13 +138,12 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::project::ProjectId;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::turn::Turn;
     use crate::testing::{self, TestAgents};
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::session::{SessionLoop, SessionManager};
-    use caelumora_runtime::session::testing::{actor_runtime_in, user};
+    use caelumora_runtime::session::testing::{actor_runtime_in, make_session, user};
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
@@ -152,9 +151,8 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::session::{Session, SessionId};
+    use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
-    use chrono::Utc;
     use caelumora_model::work::Work;
 
     #[test]
@@ -206,22 +204,11 @@ mod tests {
         let owner = user("owner");
         store.entity_stores().unwrap().users.create(&system, &owner).await.unwrap();
         let as_owner = SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
-        let session_id = SessionId::new();
+        let session = make_session("s", owner.id);
         let confidential = Classification::general(Confidentiality::Confidential);
-        let mut channel = Channel::build(session_id, ActorId::User(owner.id), Name::new("main").unwrap(), Default::default(), confidential.clone(), None);
+        let mut channel = Channel::build(session.id, ActorId::User(owner.id), Name::new("main").unwrap(), Default::default(), confidential.clone(), None);
         channel.participants = vec![Participant::Agent(agent.id)];
-        let now = Utc::now();
-        let session = Session {
-            summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            // Replaced by its own, which `create` makes with it.
-            project: ProjectId::new(),
-            id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
-            commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now,
-            security_attributes: Session::attributes_of(session_id, owner.id, &[]),
-            deleted: None,
-        };
+        let session = Session { summary: Some(Summary::new("Release 2.0").unwrap()), participants: channel.participants.clone(), channels: vec![channel.id], ..session };
         let session_loop = SessionManager::new(Arc::clone(&runtime)).create(&as_owner, session.clone(), vec![channel.clone()]).await.unwrap();
 
         let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);

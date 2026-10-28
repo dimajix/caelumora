@@ -73,7 +73,6 @@ mod tests {
     use axum::body::to_bytes;
     use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE};
     use axum::http::Request;
-    use caelumora_model::actor::ActorId;
     use caelumora_model::config::{AppConfig, BackendConfig, ContentConfig};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::Participant;
@@ -97,7 +96,7 @@ mod tests {
         let me = api.clone().oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
         let me: Value = serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
         let alice = UserId(me["id"].as_str().unwrap().parse().unwrap());
-        let mut talk = make_session("talk", ActorId::User(alice));
+        let mut talk = make_session("talk", alice);
         talk.participants = vec![Participant::User(alice)];
         let (session, channel) = (talk.id, talk.channels[0]);
         create(&state.session_manager, &SecurityContext::system(), talk).await.unwrap();

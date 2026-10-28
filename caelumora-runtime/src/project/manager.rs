@@ -252,7 +252,7 @@ mod tests {
         let projects = ProjectManager::new(Arc::clone(&manager));
         let owner = UserId::new();
         let (ctx, system) = (SecurityContext::new(ActorId::User(owner), Default::default(), Default::default()), SecurityContext::system());
-        let session = create(&manager, &ctx, make_session("in it", ActorId::User(owner))).await.unwrap();
+        let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects.create(&ctx, "report", Scope::UserScope { user_id: owner }, None).await.unwrap();
         session.update_project(&ctx, Some(project.id)).await.unwrap();
         let bundle = ComponentBundle::new(ScopedName::new("tools", project.holds()).unwrap(), Default::default(), Default::default());

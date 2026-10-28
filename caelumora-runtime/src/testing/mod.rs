@@ -24,7 +24,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 use caelumora_model::component::ComponentConfig;
 use anyhow::{Error, Result};
 use tempfile::TempDir;
-use chrono::Utc;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
@@ -39,11 +38,9 @@ use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::group::GroupId;
 use caelumora_model::security::{ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::project::ProjectId;
 use caelumora_model::store::{EntityKind, Persistence, StoreError};
 use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
@@ -57,6 +54,7 @@ use caelumora_model::actor::ActorEvent;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use crate::session::{SessionError, SessionLoop, SessionManager};
+use crate::session::testing::make_session;
 use crate::project::{ProjectError, ProjectManager};
 use crate::error::refusal;
 use crate::view::Viewer;
@@ -425,26 +423,11 @@ impl World {
         let users: Vec<Participant> = iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
         let in_channel: Vec<Participant> = users.iter().cloned().chain(agents.iter().map(|a| Participant::Agent(*a))).collect();
         let in_session: Vec<Participant> = in_channel.iter().cloned().chain(waiting.iter().map(|a| Participant::Agent(*a))).collect();
-        let mut channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None);
+        let session = make_session("shared", self.alice);
+        let mut channel = Channel::build(session.id, alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None);
         channel.participants = in_channel;
         channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
-        let session = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            // Replaced by its own, which `create` makes with it.
-            project: ProjectId::new(),
-            id: channel.session_id,
-            name: Name::new("shared").unwrap(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            participants: in_session.clone(),
-            channels: vec![channel.id],
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::of_session(channel.session_id)), Grant::Read),
-            deleted: None,
-        };
+        let session = Session { participants: in_session.clone(), channels: vec![channel.id], ..session };
         let id = session.id;
         self.manager.create(&Self::as_user(self.alice), session, vec![channel]).await.expect("the session is made");
         self.manager.open(&Self::as_user(self.alice), id).await.expect("alice opens her session")

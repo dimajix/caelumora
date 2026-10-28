@@ -1101,7 +1101,7 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
     stores.component_bundles.delete(&World::as_user(world.bob), bobs.id, &Removal::now(ActorId::User(world.bob))).await.expect("his to delete");
     let bob = World::as_user(world.bob);
     world.runtime.controller_manager().project_controller(project.id).await.unwrap().update_members(&alice, vec![world.bob]).await.unwrap();
-    let his = create(&world.manager, &bob, make_session("his", ActorId::User(world.bob))).await.expect("bob's session");
+    let his = create(&world.manager, &bob, make_session("his", world.bob)).await.expect("bob's session");
     his.update_project(&bob, Some(project.id)).await.expect("a member puts his session into it");
     let refused = world.projects.delete(&alice, project.id).await.expect_err("bob's session is left");
     assert!(matches!(&refused, ProjectError::ScopeNotEmpty(ScopeNotEmpty { left, .. }) if *left == [(Session::KIND, 1)]), "{refused:?}");

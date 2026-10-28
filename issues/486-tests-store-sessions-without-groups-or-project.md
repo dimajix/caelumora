@@ -69,3 +69,11 @@ Recommendation: A and B.
   workspace's owner was never stored, which founding refuses as a participant that no longer
   exists; the agent "Gone" of the participants' test, never stored either, now founds the channel
   and is deleted after (`AgentManager::delete`), as a participant that no longer exists is.
+- **2026-10-28** — Step 2, added by the maintainer from the review of step 1, a restructuring
+  without a change of behaviour: the session the tests write out whole - in the four places of
+  step 1 and in `World::session_of` - is `session::testing::make_session` with what they differ in.
+  `make_session` takes its owner as a `UserId` - every caller passed a user - and its attributes
+  are the model's (`Session::attributes_of`). The memory tests are now step 3, what was step 3 is
+  step 4. With it, from the review: the attributes of a new channel are `Channel::attributes_of`,
+  which `Channel::build` and the tests' `main_channel` and the views' `like` use instead of three
+  copies.

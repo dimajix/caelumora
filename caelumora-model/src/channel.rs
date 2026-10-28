@@ -298,6 +298,13 @@ impl Secured for Channel {
 }
 
 impl Channel {
+    /// The attributes of a new channel `id` of `owner`: read by its participants, whoever they are
+    /// at the time (issue 23) - the group of its participants, stored with it
+    /// (`Group::of_channel`).
+    pub fn attributes_of(id: ChannelId, owner: ActorId) -> SecurityAttributes {
+        SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read)
+    }
+
     /// A new channel, owned by `owner`, as every channel is built - from a
     /// template or on request (issue 09) -, read by its participants (issue
     /// 23): every user and agent in it, whoever they are at the time - the
@@ -309,7 +316,7 @@ impl Channel {
     /// so that without an approver nothing in it is approved.
     pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>) -> Self {
         let id = ChannelId::new();
-        let security_attributes = SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read);
+        let security_attributes = Self::attributes_of(id, owner);
         Self {
             id,
             session_id,

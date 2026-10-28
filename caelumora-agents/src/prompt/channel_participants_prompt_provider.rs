@@ -146,7 +146,6 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::project::ProjectId;
     use crate::turn::Turn;
     use crate::testing::{self, TestAgents};
     use caelumora_runtime::view::ViewError;
@@ -154,7 +153,7 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::session::SessionManager;
-    use caelumora_runtime::session::testing::actor_runtime_in;
+    use caelumora_runtime::session::testing::{actor_runtime_in, make_session};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::approval::{ApprovalStrategy, Approver};
@@ -162,10 +161,9 @@ mod tests {
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::session::{Session, SessionId};
+    use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::{User, UserId, UserProfile};
-    use chrono::Utc;
     use caelumora_model::work::Work;
     use std::slice;
 
@@ -263,21 +261,10 @@ mod tests {
         let approver = InternalActor::Approver(Approver::new(ApprovalStrategy::Any));
 
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
-        let session_id = SessionId::new();
-        let mut channel = Channel::build(session_id, ActorId::User(kaya.id), Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
+        let session = make_session("s", kaya.id);
+        let mut channel = Channel::build(session.id, ActorId::User(kaya.id), Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
         (channel.participants, channel.internal_actors) = (participants.clone(), vec![approver]);
-        let now = Utc::now();
-        let session = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            // Replaced by its own, which `create` makes with it.
-            project: ProjectId::new(),
-            id: session_id, name: Name::new("s").unwrap(), participants, channels: vec![channel.id],
-            commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now,
-            security_attributes: Session::attributes_of(session_id, kaya.id, &[]),
-            deleted: None,
-        };
+        let session = Session { participants, channels: vec![channel.id], ..session };
         let as_owner = SecurityContext::new(ActorId::User(kaya.id), Default::default(), Default::default());
         let session_loop = SessionManager::new(Arc::clone(&runtime)).create(&as_owner, session.clone(), vec![channel.clone()]).await.unwrap();
         // One who no longer exists: deleted once it founded the channel with the others.

@@ -6,7 +6,7 @@
 use crate::testing::TestRuntime;
 use crate::runtime::RuntimeManager;
 use crate::session::{SessionLoop, SessionManager};
-use crate::session::testing::user;
+use crate::session::testing::{make_session, user};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
@@ -16,14 +16,12 @@ use serde_json::json;
 use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::project::ProjectId;
-use caelumora_model::session::{Session, SessionId};
+use caelumora_model::session::Session;
 use caelumora_model::store::Persistence;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::workspace::Workspace;
 use std::sync::Arc;
 use caelumora_model::config::AppConfig;
-use chrono::Utc;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -76,23 +74,12 @@ pub async fn session_with_workspace() -> WithWorkspace {
     store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
     let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(owner));
     store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
-    let session_id = SessionId::new();
-    let mut channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None);
+    let session = make_session("s", owner);
+    let mut channel = Channel::build(session.id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None);
     channel.participants = vec![Participant::User(owner), Participant::Agent(agent.id)];
     channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
-    let now = Utc::now();
-    let session = Session {
-        summary: None, briefing: None, language: None, time_zone: None,
-        approval_rules: Vec::new(),
-        workspace: Some(workspace.id),
-        // Replaced by its own, which `create` makes with it.
-        project: ProjectId::new(),
-        id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
-        commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now,
-        security_attributes: Session::attributes_of(session_id, owner, &[]),
-        deleted: None,
-    };
+    let session = Session { workspace: Some(workspace.id), participants: channel.participants.clone(), channels: vec![channel.id], ..session };
     let session = SessionManager::new(Arc::clone(&runtime)).create(&as_owner, session, vec![channel]).await.unwrap();
-    let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner), ActorId::User(owner));
+    let context = SecurityContext::new(ActorId::User(owner), session.id(), session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner), ActorId::User(owner));
     WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }
 }

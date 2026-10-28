@@ -937,7 +937,7 @@ mod tests {
         let mut rx = runtime.event_bus().subscribe_all();
         let ctx = SecurityContext::default();
 
-        let session = make_session("s1", ActorId::User(UserId::new()));
+        let session = make_session("s1", UserId::new());
         let session_id = session.id;
         let channel_id = session.channels[0];
 
@@ -967,7 +967,7 @@ mod tests {
         let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
 
-        let session = make_session("s2", ActorId::User(UserId::new()));
+        let session = make_session("s2", UserId::new());
         let session_id = session.id;
         let channel_id = session.channels[0];
         create(&manager, &ctx, session).await.unwrap();
@@ -997,7 +997,7 @@ mod tests {
         let ctx = SecurityContext::default();
 
         // Persist a session directly, without going through `create`.
-        let session = make_session("s3", ActorId::User(UserId::new()));
+        let session = make_session("s3", UserId::new());
         let session_id = session.id;
         let channels = [main_channel(&session)];
         persist(&manager, &ctx, session, &channels).await;
@@ -1023,7 +1023,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
-        let session = make_session("concurrent", ActorId::User(UserId::new()));
+        let session = make_session("concurrent", UserId::new());
         let session_id = session.id;
         let channels = [main_channel(&session)];
         persist(&manager, &ctx, session, &channels).await;
@@ -1047,7 +1047,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let ctx = SecurityContext::default();
-        let session = make_session("stopped", ActorId::User(UserId::new()));
+        let session = make_session("stopped", UserId::new());
         let session_id = session.id;
         let channels = [main_channel(&session)];
         let session = persist(&manager, &ctx, session, &channels).await;
@@ -1079,13 +1079,13 @@ mod tests {
             executor.visible(&SecurityContext::default(), &SecurityAttributes::default()).await.into_iter().map(|c| c.name).collect::<Vec<_>>()
         };
 
-        let session = make_session("plain", ActorId::User(UserId::new()));
+        let session = make_session("plain", UserId::new());
         let executor = runtime.new_command_executor(&session).await.expect("the global commands build");
         assert_eq!(names(executor).await, vec!["help", "nudge", "wakeup"]);
 
         // A second /help from the session's own configuration - with the same
         // component id, which is fine across the two configurations.
-        let mut session = make_session("clashing", ActorId::User(UserId::new()));
+        let mut session = make_session("clashing", UserId::new());
         session.commands = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 id: "help".to_string(),
@@ -1124,11 +1124,11 @@ mod tests {
         let actor = ActorId::Agent(helper.id);
 
         // In a running session's channel, and in a stopped one's.
-        let mut running = make_session("running", ActorId::User(UserId::new()));
+        let mut running = make_session("running", UserId::new());
         running.participants = vec![Participant::Agent(helper.id)];
         let running = create(&manager, &ctx, running).await.unwrap();
         let talk = running.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
-        let mut stopped = make_session("stopped", ActorId::User(UserId::new()));
+        let mut stopped = make_session("stopped", UserId::new());
         stopped.participants = vec![Participant::Agent(helper.id)];
         let channels = [main_channel(&stopped)];
         let stopped = persist(&manager, &system, stopped, &channels).await;
@@ -1199,7 +1199,7 @@ mod tests {
         let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
-        let mut session = make_session("running", ActorId::User(UserId::new()));
+        let mut session = make_session("running", UserId::new());
         session.participants = vec![Participant::Agent(helper.id)];
         let session = create(&manager, &ctx, session).await.unwrap();
         let talk = session.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
@@ -1313,7 +1313,7 @@ mod tests {
         let runtime = TestRuntime { store: store.clone(), ..Default::default() }.build();
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
-        let session = make_session("two-stores", ActorId::User(UserId::new()));
+        let session = make_session("two-stores", UserId::new());
         let (id, channel_id) = (session.id, session.channels[0]);
         create(&manager, &ctx, session).await.unwrap();
         assert!(states.get_channel_state(channel_id).await.is_ok(), "the channel keeps its state in the state store");
@@ -1352,7 +1352,7 @@ mod tests {
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let owner = UserId::new();
-        let session = make_session("with-results", ActorId::User(owner));
+        let session = make_session("with-results", owner);
         let id = session.id;
         let project = create(&manager, &ctx, session).await.unwrap().session().project;
 
@@ -1397,7 +1397,7 @@ mod tests {
         let stores = runtime.entity_stores().clone();
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
-        let session = make_session("kept", ActorId::User(UserId::new()));
+        let session = make_session("kept", UserId::new());
         let id = session.id;
         let project = create(&manager, &ctx, session).await.unwrap().session().project;
         let groups_there = async || {
@@ -1439,7 +1439,7 @@ mod tests {
         let manager = Arc::new(SessionManager::new(runtime));
         let owner = UserId::new();
         let ctx = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let session = create(&manager, &ctx, make_session("moving", ActorId::User(owner))).await.unwrap();
+        let session = create(&manager, &ctx, make_session("moving", owner)).await.unwrap();
         let own = session.session().project;
         let project = ProjectManager::new(Arc::clone(&manager)).create(&ctx, "report", Scope::UserScope { user_id: owner }, None).await.unwrap();
 
@@ -1483,7 +1483,7 @@ mod tests {
         let stores = runtime.entity_stores().clone();
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
-        let session = make_session("scoped", ActorId::User(UserId::new()));
+        let session = make_session("scoped", UserId::new());
         let id = session.id;
         let running = create(&manager, &ctx, session).await.unwrap();
         let side = running.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
@@ -1569,7 +1569,7 @@ mod tests {
 
         let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
-        let mut session = make_session("hers", ActorId::User(alice));
+        let mut session = make_session("hers", alice);
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let id = session.id;
         create(&manager, &as_user(alice), session).await.expect("alice creates her own session");
@@ -1621,7 +1621,7 @@ mod tests {
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let mut session = make_session("thinking", ActorId::User(UserId::new()));
+        let mut session = make_session("thinking", UserId::new());
         session.participants = participants;
         session.participants.push(session::Participant::Agent(thinker.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
@@ -1667,9 +1667,9 @@ mod tests {
     #[tokio::test]
     async fn a_shutdown_stops_every_session_keeping_its_turns_and_starts_none_after() {
         let (manager, alice, session, agent, mut events) = with_a_hanging_answer().await;
-        let stored = create(&manager, &alice, make_session("idle", ActorId::User(alice.caller_id.as_user_id().unwrap()))).await.unwrap().id();
+        let stored = create(&manager, &alice, make_session("idle", alice.caller_id.as_user_id().unwrap())).await.unwrap().id();
         manager.stop(&alice, stored).await.unwrap();
-        let other = create(&manager, &alice, make_session("other", ActorId::User(UserId::new()))).await.unwrap().id();
+        let other = create(&manager, &alice, make_session("other", UserId::new())).await.unwrap().id();
 
         let shutting = Instant::now();
         manager.shutdown().await;
@@ -1680,7 +1680,7 @@ mod tests {
         let refused = |result: Result<Arc<SessionLoop>>| matches!(result.err().and_then(|e| e.downcast::<SessionError>().ok()), Some(SessionError::ShuttingDown));
         assert!(refused(manager.open(&alice, stored).await), "a stored one is not started");
         assert!(refused(manager.open(&alice, session.id()).await), "nor one that ran");
-        assert!(refused(create(&manager, &alice, make_session("new", ActorId::User(UserId::new()))).await), "nor a new one");
+        assert!(refused(create(&manager, &alice, make_session("new", UserId::new())).await), "nor a new one");
     }
 
     /// After a restart (issue 388) the runtime starts again the sessions in
@@ -1693,7 +1693,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
-        let sessions = ["interrupted", "waiting", "idle", "deleted"].map(|name| make_session(name, ActorId::User(UserId::new())));
+        let sessions = ["interrupted", "waiting", "idle", "deleted"].map(|name| make_session(name, UserId::new()));
         for session in &sessions {
             persist(&manager, &ctx, session.clone(), &[main_channel(session)]).await;
         }

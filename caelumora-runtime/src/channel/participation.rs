@@ -352,7 +352,7 @@ mod tests {
         assert!(!cleared(cleared_remote, &hr).await);
 
         // The same question when a channel is created and when one is joined.
-        let mut session = make_session("hers", alice_id);
+        let mut session = make_session("hers", alice.id);
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = users;
         session.participants.extend([hers, limited].map(|a| match a { ActorId::Agent(id) => Participant::Agent(id), _ => unreachable!() }));
@@ -382,7 +382,7 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
-        let mut session = make_session("scoped", ActorId::User(UserId::new()));
+        let mut session = make_session("scoped", UserId::new());
         let id = session.id;
         let elsewhere = [
             Agent::new(ScopedName::new("aside", Scope::ChannelScope { session_id: id, channel_id: ChannelId::new() }).unwrap(), personality.id, ActorId::None),

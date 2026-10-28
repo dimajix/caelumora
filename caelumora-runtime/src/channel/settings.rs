@@ -169,7 +169,7 @@ mod tests {
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let bob_ctx = SecurityContext::new(bob_id, Default::default(), Default::default());
-        let mut session = make_session("hers", alice_id);
+        let mut session = make_session("hers", alice.id);
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
@@ -216,7 +216,7 @@ mod tests {
         let users = (user("alice"), user("bob"));
         let (alice, bob) = (ActorId::User(users.0.id), ActorId::User(users.1.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
-        let mut session = make_session("hers", alice);
+        let mut session = make_session("hers", users.0.id);
         session.participants = record_users(&manager, &[&users.0, &users.1]).await;
         let running = create(&manager, &as_user(alice), session).await.unwrap();
         let main = running.channel_named("main").unwrap();
