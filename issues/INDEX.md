@@ -523,6 +523,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [471](471-world-builds-sessions-by-hand.md) | done | `World::session_of`, which most tests of the security suite start from, and the tests of the views store a session, its groups, its own project and its channels themselves, and so have to be changed whenever making a session gains a step. |
 | [472](472-deleted-listings-repeat-one-body.md) | done | The views list what was deleted of each kind with a body of their own each, which differ only in the store, the query and the kind. |
 | [484](484-a-dash-at-line-start-is-checked-only-in-rust-docs.md) | open | "No line of prose starts with a dash" is checked by clippy in Rust's doc comments alone; in plain Rust comments and in the web UI's TypeScript it is kept by hand, and missed. |
+| [485](485-own-project-derived-in-several-places.md) | open | Which project is a session's own - `Project::own_of` of its owner, refused if the owner is no user - is worked out where it is needed, in the runtime and in its test fixtures, instead of being asked of the session. |
 
 ## Integrations
 
