@@ -1,9 +1,16 @@
-// A text edited where a page shows it (issue 479) - a name, a description -, in place of the text
-// while it is edited; drawn for a page, which follows the theme.
+// A text edited where it is shown (issue 479) - a name, a description -, in place of the text
+// while it is edited; drawn for a page, which follows the theme, or for the sidebar, which is dark
+// whatever the theme (issue 483).
 
 import React, {useEffect, useRef, useState} from 'react';
+import {cn} from '../classNames';
 import {reportError, reportUnlessRefused} from '../errors';
 import {Refusal} from './Refusal';
+
+const LOOKS = {
+  page: 'rounded-md bg-white dark:bg-gray-800 px-2 py-1',
+  sidebar: 'rounded-sm bg-gray-700 text-white px-1 outline-hidden',
+};
 
 interface EditInPlaceProps {
   /** The text the field starts with. */
@@ -14,6 +21,8 @@ interface EditInPlaceProps {
   action: string;
   /** Closes the field. */
   onDone: () => void;
+  /** Where it is shown; a page if not given. */
+  on?: keyof typeof LOOKS;
 }
 
 /**
@@ -21,7 +30,7 @@ interface EditInPlaceProps {
  * stays open until the server answered; what it refuses is shown under the field, and what else
  * fails is reported, the text kept either way to be corrected, saved again or given up.
  */
-export const EditInPlace: React.FC<EditInPlaceProps> = ({initial, save, action, onDone}) => {
+export const EditInPlace: React.FC<EditInPlaceProps> = ({initial, save, action, onDone, on = 'page'}) => {
   const [text, setText] = useState(initial);
   const [refusal, setRefusal] = useState<string | null>(null);
   // Only a field being edited saves: not a second time while a save is under way, and not the
@@ -74,9 +83,9 @@ export const EditInPlace: React.FC<EditInPlaceProps> = ({initial, save, action, 
           if (e.key === 'Enter') void commit();
           if (e.key === 'Escape') close();
         }}
-        className="w-full rounded-md border border-blue-500 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
+        className={cn('w-full border border-blue-500 text-sm', LOOKS[on])}
       />
-      <Refusal message={refusal} on="page" />
+      <Refusal message={refusal} on={on} />
     </div>
   );
 };

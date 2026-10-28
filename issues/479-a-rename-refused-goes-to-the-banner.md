@@ -67,3 +67,6 @@ banner (B for it alone).
   gone with its page - closes nothing, and its refusal goes to the banner. `Refusal` has `on`,
   `'dialog'` or `'page'`; the form "keep the project" uses it, in red-600, or red-400 in the dark
   theme, as the login shows its errors.
+- **2026-10-28** — The session's name in the sidebar no longer keeps the banner: issue
+  [483](483-the-sidebar-edits-a-session-name-by-hand.md) put its field in place of the row's button,
+  where it is an `EditInPlace` and shows a refusal under it.
