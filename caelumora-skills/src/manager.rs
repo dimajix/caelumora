@@ -25,8 +25,8 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::event::EventBus;
-use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
-use chrono::{DateTime, Utc};
+use caelumora_runtime::scoped::{deleted_with, deleted_unless_refused, restored_unless_refused, ScopeMember};
+use chrono::Utc;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -268,18 +268,17 @@ impl ScopeMember for SkillManager {
         Ok(left)
     }
 
-    /// Restores the skills that lie in `holder` or within it and were
-    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
-    /// announces them as `restore` does. One whose name was taken meanwhile
-    /// stays deleted, as does one `ctx` may not restore.
+    /// Restores the skills that lie in `holder` or within it and carry `removal`, the holder's
+    /// mark, on behalf of `ctx` (`scoped`), and announces them as `restore` does. One whose name
+    /// was taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for skill in deleted_since(self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+        for skill in deleted_with(self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
             if let Some(restored) = restored_unless_refused(self.skills.restore(ctx, skill.id).await, &skill)? {
                 self.events.announce(GlobalEvent::restored::<Skill>(&restored.id), &restored);
             }

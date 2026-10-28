@@ -310,11 +310,11 @@ mod tests {
         assert_eq!(marked, Some(removal.clone()), "with the mark of what holds them, in the runtime's name");
 
         failing.passing.store(2, Ordering::SeqCst);
-        manager.restore_participants(&holders, removal.at).await.expect_err("the third fails");
+        manager.restore_participants(&holders, &removal).await.expect_err("the third fails");
         assert_eq!(how_many_there().await, 0, "none is restored: those before are deleted again");
 
         failing.passing.store(usize::MAX, Ordering::SeqCst);
-        manager.restore_participants(&holders, removal.at).await.expect("all restored");
+        manager.restore_participants(&holders, &removal).await.expect("all restored");
         assert_eq!(how_many_there().await, 3);
     }
 

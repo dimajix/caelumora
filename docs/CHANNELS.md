@@ -43,8 +43,9 @@ or restores it - all of them or none (`GroupManager::delete_participants`, `rest
 announced as a team. Deleting deletes them last, once nothing else of the scope is left, so that a
 session kept keeps its members; if they cannot go, the mark is taken away again, and they stay.
 Restoring restores them first, with the mark; if they cannot come back, the session or channel is
-deleted again and the restoring fails. So a session or channel that is there always has the group of
-its participants there, too. Purging purges them with it (`scoped::purge_for_good`).
+marked again as it was - with them, so that a restoring tried again finds all of it -, and the
+restoring fails. So a session or channel that is there always has the group of its participants
+there, too. Purging purges them with it (`scoped::purge_for_good`).
 
 That holds because what lies in a session's or a channel's scope is used only within it
 (`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel,

@@ -33,9 +33,9 @@ use caelumora_runtime::backend::{NamedBackends, StorageGone};
 use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
-use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
+use caelumora_runtime::scoped::{deleted_with, deleted_unless_refused, restored_unless_refused, ScopeMember};
 use caelumora_runtime::terminal::ByteStream;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use std::fmt;
 use std::sync::Arc;
@@ -428,18 +428,17 @@ impl ScopeMember for ArtifactManager {
         Ok(left)
     }
 
-    /// Restores the artifacts that lie in `holder` or within it and were
-    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
-    /// announces them as `restore` does. One whose name was taken meanwhile
-    /// stays deleted, as does one `ctx` may not restore.
+    /// Restores the artifacts that lie in `holder` or within it and carry `removal`, the holder's
+    /// mark, on behalf of `ctx` (`scoped`), and announces them as `restore` does. One whose name
+    /// was taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in deleted_since(self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+        for artifact in deleted_with(self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
             if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)? {
                 self.events.announce(GlobalEvent::restored::<Artifact>(&restored.id), &restored);
             }

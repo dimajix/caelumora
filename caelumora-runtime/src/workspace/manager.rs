@@ -4,7 +4,7 @@
 
 use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
 use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused};
+use crate::scoped::{ScopeMember, deleted_with, deleted_unless_refused, restored_unless_refused};
 use crate::backend::NamedBackends;
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
@@ -21,7 +21,6 @@ use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, 
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
-use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -224,18 +223,17 @@ impl ScopeMember for WorkspaceManager {
         Ok(left)
     }
 
-    /// Restores the workspaces that lie in `holder` or within it and were
-    /// deleted at `since` or later, with their places, on behalf of `ctx`
-    /// (`scoped`), and announces them as `restore` does. One whose name was
-    /// taken meanwhile stays deleted, as does one `ctx` may not restore.
+    /// Restores the workspaces that lie in `holder` or within it and carry `removal`, the holder's
+    /// mark, with their places, on behalf of `ctx` (`scoped`), and announces them as `restore`
+    /// does. One whose name was taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in deleted_since(self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+        for workspace in deleted_with(self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
             if let Some(restored) = restored_unless_refused(self.workspaces.restore(ctx, workspace.id).await, &workspace)? {
                 self.events.announce(GlobalEvent::restored::<Workspace>(&restored.id), &restored);
             }

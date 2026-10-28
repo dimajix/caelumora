@@ -5,7 +5,7 @@ use super::{store_error, ProjectError, ProjectResult};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
-use crate::scoped::{deleted_since, purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{deleted_with, purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::{Announcing, GlobalEvent};
@@ -140,8 +140,9 @@ impl ProjectManager {
     }
 
     /// Restores the deleted project `id` on behalf of `ctx` (`Restore`): its mark taken away and
-    /// the group of its members restored in the runtime's name - both, or neither -, then the
-    /// sessions deleted with it and what lay in its scope, as far as `ctx` may restore them; what
+    /// the group of its members restored in the runtime's name - both, or neither: it keeps its
+    /// mark then, so that it can be tried again (issue 469) -, then the sessions deleted with it
+    /// and what lay in its scope - what carries its mark -, as far as `ctx` may restore them; what
     /// they may not stays deleted, and the project comes back all the same.
     ///
     /// # Errors
@@ -153,23 +154,25 @@ impl ProjectManager {
         if deleted.is_own() {
             return Err(ProjectError::InvalidScope);
         }
+        // What went with it carries its mark (issue 469).
+        let Some(removal) = deleted.deleted else { return Err(ProjectError::NotFound(id)) };
         let project = self.stores.projects.restore(ctx, id).await.map_err(store_error(id))?;
         let holder = project.holds();
-        if let Some(since) = deleted.deleted.map(|removal| removal.at) {
-            if let Err(error) = self.groups.restore_participants(slice::from_ref(&holder), since).await {
-                if let Err(undo) = self.stores.projects.delete(&SecurityContext::system(), id, &Removal::now(ActorId::System)).await {
-                    warn!(project = %id, "A project could not be restored and not be marked deleted again: {undo}");
-                }
-                return Err(error.into());
+        // If its members cannot come back, it is marked again as it was, so that a restoring tried
+        // again finds what went with it.
+        if let Err(error) = self.groups.restore_participants(slice::from_ref(&holder), &removal).await {
+            if let Err(undo) = self.stores.projects.delete(&SecurityContext::system(), id, &removal).await {
+                warn!(project = %id, "A project could not be restored and not be marked deleted again: {undo}");
             }
-            for session in deleted_since(self.deleted_sessions_in(id).await?, since) {
-                if let Err(e) = self.sessions.restore(ctx, session.id).await {
-                    info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
-                }
+            return Err(error.into());
+        }
+        for session in deleted_with(self.deleted_sessions_in(id).await?, &removal) {
+            if let Err(e) = self.sessions.restore(ctx, session.id).await {
+                info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
             }
-            if let Err(e) = self.scoped.restore_lying_in(ctx, slice::from_ref(&holder), since).await {
-                warn!(project = %id, "The project was restored, but not what lies in its scope: {e}");
-            }
+        }
+        if let Err(e) = self.scoped.restore_lying_in(ctx, slice::from_ref(&holder), &removal).await {
+            warn!(project = %id, "The project was restored, but not what lies in its scope: {e}");
         }
         self.events.announce(GlobalEvent::restored::<Project>(&id), &project);
         info!(project = %id, by = %ctx.caller_id, "Project restored");
@@ -229,5 +232,43 @@ impl ProjectManager {
             }
         }
         Ok(kept)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::testing::{create, failing_runtime, make_session};
+    use caelumora_model::component::ComponentBundle;
+    use caelumora_model::user::UserId;
+    use std::sync::atomic::Ordering;
+
+    /// Issue 469: a project whose members' group cannot come back stays deleted, marked as it was,
+    /// and tried again, comes back with its sessions and what lay in its scope.
+    #[tokio::test]
+    async fn a_project_whose_restoring_failed_comes_back_whole_when_tried_again() {
+        let (runtime, passing) = failing_runtime(Group::KIND);
+        let stores = runtime.entity_stores().clone();
+        let manager = Arc::new(SessionManager::new(runtime));
+        let projects = ProjectManager::new(Arc::clone(&manager));
+        let owner = UserId::new();
+        let (ctx, system) = (SecurityContext::new(ActorId::User(owner), Default::default(), Default::default()), SecurityContext::system());
+        let session = create(&manager, &ctx, make_session("in it", ActorId::User(owner))).await.unwrap();
+        let project = projects.create(&ctx, "report", Scope::UserScope { user_id: owner }, None).await.unwrap();
+        session.update_project(&ctx, Some(project.id)).await.unwrap();
+        let bundle = ComponentBundle::new(ScopedName::new("tools", project.holds()).unwrap(), Default::default(), Default::default());
+        stores.component_bundles.create(&system, &bundle).await.unwrap();
+        projects.delete(&ctx, project.id).await.unwrap();
+        let mark = stores.projects.get_deleted(&system, project.id).await.unwrap().deleted;
+
+        passing.store(0, Ordering::SeqCst);
+        projects.restore(&ctx, project.id).await.expect_err("its members cannot come back");
+        assert_eq!(stores.projects.get_deleted(&system, project.id).await.unwrap().deleted, mark, "it stays deleted, marked as it was");
+
+        passing.store(usize::MAX, Ordering::SeqCst);
+        projects.restore(&ctx, project.id).await.expect("restored when tried again");
+        assert!(stores.groups.get(&system, GroupId::of_project(project.id)).await.is_ok(), "with its members");
+        assert!(stores.sessions.get(&system, session.id()).await.is_ok(), "its session");
+        assert!(stores.component_bundles.get(&system, bundle.id).await.is_ok(), "and what lay in its scope");
     }
 }

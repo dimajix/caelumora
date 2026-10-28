@@ -34,7 +34,6 @@ use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
-use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -99,14 +98,14 @@ pub trait ScopeMember: Send + Sync {
     /// deleted.
     async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize>;
 
-    /// Restores what of its kind lies in `holder` or within it and was
-    /// deleted at `since` or later on behalf of `ctx`. One whose name was
-    /// taken meanwhile stays deleted, as does one `ctx` may not restore.
+    /// Restores what of its kind lies in `holder` or within it and carries `removal`, the holder's
+    /// mark - what was deleted with it (issue 469) -, on behalf of `ctx`. One whose name was taken
+    /// meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()>;
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()>;
 
     /// Purges what of its kind lies in `holder` or within it and is
     /// deleted, with what its owner purges with it, in the runtime's name.
@@ -165,18 +164,18 @@ impl ScopedEntities {
         Ok(left)
     }
 
-    /// Restores what lies in `holders` or within them and was deleted with them - at `since`, when
-    /// they were deleted, or later - on behalf of `ctx`, and announces it as its owner announces a
-    /// restoring. What was deleted before stays deleted, as a channel deleted before its session
-    /// does; so does one whose name was taken meanwhile (issue 250) and one `ctx` may not restore
-    /// (issue 320), and the others are restored all the same.
+    /// Restores what lies in `holders` or within them and was deleted with them - what carries
+    /// `removal`, the mark of what holds them (issue 469) - on behalf of `ctx`, and announces it as
+    /// its owner announces a restoring. What was deleted on its own stays deleted, as a channel
+    /// deleted before its session does; so does one whose name was taken meanwhile (issue 250) and
+    /// one `ctx` may not restore (issue 320), and the others are restored all the same.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays restored.
-    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holders: &[Scope], since: DateTime<Utc>) -> StoreResult<()> {
+    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holders: &[Scope], removal: &Removal) -> StoreResult<()> {
         for member in &self.members {
             for holder in holders {
-                member.restore_lying_in(ctx, holder, since).await?;
+                member.restore_lying_in(ctx, holder, removal).await?;
             }
         }
         Ok(())
@@ -221,8 +220,8 @@ where
         Ok(left)
     }
 
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
-        for entity in deleted_since(self.0.list_deleted(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
+        for entity in deleted_with(self.0.list_deleted(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
             restored_unless_refused(self.0.restore(ctx, entity.id()).await, &entity)?;
         }
         Ok(())
@@ -278,8 +277,8 @@ pub(crate) async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T:
     store.purge(&system, id).await
 }
 
-/// Those of `deleted` that were deleted at `since` or later - a comparison
-/// a query does not make yet.
-pub fn deleted_since<D: Stored>(deleted: Vec<D>, since: DateTime<Utc>) -> Vec<D> {
-    deleted.into_iter().filter(|d| d.deleted().is_some_and(|removal| removal.at >= since)).collect()
+/// Those of `deleted` that were deleted with `removal` - that carry its mark (issue 469), which
+/// a query does not compare yet.
+pub fn deleted_with<D: Stored>(deleted: Vec<D>, removal: &Removal) -> Vec<D> {
+    deleted.into_iter().filter(|d| d.deleted() == Some(removal)).collect()
 }

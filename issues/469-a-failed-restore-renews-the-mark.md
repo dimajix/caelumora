@@ -1,6 +1,6 @@
 # 469 — A restoring that fails marks anew, and a second one leaves behind what was deleted with it
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Persistence
@@ -117,3 +117,15 @@ D, in two steps:
   session or channel. Restoring still compares times; the roll-backs of a restoring still mark
   anew - both are step 2. `delete_kept` rolls its groups back from the session's time, which they
   now carry.
+- **2026-10-28** — Step 2 done: restoring takes back what carries the holder's mark -
+  `ScopeMember::restore_lying_in`, `ScopedEntities::restore_lying_in` and
+  `GroupManager::restore_participants` take the `Removal` instead of a time, `deleted_since` became
+  `deleted_with`, a comparison for equality. The roll-backs of `SessionManager::restore`,
+  `SessionLoop::restore_channel`, `ProjectManager::restore` and of `restore_participants` mark again
+  with the `Removal` read before restoring; a session's own project is found as what carries the
+  session's mark, the work-around (`max_by_key`) is gone. A deleted session, channel or project
+  whose mark is missing answers "not found". Tests retry a failed restoring of a session, a channel
+  and a project and find what went with each, each in the tests of its module, with a store that
+  fails once (`session::testing::failing_runtime`, moved there from the session manager's
+  tests). What was deleted before step 1 carries marks of other times than its holder's and no
+  longer comes back with it: deleted sessions, channels and projects of before are to be purged.

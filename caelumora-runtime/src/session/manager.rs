@@ -27,7 +27,7 @@ use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
 use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::WorkspaceChoice;
-use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{deleted_with, purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::workspace::reaper::CommandReaper;
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
@@ -35,7 +35,6 @@ use dashmap::DashMap;
 use futures::future::join_all;
 use std::collections::HashSet;
 use std::iter;
-use chrono::{DateTime, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::ops::AsyncFnOnce;
@@ -697,35 +696,32 @@ impl SessionManager {
         // restored.
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        // When it was deleted, read before the mark goes - as `context`, so
-        // that whoever may not see it learns nothing more: what was deleted
-        // with it comes back with it (issue 178).
+        // Its mark, read before it goes - as `context`, so that whoever may not see it learns
+        // nothing more: what was deleted with it carries it and comes back with it (issues 178,
+        // 469), its own project among it.
         let deleted = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
-        let deleted_at = deleted.deleted.map(|removal| removal.at);
-        // Its own project, whenever it was deleted: it goes only with the session, which a
-        // restoring that failed before marked anew, later (issue 467).
-        let own = self.deleted_own(id).await?.into_iter().max_by_key(|own| own.deleted.as_ref().map(|removal| removal.at));
+        let Some(removal) = deleted.deleted else { return Err(SessionError::NotFound(id).into()) };
+        let own = deleted_with(self.deleted_own(id).await?, &removal).pop();
         // A session in a shared project lies where its project is, and comes back with it.
         let lies_in_own = own.as_ref().is_some_and(|own| own.id == deleted.project);
         if !lies_in_own && self.stores.projects.get(&SecurityContext::system(), deleted.project).await.optional()?.is_none() {
             return Err(SessionError::ProjectDeleted(deleted.project).into());
         }
         let session = self.stores.sessions.restore(context, id).await.map_err(store_error(id))?;
-        if let Some(since) = deleted_at {
-            // The groups of its participants and its own project first, with it: whatever fails
-            // later, its participants reach it (issue 348) and its results have their place (issue
-            // 467). If they cannot come back, the restoring is rolled back: the session is deleted
-            // again, in the runtime's name, as its restoring was permitted.
-            let holders = held_by(id, own.as_ref());
-            if let Err(error) = self.restore_kept(&holders, own.as_ref(), since).await {
-                if let Err(undo) = self.stores.sessions.delete(&SecurityContext::system(), id, &Removal::now(ActorId::System)).await {
-                    warn!("Session {} could not be restored and not be marked deleted again: {}", id, undo);
-                }
-                return Err(error);
+        // The groups of its participants and its own project first, with it: whatever fails later,
+        // its participants reach it (issue 348) and its results have their place (issue 467). If
+        // they cannot come back, the restoring is rolled back: the session is marked again as it
+        // was, in the runtime's name, as its restoring was permitted - so that a restoring tried
+        // again finds what went with it (issue 469).
+        let holders = held_by(id, own.as_ref());
+        if let Err(error) = self.restore_kept(&holders, own.as_ref(), &removal).await {
+            if let Err(undo) = self.stores.sessions.delete(&SecurityContext::system(), id, &removal).await {
+                warn!("Session {} could not be restored and not be marked deleted again: {}", id, undo);
             }
-            if let Err(e) = self.scoped.restore_lying_in(context, &holders, since).await {
-                warn!("Session {} was restored, but not what lies in its scope or its project's: {}", id, e);
-            }
+            return Err(error);
+        }
+        if let Err(e) = self.scoped.restore_lying_in(context, &holders, &removal).await {
+            warn!("Session {} was restored, but not what lies in its scope or its project's: {}", id, e);
         }
         self.events.publish(GlobalEvent::restored::<Session>(&id), session.security_attributes.clone());
         info!("Session {} restored by {}", id, context.caller_id);
@@ -744,7 +740,7 @@ impl SessionManager {
         self.groups.delete_participants(holders, removal).await?;
         let Some(own) = own else { return Ok(()) };
         if let Err(error) = self.stores.projects.delete(&SecurityContext::system(), own.id, removal).await {
-            if let Err(undo) = self.groups.restore_participants(holders, removal.at).await {
+            if let Err(undo) = self.groups.restore_participants(holders, removal).await {
                 warn!(project = %own.id, "The groups of a session whose project could not be deleted could not be restored again: {undo}");
             }
             return Err(error.into());
@@ -754,19 +750,20 @@ impl SessionManager {
     }
 
     /// Restores what a session keeps with it, in the runtime's name, as it is restored: the groups
-    /// that lie in `holders` deleted at `since` or later, then `own`, its own project, if it is
-    /// deleted - all of them or, if one cannot come back, none (issues 348, 467). The project's
-    /// restoring is announced once all are restored.
+    /// that lie in `holders` and carry `removal`, its mark, then `own`, its own project, deleted
+    /// with it - all of them or, if one cannot come back, none, those restored marked again with
+    /// `removal` (issues 348, 467, 469). The project's restoring is announced once all are
+    /// restored.
     ///
     /// # Errors
     /// Whatever the store reports.
-    async fn restore_kept(&self, holders: &[Scope], own: Option<&Project>, since: DateTime<Utc>) -> Result<()> {
-        self.groups.restore_participants(holders, since).await?;
+    async fn restore_kept(&self, holders: &[Scope], own: Option<&Project>, removal: &Removal) -> Result<()> {
+        self.groups.restore_participants(holders, removal).await?;
         let Some(own) = own else { return Ok(()) };
         match self.stores.projects.restore(&SecurityContext::system(), own.id).await {
             Ok(restored) => self.events.announce(GlobalEvent::restored::<Project>(&own.id), &restored),
             Err(error) => {
-                if let Err(undo) = self.groups.delete_participants(holders, &Removal::now(ActorId::System)).await {
+                if let Err(undo) = self.groups.delete_participants(holders, removal).await {
                     warn!(project = %own.id, "The groups of a session whose project could not be restored could not be deleted again: {undo}");
                 }
                 return Err(error.into());
@@ -874,22 +871,17 @@ fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use caelumora_model::component::ComponentBundle;
     use caelumora_model::group::GroupId;
+    use crate::project::ProjectManager;
     use caelumora_model::removal::Removal;
     use caelumora_model::value::name::Name;
     use crate::testing::TestRuntime;
     use caelumora_model::actor::ActorId;
     use caelumora_model::user::UserId;
-    use async_trait::async_trait;
     use caelumora_model::project::Project;
-    use caelumora_model::security::Admission;
-    use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
-    use caelumora_model::store::history::HistoryStore;
-    use caelumora_model::store::query::{FieldPath, Filter};
-    use caelumora_model::store::transcript::TranscriptStore;
-    use caelumora_model::store::{EntityKind, PersistenceBackend, Presence, StoreResult, Stored};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use uuid::Uuid;
+    use caelumora_model::store::Stored;
+    use std::sync::atomic::Ordering;
     use caelumora_model::agent::Agent;
     use crate::agent::AgentError;
     use caelumora_model::channel::{self, Channel, moderation_components};
@@ -1340,7 +1332,6 @@ mod tests {
     /// group of its members and what lies in its scope.
     #[tokio::test]
     async fn a_session_s_own_project_goes_and_comes_back_with_it() {
-        use caelumora_model::component::ComponentBundle;
         use caelumora_model::security::AclEntry;
 
         let runtime = test_runtime();
@@ -1382,81 +1373,15 @@ mod tests {
         assert!(stores.component_bundles.get_deleted(&system, bundle.id).await.is_err(), "and what lay in its scope");
     }
 
-    /// A backend of the entities in memory whose documents of `kind` are not
-    /// replaced - marked deleted, restored or changed - once, after as many
-    /// as `passing` let through: counted down past zero, never again.
-    #[derive(Debug)]
-    struct Failing {
-        inner: MemoryStore,
-        kind: EntityKind,
-        passing: Arc<AtomicUsize>,
-    }
-
-    impl PersistenceBackend for Failing {
-        fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
-            let documents = self.inner.documents(kind, document_of)?;
-            if kind != self.kind {
-                return Ok(documents);
-            }
-            Ok(Arc::new(FailingDocuments { inner: documents, passing: Arc::clone(&self.passing) }))
-        }
-
-        fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {
-            Err(StoreError::Backend("the entities alone".to_string()))
-        }
-
-        fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
-            Err(StoreError::Backend("the entities alone".to_string()))
-        }
-
-        fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
-            Err(StoreError::Backend("the entities alone".to_string()))
-        }
-    }
-
-    #[derive(Debug)]
-    struct FailingDocuments {
-        inner: Arc<dyn DocumentStorage>,
-        passing: Arc<AtomicUsize>,
-    }
-
-    #[async_trait]
-    impl DocumentStorage for FailingDocuments {
-        async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
-            self.inner.get(id).await
-        }
-        async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
-            self.inner.scan(filter, admission, presence, after, limit).await
-        }
-        async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
-            self.inner.named(name).await
-        }
-        async fn insert(&self, document: Document) -> StoreResult<()> {
-            self.inner.insert(document).await
-        }
-        async fn replace(&self, document: Document) -> StoreResult<()> {
-            if self.passing.fetch_sub(1, Ordering::SeqCst) == 0 {
-                return Err(StoreError::Backend("failing".to_string()));
-            }
-            self.inner.replace(document).await
-        }
-        async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
-            self.inner.remove_deleted(id).await
-        }
-    }
-
-    /// Issues 348, 467: what a session keeps with it - the groups of its
-    /// participants and its channels', its own project with the group of its
-    /// members - goes and comes back with it all or none: if its own project
-    /// cannot go, or not come back, the session stays as it was, with its
-    /// groups.
+    /// Issues 348, 467: what a session keeps with it - the groups of its participants and its
+    /// channels', its own project with the group of its members - goes and comes back with it all
+    /// or none: if its own project cannot go, or not come back, the session stays as it was, with
+    /// its groups. Issue 469: a restoring that failed keeps its mark, and tried again, brings back
+    /// all that went with it, what lay in its scope too.
     #[tokio::test]
     async fn a_session_keeps_its_groups_and_its_project_all_or_none() {
 
-        let passing = Arc::new(AtomicUsize::new(usize::MAX));
-        let entities = Arc::new(Failing { inner: MemoryStore::new(), kind: Project::KIND, passing: Arc::clone(&passing) });
-        let store = Persistence::new(entities, Arc::new(MemoryStore::new()), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
-        let runtime = TestRuntime { store: store.clone(), ..Default::default() }.build();
+        let (runtime, passing) = failing_runtime(Project::KIND);
         let stores = runtime.entity_stores().clone();
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
@@ -1474,25 +1399,30 @@ mod tests {
         assert!(stores.projects.get(&system, project).await.is_ok(), "with its project");
         assert_eq!(groups_there().await, (true, true), "and its groups, deleted before and restored again");
 
+        let bundle = ComponentBundle::new(ScopedName::new("tools", Scope::SessionScope { session_id: id }).unwrap(), Default::default(), Default::default());
+        stores.component_bundles.create(&system, &bundle).await.unwrap();
         manager.delete(&ctx, id).await.expect("deleted now");
         assert_eq!(groups_there().await, (false, false));
+        let mark = stores.sessions.get_deleted(&system, id).await.unwrap().deleted;
         passing.store(0, Ordering::SeqCst);
         manager.restore(&ctx, id).await.expect_err("its project cannot come back");
         assert!(stores.sessions.get(&system, id).await.is_err(), "the session stays deleted");
         assert_eq!(groups_there().await, (false, false), "with its groups, restored before and deleted again");
         assert!(stores.projects.get(&system, project).await.is_err(), "and its project");
+        assert_eq!(stores.sessions.get_deleted(&system, id).await.unwrap().deleted, mark, "marked as it was");
+
+        passing.store(usize::MAX, Ordering::SeqCst);
+        manager.restore(&ctx, id).await.expect("restored when tried again");
+        assert_eq!(groups_there().await, (true, true), "with its groups");
+        assert!(stores.projects.get(&system, project).await.is_ok(), "its project");
+        assert!(stores.component_bundles.get(&system, bundle.id).await.is_ok(), "and what lay in its scope");
     }
 
     /// Issue 467: a session whose move into a project cannot be stored leaves the project as it
     /// was - not shared with its participants -, and lies where it lay.
     #[tokio::test]
     async fn a_session_that_cannot_be_put_into_a_project_leaves_it_unshared() {
-        use crate::project::ProjectManager;
-
-        let passing = Arc::new(AtomicUsize::new(usize::MAX));
-        let entities = Arc::new(Failing { inner: MemoryStore::new(), kind: Session::KIND, passing: Arc::clone(&passing) });
-        let store = Persistence::new(entities, Arc::new(MemoryStore::new()), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
-        let runtime = TestRuntime { store: store.clone(), ..Default::default() }.build();
+        let (runtime, passing) = failing_runtime(Session::KIND);
         let stores = runtime.entity_stores().clone();
         let manager = Arc::new(SessionManager::new(runtime));
         let owner = UserId::new();
@@ -1532,7 +1462,6 @@ mod tests {
     #[tokio::test]
     async fn what_lies_in_a_scope_goes_with_its_session_or_channel() {
         use caelumora_model::agent::{Personality, PersonalityId};
-        use caelumora_model::component::ComponentBundle;
         use caelumora_model::user::UserId;
 
         let runtime = test_runtime();

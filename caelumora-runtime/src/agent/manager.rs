@@ -16,7 +16,7 @@
 
 use super::{store_error, AgentError, AgentResult};
 use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused};
+use crate::scoped::{ScopeMember, deleted_with, deleted_unless_refused, restored_unless_refused};
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::Channel;
@@ -28,7 +28,6 @@ use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
-use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
@@ -215,17 +214,16 @@ impl ScopeMember for AgentManager {
         Ok(left)
     }
 
-    /// Restores the agents that lie in `holder` or within it and were
-    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
-    /// announces them as `restore` does. One whose name was taken meanwhile
-    /// stays deleted, as does one `ctx` may not restore.
+    /// Restores the agents that lie in `holder` or within it and carry `removal`, the holder's
+    /// mark, on behalf of `ctx` (`scoped`), and announces them as `restore` does. One whose name
+    /// was taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for agent in deleted_since(self.agents.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+        for agent in deleted_with(self.agents.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
             if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)? {
                 self.events.publish(GlobalEvent::restored::<Agent>(&restored.id), restored.security_attributes);
             }
