@@ -20,9 +20,11 @@
 //!   writing oneself in as owner would pass the check. An entity the caller
 //!   may not even read is not found; one they may read but not change is
 //!   refused.
-//! - **What is marked deleted** (issue 164) is not there for any of them,
-//!   before anything is asked: the store treats it as absent. And nothing
-//!   created or changed may carry the mark, so that only deleting sets it.
+//! - **What is marked deleted** (issue 164) is not there for any of them, before anything is
+//!   asked: the store treats it as absent. And nothing created or changed may carry the mark, so
+//!   that only deleting sets it. Deleting sets the mark it is given (issue 469), which names the
+//!   caller - another only if the caller is the system, which deletes what goes with something
+//!   deleted by whoever deleted that.
 //! - **Reading what was deleted** asks `ReadDeleted` with the stored
 //!   attributes, and answers "not found" alike; **restoring** it asks that
 //!   and then `Restore`, **purging** it that and then `Purge`. What is not
@@ -40,7 +42,9 @@
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
+use crate::actor::ActorId;
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
+use crate::removal::Removal;
 use crate::security::{ActionType, Admission, Enforcement, Refused, SecurityContext, AccessPolicy};
 use crate::store::{Presence, StoreError, StoreResult, Stored};
 use std::slice;
@@ -140,14 +144,26 @@ impl<'a> Access<'a> {
         valid(value)
     }
 
-    /// Whether to delete `stored`: `false` if there is nothing the caller
-    /// could see to delete, an error if they may see but not delete it.
-    pub(crate) async fn delete<T: Stored>(&self, stored: Option<&T>) -> StoreResult<bool> {
+    /// Whether to delete `stored` with the mark `removal`: `false` if there is nothing the caller
+    /// could see to delete, an error if they may see but not delete it, or if `removal` names
+    /// another than the caller.
+    pub(crate) async fn delete<T: Stored>(&self, stored: Option<&T>, removal: &Removal) -> StoreResult<bool> {
         let Some(stored) = stored else { return Ok(false) };
         if self.require_reached(stored, Presence::Present, || ()).await.is_err() {
             return Ok(false);
         }
-        self.allow(ActionType::delete(T::KIND, stored.security_attributes())).await.map(|_| true)
+        self.allow(ActionType::delete(T::KIND, stored.security_attributes())).await?;
+        self.by_caller::<T>(removal)?;
+        Ok(true)
+    }
+
+    /// Refuses `removal` if it names another than the caller, unless the caller is the system: it
+    /// deletes what goes with something deleted, by whoever deleted that (issue 469).
+    fn by_caller<T: Stored>(&self, removal: &Removal) -> StoreResult<()> {
+        if removal.by == self.ctx.caller_id || self.ctx.caller_id == ActorId::System {
+            return Ok(());
+        }
+        Err(StoreError::Validation(format!("a {} is marked deleted by its caller", T::KIND)))
     }
 
     /// `stored`, if the caller may take its mark away: not found if it is
@@ -193,7 +209,8 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 mod tests {
     use crate::actor::ActorId;
     use crate::project::ProjectId;
-    use crate::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb, Grant};
+    use crate::removal::Removal;
+    use crate::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy, OwnershipPolicy, Subject, Verb, Grant};
     use crate::session::{Session, SessionId};
     use crate::store::{StoreError, Stored};
     use crate::store::query::Query;
@@ -270,10 +287,10 @@ mod tests {
         assert!(matches!(store.get(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "not by its id");
         assert!(store.list(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "not in a list");
         assert!(matches!(store.update(&uncleared, &workspace).await, Err(StoreError::NotFound { .. })), "not to change");
-        assert!(!store.delete(&uncleared, workspace.id).await.unwrap(), "not to delete");
+        assert!(!store.delete(&uncleared, workspace.id, &Removal::now(uncleared.caller_id)).await.unwrap(), "not to delete");
         assert!(store.get(&cleared, workspace.id).await.is_ok(), "who is cleared finds it");
 
-        assert!(store.delete(&cleared, workspace.id).await.unwrap());
+        assert!(store.delete(&cleared, workspace.id, &Removal::now(cleared.caller_id)).await.unwrap());
         assert!(store.list_deleted(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "nor among the deleted");
         assert!(matches!(store.restore(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "nor to restore");
         assert!(!store.purge(&uncleared, workspace.id).await.unwrap(), "nor to purge");
@@ -313,20 +330,19 @@ mod tests {
         assert!(matches!(store.update(&bob_ctx, &forged).await, Err(StoreError::PermissionDenied(_))), "a contributor may read, not change");
         assert!(store.update(&alice_ctx, &hers).await.is_ok());
 
-        assert!(!store.delete(&carol_ctx, hers.id).await.unwrap(), "nothing carol could see to delete");
-        assert!(matches!(store.delete(&bob_ctx, hers.id).await, Err(StoreError::PermissionDenied(_))));
-        assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
+        assert!(!store.delete(&carol_ctx, hers.id, &Removal::now(carol_ctx.caller_id)).await.unwrap(), "nothing carol could see to delete");
+        assert!(matches!(store.delete(&bob_ctx, hers.id, &Removal::now(bob_ctx.caller_id)).await, Err(StoreError::PermissionDenied(_))));
+        assert!(store.delete(&alice_ctx, hers.id, &Removal::now(alice_ctx.caller_id)).await.unwrap());
     }
 
     #[tokio::test]
     async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
-        use crate::security::OwnershipPolicy;
         let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let hers = session(alice, vec![bob]);
         store.create(&alice_ctx, &hers).await.unwrap();
-        assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
+        assert!(store.delete(&alice_ctx, hers.id, &Removal::now(alice_ctx.caller_id)).await.unwrap());
         assert_eq!(store.get_deleted(&alice_ctx, hers.id).await.unwrap().deleted.map(|d| d.by), Some(alice), "deleted by her");
 
         let seen = store.get_deleted(&bob_ctx, hers.id).await;
@@ -340,8 +356,30 @@ mod tests {
         assert!(matches!(purged, Err(StoreError::PermissionDenied(_))), "the owner does not purge: {purged:?}");
         assert_eq!(store.list_deleted(&alice_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "the owner sees what she deleted");
         store.restore(&alice_ctx, hers.id).await.expect("and restores it");
-        assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
+        assert!(store.delete(&alice_ctx, hers.id, &Removal::now(alice_ctx.caller_id)).await.unwrap());
         assert!(store.purge(&SecurityContext::system(), hers.id).await.unwrap(), "the system purges");
+    }
+
+    /// Issue 469: a deletion sets the mark it is given - the one mark of a deletion, given to all
+    /// that goes with what is deleted -, which names the caller; the system's names another.
+    #[tokio::test]
+    async fn a_deletion_sets_the_mark_it_is_given_by_its_caller() {
+        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().sessions;
+        let system = SecurityContext::system();
+        let (alice, alice_ctx) = user();
+        let (bob, _) = user();
+        let (hers, other) = (session(alice, Vec::new()), session(alice, Vec::new()));
+        store.create(&alice_ctx, &hers).await.unwrap();
+        store.create(&alice_ctx, &other).await.unwrap();
+
+        let forged = store.delete(&alice_ctx, hers.id, &Removal::now(bob)).await;
+        assert!(matches!(forged, Err(StoreError::Validation(_))), "not in another's name: {forged:?}");
+        let removal = Removal::now(alice_ctx.caller_id);
+        assert!(store.delete(&alice_ctx, hers.id, &removal).await.unwrap());
+        assert!(store.delete(&system, other.id, &removal).await.unwrap(), "the system marks what goes with it, by her");
+        for id in [hers.id, other.id] {
+            assert_eq!(store.get_deleted(&system, id).await.unwrap().deleted.as_ref(), Some(&removal), "the mark given");
+        }
     }
 
     #[tokio::test]
@@ -354,7 +392,6 @@ mod tests {
 
     #[tokio::test]
     async fn users_are_read_by_everybody_and_changed_by_the_system_alone() {
-        use crate::security::OwnershipPolicy;
         use crate::scope::Scope;
         use crate::user::User;
         use crate::value::name::ScopedName;
@@ -378,10 +415,10 @@ mod tests {
         for ctx in [&alice_ctx, &bob_ctx] {
             let update = store.update(ctx, &promoted).await;
             assert!(matches!(update, Err(StoreError::PermissionDenied(_))), "not even she changes her roles, got {update:?}");
-            let delete = store.delete(ctx, alice_id).await;
+            let delete = store.delete(ctx, alice_id, &Removal::now(ctx.caller_id)).await;
             assert!(matches!(delete, Err(StoreError::PermissionDenied(_))), "nor deletes her, got {delete:?}");
         }
         store.update(&system, &promoted).await.expect("the system changes users");
-        assert!(store.delete(&system, alice_id).await.expect("the system deletes users"));
+        assert!(store.delete(&system, alice_id, &Removal::now(system.caller_id)).await.expect("the system deletes users"));
     }
 }

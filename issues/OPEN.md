@@ -8,7 +8,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [469](469-a-failed-restore-renews-the-mark.md) | open | medium | bug | When restoring a session, a channel or a project fails part of the way, the roll-back marks it deleted again with a new time, so that a second restoring no longer finds what was deleted with it at the first. |
 | [477](477-only-the-system-acts-as-the-system.md) | open | medium | bug | `OwnershipPolicy` allows everything to a context whose principal is the system, whoever its caller is, and `AgentManager::create` lets the system own an agent, which then acts with all the system's rights. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [458](458-deleted-while-it-runs.md) | open | low | bug | Deleting a session or a channel marks it, deletes what lies in its scope and the groups of its participants while it still runs, and stops it only afterwards, so what its agents write into its scope meanwhile is left behind, and what it announces as it stops reaches its owner alone. |

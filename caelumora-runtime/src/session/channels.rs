@@ -11,6 +11,7 @@ use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::value::language::Language;
 use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::removal::Removal;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::store::{StoreError, StoreResultExt, Stored};
@@ -393,20 +394,19 @@ impl SessionLoop {
         self.access_policy.require(context, ActionType::delete(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         self.session_controller.remove_channel(context, channel_id).await?;
-        // Marked before what lies in its scope, so that all of that is
-        // deleted with it, not before it: it comes back with it
-        // (`restore_channel`, issue 178). Then what lies in its scope goes as
-        // far as `context` may delete it (issue 320); an agent of it takes
-        // part in no other channel (`Scope::admits`). Then the group of its
-        // participants, in the runtime's name (issue 348). If any of it
-        // fails, the deletion is rolled back - in the runtime's name: its
-        // deletion was permitted - and runs on, without what was deleted but
-        // with its group.
+        // Marked before what lies in its scope, so that nothing of it goes unless the channel's
+        // deletion was granted. Then what lies in its scope goes as far as `context` may delete it
+        // (issue 320); an agent of it takes part in no other channel (`Scope::admits`). Then the
+        // group of its participants, in the runtime's name (issue 348). All of it carries the
+        // channel's mark and comes back with it (`restore_channel`, issues 178, 469). If any of it
+        // fails, the deletion is rolled back - in the runtime's name: its deletion was permitted -
+        // and runs on, without what was deleted but with its group.
+        let removal = Removal::now(context.caller_id);
         let deleted = async {
-            self.stores.channels.delete(context, channel_id).await?;
-            let left = self.scoped.delete_lying_in(context, slice::from_ref(&scope)).await?;
+            self.stores.channels.delete(context, channel_id, &removal).await?;
+            let left = self.scoped.delete_lying_in(context, slice::from_ref(&scope), &removal).await?;
             ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
-            self.groups.delete_participants(slice::from_ref(&scope)).await?;
+            self.groups.delete_participants(slice::from_ref(&scope), &removal).await?;
             Ok::<_, Error>(())
         }.await;
         if let Err(error) = deleted {
@@ -465,38 +465,35 @@ impl SessionLoop {
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
         self.participation.require_admitted(context, &channel, &channel.participants).await?;
-        let deleted_at = channel.deleted.as_ref().map(|removal| removal.at);
+        // What went with it carries its mark (issue 469).
+        let Some(removal) = channel.deleted.clone() else { return Err(not_found().into()) };
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         let channel = self.stores.channels.restore(context, channel_id).await?;
         // The group of its participants first, with it, in the runtime's
         // name (issue 348): whatever fails later, its participants reach it.
         let listed = async {
-            if let Some(since) = deleted_at {
-                self.groups.restore_participants(slice::from_ref(&scope), since).await?;
-            }
+            self.groups.restore_participants(slice::from_ref(&scope), &removal).await?;
             self.session_controller.add_channel(context, channel_id).await?;
             self.add_channel_loop(&channel).await
         }.await;
         let channel_loop = match listed {
             Ok(channel_loop) => channel_loop,
             Err(error) => {
-                // Rolled back: deleted again, with its group, so that it is
-                // neither half back nor lost.
+                // Rolled back: deleted again with its group, marked as it was, so that it is
+                // neither half back nor lost, and a restoring tried again finds what went with it.
                 let _ = self.session_controller.remove_channel(context, channel_id).await;
-                if let Err(undo) = self.groups.delete_participants(slice::from_ref(&scope)).await {
+                if let Err(undo) = self.groups.delete_participants(slice::from_ref(&scope), &removal).await {
                     warn!("Channel {} of session {} could not be restored and its group not be deleted again: {}", channel_id, self.id, undo);
                 }
-                if let Err(undo) = self.stores.channels.delete(&SecurityContext::system(), channel_id).await {
+                if let Err(undo) = self.stores.channels.delete(&SecurityContext::system(), channel_id, &removal).await {
                     warn!("Channel {} of session {} could not be restored and not be marked deleted again: {}", channel_id, self.id, undo);
                 }
                 return Err(error);
             }
         };
-        if let Some(since) = deleted_at {
-            // What was deleted with it comes back with it (issue 178).
-            if let Err(e) = self.scoped.restore_lying_in(context, slice::from_ref(&scope), since).await {
-                warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
-            }
+        // What was deleted with it comes back with it (issue 178).
+        if let Err(e) = self.scoped.restore_lying_in(context, slice::from_ref(&scope), &removal).await {
+            warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
         }
         self.events.announce(GlobalEvent::restored::<Channel>(&(self.id, channel_id)), &channel);
         info!("Channel {}/{} restored in session {} by {}", channel.name, channel_id, self.id, context.caller_id);
@@ -555,6 +552,13 @@ mod tests {
     use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
     use crate::session::testing::*;
     use crate::component::ComponentError;
+    use caelumora_model::component::ComponentBundle;
+    use caelumora_model::group::GroupId;
+    use caelumora_model::scope::Scope;
+    use caelumora_model::session::Session;
+    use caelumora_model::store::Stored;
+    use caelumora_model::value::name::ScopedName;
+    use std::sync::atomic::Ordering;
     use super::unavailable_components;
     use anyhow::Error;
     use caelumora_model::user::UserId;
@@ -842,5 +846,33 @@ mod tests {
         assert!(matches!(hidden.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "absent, not refused: {hidden}");
         assert!(session.channel_for(&as_user(alice.id), hers.id()).await.is_ok(), "the owner reads it");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    /// Issue 469: a channel that cannot be listed in its session again once its group came back
+    /// stays deleted with its group, both marked as they were, and tried again, comes back with
+    /// its group and what lay in its scope.
+    #[tokio::test]
+    async fn a_channel_whose_restoring_failed_comes_back_whole_when_tried_again() {
+        let (runtime, passing) = failing_runtime(Session::KIND);
+        let stores = runtime.entity_stores().clone();
+        let manager = SessionManager::new(runtime);
+        let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
+        let session = create(&manager, &ctx, make_session("restored", ActorId::User(UserId::new()))).await.unwrap();
+        let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
+        let scope = Scope::ChannelScope { session_id: session.id(), channel_id: side };
+        let bundle = ComponentBundle::new(ScopedName::new("tools", scope).unwrap(), Default::default(), Default::default());
+        stores.component_bundles.create(&system, &bundle).await.unwrap();
+        session.delete_channel(&ctx, side).await.unwrap();
+        let mark = stores.channels.get_deleted(&system, side).await.unwrap().deleted;
+
+        passing.store(0, Ordering::SeqCst);
+        session.restore_channel(&ctx, side).await.expect_err("the session cannot list it again");
+        assert_eq!(stores.channels.get_deleted(&system, side).await.unwrap().deleted, mark, "it stays deleted, marked as it was");
+        assert_eq!(stores.groups.get_deleted(&system, GroupId::of_channel(side)).await.unwrap().deleted, mark, "with its group");
+
+        passing.store(usize::MAX, Ordering::SeqCst);
+        session.restore_channel(&ctx, side).await.expect("restored when tried again");
+        assert!(stores.groups.get(&system, GroupId::of_channel(side)).await.is_ok(), "with its group");
+        assert!(stores.component_bundles.get(&system, bundle.id).await.is_ok(), "and what lay in its scope");
     }
 }

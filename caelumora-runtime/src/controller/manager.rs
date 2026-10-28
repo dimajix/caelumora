@@ -306,6 +306,7 @@ fn remember<K: Eq + Hash, C>(registry: &mut HashMap<K, Weak<C>>, id: K, controll
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::removal::Removal;
     use crate::backend::StorageGone;
     use crate::workspace::WorkspaceError;
     use caelumora_model::event::GlobalEvent;
@@ -421,7 +422,7 @@ mod tests {
         manager.personality_controller(agent.personality_id).await.unwrap();
         assert_eq!(first.load().roles, narrowed.roles, "taken in when asked for, for all that hold it");
 
-        store.entity_stores().unwrap().personalities.delete(&system, agent.personality_id).await.unwrap();
+        store.entity_stores().unwrap().personalities.delete(&system, agent.personality_id, &Removal::now(system.caller_id)).await.unwrap();
         let deleted = manager.personality_controller(agent.personality_id).await;
         assert!(matches!(deleted, Err(StoreError::NotFound { .. })), "a deleted one is not handed out, got {deleted:?}");
         assert_eq!(first.load().roles, narrowed.roles, "but kept for those that hold it");

@@ -16,6 +16,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_model::removal::Removal;
 use caelumora_model::store::query::Query;
 use std::sync::{Arc, Mutex};
 
@@ -127,7 +128,7 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
     let helper = world.agent("helper", world.alice, &bobs).await;
     let session = world.shared_session(&[helper], &[]).await;
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
-    world.runtime.entity_stores().personalities.delete(&World::as_user(world.bob), bobs.id).await.expect("bob deletes his personality");
+    world.runtime.entity_stores().personalities.delete(&World::as_user(world.bob), bobs.id, &Removal::now(ActorId::User(world.bob))).await.expect("bob deletes his personality");
 
     let reopened = world.manager.open(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
     assert!(!reopened.channels()[0].participant_ids().contains(&ActorId::Agent(helper)), "the agent is not run");

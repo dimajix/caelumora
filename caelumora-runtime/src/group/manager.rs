@@ -4,17 +4,18 @@
 
 use super::{store_error, GroupError, GroupResult};
 use crate::event::EventBus;
-use crate::scoped::deleted_since;
+use crate::scoped::deleted_with;
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupField, GroupId, GroupUpdateEvent};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -141,7 +142,7 @@ impl GroupManager {
         if !group.is_team() {
             return Err(GroupError::NotATeam(id));
         }
-        if !self.groups.delete(ctx, id).await? {
+        if !self.groups.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
         self.events.publish(GlobalEvent::deleted::<Group>(&id), group.security_attributes);
@@ -197,18 +198,18 @@ impl GroupManager {
 impl GroupManager {
     /// Deletes the groups of the participants that lie in `holders` or within them - of a session,
     /// its channels and its own project's members (issue 467), or of a channel -, as what holds
-    /// them is deleted: all of them or, if one fails, none - those deleted before are restored
-    /// again, so that what holds them, which is then kept, keeps its members. Announced once all
-    /// are deleted.
+    /// them is deleted, marked with `removal`, its mark (issue 469): all of them or, if one fails,
+    /// none - those deleted before are restored again, so that what holds them, which is then
+    /// kept, keeps its members. Announced once all are deleted.
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn delete_participants(&self, holders: &[Scope]) -> StoreResult<()> {
+    pub(crate) async fn delete_participants(&self, holders: &[Scope], removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut deleted: Vec<Group> = Vec::new();
         for group in self.groups.list(&system, &lying_in(holders)).await?.items {
-            if let Err(e) = self.groups.delete(&system, group.id).await {
+            if let Err(e) = self.groups.delete(&system, group.id, removal).await {
                 for group in &deleted {
                     if let Err(undo) = self.groups.restore(&system, group.id).await {
                         warn!(group = %group.id, "The group of participants could not be deleted and not be restored again: {undo}");
@@ -224,24 +225,24 @@ impl GroupManager {
         Ok(())
     }
 
-    /// Restores the groups of the participants that lie in `holders` or within them and were
-    /// deleted at `since` or later - with what holds them, not with a channel deleted before it -,
-    /// as that is restored: all of them or, if one fails, none - those restored before are deleted
-    /// again, so that what holds them, which is then deleted again, takes them along. Announced
-    /// once all are restored.
+    /// Restores the groups of the participants that lie in `holders` or within them and carry
+    /// `removal`, the mark of what holds them - deleted with it, not with a channel deleted before
+    /// it (issue 469) -, as that is restored: all of them or, if one fails, none - those restored
+    /// before are marked again with `removal`, so that they come back with what holds them once it
+    /// is restored. Announced once all are restored.
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn restore_participants(&self, holders: &[Scope], since: DateTime<Utc>) -> StoreResult<()> {
+    pub(crate) async fn restore_participants(&self, holders: &[Scope], removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut restored = Vec::new();
-        for group in deleted_since(self.groups.list_deleted(&system, &lying_in(holders)).await?.items, since) {
+        for group in deleted_with(self.groups.list_deleted(&system, &lying_in(holders)).await?.items, removal) {
             match self.groups.restore(&system, group.id).await {
                 Ok(group) => restored.push(group),
                 Err(e) => {
                     for group in &restored {
-                        if let Err(undo) = self.groups.delete(&system, group.id).await {
+                        if let Err(undo) = self.groups.delete(&system, group.id, removal).await {
                             warn!(group = %group.id, "The group of participants could not be restored and not be deleted again: {undo}");
                         }
                     }

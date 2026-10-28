@@ -5,7 +5,18 @@
 
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityRules};
 use crate::testing::TestRuntime;
-use caelumora_model::security::{OwnershipPolicy, AccessPolicy};
+use caelumora_model::security::{Admission, AllowAllPolicy, OwnershipPolicy, AccessPolicy};
+use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
+use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::store::query::{FieldPath, Filter};
+use caelumora_model::store::transcript::TranscriptStore;
+use caelumora_model::store::{EntityKind, PersistenceBackend, Presence, StateStore, StoreError, StoreResult};
+use caelumora_model::value::name::ScopedName;
+use async_trait::async_trait;
+use serde_json::Value;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use uuid::Uuid;
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::Persistence;
 use std::sync::Arc;
@@ -263,4 +274,78 @@ pub async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<Message> {
         time::sleep(Duration::from_millis(10)).await;
     }
     panic!("the channel's history never reached {count} messages");
+}
+
+/// A runtime whose entities are kept in memory, and whose documents of `kind` fail to be replaced -
+/// marked deleted, restored or changed - once `passing` is set to how many may pass first: counted
+/// down past zero, it never fails again. For tests of what an operation sets back when a step of
+/// it cannot be stored.
+pub fn failing_runtime(kind: EntityKind) -> (Arc<RuntimeManager>, Arc<AtomicUsize>) {
+    let passing = Arc::new(AtomicUsize::new(usize::MAX));
+    let entities = Arc::new(FailingBackend { inner: MemoryStore::new(), kind, passing: Arc::clone(&passing) });
+    let store = Persistence::new(entities, Arc::new(MemoryStore::new()), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
+    (TestRuntime { store, ..Default::default() }.build(), passing)
+}
+
+/// A backend of the entities in memory whose documents of `kind` are not
+/// replaced - marked deleted, restored or changed - once, after as many
+/// as `passing` let through: counted down past zero, never again.
+#[derive(Debug)]
+struct FailingBackend {
+    inner: MemoryStore,
+    kind: EntityKind,
+    passing: Arc<AtomicUsize>,
+}
+
+impl PersistenceBackend for FailingBackend {
+    fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
+        let documents = self.inner.documents(kind, document_of)?;
+        if kind != self.kind {
+            return Ok(documents);
+        }
+        Ok(Arc::new(FailingDocuments { inner: documents, passing: Arc::clone(&self.passing) }))
+    }
+
+    fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {
+        Err(StoreError::Backend("the entities alone".to_string()))
+    }
+
+    fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
+        Err(StoreError::Backend("the entities alone".to_string()))
+    }
+
+    fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
+        Err(StoreError::Backend("the entities alone".to_string()))
+    }
+}
+
+#[derive(Debug)]
+struct FailingDocuments {
+    inner: Arc<dyn DocumentStorage>,
+    passing: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl DocumentStorage for FailingDocuments {
+    async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
+        self.inner.get(id).await
+    }
+    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+        self.inner.scan(filter, admission, presence, after, limit).await
+    }
+    async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
+        self.inner.named(name).await
+    }
+    async fn insert(&self, document: Document) -> StoreResult<()> {
+        self.inner.insert(document).await
+    }
+    async fn replace(&self, document: Document) -> StoreResult<()> {
+        if self.passing.fetch_sub(1, Ordering::SeqCst) == 0 {
+            return Err(StoreError::Backend("failing".to_string()));
+        }
+        self.inner.replace(document).await
+    }
+    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
+        self.inner.remove_deleted(id).await
+    }
 }

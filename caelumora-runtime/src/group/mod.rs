@@ -171,6 +171,7 @@ pub(crate) async fn keep_participants(store: &dyn EntityStore<Group>, participan
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::removal::Removal;
     use crate::event::EventBus;
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::ConfidentialityRules;
@@ -223,9 +224,9 @@ mod tests {
         async fn update(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
             self.inner.update(ctx, value).await
         }
-        async fn delete(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
+        async fn delete(&self, ctx: &SecurityContext, id: GroupId, removal: &Removal) -> StoreResult<bool> {
             self.fails()?;
-            self.inner.delete(ctx, id).await
+            self.inner.delete(ctx, id, removal).await
         }
         async fn list(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
             self.inner.list(ctx, query).await
@@ -258,7 +259,7 @@ mod tests {
         let name = ScopedName::new("participants", Scope::SessionScope { session_id: session }).unwrap();
         let participants = Group { id: GroupId::of_session(session), ..Group::team(name, owner) };
         keep_participants(groups.as_ref(), participants.clone()).await.expect("made");
-        groups.delete(&system, participants.id).await.unwrap();
+        groups.delete(&system, participants.id, &Removal::now(system.caller_id)).await.unwrap();
 
         keep_participants(groups.as_ref(), Group { members: vec![bob], ..participants.clone() }).await.expect("restored, not made again");
         assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob], "there again, following who takes part");
@@ -297,21 +298,23 @@ mod tests {
             count
         };
 
+        let removal = Removal::now(ActorId::User(owner));
         failing.passing.store(2, Ordering::SeqCst);
-        manager.delete_participants(&holders).await.expect_err("the third fails");
+        manager.delete_participants(&holders, &removal).await.expect_err("the third fails");
         assert_eq!(how_many_there().await, 3, "none is deleted: those before are restored again");
 
         failing.passing.store(usize::MAX, Ordering::SeqCst);
-        let since = Utc::now();
-        manager.delete_participants(&holders).await.expect("all deleted");
+        manager.delete_participants(&holders, &removal).await.expect("all deleted");
         assert_eq!(how_many_there().await, 0);
+        let marked = stores.groups.get_deleted(&system, of_session.id).await.unwrap().deleted;
+        assert_eq!(marked, Some(removal.clone()), "with the mark of what holds them, in the runtime's name");
 
         failing.passing.store(2, Ordering::SeqCst);
-        manager.restore_participants(&holders, since).await.expect_err("the third fails");
+        manager.restore_participants(&holders, &removal).await.expect_err("the third fails");
         assert_eq!(how_many_there().await, 0, "none is restored: those before are deleted again");
 
         failing.passing.store(usize::MAX, Ordering::SeqCst);
-        manager.restore_participants(&holders, since).await.expect("all restored");
+        manager.restore_participants(&holders, &removal).await.expect("all restored");
         assert_eq!(how_many_there().await, 3);
     }
 
@@ -329,8 +332,8 @@ mod tests {
         for group in [&there, &deleted, &purged, &unreadable] {
             groups.create(&system, group).await.unwrap();
         }
-        groups.delete(&system, deleted.id).await.unwrap();
-        groups.delete(&system, purged.id).await.unwrap();
+        groups.delete(&system, deleted.id, &Removal::now(system.caller_id)).await.unwrap();
+        groups.delete(&system, purged.id, &Removal::now(system.caller_id)).await.unwrap();
         groups.purge(&system, purged.id).await.unwrap();
         // Kept as something that is no group, past the store.
         let storage = memory.documents(Group::KIND, |_| Err(StoreError::Backend("not read".to_string()))).unwrap();

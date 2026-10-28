@@ -705,6 +705,7 @@ impl StateStore for JsonFileStore {
 #[cfg(test)]
 mod tests {
     use caelumora_model::chain::Position;
+    use caelumora_model::removal::Removal;
     use caelumora_model::turn::TurnState;
     use caelumora_model::project::ProjectId;
     use caelumora_model::session::{Session, SessionId};
@@ -963,7 +964,7 @@ mod tests {
         assert!(path_of::<Session>(dir.path(), &session_id).exists());
         assert!(store.agent_channel_state_dir(channel_id).exists());
 
-        assert!(sessions.delete(&ctx, session_id).await.unwrap());
+        assert!(sessions.delete(&ctx, session_id, &Removal::now(ctx.caller_id)).await.unwrap());
         assert!(path_of::<Session>(dir.path(), &session_id).exists(), "deleting marks the file");
         assert!(store.agent_channel_state_dir(channel_id).exists(), "the state is the state store's");
         assert!(sessions.purge(&ctx, session_id).await.unwrap());
@@ -976,7 +977,7 @@ mod tests {
         store.delete_channel_state(channel_id).await.expect("nothing to delete is no error");
 
         // Deleting or purging again reports that nothing was there.
-        assert!(!sessions.delete(&ctx, session_id).await.unwrap());
+        assert!(!sessions.delete(&ctx, session_id, &Removal::now(ctx.caller_id)).await.unwrap());
         assert!(!sessions.purge(&ctx, session_id).await.unwrap());
         let err = sessions.get(&ctx, session_id).await.unwrap_err();
         assert!(matches!(err, StoreError::NotFound { entity: "session", .. }));

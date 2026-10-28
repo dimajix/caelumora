@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
@@ -24,8 +25,8 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::event::EventBus;
-use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
-use chrono::{DateTime, Utc};
+use caelumora_runtime::scoped::{deleted_with, deleted_unless_refused, restored_unless_refused, ScopeMember};
+use chrono::Utc;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -204,7 +205,7 @@ impl SkillManager {
     pub async fn delete(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(skill) = self.skills.get(ctx, id).await.optional()? else { return Ok(false) };
-        if !self.skills.delete(ctx, id).await? {
+        if !self.skills.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
         self.events.announce(GlobalEvent::deleted::<Skill>(&id), &skill);
@@ -246,19 +247,19 @@ impl ScopeMember for SkillManager {
         Skill::KIND
     }
 
-    /// Deletes the skills that lie in `holder` or within it on behalf of
-    /// `ctx` (`scoped`), as far as they may, and announces them as `delete`
-    /// does; answers how many are left.
+    /// Deletes the skills that lie in `holder` or within it on behalf of `ctx` (`scoped`), as far
+    /// as they may, marked with `removal`, and announces them as `delete` does; answers how many
+    /// are left.
     ///
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
         for skill in self.skills.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if deleted_unless_refused(self.skills.delete(ctx, skill.id).await)? {
+            if deleted_unless_refused(self.skills.delete(ctx, skill.id, removal).await)? {
                 self.events.announce(GlobalEvent::deleted::<Skill>(&skill.id), &skill);
             } else {
                 left += 1;
@@ -267,18 +268,17 @@ impl ScopeMember for SkillManager {
         Ok(left)
     }
 
-    /// Restores the skills that lie in `holder` or within it and were
-    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
-    /// announces them as `restore` does. One whose name was taken meanwhile
-    /// stays deleted, as does one `ctx` may not restore.
+    /// Restores the skills that lie in `holder` or within it and carry `removal`, the holder's
+    /// mark, on behalf of `ctx` (`scoped`), and announces them as `restore` does. One whose name
+    /// was taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for skill in deleted_since(self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+        for skill in deleted_with(self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
             if let Some(restored) = restored_unless_refused(self.skills.restore(ctx, skill.id).await, &skill)? {
                 self.events.announce(GlobalEvent::restored::<Skill>(&restored.id), &restored);
             }

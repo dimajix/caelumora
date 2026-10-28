@@ -1403,7 +1403,7 @@ mod tests {
         let mut kept = AgentChannelState::default();
         kept.notes.push(Change::Add { id: NoteId(1), text: "kept".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         store.state_store().put_agent_channel_state(helper.id, channel.id, &mut kept).await.unwrap();
-        assert!(store.entity_stores().unwrap().personalities.delete(&system, helper.personality_id).await.unwrap());
+        assert!(store.entity_stores().unwrap().personalities.delete(&system, helper.personality_id, &Removal::now(system.caller_id)).await.unwrap());
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
@@ -1643,13 +1643,13 @@ mod tests {
         deleted.id = ChannelId::new();
         deleted.name = Name::new("deleted").unwrap();
         stored_channel(&store, &deleted).await;
-        store.entity_stores().unwrap().channels.delete(&alice_ctx, deleted.id).await.unwrap();
+        store.entity_stores().unwrap().channels.delete(&alice_ctx, deleted.id, &Removal::now(alice_ctx.caller_id)).await.unwrap();
         match views.channel_of(session.id, deleted.id).await.unwrap() {
             Reached::Gone(removal) => assert_eq!(removal.by, ActorId::User(alice.id)),
             other => panic!("gone, not {other:?}"),
         }
         assert!(matches!(stranger.channel_of(session.id, deleted.id).await.unwrap(), Reached::Never), "not to a stranger");
-        store.entity_stores().unwrap().sessions.delete(&alice_ctx, session.id).await.unwrap();
+        store.entity_stores().unwrap().sessions.delete(&alice_ctx, session.id, &Removal::now(alice_ctx.caller_id)).await.unwrap();
         assert!(matches!(views.channel_of(session.id, channel.id).await.unwrap(), Reached::Gone(_)), "gone with its session");
         assert!(matches!(stranger.channel_of(session.id, channel.id).await.unwrap(), Reached::Never));
     }
@@ -1671,8 +1671,8 @@ mod tests {
         for channel in [&main, &internal, &secret] {
             stored_channel(&store, channel).await;
         }
-        store.entity_stores().unwrap().channels.delete(&SecurityContext::system(), internal.id).await.unwrap();
-        store.entity_stores().unwrap().channels.delete(&SecurityContext::system(), secret.id).await.unwrap();
+        store.entity_stores().unwrap().channels.delete(&SecurityContext::system(), internal.id, &Removal::now(ActorId::System)).await.unwrap();
+        store.entity_stores().unwrap().channels.delete(&SecurityContext::system(), secret.id, &Removal::now(ActorId::System)).await.unwrap();
 
         // Alice owns both, and is cleared for internal alone (issue 304).
         let hers = manager.views(Viewer::new(SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default()).with_roles(vec![staff], None)));
@@ -1692,7 +1692,7 @@ mod tests {
         stored_channel(&store, &channel).await;
         stored_channel(&store, &side).await;
         let alice_ctx = as_user(alice.id).context().clone();
-        store.entity_stores().unwrap().channels.delete(&alice_ctx, side.id).await.unwrap();
+        store.entity_stores().unwrap().channels.delete(&alice_ctx, side.id, &Removal::now(alice_ctx.caller_id)).await.unwrap();
 
         let hers = manager.views(as_user(alice.id));
         let channels = hers.session(session.id).await.unwrap().deleted_channels().await.unwrap();
@@ -1702,7 +1702,7 @@ mod tests {
         let his = manager.views(as_user(bob.id));
         assert!(his.session(session.id).await.unwrap().deleted_channels().await.unwrap().is_empty(), "not shown to a contributor");
 
-        store.entity_stores().unwrap().sessions.delete(&alice_ctx, session.id).await.unwrap();
+        store.entity_stores().unwrap().sessions.delete(&alice_ctx, session.id, &Removal::now(alice_ctx.caller_id)).await.unwrap();
         let sessions = hers.deleted_sessions().await.unwrap();
         assert_eq!(sessions.iter().map(|s| s.id).collect::<Vec<_>>(), [session.id]);
         assert!(sessions[0].can_restore && !sessions[0].can_purge, "purging is not the owner's");

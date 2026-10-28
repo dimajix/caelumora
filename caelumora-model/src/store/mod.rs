@@ -349,21 +349,21 @@ pub type Address<T> = <<T as Stored>::Within as Enclosing>::Address<<T as Stored
 /// also one the caller may not read (`NameTaken`), and is found by it
 /// (`find_by_name`) - `NotFound` for a kind without one.
 ///
-/// Deleting marks (issue 164): `delete` sets the mark - who, when - and
-/// keeps the entity. What is marked is not there for `get`, `list`,
-/// `update` and `delete`, also not for the system, and its id is not free
-/// for `create`; nothing new or changed may carry the mark (`Validation`).
-/// What was deleted is reached by four operations of its own:
-/// `get_deleted` and `list_deleted` read it (`ReadDeleted`), `restore`
-/// takes the mark away (`Restore`) and returns what it restored, and
-/// `purge` removes what was deleted for good (`Purge`) - only what is
-/// marked, so that a purge never takes what was restored.
+/// Deleting marks (issue 164): `delete` sets the mark it is given - who, when - and keeps the
+/// entity. A deletion makes its mark once and gives it to everything that goes with what it deletes
+/// (issue 469); the mark names the caller, another only if the caller is the system
+/// (`Validation`). What is marked is not there for `get`, `list`, `update` and `delete`, also not
+/// for the system, and its id is not free for `create`; nothing new or changed may carry the mark
+/// (`Validation`). What was deleted is reached by four operations of its own: `get_deleted` and
+/// `list_deleted` read it (`ReadDeleted`), `restore` takes the mark away (`Restore`) and returns
+/// what it restored, and `purge` removes what was deleted for good (`Purge`) - only what is marked,
+/// so that a purge never takes what was restored.
 #[async_trait]
 pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
-    async fn delete(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
+    async fn delete(&self, ctx: &SecurityContext, id: T::Id, removal: &Removal) -> StoreResult<bool>;
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;

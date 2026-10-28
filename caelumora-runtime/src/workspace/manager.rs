@@ -4,7 +4,7 @@
 
 use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
 use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused};
+use crate::scoped::{ScopeMember, deleted_with, deleted_unless_refused, restored_unless_refused};
 use crate::backend::NamedBackends;
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
@@ -12,6 +12,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
@@ -20,7 +21,6 @@ use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, 
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
-use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -107,7 +107,7 @@ impl WorkspaceManager {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
             let system = SecurityContext::system();
             if let Err(cleanup) = async {
-                self.workspaces.delete(&system, workspace.id).await?;
+                self.workspaces.delete(&system, workspace.id, &Removal::now(ActorId::System)).await?;
                 self.workspaces.purge(&system, workspace.id).await
             }.await {
                 warn!(workspace = %workspace.id, "A workspace whose place could not be made is left deleted: {cleanup}");
@@ -132,7 +132,7 @@ impl WorkspaceManager {
             Err(WorkspaceError::NotFound(_)) => return Ok(false),
             Err(e) => return Err(e),
         };
-        if !self.workspaces.delete(ctx, id).await? {
+        if !self.workspaces.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
         self.events.announce(GlobalEvent::deleted::<Workspace>(&id), &workspace);
@@ -202,19 +202,19 @@ impl ScopeMember for WorkspaceManager {
         Workspace::KIND
     }
 
-    /// Deletes the workspaces that lie in `holder` or within it, their
-    /// places kept, on behalf of `ctx` (`scoped`), as far as they may, and
-    /// announces them as `delete` does; answers how many are left.
+    /// Deletes the workspaces that lie in `holder` or within it, their places kept, on behalf of
+    /// `ctx` (`scoped`), as far as they may, marked with `removal`, and announces them as `delete`
+    /// does; answers how many are left.
     ///
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
         for workspace in self.workspaces.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if deleted_unless_refused(self.workspaces.delete(ctx, workspace.id).await)? {
+            if deleted_unless_refused(self.workspaces.delete(ctx, workspace.id, removal).await)? {
                 self.events.announce(GlobalEvent::deleted::<Workspace>(&workspace.id), &workspace);
             } else {
                 left += 1;
@@ -223,18 +223,17 @@ impl ScopeMember for WorkspaceManager {
         Ok(left)
     }
 
-    /// Restores the workspaces that lie in `holder` or within it and were
-    /// deleted at `since` or later, with their places, on behalf of `ctx`
-    /// (`scoped`), and announces them as `restore` does. One whose name was
-    /// taken meanwhile stays deleted, as does one `ctx` may not restore.
+    /// Restores the workspaces that lie in `holder` or within it and carry `removal`, the holder's
+    /// mark, with their places, on behalf of `ctx` (`scoped`), and announces them as `restore`
+    /// does. One whose name was taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in deleted_since(self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+        for workspace in deleted_with(self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
             if let Some(restored) = restored_unless_refused(self.workspaces.restore(ctx, workspace.id).await, &workspace)? {
                 self.events.announce(GlobalEvent::restored::<Workspace>(&restored.id), &restored);
             }

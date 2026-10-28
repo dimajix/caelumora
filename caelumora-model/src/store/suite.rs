@@ -77,8 +77,8 @@ macro_rules! lifecycle {
         assert_eq!(listed.len(), 1, concat!($entity, ": list holds exactly what was created"));
         assert!(($key)(&listed[0]) == ($key)(&value), concat!($entity, ": list holds the entity"));
 
-        assert!(store.$delete(&ctx, ($key)(&value)).await.expect(concat!($entity, ": delete")), concat!($entity, ": delete reports the removal"));
-        assert!(!store.$delete(&ctx, ($key)(&value)).await.expect(concat!($entity, ": delete again")), concat!($entity, ": deleting again removes nothing"));
+        assert!(store.$delete(&ctx, ($key)(&value), &Removal::now(ctx.caller_id)).await.expect(concat!($entity, ": delete")), concat!($entity, ": delete reports the removal"));
+        assert!(!store.$delete(&ctx, ($key)(&value), &Removal::now(ctx.caller_id)).await.expect(concat!($entity, ": delete again")), concat!($entity, ": deleting again removes nothing"));
 
         let gone = store.$get(&ctx, ($key)(&value)).await;
         assert!(matches!(gone, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": get after delete is NotFound, got {:?}"), gone);
@@ -453,7 +453,7 @@ macro_rules! found_by_name {
         let elsewhere = store.$find(&ctx, &ScopedName::new("helper", Scope::SessionScope { session_id: SessionId::new() }).unwrap()).await;
         assert!(matches!(elsewhere, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": not in a scope it does not lie in, got {:?}"), elsewhere);
 
-        store.$delete(&ctx, global.id).await.expect(concat!($entity, ": delete"));
+        store.$delete(&ctx, global.id, &Removal::now(ctx.caller_id)).await.expect(concat!($entity, ": delete"));
         let deleted = store.$find(&ctx, &global.scoped_name()).await;
         assert!(matches!(deleted, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": not once deleted, got {:?}"), deleted);
     }};
@@ -566,7 +566,7 @@ macro_rules! unique_by_name {
         store.$update(&ctx, &($rename)(other.clone(), "other")).await.expect(concat!($entity, ": renamed to what is still its own name"));
         store.$update(&ctx, &($rename)(other.clone(), "Another")).await.expect(concat!($entity, ": renamed to a free one"));
 
-        store.$delete(&ctx, first.id).await.expect(concat!($entity, ": delete"));
+        store.$delete(&ctx, first.id, &Removal::now(ctx.caller_id)).await.expect(concat!($entity, ": delete"));
         store.$create(&ctx, &second).await.expect(concat!($entity, ": what is deleted holds no name"));
         assert!(taken(store.$restore(&ctx, first.id).await.map(drop)), concat!($entity, ": and is not restored under one taken meanwhile"));
         store.$update(&ctx, &($rename)(second.clone(), "Helper 2")).await.expect(concat!($entity, ": rename"));
@@ -1044,7 +1044,7 @@ pub async fn deleting_marks(stores: &EntityStores) {
     stores.sessions.create(&system, &kept).await.expect("create");
     let gone = session();
     stores.sessions.create(&system, &gone).await.expect("create");
-    assert!(stores.sessions.delete(&system, gone.id).await.expect("delete"));
+    assert!(stores.sessions.delete(&system, gone.id, &Removal::now(system.caller_id)).await.expect("delete"));
 
     let read = stores.sessions.get(&system, gone.id).await;
     assert!(matches!(read, Err(StoreError::NotFound { entity: "session", .. })), "not read, not even by the system: {read:?}");
@@ -1052,7 +1052,7 @@ pub async fn deleting_marks(stores: &EntityStores) {
     assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), [kept.id], "not listed");
     let changed = stores.sessions.update(&system, &gone).await;
     assert!(matches!(changed, Err(StoreError::NotFound { .. })), "not changed: {changed:?}");
-    assert!(!stores.sessions.delete(&system, gone.id).await.expect("delete"), "not deleted again");
+    assert!(!stores.sessions.delete(&system, gone.id, &Removal::now(system.caller_id)).await.expect("delete"), "not deleted again");
     let again = stores.sessions.create(&system, &gone).await;
     assert!(matches!(again, Err(StoreError::Conflict(_))), "its id stays taken: {again:?}");
 
@@ -1080,7 +1080,7 @@ pub async fn deleting_marks(stores: &EntityStores) {
     // Purged: only what was deleted, gone for good, and its id free again.
     assert!(!stores.sessions.purge(&system, gone.id).await.expect("purge restored"), "what is not marked is not purged");
     assert!(stores.sessions.get(&system, gone.id).await.is_ok(), "and stays");
-    assert!(stores.sessions.delete(&system, gone.id).await.expect("delete"));
+    assert!(stores.sessions.delete(&system, gone.id, &Removal::now(system.caller_id)).await.expect("delete"));
     assert!(stores.sessions.purge(&system, gone.id).await.expect("purge marked"));
     assert!(!stores.sessions.purge(&system, gone.id).await.expect("purge again"), "nothing left");
     assert!(stores.sessions.list_deleted(&system, &Query::all()).await.map(|page| page.items).expect("list deleted").is_empty());
@@ -1088,7 +1088,7 @@ pub async fn deleting_marks(stores: &EntityStores) {
 
     let carol = user("carol");
     stores.users.create(&system, &carol).await.expect("create user");
-    assert!(stores.users.delete(&system, carol.id).await.expect("delete user"));
+    assert!(stores.users.delete(&system, carol.id, &Removal::now(system.caller_id)).await.expect("delete user"));
     let found = stores.users.find_by_name(&system, &scoped("carol")).await;
     assert!(matches!(found, Err(StoreError::NotFound { .. })), "not found by name: {found:?}");
 }
@@ -1126,7 +1126,7 @@ pub async fn lists_admit_what_check_decides(stores: &EntityStores, folders: &dyn
     for group in [&team, &gone, &place] {
         stores.groups.create(&system, group).await.expect("create group");
     }
-    assert!(stores.groups.delete(&system, gone.id).await.expect("delete group"));
+    assert!(stores.groups.delete(&system, gone.id, &Removal::now(system.caller_id)).await.expect("delete group"));
 
     let subjects = [Subject::Actor(his), Subject::Role(role), Subject::Group(team.id), Subject::Group(gone.id), Subject::Group(place.id), Subject::Everyone];
     let mut made = Vec::new();
@@ -1142,7 +1142,7 @@ pub async fn lists_admit_what_check_decides(stores: &EntityStores, folders: &dyn
         let folder = Folder { security_attributes, ..Folder::of(alice) };
         folders.create(&system, &folder).await.expect("create folder");
         if index % 3 == 0 {
-            assert!(folders.delete(&system, folder.id).await.expect("delete folder"));
+            assert!(folders.delete(&system, folder.id, &Removal::now(system.caller_id)).await.expect("delete folder"));
         }
     }
     let there = all_folders(folders, &system, Presence::Present).await;

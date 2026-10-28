@@ -23,6 +23,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, WRITE};
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::project::Project;
+use caelumora_model::removal::Removal;
 use caelumora_model::store::{Address, EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -32,9 +33,9 @@ use caelumora_runtime::backend::{NamedBackends, StorageGone};
 use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
-use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, ScopeMember};
+use caelumora_runtime::scoped::{deleted_with, deleted_unless_refused, restored_unless_refused, ScopeMember};
 use caelumora_runtime::terminal::ByteStream;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use std::fmt;
 use std::sync::Arc;
@@ -360,7 +361,7 @@ impl ArtifactManager {
     pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(artifact) = self.artifacts.get(ctx, id).await.optional()? else { return Ok(false) };
-        if !self.artifacts.delete(ctx, id).await? {
+        if !self.artifacts.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
         self.events.announce(GlobalEvent::deleted::<Artifact>(&id), &artifact);
@@ -406,19 +407,19 @@ impl ScopeMember for ArtifactManager {
         Artifact::KIND
     }
 
-    /// Deletes the artifacts that lie in `holder` or within it, their
-    /// content kept, on behalf of `ctx` (`scoped`), as far as they may, and
-    /// announces them as `delete` does; answers how many are left.
+    /// Deletes the artifacts that lie in `holder` or within it, their content kept, on behalf of
+    /// `ctx` (`scoped`), as far as they may, marked with `removal`, and announces them as `delete`
+    /// does; answers how many are left.
     ///
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
         for artifact in self.artifacts.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if deleted_unless_refused(self.artifacts.delete(ctx, artifact.id).await)? {
+            if deleted_unless_refused(self.artifacts.delete(ctx, artifact.id, removal).await)? {
                 self.events.announce(GlobalEvent::deleted::<Artifact>(&artifact.id), &artifact);
             } else {
                 left += 1;
@@ -427,18 +428,17 @@ impl ScopeMember for ArtifactManager {
         Ok(left)
     }
 
-    /// Restores the artifacts that lie in `holder` or within it and were
-    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
-    /// announces them as `restore` does. One whose name was taken meanwhile
-    /// stays deleted, as does one `ctx` may not restore.
+    /// Restores the artifacts that lie in `holder` or within it and carry `removal`, the holder's
+    /// mark, on behalf of `ctx` (`scoped`), and announces them as `restore` does. One whose name
+    /// was taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in deleted_since(self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+        for artifact in deleted_with(self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
             if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)? {
                 self.events.announce(GlobalEvent::restored::<Artifact>(&restored.id), &restored);
             }

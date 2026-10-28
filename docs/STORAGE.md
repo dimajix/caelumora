@@ -296,8 +296,8 @@ Postgres narrows by the access entries it keeps of every kind (below). What a li
 
 Without an index - in memory and in the JSON files -, a list without a limit still goes through
 every entity of the kind. Every list that narrows what it read says so in its query; what a query
-cannot say yet - a time comparison, a lookup by normalized name, a viewer's clearance - stays code
-at the caller.
+cannot say yet - the mark of a deletion (`scoped::deleted_with`), a lookup by normalized name, a
+viewer's clearance - stays code at the caller.
 
 ### Deleted entities
 
@@ -310,8 +310,14 @@ the plugins -, and carries who deleted it and when: `Stored::deleted` reads the 
 A marked document is not there for the ordinary operations, before anything is asked: not read,
 listed, found by name, changed or deleted again - also not by the system, so that no caller has to
 remember to leave it out. Its id stays taken, so seeding does not bring back deleted demo data.
-Nothing created or changed may carry the mark: only deleting sets it. What was deleted is reached by
-operations of its own, each with a permission of its own:
+Nothing created or changed may carry the mark: only deleting sets it. Deleting sets the mark it is
+given (`EntityStore::delete`): a deletion makes its mark once - who, when - and gives it to
+everything that goes with what it deletes, so that what went with it is what carries its mark (issue
+469): restoring takes back what carries the mark of what is restored, and a restoring that fails
+puts the mark back as it was, so that it can be tried again. The mark names the caller; only the
+system's names another, as it deletes the groups that go with a session in the runtime's name, by
+whoever deleted the session (`Validation` otherwise). What was deleted is reached by operations of
+its own, each with a permission of its own:
 
 | Operation | asks | does |
 |---|---|---|
