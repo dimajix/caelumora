@@ -309,6 +309,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [443](443-errors-carry-only-an-english-text.md) | open | What an error tells a person - a problem detail of the REST API, what a failed turn or command tells its owner - is an English text written by the runtime, with nothing beside it from which a frontend could say the same in the person's language. |
 | [466](466-storage-errors-answered-differently.md) | done | A file too large, content that changed while it was kept, or a storage that broke is answered with another status and code by the artifacts than by attachments and workspaces, since each kind maps the storage's errors to its own and the REST layer maps each kind's on its own. |
 | [473](473-web-ui-repeats-the-refusal-check.md) | open | Whether a dialog shows what the server said or reports the error is decided by the same condition copied into eighteen files. |
+| [474](474-web-ui-repeats-the-user-test.md) | open | Whether an `ActorId` names a user, and the user, is written out by hand in several components beside the one function for it. |
 
 ## Context and knowledge
 
