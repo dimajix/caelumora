@@ -11,6 +11,7 @@ import type {ApprovalRule, Reach, SessionSnapshot} from '../types';
 import {describeMatcher, describeReach, isActive} from '../approvalRules';
 import {reportError, reportUnlessRefused} from '../errors';
 import {LanguageField} from './LanguageField';
+import {Refusal} from './Refusal';
 
 interface ProfileDialogProps {
   username: string;
@@ -39,7 +40,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, sessions,
   const [introduction, setIntroduction] = useState('');
   const [language, setLanguage] = useState('');
   const [maxChars, setMaxChars] = useState<number | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -69,12 +70,12 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, sessions,
     e.preventDefault();
     if (!loaded || unchanged || tooLong || isSaving) return;
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await api.updateProfile({introduction: introduction.trim() || null, preferred_language: language.trim() || null});
       onClose();
     } catch (error) {
-      reportUnlessRefused('Failed to save the profile', error, setProblem);
+      reportUnlessRefused('Failed to save the profile', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -126,7 +127,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, sessions,
             onChange={setLanguage}
             hint="the sessions you create are held in it unless their template or you choose another; the agents of their channels are told to write in it."
           />
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
           <div className="pt-2">
             <div className="mb-1">Your rules on tool calls</div>
             <div className="mb-2 text-xs text-gray-400">

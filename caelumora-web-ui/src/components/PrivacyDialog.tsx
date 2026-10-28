@@ -6,6 +6,7 @@ import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import {PRIVACY_POLICIES, type PrivacyPolicy, privacyInfo} from '../privacy';
 import {reportUnlessRefused} from '../errors';
+import {Refusal} from './Refusal';
 
 interface PrivacyDialogProps {
   sessionName: string;
@@ -17,7 +18,7 @@ interface PrivacyDialogProps {
 
 export const PrivacyDialog: React.FC<PrivacyDialogProps> = ({sessionName, current, canChange, onSubmit, onClose}) => {
   const [privacy, setPrivacy] = useState<PrivacyPolicy>(current);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const unchanged = privacy === current;
   // Another policy that lets other sessions read applies to what is said
@@ -28,12 +29,12 @@ export const PrivacyDialog: React.FC<PrivacyDialogProps> = ({sessionName, curren
     e.preventDefault();
     if (!canChange || unchanged || isSaving) return;
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await onSubmit(privacy);
       onClose();
     } catch (error) {
-      reportUnlessRefused('Failed to change the privacy', error, setProblem);
+      reportUnlessRefused('Failed to change the privacy', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -77,7 +78,7 @@ export const PrivacyDialog: React.FC<PrivacyDialogProps> = ({sessionName, curren
               Other sessions may read what is said from now on. What was said before keeps the privacy it was said under.
             </div>
           )}
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </fieldset>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

@@ -14,6 +14,7 @@ import {DEFAULT_RESPONDER_POLICY, RESPONDER_POLICY_KINDS, responderPolicyInfo} f
 import {CONFIDENTIALITY_LEVELS, DEFAULT_CLASSIFICATION, confidentialityInfo, type ConfidentialityLevel} from '../confidentiality';
 import {LanguageField} from './LanguageField';
 import {languageLabel} from '../language';
+import {Refusal} from './Refusal';
 
 interface NewChannelDialogProps {
   session: SessionSnapshot;
@@ -35,7 +36,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
   const [language, setLanguage] = useState('');
   const [usesWorkspace, setUsesWorkspace] = useState(true);
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(candidates.map(p => actorKey(p.id))));
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   // The configured compartments; none if they cannot be fetched - the
@@ -66,7 +67,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
     e.preventDefault();
     if (!name.trim() || isCreating) return;
     setIsCreating(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       const channel = await api.createChannel(session.id, {
         name: name.trim(),
@@ -84,7 +85,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
     } catch (error) {
       // What the server says about the request - a taken name, say - is
       // shown here, next to what can be corrected; anything else as usual.
-      reportUnlessRefused('Failed to create the channel', error, setProblem);
+      reportUnlessRefused('Failed to create the channel', error, setRefusal);
     } finally {
       setIsCreating(false);
     }
@@ -207,7 +208,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
             )}
           </fieldset>
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

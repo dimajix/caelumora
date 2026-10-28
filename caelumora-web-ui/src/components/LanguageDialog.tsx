@@ -8,6 +8,7 @@ import {X} from 'lucide-react';
 import {reportUnlessRefused} from '../errors';
 import {languageLabel} from '../language';
 import {LanguageField} from './LanguageField';
+import {Refusal} from './Refusal';
 
 interface LanguageDialogProps {
   title: string;
@@ -23,7 +24,7 @@ interface LanguageDialogProps {
 
 export const LanguageDialog: React.FC<LanguageDialogProps> = ({title, current, empty, emptyHint, onSubmit, onClose}) => {
   const [language, setLanguage] = useState(current ?? '');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const next = language.trim() || null;
   const unchanged = next === current;
@@ -32,14 +33,14 @@ export const LanguageDialog: React.FC<LanguageDialogProps> = ({title, current, e
     e.preventDefault();
     if (unchanged || isSaving) return;
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await onSubmit(next);
       onClose();
     } catch (error) {
-      // What the server says about the request - a refusal or no tag, say -
-      // is shown here; anything else as usual.
-      reportUnlessRefused('Failed to change the language', error, setProblem);
+      // What the server says about the request - a change the user may not
+      // make, or no tag, say - is shown here; anything else as usual.
+      reportUnlessRefused('Failed to change the language', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -75,7 +76,7 @@ export const LanguageDialog: React.FC<LanguageDialogProps> = ({title, current, e
             empty={empty}
             hint={`the agents write in it from their next answer on; ${emptyHint}. Nothing said before is translated.`}
           />
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

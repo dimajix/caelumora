@@ -12,6 +12,7 @@ import type {ActorId, Candidate, CandidateRefusal, ChannelResponse, CreateAgentR
 import {api} from '../api';
 import {reportError, reportUnlessRefused} from '../errors';
 import {actorKey, agentActor} from '../actor';
+import {Refusal} from './Refusal';
 
 type HistoryKind = HistoryAccess['kind'];
 
@@ -72,7 +73,7 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
   const [chosen, setChosen] = useState<string>('');
   const [historyKind, setHistoryKind] = useState<HistoryKind>('all');
   const [count, setCount] = useState(10);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   // A new agent instead (issue 227): the personalities it may be made of
   // here, `null` until they are asked for; its personality, name and
@@ -150,7 +151,7 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
     e.preventDefault();
     if (!ready || isAdding) return;
     setIsAdding(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       if (makingAgent && personality) {
         onAdded(await makeAndTakeIn(personality));
@@ -160,7 +161,7 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
     } catch (error) {
       // What the server says about the request is shown here, next to what
       // can be corrected; anything else as usual.
-      reportUnlessRefused('Failed to add the participant', error, setProblem);
+      reportUnlessRefused('Failed to add the participant', error, setRefusal);
     } finally {
       setIsAdding(false);
     }
@@ -333,7 +334,7 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
             </fieldset>
           </>)}
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

@@ -7,6 +7,7 @@ import {X} from 'lucide-react';
 import type {GroupResponse} from '../types';
 import {api} from '../api';
 import {reportUnlessRefused} from '../errors';
+import {Refusal} from './Refusal';
 
 interface NewGroupDialogProps {
   onCreated: (group: GroupResponse) => void;
@@ -16,7 +17,7 @@ interface NewGroupDialogProps {
 export const NewGroupDialog: React.FC<NewGroupDialogProps> = ({onCreated, onClose}) => {
   const [name, setName] = useState('');
   const [scope, setScope] = useState<'user' | 'global'>('user');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const complete = name.trim();
 
@@ -24,13 +25,13 @@ export const NewGroupDialog: React.FC<NewGroupDialogProps> = ({onCreated, onClos
     e.preventDefault();
     if (!complete || isCreating) return;
     setIsCreating(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       onCreated(await api.createGroup({name: name.trim(), scope}));
     } catch (error) {
       // What the server says about the request - a taken name, say - is
       // shown here.
-      reportUnlessRefused('Failed to create the team', error, setProblem);
+      reportUnlessRefused('Failed to create the team', error, setRefusal);
     } finally {
       setIsCreating(false);
     }
@@ -82,7 +83,7 @@ export const NewGroupDialog: React.FC<NewGroupDialogProps> = ({onCreated, onClos
             The team starts with nobody in it: you choose its members on its page.
           </div>
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

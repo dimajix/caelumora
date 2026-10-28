@@ -10,6 +10,7 @@ import type {SessionSnapshot, WorkspaceResponse} from '../types';
 import {reportUnlessRefused} from '../errors';
 import {scopeLabel} from '../scope';
 import {ShareSelect, type Share} from './ShareSelect';
+import {Refusal} from './Refusal';
 
 interface SessionWorkspaceDialogProps {
   session: SessionSnapshot;
@@ -24,17 +25,17 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
   const offered = workspaces.filter(w => w.can_change && (w.scope !== 'session' || w.session_id === session.id));
   const [chosen, setChosen] = useState(session.workspace?.id ?? offered[0]?.id ?? '');
   const [share, setShare] = useState<Share>('write');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const act = async (workspaceId: string | null) => {
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await onSubmit(workspaceId, share);
       onClose();
     } catch (error) {
-      reportUnlessRefused(workspaceId === null ? 'Failed to detach the workspace' : 'Failed to attach the workspace', error, setProblem);
+      reportUnlessRefused(workspaceId === null ? 'Failed to detach the workspace' : 'Failed to attach the workspace', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -92,7 +93,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
             <div className="text-xs italic text-gray-500">Only who may change the session attaches a workspace.</div>
           )}
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

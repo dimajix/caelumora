@@ -280,20 +280,22 @@ interface LiftProjectProps {
 const LiftProject: React.FC<LiftProjectProps> = ({project, onLifted, onCancel}) => {
   const [name, setName] = useState('');
   const [scope, setScope] = useState<'user' | 'global'>('user');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
 
   const lift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    setProblem(null);
+    setRefusal(null);
     try {
       onLifted(await api.liftProject(project.id, name.trim(), scope));
     } catch (error) {
       // What the server says about the request - a taken name, say - is shown here.
-      reportUnlessRefused('Failed to keep the project', error, setProblem);
+      reportUnlessRefused('Failed to keep the project', error, setRefusal);
     }
   };
 
+  // This form lies on the page and follows its theme, unlike a dialog; so
+  // does its refusal, which is therefore drawn here and not by `Refusal`.
   const fieldClass = "rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-sm";
   return (
     <form onSubmit={(e) => void lift(e)} className="space-y-2 rounded-md border border-gray-200 dark:border-gray-700 p-3 text-sm">
@@ -306,7 +308,7 @@ const LiftProject: React.FC<LiftProjectProps> = ({project, onLifted, onCancel}) 
         <button type="submit" disabled={!name.trim()} className="rounded-md bg-blue-600 px-3 py-1 text-white hover:bg-blue-700 disabled:opacity-50">Keep</button>
         <button type="button" onClick={onCancel} className="rounded-md px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">Cancel</button>
       </div>
-      {problem && <div role="alert" className="text-xs text-red-500">{problem}</div>}
+      {refusal && <div role="alert" className="text-xs text-red-500">{refusal}</div>}
     </form>
   );
 };

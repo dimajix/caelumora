@@ -9,6 +9,7 @@ import type {Page} from '../page';
 import type {ProjectResponse, SessionSnapshot} from '../types';
 import {reportUnlessRefused} from '../errors';
 import {optionLabel, projectLabel} from '../project';
+import {Refusal} from './Refusal';
 
 interface SessionProjectDialogProps {
   session: SessionSnapshot;
@@ -25,17 +26,17 @@ export const SessionProjectDialog: React.FC<SessionProjectDialogProps> = ({sessi
   const current = session.project;
   const offered = projects.filter(p => p.id !== current?.id);
   const [chosen, setChosen] = useState(offered[0]?.id ?? '');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const act = async (projectId: string | null) => {
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await onSubmit(projectId);
       onClose();
     } catch (error) {
-      reportUnlessRefused(projectId === null ? 'Failed to take the session out of the project' : 'Failed to put the session into the project', error, setProblem);
+      reportUnlessRefused(projectId === null ? 'Failed to take the session out of the project' : 'Failed to put the session into the project', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -95,7 +96,7 @@ export const SessionProjectDialog: React.FC<SessionProjectDialogProps> = ({sessi
             <div className="text-xs italic text-gray-500">Only who may change the session puts it into a project.</div>
           )}
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

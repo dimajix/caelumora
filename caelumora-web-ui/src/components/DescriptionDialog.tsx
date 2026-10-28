@@ -9,6 +9,7 @@ import {X} from 'lucide-react';
 import type {Description} from '../types';
 import {reportUnlessRefused} from '../errors';
 import {MarkdownMessage} from './MarkdownMessage';
+import {Refusal} from './Refusal';
 
 interface DescriptionDialogProps {
   title: string;
@@ -30,7 +31,7 @@ const READERS = {
 export const DescriptionDialog: React.FC<DescriptionDialogProps> = ({title, place, summary, briefing, canChange, onSubmit, onClose}) => {
   const [nextSummary, setNextSummary] = useState(summary ?? '');
   const [nextBriefing, setNextBriefing] = useState(briefing ?? '');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const unchanged = nextSummary.trim() === (summary ?? '') && nextBriefing.trim() === (briefing ?? '');
 
@@ -38,14 +39,14 @@ export const DescriptionDialog: React.FC<DescriptionDialogProps> = ({title, plac
     e.preventDefault();
     if (!canChange || unchanged || isSaving) return;
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await onSubmit({summary: nextSummary.trim() || null, briefing: nextBriefing.trim() || null});
       onClose();
     } catch (error) {
       // What the server says about the request - too long, say - is shown
       // here; anything else as usual.
-      reportUnlessRefused('Failed to change the description', error, setProblem);
+      reportUnlessRefused('Failed to change the description', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -94,7 +95,7 @@ export const DescriptionDialog: React.FC<DescriptionDialogProps> = ({title, plac
                   className="w-full bg-gray-800 border border-gray-700 rounded-md px-2 py-1 font-mono text-xs"
                 />
               </label>
-              {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+              <Refusal message={refusal} />
             </>
           ) : (
             <>

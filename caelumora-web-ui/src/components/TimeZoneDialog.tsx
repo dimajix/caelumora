@@ -6,6 +6,7 @@ import {X} from 'lucide-react';
 import {reportUnlessRefused} from '../errors';
 import {timeZoneLabel} from '../timeZone';
 import {TimeZoneField} from './TimeZoneField';
+import {Refusal} from './Refusal';
 
 interface TimeZoneDialogProps {
   title: string;
@@ -17,7 +18,7 @@ interface TimeZoneDialogProps {
 
 export const TimeZoneDialog: React.FC<TimeZoneDialogProps> = ({title, current, onSubmit, onClose}) => {
   const [timeZone, setTimeZone] = useState(current ?? '');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const next = timeZone.trim() || null;
   const unchanged = next === current;
@@ -26,14 +27,14 @@ export const TimeZoneDialog: React.FC<TimeZoneDialogProps> = ({title, current, o
     e.preventDefault();
     if (unchanged || isSaving) return;
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await onSubmit(next);
       onClose();
     } catch (error) {
-      // What the server says about the request - a refusal or no time zone,
-      // say - is shown here; anything else as usual.
-      reportUnlessRefused('Failed to change the time zone', error, setProblem);
+      // What the server says about the request - a change the user may not
+      // make, or no time zone, say - is shown here; anything else as usual.
+      reportUnlessRefused('Failed to change the time zone', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -67,7 +68,7 @@ export const TimeZoneDialog: React.FC<TimeZoneDialogProps> = ({title, current, o
             onChange={setTimeZone}
             hint="the agents are given the times of messages in it from their next answer on; empty is UTC."
           />
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

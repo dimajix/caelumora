@@ -12,6 +12,7 @@ import {reportError, reportUnlessRefused} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {storageLabel} from '../workspace';
 import {ClassificationFields} from './ClassificationFields';
+import {Refusal} from './Refusal';
 
 interface NewWorkspaceDialogProps {
   onCreated: (workspace: WorkspaceResponse) => void;
@@ -25,7 +26,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
   const [scope, setScope] = useState<'user' | 'global'>('user');
   const [description, setDescription] = useState('');
   const [classification, setClassification] = useState<Classification>(DEFAULT_CLASSIFICATION);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
@@ -44,7 +45,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
     e.preventDefault();
     if (!name.trim() || !storage || isCreating) return;
     setIsCreating(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       const workspace = await api.createWorkspace({
         name: name.trim(),
@@ -57,7 +58,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
     } catch (error) {
       // What the server says about the request - a taken name, a
       // classification the user is not cleared for - is shown here.
-      reportUnlessRefused('Failed to create the workspace', error, setProblem);
+      reportUnlessRefused('Failed to create the workspace', error, setRefusal);
     } finally {
       setIsCreating(false);
     }
@@ -139,7 +140,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
 
           <ClassificationFields value={classification} onChange={setClassification} />
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

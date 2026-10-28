@@ -1,6 +1,6 @@
 # 481 — Every dialog of the web UI draws the server's refusal itself
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -23,6 +23,18 @@ colour already was.
 - **A. One small component**, e.g. `<Refusal message={problem} />`, which draws nothing for `null`;
   every dialog uses it.
 
+## Decision
+
+A, drawn for a dialog: `components/Refusal.tsx`, as the fields dialogs share (`LanguageField`,
+`ClassificationFields`) are. The colour of `ProjectPage` was not without a reason: a dialog is dark
+whatever the theme, the form "keep the project" lies on the page and follows the theme, where
+`text-red-400` is hardly read on white; the theme is the system's (a media query), so a component
+cannot tell which it stands on. That form keeps its own line, saying why. A variant for the page
+waits for a second user - issue [479](479-a-rename-refused-goes-to-the-banner.md) would bring
+four -, and one class for both, `text-red-600 dark:text-red-400`, would be read worse in a dialog
+in the light theme. With it, each dialog's state `problem` is `refusal`: it holds what
+`reportUnlessRefused` calls one.
+
 ## Done when
 
 - The look of a refusal in a dialog is written in one place.
@@ -30,3 +42,5 @@ colour already was.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of issue 473.
+- **2026-10-28** — Done: `Refusal` draws the refusal in the seventeen dialogs; `ProjectPage`'s form
+  keeps its own, for the page's theme. The state is `refusal` in all eighteen.

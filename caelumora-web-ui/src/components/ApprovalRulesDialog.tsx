@@ -10,6 +10,7 @@ import React, {useState} from 'react';
 import {Plus, Trash2, X} from 'lucide-react';
 import type {ApprovalRule, ArgumentMatcher, RuleDecision} from '../types';
 import {reportUnlessRefused} from '../errors';
+import {Refusal} from './Refusal';
 
 interface ApprovalRulesDialogProps {
   title: string;
@@ -81,7 +82,7 @@ function ruleOf(draft: Draft): ApprovalRule {
 
 export const ApprovalRulesDialog: React.FC<ApprovalRulesDialogProps> = ({title, place, current, canChange, onSubmit, onClose}) => {
   const [drafts, setDrafts] = useState<Draft[]>(() => current.map(draftOf));
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const complete = drafts.every(d => d.tool.trim() !== '');
 
@@ -92,14 +93,14 @@ export const ApprovalRulesDialog: React.FC<ApprovalRulesDialogProps> = ({title, 
     e.preventDefault();
     if (!canChange || !complete || isSaving) return;
     setIsSaving(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       await onSubmit(drafts.map(ruleOf));
       onClose();
     } catch (error) {
       // What the server says about the rules - a pattern that is none, say -
       // is shown here; anything else as usual.
-      reportUnlessRefused('Failed to change the approval rules', error, setProblem);
+      reportUnlessRefused('Failed to change the approval rules', error, setRefusal);
     } finally {
       setIsSaving(false);
     }
@@ -210,7 +211,7 @@ export const ApprovalRulesDialog: React.FC<ApprovalRulesDialogProps> = ({title, 
               <Plus size={14} /> Add a rule
             </button>
           )}
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">

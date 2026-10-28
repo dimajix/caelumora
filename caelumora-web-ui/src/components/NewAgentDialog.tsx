@@ -7,6 +7,7 @@ import {X} from 'lucide-react';
 import type {AgentResponse, PersonalityResponse} from '../types';
 import {api} from '../api';
 import {reportError, reportUnlessRefused} from '../errors';
+import {Refusal} from './Refusal';
 
 interface NewAgentDialogProps {
   onCreated: (agent: AgentResponse) => void;
@@ -18,7 +19,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({onCreated, onClos
   const [personalities, setPersonalities] = useState<PersonalityResponse[] | null>(null);
   const [personalityId, setPersonalityId] = useState('');
   const [name, setName] = useState('');
-  const [problem, setProblem] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
@@ -41,13 +42,13 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({onCreated, onClos
     e.preventDefault();
     if (!complete || isCreating) return;
     setIsCreating(true);
-    setProblem(null);
+    setRefusal(null);
     try {
       onCreated(await api.createAgent({name: name.trim(), personality_id: personality.id}));
     } catch (error) {
       // What the server says about the request - a taken name, say - is
       // shown here.
-      reportUnlessRefused('Failed to create the agent', error, setProblem);
+      reportUnlessRefused('Failed to create the agent', error, setRefusal);
     } finally {
       setIsCreating(false);
     }
@@ -101,7 +102,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({onCreated, onClos
             session. Its name is unique among your agents.
           </div>
 
-          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+          <Refusal message={refusal} />
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-800 p-4">
