@@ -316,6 +316,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [475](475-another-users-thing-shown-as-yours.md) | open | What lies in a user's scope is labelled "yours" in the web UI, also where it is another user's, shared with the viewer, since the responses do not name its owner. |
 | [479](479-a-rename-refused-goes-to-the-banner.md) | open | When the server refuses a new name for a project, team, agent or session - a name taken, say - the refusal appears in the error banner, away from the field where it can be corrected. |
 | [480](480-the-context-panels-refusal-is-misnamed.md) | open | `refusal(error)` in the context panel turns three error codes into texts of its own, under the name the web UI now gives to every error a request is at fault for. |
+| [481](481-every-dialog-draws-its-refusal-itself.md) | open | How a refusal is shown in a dialog - an alert line under the fields - is written out by hand in eighteen files, and one of them already draws it in another colour. |
 
 ## Context and knowledge
 
