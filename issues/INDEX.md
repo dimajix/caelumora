@@ -319,7 +319,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [481](481-every-dialog-draws-its-refusal-itself.md) | done | How a refusal is shown in a dialog - an alert line under the fields - is written out by hand in eighteen files, and one of them already draws it in another colour. |
 | [482](482-question-card-shows-an-actor-key.md) | done | When an actor a question is put to is no participant of the channel - one that has left, say -, the question card says it waits for `User:<uuid>` instead of a name. |
 | [483](483-the-sidebar-edits-a-session-name-by-hand.md) | open | The field in which the sidebar renames a session repeats what `EditInPlace` does, without what that has since learned: Escape is followed by a save, and a name that differs only by spaces is sent. |
-| [488](488-the-sidebar-offers-to-rename-any-session.md) | open | A session's menu in the sidebar offers "Rename" also to who may not change the session, who types a name and only then sees it refused; "Language" and "Time zone" beside it are offered only under `can_change`. |
+| [488](488-the-sidebar-offers-to-rename-any-session.md) | done | A session's menu in the sidebar offers "Rename" also to who may not change the session, who types a name and only then sees it refused; "Language" and "Time zone" beside it are offered only under `can_change`. |
 
 ## Context and knowledge
 

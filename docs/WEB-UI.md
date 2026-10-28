@@ -158,15 +158,16 @@ channel is on screen.
 
 A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDialog`). Choosing a
 policy that lets other sessions read says that it holds for what is said from then on. The session's
-approval rules are changed by its owner from its menu. Deleting a session or a channel asks once
-more, though it is only marked and can be restored.
+approval rules are changed by its owner from its menu, and its name, language and time zone by
+whoever may change it. Deleting a session or a channel asks once more, though it is only marked and
+can be restored.
 
 The user's name at the foot of the sidebar opens their profile: how they introduce themselves to the
 agents - with the note that every agent in every channel they take part in is given it - the
 language they prefer, and their own rules on tool calls, each with where it reaches and until when,
 to take back. Whether a language tag is valid is the server's to decide. The preferred language is
 the web UI's to apply, not the server's (issue 331): the dialog for a new session presets it where
-the template names no language. A session's language and time zone are changed from its menu.
+the template names no language.
 
 "New Session" presets everything - the template used last in this browser, its name, the workspace
 the template names, the language the template names or else the one the user prefers, the time

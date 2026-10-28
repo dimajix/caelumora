@@ -472,7 +472,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   size={16}
                   className="p-2 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
                   actions={[
-                    {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
+                    ...(session.can_change ? [{label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)}] : []),
                     // Fetched first: the list holds no briefing, and saving without it would remove
                     // it.
                     {label: 'Description', icon: FileText, onSelect: () => void refreshSession(session.id).then(() => setDescriptionOf(session.id))},
