@@ -314,6 +314,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [473](473-web-ui-repeats-the-refusal-check.md) | done | Whether a dialog shows what the server said or reports the error is decided by the same condition copied into eighteen files. |
 | [474](474-web-ui-repeats-the-user-test.md) | done | Whether an `ActorId` names a user, and the user, is written out by hand in several components beside the one function for it. |
 | [475](475-another-users-thing-shown-as-yours.md) | open | What lies in a user's scope is labelled "yours" in the web UI, also where it is another user's, shared with the viewer, since the responses do not name its owner. |
+| [479](479-a-rename-refused-goes-to-the-banner.md) | open | When the server refuses a new name for a project, team, agent or session - a name taken, say - the refusal appears in the error banner, away from the field where it can be corrected. |
 
 ## Context and knowledge
 
