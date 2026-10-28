@@ -4,9 +4,8 @@
 use crate::skill::{SkillBody, SkillId, SkillSnapshot};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::session::SessionId;
 use caelumora_model::value::text::Description;
-use caelumora_rest_api::scope::ScopeKind;
+use caelumora_rest_api::scope::{ScopeKind, ScopeResponse};
 use serde::{Deserialize, Serialize};
 
 /// A skill (issue 22) as whoever may read it sees it; with its `body` where
@@ -17,9 +16,8 @@ pub struct SkillResponse {
     pub name: String,
     /// Where it lies: `session` - written by an agent for one session,
     /// which `session_id` names -, `user` or `global`.
-    pub scope: ScopeKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
+    #[serde(flatten)]
+    pub scope: ScopeResponse,
     pub description: Description,
     pub classification: Classification,
     /// Whose it is: a user, or the system for a skill of the seed.
@@ -33,8 +31,7 @@ pub struct SkillResponse {
 
 impl From<SkillSnapshot> for SkillResponse {
     fn from(view: SkillSnapshot) -> Self {
-        let (scope, session_id) = ScopeKind::of(&view.scope);
-        Self { id: view.id, name: view.name, scope, session_id, description: view.description, classification: view.classification, owner: view.owner, can_change: view.can_change, body: None }
+        Self { id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), description: view.description, classification: view.classification, owner: view.owner, can_change: view.can_change, body: None }
     }
 }
 
@@ -72,12 +69,14 @@ pub struct SkillBodyRequest {
 mod tests {
     use super::*;
     use caelumora_model::scope::Scope;
+    use caelumora_model::session::SessionId;
+    use caelumora_model::snapshot::ScopeSnapshot;
 
     #[test]
     fn a_skill_is_answered_with_its_scope_and_its_body_only_alone() {
         let session_id = SessionId::new();
         let snapshot = SkillSnapshot {
-            id: SkillId::new(), name: "deploy".to_string(), scope: Scope::SessionScope { session_id },
+            id: SkillId::new(), name: "deploy".to_string(), scope: ScopeSnapshot { scope: Scope::SessionScope { session_id }, user_name: None },
             description: Description::new("How we deploy").unwrap(), classification: Classification::CHANNEL_DEFAULT,
             owner: ActorId::System, can_change: false,
         };

@@ -2,9 +2,8 @@
 //! how one is made, changed, lifted and chosen for a session.
 
 use crate::access::AccessEntry;
-use crate::scope::ScopeKind;
+use crate::scope::{ScopeKind, ScopeResponse};
 use caelumora_model::project::ProjectId;
-use caelumora_model::session::SessionId;
 use caelumora_model::snapshot;
 use caelumora_model::user::UserId;
 use caelumora_model::value::text::Description;
@@ -19,9 +18,8 @@ pub struct ProjectResponse {
     pub name: String,
     /// Where it lies: `user` or `global` for a shared project, `session` for the own project of
     /// the session `session_id` names.
-    pub scope: ScopeKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
+    #[serde(flatten)]
+    pub scope: ScopeResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Description>,
     /// Who works on it, each with their name where it is known.
@@ -44,10 +42,9 @@ pub struct ProjectMemberResponse {
 
 impl From<snapshot::ProjectSnapshot> for ProjectResponse {
     fn from(view: snapshot::ProjectSnapshot) -> Self {
-        let (scope, session_id) = ScopeKind::of(&view.scope);
         let members = view.members.into_iter().map(|(id, name)| ProjectMemberResponse { id, name }).collect();
         let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
-        Self { id: view.id, name: view.name, scope, session_id, description: view.description, members, can_change: view.can_change, access }
+        Self { id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), description: view.description, members, can_change: view.can_change, access }
     }
 }
 

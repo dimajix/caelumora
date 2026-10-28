@@ -17,11 +17,13 @@ import {EditInPlace} from './EditInPlace';
 
 interface SkillPageProps {
   skillId: string;
+  /** The user looking at it: whether it is theirs. */
+  userId: string;
   onDeleted: (skillId: string) => void;
 }
 
 /** The sidebar learns of a change from the global stream. */
-export const SkillPage: React.FC<SkillPageProps> = ({skillId, onDeleted}) => {
+export const SkillPage: React.FC<SkillPageProps> = ({skillId, userId, onDeleted}) => {
   const [skill, setSkill] = useState<SkillResponse | null>(null);
   const [editing, setEditing] = useState<'name' | 'description' | null>(null);
   // The text being edited, while it is; `null` while it is shown.
@@ -78,7 +80,7 @@ export const SkillPage: React.FC<SkillPageProps> = ({skillId, onDeleted}) => {
             {editing === 'name' ? <EditInPlace initial={skill.name} save={rename} action="Failed to rename the skill" onDone={() => setEditing(null)} /> : <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{skill.name}</h2>}
             {editing === 'description' ? <EditInPlace initial={skill.description} save={describe} action="Failed to describe the skill" onDone={() => setEditing(null)} /> : <p className="text-sm text-gray-600 dark:text-gray-400">{skill.description}</p>}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-              <span>Name space: {scopeLabel(skill)}</span>
+              <span>Name space: {scopeLabel(skill, userId)}</span>
               {isSystem(skill.owner) && <span>A skill of the system</span>}
               <span className="flex items-center gap-1" title={classificationDescription(skill.classification)}>
                 <Shield size={12} /> {classificationLabel(skill.classification)}

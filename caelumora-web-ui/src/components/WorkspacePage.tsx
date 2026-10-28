@@ -18,11 +18,13 @@ import {EditInPlace} from './EditInPlace';
 
 interface WorkspacePageProps {
   workspaceId: string;
+  /** The user looking at it: whether it is theirs. */
+  userId: string;
   onDeleted: (workspaceId: string) => void;
 }
 
 /** The sidebar learns of a change from the global stream. */
-export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDeleted}) => {
+export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, userId, onDeleted}) => {
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null);
   const [editing, setEditing] = useState<'name' | 'description' | null>(null);
   const [isReclassifying, setIsReclassifying] = useState(false);
@@ -78,7 +80,7 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
               <p className="text-sm text-gray-600 dark:text-gray-400">{workspace.description || <span className="italic">No description</span>}</p>
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-              <span>Name space: {scopeLabel(workspace)}</span>
+              <span>Name space: {scopeLabel(workspace, userId)}</span>
               <span>Storage: {workspace.storage}</span>
               <span className="flex items-center gap-1" title={classificationDescription(workspace.classification)}>
                 <Shield size={12} /> {classificationLabel(workspace.classification)}

@@ -10,6 +10,7 @@ use caelumora_model::define_id;
 use caelumora_model::digest::{Digest, Encoder};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField, Scoped};
+use caelumora_model::snapshot::ScopeSnapshot;
 use caelumora_model::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
 use caelumora_model::store::{EntityKind, NoEntity, Stored};
 use caelumora_model::value::name::ScopedName;
@@ -177,7 +178,7 @@ pub struct SkillSnapshot {
     pub id: SkillId,
     pub name: String,
     /// Where it lies: the global scope, its owner's or a session's.
-    pub scope: Scope,
+    pub scope: ScopeSnapshot,
     pub description: Description,
     pub classification: Classification,
     /// Whose it is.

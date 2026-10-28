@@ -59,7 +59,7 @@ impl ProjectView {
         ProjectSnapshot {
             id: self.project.id,
             name: self.project.name.to_string(),
-            scope: self.project.name.scope.clone(),
+            scope: self.views.scope_snapshot(&self.project.name.scope).await,
             description: self.project.description.clone(),
             members,
             can_change,

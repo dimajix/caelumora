@@ -62,7 +62,7 @@ use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessQuestions, AclEntry, Refused, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
-use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnapshot};
+use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnapshot, ScopeSnapshot};
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{Deleted, EntityStore, EntityStores, StateStore, StoreResult, StoreResultExt, Stored};
 use caelumora_model::project::ProjectId;
@@ -450,15 +450,16 @@ impl Views {
     pub async fn personalities(&self) -> ViewResult<Vec<PersonalitySnapshot>> {
         let personalities: Vec<Personality> = self.stores.personalities.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the personalities"))?;
-        let mut listed: Vec<PersonalitySnapshot> = personalities.into_iter()
-            .map(|personality| PersonalitySnapshot {
+        let mut listed = Vec::with_capacity(personalities.len());
+        for personality in personalities {
+            listed.push(PersonalitySnapshot {
                 id: personality.id,
                 name: personality.name.to_string(),
-                scope: personality.name.scope,
+                scope: self.scope_snapshot(&personality.name.scope).await,
                 kind: personality.kind,
                 description: personality.description,
-            })
-            .collect();
+            });
+        }
         listed.sort_by(|l, r| l.name.cmp(&r.name));
         Ok(listed)
     }
@@ -687,12 +688,21 @@ impl Views {
         self.confidentiality.may_copy_information(self.viewer.context(), from, into)
     }
 
-    /// The name of `actor`; `None` for a user or agent that no longer
-    /// exists. Read in the runtime's name: taking part in a session makes a
-    /// name known to everybody in it - it stands at every message - even
-    /// where the record itself is not theirs to read (issue 120); so does
-    /// owning an agent there, which acts with its owner's authority (issue
-    /// 244).
+    /// Where `scope` is, as the viewer is shown it (issue 475): with the name of its user if it is
+    /// a user's - whose it is, read as `name_of` reads it.
+    pub async fn scope_snapshot(&self, scope: &Scope) -> ScopeSnapshot {
+        let user_name = match scope {
+            Scope::UserScope { user_id } => self.name_of(ActorId::User(*user_id)).await,
+            _ => None,
+        };
+        ScopeSnapshot { scope: scope.clone(), user_name }
+    }
+
+    /// The name of `actor`; `None` for a user or agent that no longer exists. Read in the runtime's
+    /// name: taking part in a session makes a name known to everybody in it - it stands at every
+    /// message - even where the record itself is not theirs to read (issue 120); so does owning an
+    /// agent there, which acts with its owner's authority (issue 244), and reading something of a
+    /// user's scope, which is theirs (issue 475).
     async fn name_of(&self, actor: ActorId) -> Option<String> {
         match actor {
             ActorId::User(id) => self.stores.users.get(&SecurityContext::system(), id).await.ok().map(|user| user.username.to_string()),

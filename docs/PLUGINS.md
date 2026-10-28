@@ -64,7 +64,8 @@ store of the users - with `service_of`. While it registers, a plugin
 
 Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's `context`,
 the `access_policy` and `confidentiality` policies, its manager as a `service`, `channel_reading`,
-and `deleted_of`, by which it lists what of its kind was deleted, as every kind is listed.
+`deleted_of`, by which it lists what of its kind was deleted, as every kind is listed, and
+`scope_snapshot`, by which it answers where something of its kind lies, as every kind answers it.
 What a channel's view lists of its kind - the artifacts published in it, say - is an extension trait
 on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`): whether the
 viewer reads the channel stays the channel's to decide (issue 328). What lies in a project is listed

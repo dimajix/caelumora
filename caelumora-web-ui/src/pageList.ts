@@ -3,16 +3,17 @@
 // them, and the page of one no longer listed closed.
 
 import {useCallback, useEffect, useRef, useState} from 'react';
-import type {ScopeKind} from './types';
+import type {ScopeResponse} from './types';
 import {reportError} from './errors';
 import type {Page, PageKind} from './page';
 
-/** What a list shows of each entry. */
-export interface Listed {
+/**
+ * What a list shows of each entry, and where it lies - nowhere for what lies in a project (issue
+ * 467), which the list does not name.
+ */
+export interface Listed extends Partial<ScopeResponse> {
   id: string;
   name: string;
-  /** Where it lies; absent for what lies in a project (issue 467), which the list does not name. */
-  scope?: ScopeKind;
   description?: string;
 }
 

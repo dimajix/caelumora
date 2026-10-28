@@ -12,7 +12,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [458](458-deleted-while-it-runs.md) | open | low | bug | Deleting a session or a channel marks it, deletes what lies in its scope and the groups of its participants while it still runs, and stops it only afterwards, so what its agents write into its scope meanwhile is left behind, and what it announces as it stops reaches its owner alone. |
 | [470](470-personalities-and-bundles-in-a-project-scope.md) | open | low | bug | A personality or a component bundle can be stored in a project's scope, though nothing is used from there yet, while session templates, agents, workspaces, skills and artifacts are each refused or placed by their own validation. |
-| [475](475-another-users-thing-shown-as-yours.md) | open | low | bug | What lies in a user's scope is labelled "yours" in the web UI, also where it is another user's, shared with the viewer, since the responses do not name its owner. |
 | [488](488-the-sidebar-offers-to-rename-any-session.md) | open | low | bug | A session's menu in the sidebar offers "Rename" also to who may not change the session, who types a name and only then sees it refused; "Language" and "Time zone" beside it are offered only under `can_change`. |
 
 ## Persistence

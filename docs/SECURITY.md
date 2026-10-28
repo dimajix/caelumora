@@ -602,7 +602,8 @@ question, in the viewer's name:
 What does not exist and what the viewer may not read are one answer, so that nothing can be probed.
 A node is reached through the running loop where there is one and from the stores otherwise, so the
 same navigation serves running and stopped sessions alike, and reaching a session does not start it.
-Names are read in the runtime's name.
+Names are read in the runtime's name. Among what makes a name known: whoever may read something of
+a user's scope learns whose it is, by name (`Views::scope_snapshot`, issue 475).
 
 A node answers with a **snapshot** (`caelumora_model::snapshot`) for a client that lists and offers,
 with flags such as `can_change` and `can_read_context` decided for the viewer. What else it holds

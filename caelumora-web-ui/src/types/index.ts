@@ -455,6 +455,20 @@ export interface SessionSnapshot {
 export type ScopeKind = 'session' | 'user' | 'global' | 'project';
 
 /**
+ * Where something kept in a scope lies (`ScopeResponse`): the kind of its scope and what that scope
+ * names - its session and channel, its project, or its user, who owns it, with their name where the
+ * server knows it (issue 475).
+ */
+export interface ScopeResponse {
+  scope: ScopeKind;
+  session_id?: string;
+  channel_id?: string;
+  project_id?: string;
+  user_id?: string;
+  user_name?: string;
+}
+
+/**
  * What an entry of an access list grants (issue 23): reading, changing the files too, or - for a
  * session or channel - joining it (issue 221).
  */
@@ -473,13 +487,13 @@ export interface AccessEntry {
   name?: string;
 }
 
-/** A workspace (issue 253), as whoever its access list lets read it sees it (issue 23). */
-export interface WorkspaceResponse {
+/**
+ * A workspace (issue 253), as whoever its access list lets read it sees it (issue 23); one of a
+ * session's scope was made for the session `session_id`.
+ */
+export interface WorkspaceResponse extends ScopeResponse {
   id: string;
   name: string;
-  scope: ScopeKind;
-  /** The session it was made for, if it lies in a session's scope. */
-  session_id?: string;
   /** The storage its files lie in, by its configured name. */
   storage: string;
   description?: string;
@@ -495,16 +509,13 @@ export interface WorkspaceResponse {
 }
 
 /**
- * A skill (issue 22): a procedure written down for agents, as whoever may read
- * it sees it - with its `body` where it is fetched alone, not where skills are
- * listed.
+ * A skill (issue 22): a procedure written down for agents, as whoever may read it sees it - with
+ * its `body` where it is fetched alone, not where skills are listed. One of a session's scope was
+ * written for the session `session_id`.
  */
-export interface SkillResponse {
+export interface SkillResponse extends ScopeResponse {
   id: string;
   name: string;
-  scope: ScopeKind;
-  /** The session it was written for, if it lies in a session's scope. */
-  session_id?: string;
   /** What it is for, in a line: what agents are shown to choose it by. */
   description: string;
   classification: Classification;
@@ -525,20 +536,14 @@ export interface CreateSkillRequest {
 }
 
 /**
- * A group (issue 286), as its owner and its members see it: a team a user
- * made, the participants of a session or a channel, or the members of a project (issue 467).
+ * A group (issue 286), as its owner and its members see it: a team a user made, the participants of
+ * a session or a channel, or the members of a project (issue 467). It lies in the scope `user` or
+ * `global` for a team; `session` for the participants of the session `session_id` - or of its
+ * channel `channel_id`; `project` for the members of the project `project_id`.
  */
-export interface GroupResponse {
+export interface GroupResponse extends ScopeResponse {
   id: string;
   name: string;
-  /**
-   * `user` or `global` for a team; `session` for the participants of the session `session_id` - or
-   * of its channel `channel_id`; `project` for the members of the project `project_id`.
-   */
-  scope: ScopeKind;
-  session_id?: string;
-  channel_id?: string;
-  project_id?: string;
   /** Whose it is. */
   owner: ActorId;
   /** Who belongs to it - users alone in a team. */
@@ -562,18 +567,12 @@ export interface CreateGroupRequest {
 
 /**
  * An agent the user may read (issues 164, 227), on its own rather than as a participant of a
- * channel.
+ * channel. It lies in the scope `user` or `global` as an agent of its own; `session` as one that
+ * takes part only in the session `session_id` - or in its channel `channel_id`.
  */
-export interface AgentResponse {
+export interface AgentResponse extends ScopeResponse {
   id: string;
   name: string;
-  /**
-   * `user` or `global` for an agent of its own; `session` for one that takes part only in the
-   * session `session_id` - or in its channel `channel_id`.
-   */
-  scope: ScopeKind;
-  session_id?: string;
-  channel_id?: string;
   /** Whose it is: whose rights it acts with. */
   owner: ActorId;
   personality_id: string;
@@ -607,14 +606,13 @@ export interface CreateAgentRequest {
   channel_id?: string;
 }
 
-/** A personality the user may read (issue 227): what they may make an agent of. */
-export interface PersonalityResponse {
+/**
+ * A personality the user may read (issue 227): what they may make an agent of. It lies as an
+ * agent's: an agent made of it lies there or within it.
+ */
+export interface PersonalityResponse extends ScopeResponse {
   id: string;
   name: string;
-  /** Where it lies, as an agent's: an agent made of it lies there or within it. */
-  scope: ScopeKind;
-  session_id?: string;
-  channel_id?: string;
   kind: PersonalityKind;
   description?: string;
 }
@@ -1079,15 +1077,9 @@ export interface CreateSessionRequest {
  * A project (issue 467): what holds the results of sessions, as whoever may read it sees it - a
  * shared one, or a session's own (`scope: session`, named `own`, the session `session_id`).
  */
-export interface ProjectResponse {
+export interface ProjectResponse extends ScopeResponse {
   id: string;
   name: string;
-  /**
-   * `user` or `global` for a shared project; `session` for the own project of the session
-   * `session_id`.
-   */
-  scope: ScopeKind;
-  session_id?: string;
   description?: string;
   /** Who works on it. */
   members: ProjectMemberResponse[];

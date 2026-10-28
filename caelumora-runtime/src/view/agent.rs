@@ -66,7 +66,7 @@ impl AgentView {
         Ok(AgentSnapshot {
             id: self.agent.id,
             name: self.agent.name.to_string(),
-            scope: self.agent.name.scope.clone(),
+            scope: self.views.scope_snapshot(&self.agent.name.scope).await,
             owner: self.agent.security_attributes.owner_id,
             personality_id: self.agent.personality_id,
             personality: personality.map(|personality| personality.name.to_string()),

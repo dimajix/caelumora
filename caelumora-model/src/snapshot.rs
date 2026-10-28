@@ -304,6 +304,16 @@ pub struct DeletedSnapshot<I> {
     pub can_purge: bool,
 }
 
+/// Where something lies, as its viewer is shown it (issue 475): its scope, and for a user's scope
+/// the name of that user - its owner -, where it is known; none for any other scope. The name
+/// stands beside the scope rather than in it: `Scope` is what is stored, the name what is read
+/// for the viewer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeSnapshot {
+    pub scope: Scope,
+    pub user_name: Option<String>,
+}
+
 /// A group as the viewer sees it (issue 286): a team they own or belong
 /// to, or the participants of a session or channel they read.
 #[derive(Debug, Clone, PartialEq)]
@@ -312,7 +322,7 @@ pub struct GroupSnapshot {
     pub name: String,
     /// Where it lies: a team in the global scope or its owner's, the
     /// participants of a session or channel in its scope.
-    pub scope: Scope,
+    pub scope: ScopeSnapshot,
     /// Whose it is.
     pub owner: ActorId,
     /// Who belongs to it, each with their name where it is known.
@@ -331,7 +341,7 @@ pub struct ProjectSnapshot {
     pub name: String,
     /// Where it lies: the global scope or its owner's for a shared project, a session's for its
     /// own.
-    pub scope: Scope,
+    pub scope: ScopeSnapshot,
     pub description: Option<Description>,
     /// Who works on it, each with their name where it is known.
     pub members: Vec<(UserId, Option<String>)>,
@@ -350,7 +360,7 @@ pub struct WorkspaceSnapshot {
     pub name: String,
     /// Where it lies (issue 251): a session's scope, its owner's or the
     /// global one.
-    pub scope: Scope,
+    pub scope: ScopeSnapshot,
     /// The storage its files lie in, by its configured name.
     pub storage: String,
     pub description: Option<Description>,
@@ -419,7 +429,7 @@ pub struct AgentSnapshot {
     pub name: String,
     /// Where it lies: its owner's scope, a group's, the global one, or a
     /// session's or channel's it takes part in alone.
-    pub scope: Scope,
+    pub scope: ScopeSnapshot,
     /// Whose it is: whose rights it acts with.
     pub owner: ActorId,
     /// What it is made of.
@@ -438,7 +448,7 @@ pub struct PersonalitySnapshot {
     pub id: PersonalityId,
     pub name: String,
     /// Where it lies: an agent made of it lies there or within it.
-    pub scope: Scope,
+    pub scope: ScopeSnapshot,
     pub kind: PersonalityKind,
     pub description: Option<Description>,
 }

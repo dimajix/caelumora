@@ -179,9 +179,11 @@ it uses the session's workspace (preset to yes), and participants.
 ### Workspaces
 
 The workspaces the user may read - their own and those shared with them - are listed below the
-sessions, each with where it lies where that is not the user's own scope. A workspace opens in the
-place of a channel (`WorkspacePage`): what it is, what its owner may do with it, whom it is shared
-with (`AccessList`), and its files - wherever it lies.
+sessions, each with where it lies where that is not the user's own scope. Wherever the web UI says
+where something lies, one of a user's scope is "yours" or named by whose it is, as the server names
+that user (`scopeLabel`, issue 475). A workspace opens in the place of a channel (`WorkspacePage`):
+what it is, what its owner may do with it, whom it is shared with (`AccessList`), and its files -
+wherever it lies.
 
 `AccessList` shows each grant with what it allows, to change or take away, and adds the members of a
 session the user may read, or of one of its channels, or a team the user reads. Users and roles are

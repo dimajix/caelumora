@@ -1,6 +1,6 @@
 # 475 — The web UI calls another user's workspace, team or project "yours"
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** User interaction
@@ -38,3 +38,22 @@ again.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of step 4b of issue 467.
+- **2026-10-28** — Decided with the maintainer: A, the name only for `scope: user`, and a
+  restructuring first. Of what lies in a user's scope, that user is its owner (`Stored::validate`
+  of workspaces, projects and groups), so a user's scope names its user as a session's names its
+  session; the owner's name is given there alone, which a global thing does not need. Step 1,
+  without a change of behaviour: the six responses that repeated where something lies - workspace,
+  project, agent, personality, group, skill - carry it as one `ScopeResponse` (`ScopeResponse::of`,
+  in place of `ScopeKind::of` and `ScopeKind::placed`), the JSON unchanged; named so, not
+  `Place…`, since `confidentiality::Place` is another concept. Step 2: `ScopeResponse` names the
+  user of a user's scope and their name, the runtime reads the name for the snapshots
+  (`Views::name_of`), SECURITY.md says that whoever reads something of another's scope learns
+  their name, and the web UI says "yours" or whose it is - also in the lists, and on a project's
+  page again -, its six response types sharing one interface for the place as the Rust ones do.
+- **2026-10-28** — Step 2: the snapshots carry where something lies as a `ScopeSnapshot` - its
+  scope and, for a user's, that user's name, read by `Views::scope_snapshot` -, and `ScopeResponse`
+  answers a user's scope with `user_id` and `user_name`. The web UI's six response types share one
+  `ScopeResponse` interface; the pages, lists and dialogs that say where something lies are given
+  the viewer's id (as `AgentPage` was), and `scopeLabel` says "yours", "of <name>" or "another
+  user's"; a template's workspace, whose `user` scope is that of whoever uses it, is labelled by its
+  kind alone (`kindLabel`). A project's page shows where it lies again.
