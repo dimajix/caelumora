@@ -77,3 +77,16 @@ Recommendation: A and B.
   step 4. With it, from the review: the attributes of a new channel are `Channel::attributes_of`,
   which `Channel::build` and the tests' `main_channel` and the views' `like` use instead of three
   copies.
+- **2026-10-28** — Step 3: the memory tests' `Sessions` makes each session with
+  `SessionManager::create`, owned by a stored user who takes part in it, on the runtime of
+  `session::testing::owned_runtime`, whose ownership policy learns who belongs to a group from its
+  store; the channels a turn works in are created by the session's owner
+  (`SessionLoop::create_channel`), with everyone in the session. A session's privacy is changed by
+  its owner (`SessionLoop::update_privacy`); a session that is gone is deleted
+  (`SessionManager::delete`) instead of purged by hand, and is restored and opened again instead of
+  stored anew. In the test of the policy deciding what is recalled, the stranger the policy refuses
+  now takes part in the session: one who may not read the channel reads nothing of it, whatever
+  the policy says. `session::testing::running_channel`, which ran a channel that was never stored,
+  had no other user and is gone. The component of the tests asks an ownership policy of its own,
+  as it did in two of them already: the runtime's, which it is given in a channel, cannot be had
+  from the session manager outside the runtime's crate.

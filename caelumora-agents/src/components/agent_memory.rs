@@ -244,16 +244,13 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::project::ProjectId;
     use caelumora_model::confidentiality::{ConfidentialityRules, Compartments, Reading, Place};
-    use caelumora_model::removal::Removal;
     use caelumora_runtime::transport::Discard;
-    use crate::testing::{self, TestAgents};
-    use caelumora_runtime::testing::TestRuntime;
+    use crate::testing;
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
-    use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
-    use caelumora_runtime::session::SessionLoop;
-    use caelumora_runtime::session::testing::{actor_runtime_in, main_channel, running_channel};
+    use caelumora_runtime::runtime::ActorRuntime;
+    use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
+    use caelumora_runtime::session::testing::{actor_runtime_in, main_channel, make_session, owned_runtime, record_users, spec, user};
     use crate::testing::detached_actor_runtime;
     use crate::tool::ToolError;
     use caelumora_model::actor::{ActorId, EventContext};
@@ -261,15 +258,13 @@ mod tests {
     use caelumora_model::channel::Participant;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
-    use caelumora_model::security::{OwnershipPolicy, SecurityAttributes, SecurityContext};
+    use caelumora_model::security::{OwnershipPolicy, SecurityContext};
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::StateStore;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use std::collections::HashMap;
     use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::value::name::Name;
-    use chrono::Utc;
     use std::ops::Deref;
     use caelumora_model::work::Work;
 
@@ -280,10 +275,6 @@ mod tests {
     /// The context of an envelope routed in the channel `at`.
     fn in_channel(at: &At) -> EventContext {
         EventContext::new(at.0.0, at.0.1, ActorId::None, String::new())
-    }
-
-    fn channel(session: SessionId, level: Confidentiality) -> At {
-        ((session, ChannelId::new()), Classification::general(level))
     }
 
     /// The component of an agent, asking `access_policy`, and the agent's owner:
@@ -309,10 +300,10 @@ mod tests {
         }
     }
 
-    /// The component of an agent owned by `owner`, asking `access_policy`, the
-    /// flow decided by the rules of no compartments.
-    fn component(access_policy: Arc<dyn AccessPolicy>, owner: ActorId) -> Memory {
-        Memory { component: AgentMemoryComponent::new(access_policy, Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap(), owner }
+    /// The component of an agent owned by `owner`, the flow decided by the
+    /// rules of no compartments.
+    fn component(owner: ActorId) -> Memory {
+        component_under(Arc::new(ConfidentialityRules::default()), owner)
     }
 
     /// The component of an agent owned by `owner`, the flow decided by
@@ -326,92 +317,111 @@ mod tests {
         AgentStates::new(store, Arc::new(())).get(agent, Default::default()).await.unwrap()
     }
 
-    /// The sessions of a test, as a turn reaches them: stored in the
-    /// runtime's store, and running with their main channel and every
-    /// channel a turn works in, through which it reaches its session and
-    /// reads its privacy from its loop.
+    /// The sessions of a test, as a turn reaches them: made as the runtime
+    /// makes a session (`SessionManager::create`, issue 486) and running,
+    /// with every channel a turn works in, through which it reaches its
+    /// session and reads its privacy from its loop. Each is changed,
+    /// deleted and restored by its owner.
     struct Sessions {
-        runtime: Arc<RuntimeManager>,
+        manager: Arc<SessionManager>,
         loops: HashMap<SessionId, Arc<SessionLoop>>,
+        /// How many were made, for their names.
+        made: usize,
     }
 
     impl Sessions {
-        async fn under(access_policy: Arc<dyn AccessPolicy>) -> Self {
-            let runtime = TestRuntime { access_policy, plugins: vec![&TestAgents], ..Default::default() }.build();
-            Self { runtime, loops: HashMap::new() }
+        /// The sessions of a runtime under the ownership policy, which
+        /// learns who belongs to a group from its store, with `rules` as the
+        /// confidentiality policy (`owned_runtime`).
+        fn under(rules: ConfidentialityRules) -> Self {
+            let (_, manager) = owned_runtime(rules);
+            Self { manager, loops: HashMap::new(), made: 0 }
         }
 
-        /// Session `id` as privacy sees it as `privacy`, stored and running.
-        async fn add(&mut self, id: SessionId, privacy: SessionPrivacy) -> &mut Self {
-            let session = session_with(id, &privacy);
-            self.runtime.entity_stores().sessions.create(&SecurityContext::system(), &session).await.unwrap();
-            self.loops.insert(id, SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&self.runtime)).await.unwrap());
-            self
+        /// A user named `name`, stored (`record_users`): to own sessions and
+        /// the agent, or to take part.
+        async fn user(&self, name: &str) -> UserId {
+            let user = user(name);
+            record_users(&self.manager, &[&user]).await;
+            user.id
         }
 
-        /// Session `id` lets others read as `privacy` says from now on -
-        /// stored, as a change to a running session is stored first - or
-        /// is gone (`None`).
-        async fn set(&mut self, id: SessionId, privacy: Option<SessionPrivacy>) {
-            let sessions = &self.runtime.entity_stores().sessions;
-            match privacy {
-                Some(privacy) => {
-                    let session = session_with(id, &privacy);
-                    if sessions.update(&SecurityContext::system(), &session).await.is_err() {
-                        // Gone meanwhile: back again.
-                        sessions.create(&SecurityContext::system(), &session).await.unwrap();
-                    }
-                    self.loops.insert(id, SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&self.runtime)).await.unwrap());
-                }
-                None => {
-                    sessions.delete(&SecurityContext::system(), id, &Removal::now(ActorId::System)).await.unwrap();
-                    sessions.purge(&SecurityContext::system(), id).await.unwrap();
-                    self.loops.remove(&id);
-                }
-            }
+        /// Creates a session of `owner`, who takes part in it, letting others
+        /// read as `policy` says: running with its main channel.
+        async fn create(&mut self, owner: UserId, policy: PrivacyConfig) -> SessionId {
+            self.made += 1;
+            let session = make_session(&format!("s{}", self.made), owner);
+            let session = Session { privacy: policy, participants: vec![Participant::User(owner)], ..session };
+            let channels = vec![main_channel(&session)];
+            let running = self.manager.create(&as_user(owner), session, channels).await.unwrap();
+            self.loops.insert(running.id(), Arc::clone(&running));
+            running.id()
+        }
+
+        /// Takes `user` into session `id`, by its owner: into every channel
+        /// made after.
+        async fn take_in(&self, id: SessionId, user: UserId) {
+            let session = self.running(id);
+            session.add_participant(&owner_of(session), ActorId::User(user), None).await.unwrap();
+        }
+
+        /// Creates a channel of session `id` classified as `classification`,
+        /// by the session's owner, with everyone in the session: where a turn
+        /// works.
+        async fn create_channel(&self, id: SessionId, classification: Classification) -> At {
+            let session = self.running(id);
+            let participants = session.session().participants.iter().map(Participant::actor_id).collect();
+            let spec = ChannelSpec { classification: Some(classification.clone()), ..spec(&format!("c{}", session.channels().len()), participants) };
+            let channel = session.create_channel(&owner_of(session), spec).await.unwrap();
+            ((id, channel.id()), classification)
+        }
+
+        /// Session `id` lets others read as `policy` says from now on.
+        async fn set_privacy(&self, id: SessionId, policy: PrivacyConfig) {
+            let session = self.running(id);
+            session.update_privacy(&owner_of(session), policy).await.unwrap();
+        }
+
+        /// Deletes session `id`: there is none such for whoever looks it up.
+        async fn delete(&mut self, id: SessionId) {
+            let session = self.loops.remove(&id).expect("a running session of the test");
+            self.manager.delete(&owner_of(&session), id).await.unwrap();
+        }
+
+        /// Restores the deleted session `id` of `owner` and runs it again.
+        async fn restore(&mut self, id: SessionId, owner: UserId) {
+            self.manager.restore(&as_user(owner), id).await.unwrap();
+            let running = self.manager.open(&as_user(owner), id).await.unwrap();
+            self.loops.insert(id, running);
         }
 
         /// The runtime a turn in channel `at` acts through: in that
         /// channel, run by its session.
-        async fn runtime_in(&self, at: &At) -> ActorRuntime {
-            let session = self.loops.get(&at.0.0).expect("a session of the test");
-            let channel = running_channel(session, at.0.1, at.1.clone()).await;
+        fn runtime_in(&self, at: &At) -> ActorRuntime {
+            let channel = self.running(at.0.0).channel(at.0.1).expect("a channel of the test");
             actor_runtime_in(&channel, ActorId::None)
         }
-    }
 
-    /// A session `id` that privacy sees as `privacy`.
-    fn session_with(id: SessionId, privacy: &SessionPrivacy) -> Session {
-        let now = Utc::now();
-        Session {
-            summary: None, briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            id,
-            name: Name::new("s").unwrap(),
-            participants: privacy.people.iter().map(|user| Participant::User(*user)).collect(),
-            channels: vec![ChannelId::new()],
-            commands: Default::default(),
-            privacy: privacy.policy,
-            created_at: now,
-            updated_at: now,
-            security_attributes: SecurityAttributes::owned_by(privacy.owner),
-            deleted: None,
+        fn running(&self, id: SessionId) -> &Arc<SessionLoop> {
+            self.loops.get(&id).expect("a running session of the test")
         }
     }
 
-    fn session_of(policy: PrivacyConfig, owner: UserId) -> SessionPrivacy {
-        SessionPrivacy { id: SessionId::new(), policy, owner: ActorId::User(owner), people: [owner].into_iter().collect() }
+    fn as_user(user: UserId) -> SecurityContext {
+        SecurityContext::new(ActorId::User(user), Default::default(), Default::default())
     }
 
-    /// Remembers `text` in a turn in channel `at`, and completes the turn.
+    /// What the owner of `session` acts in.
+    fn owner_of(session: &SessionLoop) -> SecurityContext {
+        SecurityContext::new(session.session().security_attributes.owner_id, Default::default(), Default::default())
+    }
+
     /// Remembers `text` in a turn in channel `at` that was told something
     /// classified as the channel.
     async fn remember(memory: &Memory, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At, text: &str) {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle), sessions.runtime_in(&at).await).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle), sessions.runtime_in(&at)).expect("a turn was begun");
         turn.see(&at.1);
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
@@ -421,7 +431,7 @@ mod tests {
     async fn recall(memory: &Memory, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At) -> Prompt {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at, agent);
-        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle), sessions.runtime_in(&at).await).expect("a turn was begun");
+        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle), sessions.runtime_in(&at)).expect("a turn was begun");
         memory.get_prompt(&turn.situation()).await.unwrap()
     }
 
@@ -429,19 +439,18 @@ mod tests {
     async fn what_is_remembered_is_recalled_wherever_its_origin_may_be_read() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
-        let memory = component(Arc::clone(&access_policy), ActorId::User(UserId::new()));
-        let (session, other_session) = (SessionId::new(), SessionId::new());
-        let mut sessions = Sessions::under(access_policy).await;
-        sessions.add(session, SessionPrivacy::default()).await.add(other_session, SessionPrivacy::default()).await;
-        let (team, public, elsewhere) = (channel(session, Confidentiality::Internal), channel(session, Confidentiality::Public), channel(other_session, Confidentiality::Internal));
+        let mut sessions = Sessions::under(Default::default());
+        let owner = sessions.user("owner").await;
+        let memory = component(ActorId::User(owner));
+        let (session, other_session) = (sessions.create(owner, PrivacyConfig::Private).await, sessions.create(owner, PrivacyConfig::Private).await);
+        let (team, public, elsewhere) = (sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await, sessions.create_channel(session, Classification::general(Confidentiality::Public)).await, sessions.create_channel(other_session, Classification::general(Confidentiality::Internal)).await);
 
         // A turn in an internal channel remembers something it was told
         // there ...
         let mut state = AgentChannelState::default();
         {
             memory.begin(&mut state, &team, agent);
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&team).await).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&team)).expect("a turn was begun");
             turn.see(&team.1);
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
@@ -451,7 +460,7 @@ mod tests {
 
         // ... which another actor of the agent recalls in a channel that may
         // read that one, and not where it may not be known.
-        let same_session = recall(&memory, &sessions, &handle, agent, channel(session, Confidentiality::Confidential)).await;
+        let same_session = recall(&memory, &sessions, &handle, agent, sessions.create_channel(session, Classification::general(Confidentiality::Confidential)).await).await;
         assert!(same_session.text.contains("#1: Kaya likes tea."), "{}", same_session.text);
         assert_eq!(same_session.knowledge.len(), 1, "recorded as knowledge read");
         assert!(recall(&memory, &sessions, &handle, agent, public).await.text.is_empty(), "a public channel may not read an internal one");
@@ -460,10 +469,10 @@ mod tests {
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &elsewhere, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&elsewhere).await).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&elsewhere)).expect("a turn was begun");
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.is_err());
         memory.begin(&mut state, &team, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&team).await).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&team)).expect("a turn was begun");
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
         assert!(handle.current().memory.current().is_empty());
@@ -473,23 +482,22 @@ mod tests {
     async fn an_entry_is_updated_only_where_it_is_recalled_and_stands_where_it_was_updated() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
-        let memory = component(Arc::clone(&access_policy), ActorId::User(UserId::new()));
-        let (session, other_session) = (SessionId::new(), SessionId::new());
-        let mut sessions = Sessions::under(access_policy).await;
-        sessions.add(session, SessionPrivacy::default()).await.add(other_session, SessionPrivacy::default()).await;
-        let (team, confidential, elsewhere) = (channel(session, Confidentiality::Internal), channel(session, Confidentiality::Confidential), channel(other_session, Confidentiality::Internal));
+        let mut sessions = Sessions::under(Default::default());
+        let owner = sessions.user("owner").await;
+        let memory = component(ActorId::User(owner));
+        let (session, other_session) = (sessions.create(owner, PrivacyConfig::Private).await, sessions.create(owner, PrivacyConfig::Private).await);
+        let (team, confidential, elsewhere) = (sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await, sessions.create_channel(session, Classification::general(Confidentiality::Confidential)).await, sessions.create_channel(other_session, Classification::general(Confidentiality::Internal)).await);
         remember(&memory, &sessions, &handle, agent, team.clone(), "Kaya likes tea.").await;
 
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &elsewhere, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&elsewhere).await).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&elsewhere)).expect("a turn was begun");
         let there = memory.execute(UPDATE_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }), None, &mut turn).await;
         assert!(matches!(there, Err(ToolError::InvalidParameter(_))), "not where it is not recalled");
 
         // Updated in a turn that has seen what is confidential ...
         memory.begin(&mut state, &confidential, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&confidential).await).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&confidential)).expect("a turn was begun");
         turn.see(&confidential.1);
         let updated = memory.execute(UPDATE_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }), None, &mut turn).await.unwrap();
         assert_eq!(updated.value, serde_json::json!({ "status": "updated", "id": 1 }));
@@ -507,16 +515,15 @@ mod tests {
     async fn an_entry_remembered_and_forgotten_in_one_turn_is_gone_once_it_completes() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
-        let memory = component(Arc::clone(&access_policy), ActorId::User(UserId::new()));
-        let session = SessionId::new();
-        let mut sessions = Sessions::under(access_policy).await;
-        sessions.add(session, SessionPrivacy::default()).await;
-        let team = channel(session, Confidentiality::Internal);
+        let mut sessions = Sessions::under(Default::default());
+        let owner = sessions.user("owner").await;
+        let memory = component(ActorId::User(owner));
+        let session = sessions.create(owner, PrivacyConfig::Private).await;
+        let team = sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await;
 
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &team, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&team).await).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&team)).expect("a turn was begun");
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn).await.unwrap();
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.expect("remembered in this turn");
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.is_err(), "forgotten already");
@@ -530,8 +537,8 @@ mod tests {
     async fn a_turn_in_no_session_recalls_nothing_and_remembers_as_private() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let memory = component(Arc::new(OwnershipPolicy::new()), ActorId::User(UserId::new()));
-        let at = channel(SessionId::new(), Confidentiality::Internal);
+        let memory = component(ActorId::User(UserId::new()));
+        let at = ((SessionId::new(), ChannelId::new()), Classification::general(Confidentiality::Internal));
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at, agent);
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), detached_actor_runtime()).expect("a turn was begun");
@@ -565,13 +572,15 @@ mod tests {
     async fn the_policy_decides_what_is_recalled_asked_in_the_agents_name() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let (owner, stranger) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let mut sessions = Sessions::under(Default::default());
+        let (owner, stranger) = (sessions.user("owner").await, sessions.user("stranger").await);
+        let session = sessions.create(owner, PrivacyConfig::Private).await;
+        // In the session: whom the policy refuses may read its channels.
+        sessions.take_in(session, stranger).await;
+        let (owner, stranger) = (ActorId::User(owner), ActorId::User(stranger));
         let policy: Arc<dyn ConfidentialityPolicy> = Arc::new(OnlyFor(Some(owner), Default::default()));
-        let session = SessionId::new();
-        let mut sessions = Sessions::under(Arc::new(OwnershipPolicy::new())).await;
-        sessions.add(session, SessionPrivacy::default()).await;
         // Public, so that the built-in rule would let every channel read it.
-        let (origin, reader) = (channel(session, Confidentiality::Public), channel(session, Confidentiality::Internal));
+        let (origin, reader) = (sessions.create_channel(session, Classification::general(Confidentiality::Public)).await, sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await);
         remember(&component_under(Arc::clone(&policy), owner), &sessions, &handle, agent, origin.clone(), "Kaya likes tea.").await;
 
         let asked_by_owner = recall(&component_under(Arc::clone(&policy), owner), &sessions, &handle, agent, reader.clone()).await;
@@ -586,19 +595,18 @@ mod tests {
     async fn what_a_turn_remembers_is_classified_as_what_it_has_seen() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
-        let memory = component(Arc::clone(&access_policy), ActorId::User(UserId::new()));
-        let session = SessionId::new();
-        let mut sessions = Sessions::under(access_policy).await;
-        sessions.add(session, SessionPrivacy::default()).await;
-        let (confidential, public) = (channel(session, Confidentiality::Confidential), channel(session, Confidentiality::Public));
+        let mut sessions = Sessions::under(Default::default());
+        let owner = sessions.user("owner").await;
+        let memory = component(ActorId::User(owner));
+        let session = sessions.create(owner, PrivacyConfig::Private).await;
+        let (confidential, public) = (sessions.create_channel(session, Classification::general(Confidentiality::Confidential)).await, sessions.create_channel(session, Classification::general(Confidentiality::Public)).await);
 
         // A turn in a confidential channel that has seen only what is
         // internal remembers it as internal (issue 168) ...
         let mut state = AgentChannelState::default();
         {
             memory.begin(&mut state, &confidential, agent);
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&confidential).await).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&confidential)).expect("a turn was begun");
             turn.see(&Classification::general(Confidentiality::Internal));
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.classification, Some(Classification::general(Confidentiality::Internal)), "its answer as the turn");
@@ -608,7 +616,7 @@ mod tests {
         assert_eq!(remembered[0].classification, Classification::general(Confidentiality::Internal));
 
         // ... so that an internal channel recalls it, a public one not.
-        assert!(recall(&memory, &sessions, &handle, agent, channel(session, Confidentiality::Internal)).await.text.contains("Kaya likes tea."));
+        assert!(recall(&memory, &sessions, &handle, agent, sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await).await.text.contains("Kaya likes tea."));
         assert!(recall(&memory, &sessions, &handle, agent, public).await.text.is_empty());
 
         // What is recalled is recorded with its classification, and is
@@ -624,20 +632,19 @@ mod tests {
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let memory = component_under(Arc::new(ConfidentialityRules::new(compartments)), ActorId::User(UserId::new()));
-        let session = SessionId::new();
-        let mut sessions = Sessions::under(Arc::new(OwnershipPolicy::new())).await;
-        sessions.add(session, SessionPrivacy::default()).await;
-        let in_compartments = |names: &[&str]| -> At {
-            ((session, ChannelId::new()), Classification::new(Confidentiality::Internal, names.iter().map(|n| Compartment::new(*n))).unwrap())
-        };
-        let (hr, finance) = (in_compartments(&["hr"]), in_compartments(&["finance"]));
+        let rules = ConfidentialityRules::new(compartments);
+        let mut sessions = Sessions::under(rules.clone());
+        let owner = sessions.user("owner").await;
+        let memory = component_under(Arc::new(rules), ActorId::User(owner));
+        let session = sessions.create(owner, PrivacyConfig::Private).await;
+        let in_compartment = |name: &str| Classification::new(Confidentiality::Internal, [Compartment::new(name)]).unwrap();
+        let (hr, finance) = (sessions.create_channel(session, in_compartment("hr")).await, sessions.create_channel(session, in_compartment("finance")).await);
         remember(&memory, &sessions, &handle, agent, hr.clone(), "The budget is tight.").await;
         assert!(recall(&memory, &sessions, &handle, agent, finance.clone()).await.text.is_empty(), "HR's, not finance's");
 
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &hr, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&hr).await).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.runtime_in(&hr)).expect("a turn was begun");
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });
         assert!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &above, None, &mut turn).await.is_err(), "never above the channel");
         let unknown = serde_json::json!({ "id": 7, "level": "internal", "compartments": ["hr"] });
@@ -655,42 +662,40 @@ mod tests {
     async fn an_entry_is_recalled_in_another_session_where_its_session_agreed_then_and_now() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let (alice, bob) = (UserId::new(), UserId::new());
-        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
-        let memory = component(Arc::clone(&access_policy), ActorId::User(alice));
-        let (hers, other, bobs) = (SessionId::new(), SessionId::new(), SessionId::new());
-        let mut sessions = Sessions::under(access_policy).await;
-        sessions.add(hers, session_of(PrivacyConfig::SameOwner, alice)).await
-            .add(other, session_of(PrivacyConfig::Private, alice)).await
-            .add(bobs, session_of(PrivacyConfig::Private, bob)).await;
+        let mut sessions = Sessions::under(Default::default());
+        let (alice, bob) = (sessions.user("alice").await, sessions.user("bob").await);
+        let memory = component(ActorId::User(alice));
+        let hers = sessions.create(alice, PrivacyConfig::SameOwner).await;
+        let other = sessions.create(alice, PrivacyConfig::Private).await;
+        let bobs = sessions.create(bob, PrivacyConfig::Private).await;
 
         // Remembered in a session of hers that lets her other sessions read it ...
-        let origin = channel(hers, Confidentiality::Internal);
+        let origin = sessions.create_channel(hers, Classification::general(Confidentiality::Internal)).await;
         remember(&memory, &sessions, &handle, agent, origin.clone(), "Kaya likes tea.").await;
         let remembered = handle.current().memory.current();
         assert_eq!(remembered[0].origin.session.policy, PrivacyConfig::SameOwner, "the entry keeps its session's privacy");
 
         // ... and recalled in another of hers, while the session still agrees.
-        let elsewhere = channel(other, Confidentiality::Internal);
+        let elsewhere = sessions.create_channel(other, Classification::general(Confidentiality::Internal)).await;
         let recalled = recall(&memory, &sessions, &handle, agent, elsewhere.clone()).await;
         assert!(recalled.text.contains("Kaya likes tea."), "{}", recalled.text);
         assert_eq!(recalled.knowledge.len(), 1);
         assert_eq!((recalled.knowledge[0].session, recalled.knowledge[0].channel), origin.0, "recorded with the channel it came from, of its session");
 
-        sessions.set(hers, Some(session_of(PrivacyConfig::Private, alice))).await;
+        sessions.set_privacy(hers, PrivacyConfig::Private).await;
         assert!(recall(&memory, &sessions, &handle, agent, elsewhere.clone()).await.text.is_empty(), "no longer, once the session is private");
-        sessions.set(hers, None).await;
+        sessions.delete(hers).await;
         assert!(recall(&memory, &sessions, &handle, agent, elsewhere.clone()).await.text.contains("Kaya likes tea."), "of a session that is gone, what it agreed to then");
 
-        let in_bobs = recall(&memory, &sessions, &handle, agent, channel(bobs, Confidentiality::Internal)).await;
+        let in_bobs = recall(&memory, &sessions, &handle, agent, sessions.create_channel(bobs, Classification::general(Confidentiality::Internal)).await).await;
         assert!(in_bobs.text.is_empty(), "not in someone else's session");
 
         // What was said while the session was private stays there, even
         // after it lets others read.
-        sessions.set(hers, Some(session_of(PrivacyConfig::Private, alice))).await;
-        remember(&memory, &sessions, &handle, agent, channel(hers, Confidentiality::Internal), "Kaya is moving.").await;
-        sessions.set(hers, Some(session_of(PrivacyConfig::SameOwner, alice))).await;
-        let recalled = recall(&memory, &sessions, &handle, agent, channel(other, Confidentiality::Internal)).await;
+        sessions.restore(hers, alice).await;
+        remember(&memory, &sessions, &handle, agent, sessions.create_channel(hers, Classification::general(Confidentiality::Internal)).await, "Kaya is moving.").await;
+        sessions.set_privacy(hers, PrivacyConfig::SameOwner).await;
+        let recalled = recall(&memory, &sessions, &handle, agent, sessions.create_channel(other, Classification::general(Confidentiality::Internal)).await).await;
         assert!(recalled.text.contains("Kaya likes tea.") && !recalled.text.contains("Kaya is moving."), "{}", recalled.text);
     }
 

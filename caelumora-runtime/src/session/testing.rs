@@ -203,18 +203,6 @@ pub fn main_channel(session: &Session) -> Channel {
     }
 }
 
-/// The channel `id` of the running `session`, classified as
-/// `classification`: the one it runs, or else one it is made to run as its
-/// main channel is, with that id and classification - for tests whose
-/// agents work in channels of their own.
-pub async fn running_channel(session: &Arc<SessionLoop>, id: ChannelId, classification: Classification) -> Arc<ChannelLoop> {
-    if let Some(running) = session.channel(id) {
-        return running;
-    }
-    let channel = Channel { id, classification, ..main_channel(&session.session()) };
-    session.add_channel_loop(&channel).await.unwrap()
-}
-
 /// Creates and starts `session` with its main channel.
 pub async fn create(manager: &SessionManager, ctx: &SecurityContext, session: Session) -> Result<Arc<SessionLoop>> {
     let channels = vec![main_channel(&session)];
