@@ -39,11 +39,11 @@ use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::group::{Group, GroupId};
+use caelumora_model::group::GroupId;
 use caelumora_model::security::{ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::project::Project;
+use caelumora_model::project::ProjectId;
 use caelumora_model::store::{EntityKind, Persistence, StoreError};
 use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
@@ -57,8 +57,6 @@ use caelumora_model::actor::ActorEvent;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use crate::session::{SessionError, SessionLoop, SessionManager};
-use crate::session::testing::founded;
-use crate::session::make_own;
 use crate::project::{ProjectError, ProjectManager};
 use crate::error::refusal;
 use crate::view::Viewer;
@@ -412,15 +410,16 @@ impl World {
 
     /// A session of alice with bob in it, and a channel "main" of both of
     /// them and `agents`; the session also has `waiting`, in no channel.
-    /// Stored as a setup would, then opened by alice.
+    /// Made as `session_of` makes it.
     pub async fn shared_session(&self, agents: &[AgentId], waiting: &[AgentId]) -> Arc<SessionLoop> {
         self.session_of(&[self.bob], agents, waiting).await
     }
 
     /// A session of alice with `others` in it, and a channel "main" of
-    /// them all and `agents`; the session also has `waiting`, in no
-    /// channel, and a project of its own. Stored as a setup would, then
-    /// opened by alice.
+    /// them all and `agents`, its founders; the session also has `waiting`,
+    /// in no channel. Made by alice as the runtime makes a session
+    /// (`SessionManager::create`) - with a project of its own -, then
+    /// opened by her.
     pub async fn session_of(&self, others: &[UserId], agents: &[AgentId], waiting: &[AgentId]) -> Arc<SessionLoop> {
         let alice = ActorId::User(self.alice);
         let users: Vec<Participant> = iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
@@ -429,12 +428,12 @@ impl World {
         let mut channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None);
         channel.participants = in_channel;
         channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
-        let own = Project::own_of(channel.session_id, self.alice);
         let session = Session {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
-            project: own.id,
+            // Replaced by its own, which `create` makes with it.
+            project: ProjectId::new(),
             id: channel.session_id,
             name: Name::new("shared").unwrap(),
             commands: Default::default(),
@@ -446,15 +445,9 @@ impl World {
             security_attributes: SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::of_session(channel.session_id)), Grant::Read),
             deleted: None,
         };
-        // Each with the group of its participants, as the runtime stores them
-        // (issue 286), the session with its own project (issue 467).
-        self.runtime.entity_stores().sessions.create(&Self::system(), &session).await.unwrap();
-        self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
-        make_own(self.runtime.entity_stores(), &own).await.unwrap();
-        self.runtime.entity_stores().channels.create(&Self::system(), &channel).await.unwrap();
-        self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
-        self.runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
-        self.manager.open(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
+        let id = session.id;
+        self.manager.create(&Self::as_user(self.alice), session, vec![channel]).await.expect("the session is made");
+        self.manager.open(&Self::as_user(self.alice), id).await.expect("alice opens her session")
     }
 
     /// The ids of the participants of `channel` as `user` sees them.

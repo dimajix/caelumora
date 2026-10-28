@@ -47,7 +47,7 @@ use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KI
 use caelumora_agents::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_agents::testing::{about_agent_commands, calling, register_scripted, TestAgents, ONCE_MODEL_KIND};
 use caelumora_agents::testing as agent_testing;
-use caelumora_runtime::testing::{asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World};
+use caelumora_runtime::testing::{asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World, STAFF};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
 use caelumora_model::snapshot::PersonalitySnapshot;
@@ -1635,6 +1635,9 @@ async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Cla
 async fn remote_personality(world: &World) -> Personality {
     let remote = Personality {
         kind: PersonalityKind::External,
+        // Cleared as its owner, for the channels of the world: an external
+        // personality that names no roles is limited to what is public.
+        roles: Some(vec![*STAFF]),
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "remote_at_work")] },
         ..world.personality("remote", None, &[]).await
     };
