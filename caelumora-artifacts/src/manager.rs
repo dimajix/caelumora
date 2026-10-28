@@ -24,7 +24,7 @@ use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttri
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
-use caelumora_model::store::{Address, EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Address, Deleted, EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -392,7 +392,7 @@ impl ArtifactManager {
     /// `PermissionDenied`, `StorageGone`, `Content`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(artifact) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(Deleted { entity: artifact, .. }) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.access_policy.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), StoreError::PermissionDenied).await?;
         self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key(id)).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
@@ -455,7 +455,7 @@ impl ScopeMember for ArtifactManager {
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity: artifact, .. } in self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             // Its content is its storage too.
             let unremoved = |e: &dyn fmt::Display| StoreError::Backend(format!("the content of artifact {} cannot be removed: {e}", artifact.id));
             self.storages.kept_in(&artifact.storage).map_err(|e| unremoved(&e))?.remove_under(&versions_key(artifact.id)).await.map_err(|e| unremoved(&e))?;

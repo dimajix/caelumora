@@ -1,3 +1,8 @@
+//! Where what outlasts a run is kept (issues 93, 323): the entities of every kind behind one
+//! checked interface (`EntityStore`), opened from a backend (`Persistence`), and the state, the
+//! histories and the transcripts of what runs (`StateStore`). A stored entity is deleted by a mark
+//! (`Removal`, issue 164), which the store hands out with what was deleted (`Deleted`).
+
 pub(crate) mod access;
 pub mod documents;
 pub mod history;
@@ -339,6 +344,24 @@ impl Enclosing for NoEntity {
 /// `(SessionId, ChannelId)`.
 pub type Address<T> = <<T as Stored>::Within as Enclosing>::Address<<T as Stored>::Id>;
 
+/// Something deleted as the store hands it out (issues 164, 472): the entity as it is stored, and
+/// the mark it is sure to carry - who deleted it and when, and so what went with it (issue 469).
+/// The entity carries the mark as well, as it is stored; `removal` is the one to read, which
+/// needs no check.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Deleted<T> {
+    pub entity: T,
+    pub removal: Removal,
+}
+
+impl<T: Stored> Deleted<T> {
+    /// `entity` as deleted, if it carries the mark.
+    pub(crate) fn of(entity: T) -> Option<Self> {
+        let removal = entity.deleted()?.clone();
+        Some(Self { entity, removal })
+    }
+}
+
 /// The entities of one kind (issues 93, 323): every kind has the same
 /// operations, checked the same way (`store::access`), and is kept by a
 /// store of its own. `create` refuses an entity that exists (`Conflict`),
@@ -355,9 +378,9 @@ pub type Address<T> = <<T as Stored>::Within as Enclosing>::Address<<T as Stored
 /// (`Validation`). What is marked is not there for `get`, `list`, `update` and `delete`, also not
 /// for the system, and its id is not free for `create`; nothing new or changed may carry the mark
 /// (`Validation`). What was deleted is reached by four operations of its own: `get_deleted` and
-/// `list_deleted` read it (`ReadDeleted`), `restore` takes the mark away (`Restore`) and returns
-/// what it restored, and `purge` removes what was deleted for good (`Purge`) - only what is marked,
-/// so that a purge never takes what was restored.
+/// `list_deleted` read it (`ReadDeleted`), each with its mark (`Deleted`), `restore` takes the mark
+/// away (`Restore`) and returns what it restored, and `purge` removes what was deleted for good
+/// (`Purge`) - only what is marked, so that a purge never takes what was restored.
 #[async_trait]
 pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
@@ -367,8 +390,8 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
-    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
-    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
+    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>>;
+    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<Deleted<T>>>;
     /// The one of `name`, in exactly that scope, among what the caller may
     /// read (issue 178).
     async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;

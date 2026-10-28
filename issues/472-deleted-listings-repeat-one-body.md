@@ -1,6 +1,6 @@
 # 472 — Every listing of what was deleted repeats one body
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -31,9 +31,24 @@ a field more, another question - has to be made in all of them, and the next kin
 
 Recommendation: A.
 
+## Decision
+
+A, with the finding of issue 469 recorded below, in two steps:
+
+1. **The store hands out what was deleted with its mark.** `get_deleted` answers
+   `Deleted<T> { entity, removal }`, `list_deleted` a `Page<Deleted<T>>` - a type, not a pair: it
+   is the store's public interface, crosses crates and stands in a `Page`. The store makes it in one
+   place; no caller checks for the mark. No `Deref`: what is deleted is reached as such.
+2. **One function makes the entries.** `Views::deleted_of(store, query, name)`, which answers
+   `StoreResult`, so that each caller keeps its own error; the name of an entry is given by a
+   closure, not by a method of `Stored` that every kind would implement for seven callers. The
+   deleted channels take it too, and narrow what it answers by their reason: restoring one changes
+   the session, and none is purged alone.
+
 ## Done when
 
 - The deleted entries of every kind are made in one place.
+- No caller of `get_deleted` or `list_deleted` checks for the mark.
 
 ## History
 
@@ -48,3 +63,10 @@ Recommendation: A.
   both answer the entity with its mark (`Deleted<T> { entity, removal }`, or a pair), so that no
   caller checks for it and the one function of option A takes the mark from there. A change of
   the reading interface of `EntityStore`, with its callers.
+- **2026-10-28** — Taken up; the plan above agreed with the maintainer, work begun on branch
+  `issue-472-deleted-listings`.
+- **2026-10-28** — Step 1 done: `get_deleted` answers `Deleted<T> { entity, removal }`,
+  `list_deleted` a `Page<Deleted<T>>`; the store makes it in one place (`Deleted::of`,
+  `CheckedStore`). The let-else of the three restorings and the `else { continue }` of the seven
+  listings are gone; the restorings, purges and listings take the entity and the mark apart where
+  they read them. `scoped::deleted_with` answers the entities that carry a mark.

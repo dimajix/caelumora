@@ -1109,9 +1109,9 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
     his.update_project(&bob, None).await.expect("bob takes his out");
     assert!(world.projects.delete(&alice, project.id).await.unwrap(), "nothing of anybody else's is left");
     assert!(stores.sessions.get(&World::system(), session.id()).await.is_err(), "its session goes with it");
-    let mark = stores.projects.get_deleted(&World::system(), project.id).await.unwrap().deleted;
-    let session_mark = stores.sessions.get_deleted(&World::system(), session.id()).await.unwrap().deleted;
-    let own_mark = stores.projects.get_deleted(&World::system(), own).await.unwrap().deleted;
+    let mark = stores.projects.get_deleted(&World::system(), project.id).await.unwrap().removal;
+    let session_mark = stores.sessions.get_deleted(&World::system(), session.id()).await.unwrap().removal;
+    let own_mark = stores.projects.get_deleted(&World::system(), own).await.unwrap().removal;
     assert_eq!((&session_mark, &own_mark), (&mark, &mark), "with the project's mark, as what goes with the session (issue 469)");
     let refused = world.manager.restore(&alice, session.id()).await.expect_err("not alone");
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ProjectDeleted(_))), "it comes back with its project: {refused}");

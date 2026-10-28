@@ -20,7 +20,7 @@ use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -294,7 +294,7 @@ impl ScopeMember for SkillManager {
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for skill in self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity: skill, .. } in self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
             self.skills.purge(&system, skill.id).await?;
         }
         Ok(())

@@ -14,7 +14,7 @@ use caelumora_model::security::AccessQuestions;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::DeletedSnapshot;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, StoreResultExt, Stored};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::Description;
 use caelumora_runtime::view::Views;
@@ -91,8 +91,7 @@ impl SkillViews for Views {
         let skills = self.skill_manager()?.store().list_deleted(self.context(), &Query::all()).await?.items;
         let access_policy = self.access_policy();
         let mut deleted = Vec::with_capacity(skills.len());
-        for skill in skills {
-            let Some(removal) = skill.deleted.clone() else { continue };
+        for Deleted { entity: skill, removal } in skills {
             let attributes = &skill.security_attributes;
             deleted.push(DeletedSnapshot {
                 id: skill.id,

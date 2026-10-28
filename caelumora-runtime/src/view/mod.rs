@@ -65,7 +65,7 @@ use caelumora_model::session::Session;
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnapshot};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, EntityStores, StateStore, StoreResult, StoreResultExt, Stored};
 use caelumora_model::workspace::Workspace;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::workspace::WorkspaceId;
@@ -400,8 +400,8 @@ impl Views {
         let deleted = self.stores.sessions.get_deleted(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(match deleted {
-            Some(session) if self.access_policy.may_read_session(self.viewer.context(), &session.security_attributes).await =>
-                session.deleted.map_or(Reached::Never, Reached::Gone),
+            Some(Deleted { entity: session, removal }) if self.access_policy.may_read_session(self.viewer.context(), &session.security_attributes).await =>
+                Reached::Gone(removal),
             _ => Reached::Never,
         })
     }
@@ -414,8 +414,8 @@ impl Views {
         let deleted = self.stores.channels.get_deleted(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up channel {id}")))?;
         Ok(match deleted {
-            Some(channel) if channel.session_id == session.id() && session.reading(&channel).await.is_some() =>
-                channel.deleted.map_or(Reached::Never, Reached::Gone),
+            Some(Deleted { entity: channel, removal }) if channel.session_id == session.id() && session.reading(&channel).await.is_some() =>
+                Reached::Gone(removal),
             _ => Reached::Never,
         })
     }
@@ -475,8 +475,7 @@ impl Views {
             .map_err(|e| ViewError::failed(e, "listing the deleted agents"))?;
         let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(agents.len());
-        for agent in agents {
-            let Some(removal) = agent.deleted.clone() else { continue };
+        for Deleted { entity: agent, removal } in agents {
             let attributes = &agent.security_attributes;
             deleted.push(DeletedSnapshot {
                 id: agent.id,
@@ -641,8 +640,7 @@ impl Views {
             .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
         let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(groups.len());
-        for group in groups {
-            let Some(removal) = group.deleted.clone() else { continue };
+        for Deleted { entity: group, removal } in groups {
             let attributes = &group.security_attributes;
             deleted.push(DeletedSnapshot {
                 id: group.id,
@@ -664,8 +662,7 @@ impl Views {
             .map_err(|e| ViewError::failed(e, "listing the deleted workspaces"))?;
         let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(workspaces.len());
-        for workspace in workspaces {
-            let Some(removal) = workspace.deleted.clone() else { continue };
+        for Deleted { entity: workspace, removal } in workspaces {
             let attributes = &workspace.security_attributes;
             deleted.push(DeletedSnapshot {
                 id: workspace.id,
@@ -688,8 +685,7 @@ impl Views {
             .map_err(|e| ViewError::failed(e, "listing the deleted projects"))?;
         let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(projects.len());
-        for project in projects {
-            let Some(removal) = project.deleted.clone() else { continue };
+        for Deleted { entity: project, removal } in projects {
             let attributes = &project.security_attributes;
             deleted.push(DeletedSnapshot {
                 id: project.id,
@@ -712,8 +708,7 @@ impl Views {
             .map_err(|e| ViewError::failed(e, "listing the deleted sessions"))?;
         let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(sessions.len());
-        for session in sessions {
-            let Some(removal) = session.deleted.clone() else { continue };
+        for Deleted { entity: session, removal } in sessions {
             let attributes = &session.security_attributes;
             deleted.push(DeletedSnapshot {
                 id: session.id,
@@ -757,14 +752,14 @@ impl Views {
     /// what it said keeps its sender. Read in the runtime's name, like its
     /// name while it exists.
     pub(super) async fn deleted_agent_name(&self, id: AgentId) -> Option<String> {
-        self.stores.agents.get_deleted(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
+        self.stores.agents.get_deleted(&SecurityContext::system(), id).await.ok().map(|agent| agent.entity.name.to_string())
     }
 
     /// Who deleted agent `id` and when, if it was deleted and not purged
     /// (issue 314): when it left the channels it rests in. Read in the
     /// runtime's name, like its name.
     pub(super) async fn agent_removal(&self, id: AgentId) -> Option<Removal> {
-        self.stores.agents.get_deleted(&SecurityContext::system(), id).await.ok().and_then(|agent| agent.deleted)
+        self.stores.agents.get_deleted(&SecurityContext::system(), id).await.ok().map(|agent| agent.removal)
     }
 
     /// The document of agent `id` - its name, its attributes, its

@@ -18,7 +18,7 @@ use caelumora_model::security::AccessQuestions;
 use caelumora_model::snapshot::DeletedSnapshot;
 use caelumora_model::confidentiality::Reading;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, StoreResultExt, Stored};
 use caelumora_runtime::terminal::ByteStream;
 use caelumora_model::scope::Scope;
 use caelumora_runtime::view::{ChannelView, ProjectView, Views};
@@ -90,8 +90,7 @@ impl ArtifactViews for Views {
         let artifacts = self.artifact_manager()?.store().list_deleted(self.context(), &Query::all()).await?.items;
         let access_policy = self.access_policy();
         let mut deleted = Vec::with_capacity(artifacts.len());
-        for artifact in artifacts {
-            let Some(removal) = artifact.deleted.clone() else { continue };
+        for Deleted { entity: artifact, removal } in artifacts {
             let attributes = &artifact.security_attributes;
             deleted.push(DeletedSnapshot {
                 id: artifact.id,

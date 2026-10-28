@@ -17,7 +17,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::user::UserId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, JOIN};
 use crate::view::{Viewer, Views};
-use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -699,8 +699,7 @@ impl SessionManager {
         // Its mark, read before it goes - as `context`, so that whoever may not see it learns
         // nothing more: what was deleted with it carries it and comes back with it (issues 178,
         // 469), its own project among it.
-        let deleted = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
-        let Some(removal) = deleted.deleted else { return Err(SessionError::NotFound(id).into()) };
+        let Deleted { entity: deleted, removal } = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
         let own = deleted_with(self.deleted_own(id).await?, &removal).pop();
         // A session in a shared project lies where its project is, and comes back with it.
         let lies_in_own = own.as_ref().is_some_and(|own| own.id == deleted.project);
@@ -777,7 +776,7 @@ impl SessionManager {
     ///
     /// # Errors
     /// Whatever the store reports.
-    async fn deleted_own(&self, id: SessionId) -> StoreResult<Vec<Project>> {
+    async fn deleted_own(&self, id: SessionId) -> StoreResult<Vec<Deleted<Project>>> {
         let query = Query::filtered(Filter::lying_within(&Scope::SessionScope { session_id: id }));
         Ok(self.stores.projects.list_deleted(&SecurityContext::system(), &query).await?.items)
     }
@@ -807,13 +806,13 @@ impl SessionManager {
     pub async fn purge(&self, context: &SecurityContext, id: SessionId) -> Result<()> {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        let session = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
+        let Deleted { entity: session, .. } = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
         if !self.stores.sessions.purge(context, id).await? {
             return Err(SessionError::NotFound(id).into());
         }
         let mut channels = session.channels.clone();
         let of_it = Query::filtered(Filter::eq(ChannelField::Session, id));
-        channels.extend(self.stores.channels.list_deleted(&SecurityContext::system(), &of_it).await?.items.into_iter().map(|c| c.id));
+        channels.extend(self.stores.channels.list_deleted(&SecurityContext::system(), &of_it).await?.items.into_iter().map(|c| c.entity.id));
         // The state lives in the `StateStore`, which may be another store
         // than the session's; the attachments its history carries go with it.
         for channel_id in channels {
@@ -824,7 +823,7 @@ impl SessionManager {
         // And what lay in its scope and in its channels' (issue 178), the group of its
         // participants, as a channel's (issue 348), and its own project with what lay in its scope
         // (issue 467).
-        let owns = self.deleted_own(id).await?;
+        let owns: Vec<Project> = self.deleted_own(id).await?.into_iter().map(|own| own.entity).collect();
         self.scoped.purge_lying_in(&held_by(id, &owns)).await?;
         purge_for_good(self.stores.groups.as_ref(), GroupId::of_session(id)).await?;
         for own in &owns {
@@ -880,7 +879,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::user::UserId;
     use caelumora_model::project::Project;
-    use caelumora_model::store::Stored;
+    use caelumora_model::store::{Deleted, Stored};
     use std::sync::atomic::Ordering;
     use caelumora_model::agent::Agent;
     use crate::agent::AgentError;
@@ -1403,13 +1402,13 @@ mod tests {
         stores.component_bundles.create(&system, &bundle).await.unwrap();
         manager.delete(&ctx, id).await.expect("deleted now");
         assert_eq!(groups_there().await, (false, false));
-        let mark = stores.sessions.get_deleted(&system, id).await.unwrap().deleted;
+        let mark = stores.sessions.get_deleted(&system, id).await.unwrap().removal;
         passing.store(0, Ordering::SeqCst);
         manager.restore(&ctx, id).await.expect_err("its project cannot come back");
         assert!(stores.sessions.get(&system, id).await.is_err(), "the session stays deleted");
         assert_eq!(groups_there().await, (false, false), "with its groups, restored before and deleted again");
         assert!(stores.projects.get(&system, project).await.is_err(), "and its project");
-        assert_eq!(stores.sessions.get_deleted(&system, id).await.unwrap().deleted, mark, "marked as it was");
+        assert_eq!(stores.sessions.get_deleted(&system, id).await.unwrap().removal, mark, "marked as it was");
 
         passing.store(usize::MAX, Ordering::SeqCst);
         manager.restore(&ctx, id).await.expect("restored when tried again");
@@ -1500,9 +1499,9 @@ mod tests {
 
         running.delete_channel(&ctx, side).await.unwrap();
         assert!(!present(&sides).await, "the channel's agent goes with it");
-        let mark = stores.channels.get_deleted(&system, side).await.unwrap().deleted;
-        let group = stores.groups.get_deleted(&system, GroupId::of_channel(side)).await.unwrap().deleted;
-        assert_eq!((&agents.get_deleted(&system, sides.id).await.unwrap().deleted, &group), (&mark, &mark), "with its mark (issue 469)");
+        let mark = stores.channels.get_deleted(&system, side).await.unwrap().removal;
+        let group = stores.groups.get_deleted(&system, GroupId::of_channel(side)).await.unwrap().removal;
+        assert_eq!((&agents.get_deleted(&system, sides.id).await.unwrap().removal, &group), (&mark, &mark), "with its mark (issue 469)");
         assert!(present(&sessions).await && present(&users).await, "the session's and the user's stay");
         running.restore_channel(&ctx, side).await.unwrap();
         assert!(present(&sides).await, "and comes back with it");
@@ -1513,15 +1512,15 @@ mod tests {
         assert!(bundles.get(&system, bundle.id).await.is_err(), "and its component bundles");
         assert!(present(&users).await, "the user's stays");
         // One mark for all of it (issue 469): the session's, by whoever deleted it.
-        let mark = stores.sessions.get_deleted(&system, id).await.unwrap().deleted;
-        assert_eq!(mark.as_ref().map(|removal| removal.by), Some(ctx.caller_id));
-        let own = stores.sessions.get_deleted(&system, id).await.unwrap().project;
+        let Deleted { entity: session, removal: mark } = stores.sessions.get_deleted(&system, id).await.unwrap();
+        assert_eq!(mark.by, ctx.caller_id);
+        let own = session.project;
         let marks = [
-            agents.get_deleted(&system, sessions.id).await.unwrap().deleted,
-            agents.get_deleted(&system, sides.id).await.unwrap().deleted,
-            personalities.get_deleted(&system, personality.id).await.unwrap().deleted,
-            stores.groups.get_deleted(&system, GroupId::of_session(id)).await.unwrap().deleted,
-            stores.projects.get_deleted(&system, own).await.unwrap().deleted,
+            agents.get_deleted(&system, sessions.id).await.unwrap().removal,
+            agents.get_deleted(&system, sides.id).await.unwrap().removal,
+            personalities.get_deleted(&system, personality.id).await.unwrap().removal,
+            stores.groups.get_deleted(&system, GroupId::of_session(id)).await.unwrap().removal,
+            stores.projects.get_deleted(&system, own).await.unwrap().removal,
         ];
         assert!(marks.iter().all(|marked| *marked == mark), "all with the session's mark: {marks:?}");
 

@@ -12,7 +12,7 @@ use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
 use chrono::Utc;
@@ -160,7 +160,7 @@ impl GroupManager {
     /// among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
-        let deleted = self.groups.get_deleted(ctx, id).await.map_err(store_error(id))?;
+        let Deleted { entity: deleted, .. } = self.groups.get_deleted(ctx, id).await.map_err(store_error(id))?;
         if !deleted.is_team() {
             return Err(GroupError::NotATeam(id));
         }
@@ -179,7 +179,7 @@ impl GroupManager {
     /// belongs to, `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(deleted) = self.groups.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(Deleted { entity: deleted, .. }) = self.groups.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         if !deleted.is_team() {
             return Err(GroupError::NotATeam(id));
         }

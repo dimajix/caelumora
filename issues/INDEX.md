@@ -516,7 +516,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [468](468-attachment-manager-takes-a-view.md) | open | `AttachmentManager::create` and `copy` take a `ChannelView`, a layer of access, where an interface should speak of coordinates and properties, and so make every caller reach the channel through the views first. |
 | [470](470-personalities-and-bundles-in-a-project-scope.md) | open | A personality or a component bundle can be stored in a project's scope, though nothing is used from there yet, while session templates, agents, workspaces, skills and artifacts are each refused or placed by their own validation. |
 | [471](471-world-builds-sessions-by-hand.md) | open | `World::session_of`, which most tests of the security suite start from, stores a session, its groups, its own project and its channel itself, and so has to be changed whenever making a session gains a step. |
-| [472](472-deleted-listings-repeat-one-body.md) | open | The views list what was deleted of each kind with a body of their own each, which differ only in the store, the query and the kind. |
+| [472](472-deleted-listings-repeat-one-body.md) | in progress | The views list what was deleted of each kind with a body of their own each, which differ only in the store, the query and the kind. |
 
 ## Integrations
 

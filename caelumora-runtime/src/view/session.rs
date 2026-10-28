@@ -20,7 +20,7 @@ use super::{channel_reading, ChannelReader};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
 use caelumora_model::scope::ScopeField;
-use caelumora_model::store::{StoreError, Stored};
+use caelumora_model::store::{Deleted, StoreError, Stored};
 use caelumora_model::user::UserField;
 use crate::channel::ChannelError;
 use std::sync::Arc;
@@ -385,8 +385,7 @@ impl SessionView {
         let channels = views.stores().channels.list_deleted(context, &of_this).await.map_err(failed)?.items;
         let may_change = self.may_change().await;
         let mut deleted = Vec::new();
-        for channel in channels {
-            let Some(removal) = channel.deleted.clone() else { continue };
+        for Deleted { entity: channel, removal } in channels {
             deleted.push(DeletedSnapshot {
                 id: channel.id,
                 name: channel.name.to_string(),

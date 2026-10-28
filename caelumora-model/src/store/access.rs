@@ -343,7 +343,7 @@ mod tests {
         let hers = session(alice, vec![bob]);
         store.create(&alice_ctx, &hers).await.unwrap();
         assert!(store.delete(&alice_ctx, hers.id, &Removal::now(alice_ctx.caller_id)).await.unwrap());
-        assert_eq!(store.get_deleted(&alice_ctx, hers.id).await.unwrap().deleted.map(|d| d.by), Some(alice), "deleted by her");
+        assert_eq!(store.get_deleted(&alice_ctx, hers.id).await.unwrap().removal.by, alice, "deleted by her");
 
         let seen = store.get_deleted(&bob_ctx, hers.id).await;
         assert!(matches!(seen, Err(StoreError::NotFound { .. })), "a contributor does not see what was deleted: {seen:?}");
@@ -378,7 +378,7 @@ mod tests {
         assert!(store.delete(&alice_ctx, hers.id, &removal).await.unwrap());
         assert!(store.delete(&system, other.id, &removal).await.unwrap(), "the system marks what goes with it, by her");
         for id in [hers.id, other.id] {
-            assert_eq!(store.get_deleted(&system, id).await.unwrap().deleted.as_ref(), Some(&removal), "the mark given");
+            assert_eq!(store.get_deleted(&system, id).await.unwrap().removal, removal, "the mark given");
         }
     }
 
