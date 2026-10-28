@@ -20,7 +20,7 @@ function actorKey(id: ActorId): string {
 }
 
 function isUser(id: ActorId, user: UserResponse): boolean {
-  return typeof id !== 'string' && id.User === user.id;
+  return typeof id !== 'string' && 'User' in id && id.User === user.id;
 }
 
 interface NewChannelDialogProps {

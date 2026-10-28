@@ -56,8 +56,11 @@ export interface Description {
   briefing: string | null;
 }
 
-/** Serialized `ActorId`: `"None"` or an object like `{ "Agent": "<uuid>" }`. */
-export type ActorId = string | Record<string, string>;
+/**
+ * Serialized `ActorId`, as serde tags its variants: `"None"`, `"System"`, or an object holding
+ * the id, like `{"Agent": "<uuid>"}`.
+ */
+export type ActorId = 'None' | 'System' | {User: string} | {Agent: string} | {Approver: string};
 
 /** What kind of participant an actor is; a channel's approver is none (issue 420). */
 export type ParticipantKind = 'user' | 'agent';

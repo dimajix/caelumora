@@ -454,7 +454,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // the channel is known. Joining or leaving changes it (the participants follow
   // the global stream), and the view follows.
   const takesPart = channel?.id === channelId
-    ? channel.participants.some(m => typeof m.id !== 'string' && m.id.User === user.id)
+    ? channel.participants.some(m => typeof m.id !== 'string' && 'User' in m.id && m.id.User === user.id)
     : undefined;
 
   // The compartments a message may be released to; none if they cannot be

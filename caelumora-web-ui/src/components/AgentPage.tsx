@@ -57,7 +57,7 @@ export const AgentPage: React.FC<AgentPageProps> = ({agentId, userId, onDeleted,
     }
   };
 
-  const owner = typeof agent.owner !== 'string' && agent.owner.User === userId ? 'you' : 'someone else';
+  const owner = typeof agent.owner !== 'string' && 'User' in agent.owner && agent.owner.User === userId ? 'you' : 'someone else';
   const actions = [
     ...(agent.can_change ? [{label: 'Rename', icon: Edit2, onSelect: () => { setName(agent.name); setIsRenaming(true); }}] : []),
     ...(agent.can_delete ? [{label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete agent?', onSelect: () => void remove()}] : []),

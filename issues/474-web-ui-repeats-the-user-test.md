@@ -1,6 +1,6 @@
 # 474 — The web UI tells whether an actor is a user, and which, in several ways
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -23,6 +23,22 @@ of its form - another variant, another shape - is met in some places and not in 
 - **A. Use `userIdOf(id) === userId`** in every place, and gather the other helpers on `ActorId`
   (`actorKey` in `mention.ts`) in `actor.ts` beside it.
 
+## Decision
+
+Option A, wider than the problem names it: `caelumora-web-ui/src/actor.ts` is the one place that
+knows the form of an `ActorId` - reading it, and making one. Besides the user test, the form is
+read for an approver (`'Approver' in sender`) and for the system (`=== 'System'`), and made by hand
+as `{User: …}` and `{Agent: …}`; a change of the form would be missed there the same way. `actor.ts`
+gets `userActor` and `agentActor` to make one, `isApprover` and `isSystem` beside `userIdOf`, and
+`actorKey` and `actorUuid` from `mention.ts`, which have nothing to do with mentions. Single
+predicates rather than one `actorKind(id)`, which would leave `kind === 'Approver'` at the callers;
+only two variants are asked about.
+
+1.  **The type mirrors the server.** `ActorId` in `src/types` was `string | Record<string, string>`
+    and becomes the union of serde's variants, `'None' | 'System' | {User} | {Agent} | {Approver}`.
+    A step of its own, without behaviour changes.
+2.  **`actor.ts` owns the form.** The functions above, and every component and module using them.
+
 ## Done when
 
 - No component reads the form of an `ActorId` itself.
@@ -30,3 +46,6 @@ of its form - another variant, another shape - is met in some places and not in 
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of step 4b of issue 467.
+- **2026-10-28** — The maintainer decided for option A, with making an `ActorId` included and the
+  type made exact as a step before. Step 1 done: `ActorId` is the union of the server's variants;
+  the four tests for a user that read `.User` narrow it with `'User' in`.
