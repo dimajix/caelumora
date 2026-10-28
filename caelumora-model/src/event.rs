@@ -9,26 +9,23 @@ use tracing::warn;
 use std::fmt::Debug;
 use std::slice;
 
-/// What happened, announced on the event bus - and, once there are several
-/// instances, between them (issue 122): it is read back as it is written.
-/// Every event is about an entity (issue 323), of whatever kind: a session,
-/// a channel, an agent, a user, a user's profile, a workspace, a skill, an
-/// artifact, a group, or a kind of a plugin. Published with the entity's
-/// attributes, so that whoever may read it receives it:
+/// What happened, announced on the event bus - and, once there are several instances, between them
+/// (issue 122): it is read back as it is written. Every event is about an entity (issue 323), of
+/// whatever kind: a session, a channel, an agent, a user, a user's profile, a workspace, a project,
+/// a skill, an artifact, a group, or a kind of a plugin. Published with the entity's attributes, so
+/// that whoever may read it receives it:
 ///
-/// - a session's and an agent's: an agent of user or global scope belongs to
-///   no session and takes part in several (issue 121); a restored one takes
-///   part in no channel until it is added again;
-/// - a channel's, and what happens to its participants, by the channel's (issue
-///   304);
-/// - a profile's: only its user, and the runtime (issue 13); it comes as it
-///   now stands;
-/// - a workspace's (issue 253), a skill's (issue 22) and a group's (issue
-///   286): its owner and whom its access list grants reading, a group's
-///   participants; the participants of a session or channel are announced as they
-///   join and leave, not as a group;
-/// - an artifact's (issue 271): its owner, and for a version published the
-///   readers of that version.
+/// - a session's and an agent's: an agent of user or global scope belongs to no session and takes
+///   part in several (issue 121); a restored one takes part in no channel until it is added again;
+/// - a channel's, and what happens to its participants, by the channel's (issue 304);
+/// - a profile's: only its user, and the runtime (issue 13); it comes as it now stands;
+/// - a workspace's (issue 253), a skill's (issue 22) and a group's (issue 286): its owner and whom
+///   its access list grants reading, a group's participants; the participants of a session or
+///   channel are announced as they join and leave, not as a group;
+/// - a project's (issue 467): its owner and whom its list grants reading - its members, the
+///   participants of the sessions in it -; a change of its members to who left as well;
+/// - an artifact's (issue 271): its owner and whom its list grants reading - the members of its
+///   project among them (issue 467) -, and for a version published the readers of that version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalEvent {
     /// The kind of the entity.

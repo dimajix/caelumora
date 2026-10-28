@@ -67,7 +67,8 @@ the `access_policy` and `confidentiality` policies, its manager as a `service`, 
 `channel_reading`.
 What a channel's view lists of its kind - the artifacts published in it, say - is an extension trait
 on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`): whether the
-viewer reads the channel stays the channel's to decide (issue 328).
+viewer reads the channel stays the channel's to decide (issue 328). What lies in a project is listed
+the same way, by an extension trait on `ProjectView` (issue 467).
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
 plugin that brings component kinds alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`

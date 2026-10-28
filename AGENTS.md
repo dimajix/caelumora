@@ -30,6 +30,7 @@ change something, read the document on its subject:
 | notes, private notes, agent memory, reading other channels | [MEMORY.md](docs/MEMORY.md) |
 | skills: the catalogue, loading and writing them | [SKILLS.md](docs/SKILLS.md) |
 | sessions, channels, actors, participants, moderators | [CHANNELS.md](docs/CHANNELS.md) |
+| projects, a session's project, where artifacts lie | [PROJECTS.md](docs/PROJECTS.md) |
 | the event bus | [EVENTS.md](docs/EVENTS.md) |
 | the REST API, login and tokens, server-sent event streams | [REST-SERVER.md](docs/REST-SERVER.md) |
 | the web UI | [WEB-UI.md](docs/WEB-UI.md) |

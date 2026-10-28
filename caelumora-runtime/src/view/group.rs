@@ -26,16 +26,17 @@ impl GroupView {
     }
 
     /// Where it lies: a team in the global scope or its owner's, the
-    /// participants of a session or channel in its scope.
+    /// participants of a session or channel or the members of a project in
+    /// its scope.
     pub fn scope(&self) -> &Scope {
         &self.group.name.scope
     }
 
     /// Whether the viewer may rename it, change its members and delete it
-    /// (`UpdateGroup`): the owner of a team - never the participants of a
-    /// session or channel, which change by taking part.
+    /// (`UpdateGroup`): the owner of a team - never a group that is no team,
+    /// which changes with the session, channel or project it belongs to.
     pub async fn may_change(&self) -> bool {
-        !self.group.is_participants()
+        self.group.is_team()
             && self.views.access_policy().may_change_group(self.views.context(), &self.group.security_attributes).await
     }
 

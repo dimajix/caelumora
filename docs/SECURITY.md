@@ -119,8 +119,8 @@ moves information asks both, its own permission first.
 ## Ownership
 
 Every stored entity - session, channel, agent, personality, session template, component bundle,
-workspace, skill, artifact, group - carries `SecurityAttributes`: an owner and an access list.
-This is the one place ownership and access are recorded; see [Access lists](#access-lists).
+workspace, project, skill, artifact, group - carries `SecurityAttributes`: an owner and an access
+list. This is the one place ownership and access are recorded; see [Access lists](#access-lists).
 
 *   A session and its channels are owned by the user they were created for, and read by their
     members: an entry naming the group of their participants (see [Groups](#groups)), which follows
@@ -141,7 +141,8 @@ This is the one place ownership and access are recorded; see [Access lists](#acc
     granted as reading: what the owner may read, the agent may follow. A user is shown one only if
     cleared for its classification; see [SKILLS.md](SKILLS.md#who-may-do-what).
 *   An artifact is owned by the user the agent that published it acts for, always a user; only its
-    owner keeps, describes, shares and deletes it. Its own list grants reading it - its name, its
+    owner describes, shares and deletes it. It lies in a project, and lives as long as the project
+    (issue 467). Its own list grants reading it - its name, its
     description, which versions it has - and adding to it; each version has a list of its own,
     which grants reading that version. Reading a version needs both, as a file in HDFS or ADLS
     needs its directory (issue [316](../issues/316-store-checks-artifact-without-versions.md)),
@@ -212,12 +213,14 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     them, and that its actors stop there - and start again once it is restored - is done in the
     runtime's name, a consequence of the deletion, not a change of channels owned by others.
 *   What lies in a session's or a channel's scope - personalities, session templates, component
-    bundles, agents, workspaces, skills, artifacts - is deleted and restored with it in the name of
-    whoever deletes or restores it (issue 320); only finding it is done in the runtime's name.
-    Whoever deletes a session deletes what of its scope they may; if something is left - an artifact
-    another participant published there, a contributor's agent -, the session is kept, and they are
-    told what is left, by kind and count (`SessionError::ScopeNotEmpty`). What they may is deleted
-    all the same, so that what is left to do is plain: its owners keep it elsewhere or delete it.
+    bundles, agents, workspaces, skills - is deleted and restored with it in the name of whoever
+    deletes or restores it (issue 320), and so is what lies in a project's - artifacts - with the
+    project, or with the session whose own it is (issue 467); only finding it is done in the
+    runtime's name. Whoever deletes a session deletes what of its scope they may; if something is
+    left - a contributor's agent, an artifact another participant published into its own project -,
+    the session is kept, and they are told what is left, by kind and count (`ScopeNotEmpty`, raised
+    by what holds the scope). What they may is deleted all the same, so that what is left to do is
+    plain: its owners delete it.
     Whoever restores a session restores it and what of its scope they may; the rest stays deleted
     for its owner to restore. Purging is the system's anyway and done in the runtime's name.
 *   The groups of the participants of a session and its channels are not among it: they go and come
@@ -322,7 +325,8 @@ lose theirs.
 
 A group (`caelumora_model::group::Group`) is a list of actors that access lists name as one subject,
 so that what is shared with a team or with a session's participants follows who belongs to it,
-without a copy of the members in every list. There are two kinds, told apart by where a group lies:
+without a copy of the members in every list. There are three kinds, told apart by where a group
+lies:
 
 *   **A team** is made by a user and lies in the global scope or its owner's; it holds users only
     (an agent is reached through its owner). Its one writer is the `GroupManager`, which leaves
@@ -333,6 +337,10 @@ without a copy of the members in every list. There are two kinds, told apart by 
     participants, writing in the runtime's name after the change it follows, which is the act that
     was permitted. The group is derived anew from the participants each time, so that a write that
     failed is corrected by the next. The `GroupManager` refuses to change it.
+*   **The members of a project** lie in its scope and have its id, as the participants of a
+    session do. They hold users alone and change with the project's members alone, written by its
+    `ProjectController` after the change it follows, as a channel's participants are; the
+    `GroupManager` refuses to change them, as it refuses every group that is no team.
 
 The group of the participants of a session or channel goes and comes back with it (issue 348): the
 session's or channel's own list names it, and its members reach it only while the group is there, so
@@ -342,6 +350,16 @@ restores the session, as what lies in its scope is (issue 320): it is derived fr
 nobody's to keep or leave behind. All of the groups go or none, and if they cannot go, the session
 or channel is kept; if they cannot come back, it stays deleted. The record of the deletion
 (`Removal::by`) names the system; the session's or channel's names whoever deleted it.
+
+A project (issue 467) is its owner's: only the owner changes it (`UpdateProject`), sets its
+members, lifts a session's own, or deletes it. Changing its members is asked before it is asked
+whether each member exists, so that who may not change it learns nothing of who exists (issue 312).
+Its list names the group of its members for reading, and the participants of each session that lies
+in it: a session put into a project shares it with them in the runtime's name, since changing the
+session was asked (`UpdateSession`, and reading the project, `GetProject`), and the entry goes as
+the session leaves. Deleting a project deletes the sessions in it through the `SessionManager`, each
+in the deleter's name, as what lies in a scope is (issue 320); the group of its members goes and
+comes back with the project in the runtime's name, as the participants' groups do.
 
 The REST API names the participants of a session or channel by the session's or channel's id
 (`kind: session`, `kind: channel`), a team by its own (`kind: group`).
@@ -569,6 +587,9 @@ question, in the viewer's name:
     channel, so that a version shared beyond it names nothing of it. The viewer's own list of
     artifacts holds those they own and those shared with them, a role of theirs or a team they
     belong to; what reaches them only as a participant of a channel is listed in that channel.
+*   Projects are reached by their access lists (`GetProject`, issue 467): the viewer's list of
+    projects holds the shared ones they own, work on or are shared; a session's own is reached
+    through the session, whose snapshot shows the project its results go to to whoever reads that.
 *   Agents are reached on their own by reading them (`GetAgent`), wherever they take part. An
     agent's view reaches the channels it takes part in only as the viewer reaches them through
     their sessions: reading an agent grants nothing of where it takes part. What it is made of is

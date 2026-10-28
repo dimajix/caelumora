@@ -470,6 +470,7 @@ impl InternalActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::ProjectId;
     use crate::agent::testing::{replayed, stored};
     use crate::message::testing::{id, make_message};
 
@@ -519,7 +520,7 @@ mod tests {
         let (owner, id, now) = (UserId::new(), SessionId::new(), Utc::now());
         let mut session = Session {
             id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: Vec::new(), channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, owner, &[]), deleted: None,
         };
         let tag = |tag: &str| Some(Language::new(tag).unwrap());

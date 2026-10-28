@@ -1,6 +1,6 @@
 # 467 — Results have no place of their own: a project holds what outlasts a session
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** Sessions and channels
@@ -38,8 +38,10 @@ the results go.
 ### The project
 
 A project is a stored entity of the core, `Project`, owned by a user, with a name, a description,
-members and an access list. It lies in a scope - the global one, a group's, its owner's, or a
-session's -, where it is found by name; projects in one scope have different names. And it
+members and an access list. It lies in a scope - the global one, its owner's, or a session's;
+a group's is the later step with issue [340](340-teams-as-owners.md), once the group's scope is
+a place anything is found from -, where it is found by name; projects in one scope have
+different names. And it
 **holds a scope of its own**, `Scope::ProjectScope { project_id }`: what lies in it belongs to the
 project. That is the whole mechanism. Everything the scopes already do holds for a project's:
 names are unique in it, what lies in it goes with its holder (`ScopeMember`, issue
@@ -96,7 +98,7 @@ a session out of a project takes the entry away, since the group lives on; a del
 goes once the group is gone (issue [347](347-entries-naming-purged-groups.md)).
 
 **Lifting.** The one act of keeping: the owner of a session's own project lifts it into their
-scope or a group's (`UpdateProject`, a change of the project's scope). It is then a shared
+scope or the global one (`UpdateProject`, a change of the project's scope). It is then a shared
 project like any other, with everything that lies in it - the session, which now goes with it,
 and its artifacts -, and the owner names who its members are. Nothing is moved, no version
 history is lost, and no artifact is kept by itself: the `keep` of an artifact, its
@@ -205,25 +207,464 @@ Taken with the maintainer on 2026-10-28, while looking at issue 338:
 - Issue [340](340-teams-as-owners.md), the memo: a project in a team's scope gives a team the name
   space of its own the memo asks for; who owns an artifact stays a person.
 
-## Steps
+## Plan
 
-1. **The model.** `Project`, `ProjectId`, `ProjectField`, `Scope::ProjectScope`,
-   `Session::project`, `GroupId::of_project` and `Group::of_project`; `Artifact::validate` for
-   the project's scope. The store suite covers the new kind.
-2. **The runtime.** `ProjectManager` - create, delete, restore, purge, lift, members, share -,
-   its members' group, the project scope in `ScopedEntities` with sessions as its members, the
-   rules and questions for projects in `AccessQuestions` and the policy, `Views::project`,
-   `ProjectView`; the session's own project made with it, the session put into a project and
-   taken out, the project shared with the session's participants; the security suite.
-3. **The artifacts.** Published into the project's scope and read by the members; `keep` and
-   what served it removed; the plugin's extension of `ProjectView` listing the project's
-   artifacts, as `ChannelView::artifacts` lists a channel's; the plugin's tests.
-4. **REST and the web UI.** `/projects` and `ProjectResponse`, `AccessKind::Project`; a session
-   made in a project, put into one and taken out; lifting; the artifact's page naming its project
-   instead of its scope, the buttons to keep removed.
-5. **The documents.** A document of its own, `docs/PROJECTS.md`, in the table of `AGENTS.md`;
-   `ARCHITECTURE.md`, `CHANNELS.md`, `SECURITY.md`, `PERMISSION-CHECKS.md`, `STORAGE.md`,
-   `REST-SERVER.md`, `WEB-UI.md` and `TOOLS.md` where they say where an artifact lies.
+Written on 2026-10-28 from the code as it stands, as the template for the work: one commit per
+step, each reviewed before the next. Line numbers are those of that day. Where the plan departs
+from the concept above, it says so under *Decisions of the plan*.
+
+### Decisions of the plan
+
+- **The `ProjectManager` is made by the program, beside the `SessionManager`, and holds it.**
+  Deleting a project deletes its sessions, and only the `SessionManager` deletes a session - it
+  stops what runs (`stop_running`, `leave_actors`). The `SessionManager` is no part of the
+  `RuntimeManager`: the programs make it from the built runtime (`caelumora-app/src/main.rs:83`,
+  `caelumora-tui/src/main.rs:575`, `caelumora-rest-server/src/routes/mod.rs:306`, the `World`),
+  and `ScopedEntities` is fixed in `RuntimeBuilder::build` before it exists. So the
+  `ProjectManager` is made the same way, `ProjectManager::new(sessions: Arc<SessionManager>)`,
+  and reaches the runtime through it; it is no `ScopeMember`, and sessions are none either: the
+  manager lists the sessions of a project by their own field (`Filter::in_project`) and deletes
+  each through the `SessionManager`. Weighed against it: the `SessionManager` as a `ScopeMember`
+  of project scopes, which would need a member registered after the build and a cycle of
+  references; and the `ProjectManager` in the builder without the sessions, which could not
+  delete a project.
+- **The `SessionManager` never calls the `ProjectManager`** - it could not, the other way round.
+  What a project is - its name, description, members, access list, and where it lies - is
+  changed by a `ProjectController`, one per project and instance in the `ControllerManager`, as
+  a workspace is changed by its `WorkspaceController`: the one writer of the document, which a
+  running system will read live - its description, in a prompt one day. The `SessionManager`
+  reaches it there (`ControllerManager::project_controller`) to share a project with a session's
+  participants and to take the share back. Making a session's own project and taking it along
+  are functions of `caelumora_runtime::project` over the stores, as `group::keep_participants`
+  is a function over the groups' store: making and deleting are never a controller's. The
+  `ProjectManager` keeps the lifecycle alone: `create`, `delete`, `restore`, `purge`.
+- **A session's own project is found by a fixed name in the session's scope**, `Project::OWN`
+  (`Name::fixed`), as the participants' group is named `participants`; its id is its own. An id
+  derived from the session's, as `GroupId::of_session` is, would make its members' group collide
+  with the session's participants' group once the project is lifted.
+- **A project lies in the global scope, its owner's or a session's; not yet in a group's.**
+  `Scope::GroupScope` is "not yet a place anything is looked up from" (`visible_from` answers
+  `false`), and the REST API has no group scope on the wire (`ScopeKind::of` reports it as
+  `global`). A project in a team's scope is the later step the memo [340](340-teams-as-owners.md)
+  describes, together with what the group scope is for; its members are a list meanwhile.
+- **What lies in a project's scope is used nowhere yet** (`Scope::admits` answers `false` for a
+  project's scope): nothing but artifacts lies there, and they are not used at a place; whether
+  a place is in the project, the place's session says, not the scope. `true` would let a
+  workspace of a project be attached to every session once one can lie there. Skills,
+  personalities and workspaces in projects come with *Lookups from a place*, which gives
+  `admits` the chain of the place from its caller.
+- **`ScopeNotEmpty` becomes an error of `scoped`**, raised by whoever holds the scope. Today it
+  is `SessionError::ScopeNotEmpty`, raised inside `ScopedEntities::delete_lying_in`; a project
+  holds a scope too, and adds its sessions to what is left. Step 0.
+
+### Step 0: restructuring, without a change of behaviour
+
+Two commits, each reviewable on its own.
+
+**0a. What is left in a scope is the holder's to refuse.** `caelumora-runtime/src/scoped.rs`:
+
+```rust
+/// What a holder's scope still holds after a deletion: by kind, how many
+/// the deleter may not delete.
+#[derive(Debug, thiserror::Error)]
+#[error("…")]  // the text of SessionError::ScopeNotEmpty today, with shown_holder
+pub struct ScopeNotEmpty { pub holder: Scope, pub left: Vec<(EntityKind, usize)> }
+
+impl ScopedEntities {
+    /// Deletes what lies in `holder` on behalf of `ctx`, as far as they may; answers what is
+    /// left, by kind - empty if nothing.
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<Vec<(EntityKind, usize)>>;
+}
+```
+
+`SessionError::ScopeNotEmpty { holder, left }` becomes `SessionError::ScopeNotEmpty(#[from]
+ScopeNotEmpty)`; `SessionManager::delete` (`session/manager.rs:636`) and
+`SessionLoop::delete_channel` (`session/channels.rs:405`) raise it from what is left.
+`shown_holder` (`session/mod.rs:104`) moves to `scoped.rs` with the error. REST:
+`error.rs:387` maps the new variant alike (`409 scope_not_empty`); its test at `error.rs:708`.
+Docs: `CHANNELS.md:20-28`, `SECURITY.md:217-220`, `scoped.rs` module doc name the new type.
+
+**0b. Issue 453: `publish` takes the channel's view.** `caelumora-artifacts/src/manager.rs:190`:
+
+```rust
+/// Publishes `content` … as a version of the artifact `name` of the session `channel` is in,
+/// published in `channel` by its viewer, for the user they act for …
+pub async fn publish(&self, channel: &ChannelView, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>) -> ArtifactResult<(Artifact, u32)>;
+```
+
+The context is `channel.views().context()`, session and channel `channel.session().id()` and
+`channel.id()`; the `expect(clippy::too_many_arguments)` goes. `component.rs:165-168` reaches the
+view as `attachment_tool` does (`turn.situation().channel()`, `ExecutionFailed` if the turn is in
+no channel). Tests: the helper `publish` (`tests/artifacts.rs:345`) reaches the view through
+`world.manager.views(Viewer::new(ctx)).session(..).channel(..)`;
+`a_storage_of_content_takes_nothing_above_its_destination` (`:191`), which publishes on a bare
+runtime without a session, publishes in a session of the `World` instead. The security suite's
+recorded checks gain the view's questions (`GetSession`, `channel_reading`) where they were not
+asked before: the assertions of `:438` and `:531` are extended, not loosened.
+`PERMISSION-CHECKS.md:214` names the view's reach. Issue 453 is closed with this commit.
+
+### Step 1: the model (`caelumora-model`)
+
+**`src/project.rs`, new.** Module doc: "A project (issue 467): the bracket above a session that
+holds what outlasts one piece of work - its artifacts - and the name space they are found in."
+
+```rust
+define_id!(ProjectId);
+
+/// A change of a project other than making it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProjectUpdateEvent {
+    NameChanged(String),
+    DescriptionChanged(Option<String>),
+    /// Its members changed; the group of its members follows them.
+    MembersChanged,
+    AccessChanged,
+    /// Lifted into another scope, under a name (`ScopedName`).
+    Lifted(ScopedName),
+}
+
+/// What a query of projects may name: where it lies, its owner, its members.
+pub enum ProjectField { Scope, Owner, Members, Member }   // paths as GroupField's
+impl ScopedField for ProjectField { const SCOPE: Self = ProjectField::Scope; }
+
+pub struct Project {
+    pub id: ProjectId,
+    /// What it is found by and where it lies: a session's scope for a session's own, its
+    /// owner's or the global one for a shared one.
+    #[serde(flatten)] pub name: ScopedName,
+    pub description: Option<Description>,
+    /// The users who work on it; empty for a session's own.
+    pub members: Vec<UserId>,
+    /// Owned by a user; its list names the group of its members for reading, and the
+    /// participants of every session that lies in it.
+    pub security_attributes: SecurityAttributes,
+    pub created_at: DateTime<Utc>, pub updated_at: DateTime<Utc>,
+    pub deleted: Option<Removal>,
+}
+
+impl Project {
+    /// The fixed name of a session's own project in the session's scope.
+    pub const OWN: &'static str = "own";
+    /// A shared project of `name`, owned by `owner`, read by the group of its members.
+    pub fn new(name: ScopedName, owner: UserId) -> Self;
+    /// The own project of `session`: named `OWN` in its scope, owned by its owner, read by its
+    /// participants (`GroupId::of_session`) besides.
+    pub fn own_of(session_id: SessionId, owner: UserId) -> Self;
+    /// Whether it is a session's own: it lies in a session's scope.
+    pub fn is_own(&self) -> bool;
+    pub fn owner(&self) -> Option<UserId>;
+}
+impl Filter<ProjectField> { pub fn with_member(user: UserId) -> Self; }
+```
+
+`impl Stored`: `KIND = "project"`, `Within = NoEntity`, `Field = ProjectField`, `unique_name`,
+`validate`: the owner is a user; it lies in the global scope, its owner's or a session's - in a
+session's named `OWN` and without members, since whoever reads the session reads it; never a
+channel's, a group's or a project's; members are users. `impl Updatable` (`Lifted` sets `name`),
+`impl Secured`, `impl Scoped`. Tests as `workspace.rs:210-273` has them.
+
+**`src/scope.rs`.** `Scope::ProjectScope { project_id: ProjectId }` with its doc: "A project's:
+what lies in it goes with the project. It contains nothing but itself: a session in a project is
+told by the session, not by its scope." Arms: `contains` (itself alone), `admits` (`false`, see
+the decisions), `key` (`"project:{id}"`), `depth` (project 2, session 3, channel 4),
+`From<&Scope> for FieldValue` (`tagged("ProjectScope", tagged("project_id", ..))`),
+`validate_users_own` (`Err`: "a {kind} lies in no project's scope yet"). `holders`,
+`visible_from`, `lying_within`, `seen_from` need no arm. Tests: the scope lists at `:364`,
+`:426-431`, `:453`, and `value/name.rs:166`.
+
+**`src/session.rs`.** `pub project: ProjectId` after `workspace`, documented: "The project its
+results go to (issue 467): its own, lying in its scope, or a shared one it lies in." No serde
+default: stored sessions are deleted. `SessionUpdateEvent::ProjectChanged(ProjectId)` and its
+`apply` arm. `SessionField::Project` (`["project"]`) and `Filter::in_project(project: ProjectId)`.
+`SessionTemplate::build` (`template.rs:332`) takes `project: ProjectId`. The literals: the 11 of
+the model (`privacy.rs:167`, `channel.rs:520`, `template.rs:340`, `session.rs:249/270/285`,
+`store/access.rs:230`, `store/mod.rs:710/725`, `store/suite.rs:141`) and the 13 outside it
+(`caelumora-runtime`: `session/testing.rs:92/137`, `controller/session.rs:209`,
+`workspace/testing.rs:78`, `testing/mod.rs:425`; `caelumora-agents`:
+`components/agent_memory.rs:384`, `prompt/channel_language_prompt_provider.rs:193`,
+`…participants_prompt_provider.rs:266`,
+`…briefing_prompt_provider.rs:210`; `caelumora-store-json/src/lib.rs:740`).
+
+**`src/group.rs`.** `GroupId::of_project(project: ProjectId) -> Self { Self(project.0) }`;
+`Group::of_project(project: &Project)`, named `participants` in the project's scope, owned by the
+project's owner, its members the project's; `is_participants` and `validate` take the project's
+scope (`ProjectScope { project_id } if self.id == GroupId::of_project(*project_id)`); the module
+doc names three kinds of group. `Filter::teams` is right as it is.
+
+**`src/security/access.rs`.** `may_read_project` (`get`) and `may_change_project` (`update`) on
+`AccessQuestions`, with the blanket impl. No rule changes: the verbs of a kind are generic
+(`ownership.rs:102-126`).
+
+**`src/store/mod.rs`.** `EntityStores::projects` and `open`. **`src/store/suite.rs`**: a fixture
+`project(owner)`, the `lifecycle!`, `found_by_name!` and `unique_by_name!` entries, and that a
+project of nobody's, or in a channel's scope, or a session's own with members, is refused with
+`Validation`. The backends run the suite unchanged; `caelumora-store-postgres` makes a table per
+kind in code (`migrations/0001_kinds.sql`), nothing to add.
+
+**`src/snapshot.rs`.** `ProjectSnapshot { id, name, scope, description, members: Vec<(UserId,
+Option<String>)>, can_change, access: Vec<AccessSnapshot> }`, as `GroupSnapshot` and
+`WorkspaceSnapshot` are; `SessionSnapshot::project: ProjectId`.
+
+**Doc comments:** `security/action.rs:25-44` (what reading a project covers), `event.rs:12-31`.
+**Other crates' matches over `Scope`** (compile errors or silent misfiling, step 1 fixes them
+all): `caelumora-runtime/src/agent/manager.rs:120` (`ProjectScope` refused: "an agent lies in no
+project's scope yet"), `caelumora-skills/src/skill.rs:125-133` (alike), `session/mod.rs:104`
+(after 0a in `scoped.rs`: "project"), `view/mod.rs:557` (`group_name`: "the members of project
+…"), `caelumora-rest-api/src/scope.rs:29-48` and `access.rs:53-57` (step 4),
+`caelumora-artifacts/src/manager.rs:340` (step 3), `workspace/manager.rs:99` (needs no arm).
+
+### Step 2: the runtime (`caelumora-runtime`)
+
+**`src/project/mod.rs`, new.** Module doc: "Projects (issue 467): what a session does with its
+project, the errors, and the manager." Exports `ProjectManager`.
+
+```rust
+pub enum ProjectError {
+    NotFound(ProjectId),
+    OwnerNotAUser,
+    /// Made, lifted into or deleted where a project cannot be: a session's own on its own, a
+    /// scope it cannot lie in.
+    InvalidScope,
+    UnknownMember(UserId),
+    ScopeNotEmpty(#[from] ScopeNotEmpty),
+    Invalid(#[from] ValueError),
+    Store(#[from] StoreError),
+    /// A session of the project that could not be deleted, restored or purged.
+    Session(#[source] anyhow::Error),
+}
+pub type ProjectResult<T> = Result<T, ProjectError>;
+
+/// The own project of session `session_id`, if it still lies in its scope: found by `OWN` in
+/// the runtime's name.
+pub(crate) async fn own_of(projects: &dyn EntityStore<Project>, session_id: SessionId) -> StoreResult<Option<Project>>;
+/// Makes `project` with the group of its members, in the runtime's name, and announces it.
+pub(crate) async fn establish(stores: &EntityStores, events: &EventBus, project: &Project) -> StoreResult<()>;
+/// Marks, restores and purges a session's own project with its group, in the runtime's name,
+/// as `group::delete_participants` does with a group: what lies in its scope is the caller's
+/// to delete before, through `ScopedEntities`.
+pub(crate) async fn delete_own(stores: &EntityStores, groups: &GroupManager, events: &EventBus, session_id: SessionId) -> StoreResult<()>;
+pub(crate) async fn restore_own(…, session_id, since) -> StoreResult<()>;
+pub(crate) async fn purge_own(…, session_id) -> StoreResult<()>;
+```
+
+**`src/controller/project.rs`, new.** The one writer of a project's document, as
+`controller/workspace.rs` is of a workspace's: a `LiveDocument<Project>`, made and held by the
+`ControllerManager` once per project and instance (`project_controller(id)`, beside
+`workspace_controller`), which takes every announced change of a project into it
+(`process_global_event`).
+
+```rust
+impl ProjectController {
+    pub fn id(&self) -> ProjectId;
+    /// The document as it is now.
+    pub fn project(&self) -> Arc<Project>;
+    /// (`UpdateProject`, its owner's, asked by the store as the change is stored.)
+    pub async fn update_name(&self, ctx: &SecurityContext, name: &str) -> ProjectResult<()>;
+    pub async fn update_description(&self, ctx, description: Option<&str>) -> ProjectResult<()>;
+    /// Sets who works on it - each a user that exists (`UnknownMember`); the group of its
+    /// members follows, kept after the change is stored, as a channel's participants' is.
+    pub async fn update_members(&self, ctx, members: Vec<UserId>) -> ProjectResult<()>;
+    /// Gives it the access list `acl` (`require_nameable`, as a workspace's).
+    pub async fn update_access(&self, ctx, acl: Vec<AclEntry>) -> ProjectResult<()>;
+    /// Lets `subject` read it, an entry added unless there (`WorkspaceController::share`);
+    /// `unshare` takes the entry away. Asked as `UpdateProject`, in the runtime's name where a
+    /// session shares the project it lies in: the session's act was asked.
+    pub async fn share(&self, ctx, subject: Subject, grant: Grant) -> ProjectResult<()>;
+    pub async fn unshare(&self, ctx, subject: Subject) -> ProjectResult<()>;
+    /// Lifts it into `scope` - the user's own or the global one - under `name`
+    /// (`Lifted { name, scope }`): a session's own becomes a shared project with all that lies
+    /// in it, the session included; the store refuses it under `OWN` (`Validation`), and
+    /// `NameTaken` where the name is taken.
+    pub async fn lift(&self, ctx, name: &str, scope: Scope) -> ProjectResult<()>;
+}
+```
+
+**`src/project/manager.rs`.** Fields: `sessions: Arc<SessionManager>`, and from its runtime
+`projects`, `stores`, `groups: Arc<GroupManager>`, `events`, `access_policy`, `scoped:
+Arc<ScopedEntities>`, `controllers`, `writing: Mutex<()>`.
+
+```rust
+impl ProjectManager {
+    pub fn new(sessions: Arc<SessionManager>) -> Self;
+    /// Makes a shared project of `name` in `scope` - the global one or the user's own - for
+    /// the user `ctx` acts for (`CreateProject`); `InvalidScope` for a session's.
+    pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, description: Option<&str>) -> ProjectResult<Project>;
+    /// Deletes project `id` (`DeleteProject`): marked first, then its sessions in the caller's
+    /// name through the `SessionManager`, then what lies in its scope through `ScopedEntities`,
+    /// then its group; `ScopeNotEmpty` with the sessions and the rest left, the mark taken away
+    /// again. `InvalidScope` for a session's own.
+    pub async fn delete(&self, ctx, id) -> ProjectResult<bool>;
+    /// Restores it (`Restore`): the project, its group, then its sessions deleted with it and
+    /// what lies in its scope, as far as the caller may.
+    pub async fn restore(&self, ctx, id) -> ProjectResult<Project>;
+    /// Purges it (`Purge`): its deleted sessions, what lies in its scope, its group, itself.
+    pub async fn purge(&self, ctx, id) -> ProjectResult<bool>;
+}
+```
+
+The order of `delete`, `restore` and `purge` follows `SessionManager`'s (`session/manager.rs:604`,
+`675`, `719`), the sessions in the place its channels have.
+
+**`src/session/manager.rs`.**
+- `create_from_template(…, project: Option<ProjectId>)` (`:204`): with `Some`, the project is
+  reached in the caller's name (`projects.get`, `GetProject`), `InvalidScope` if it is a session's
+  own; `template.build(…, project_id)` with the chosen id, or the id of the own project made
+  before.
+- `establish` (`:336`): after the session document, `project::establish` of the own project
+  (`Project::own_of`), beside `keep_participants`; the roll-back purges it with the groups
+  (`:355-368`). After `complete`, a shared project is shared with `GroupId::of_session` through
+  its controller (`project_controller(id).share`, where the workspace is shared, `:255`).
+- `delete` (`:604`): after the session's scope, `scoped.delete_lying_in(context,
+  &ProjectScope { own })` - the artifacts of the own project, in the deleter's name, as today in
+  the session's scope -, what is left added to `ScopeNotEmpty`; then `project::delete_own`
+  (which marks it and deletes its group) beside `delete_participants`. `restore` and `purge`
+  alike, with `restore_own` and `purge_own`.
+- `pub fn runtime(&self) -> &Arc<RuntimeManager>` for the `ProjectManager`.
+
+**`src/session/settings.rs`.** As `update_workspace` (`:112`):
+
+```rust
+/// Puts the session into project `project` (`UpdateSession`, and the project reached:
+/// `GetProject`), or takes it out into its own with `None` - the one in its scope, or a new
+/// one if it was lifted. The project it lies in is shared with its participants; the share of
+/// the one it leaves is taken away. Nothing moves.
+pub async fn update_project(&self, context: &SecurityContext, project: Option<ProjectId>) -> Result<()>;
+```
+
+`SessionController::update_project` (`controller/session.rs`, beside `update_workspace:115`)
+emits `ProjectChanged`. `SessionError::ProjectOutOfScope(ProjectId)` for a session's own named
+as a shared one.
+
+**`src/group/`.** `delete_participants` and `restore_participants` list by `lying_within(holder)`
+and need no change for a project's scope; `GroupManager::update/delete/restore/purge` refuse the
+project's group through `is_participants`. `group/mod.rs:6` doc.
+
+**`src/view/`.** `view/project.rs`, new: `ProjectView { views, project }` with `of`, `pub fn
+views()`, `pub fn id()`, `name`, `scope`, `description`, `members`, `is_own`, `may_change`
+(`may_change_project`), `snapshot() -> ProjectSnapshot` (members' names read as `GroupView`
+reads them, `access` for whoever may change). `Views::projects()` (the store lists what the
+viewer reaches: owner, members by the group, the list), `project(id)`, `deleted_projects()`,
+`ViewError::ProjectNotFound(ProjectId)`; `SessionView::project() -> ProjectId` and
+`SessionSnapshot::project`. `group_name` (`view/mod.rs:556`) names a project's group.
+
+**`src/runtime/`.** Nothing: the `ProjectManager` is the program's. `error.rs`: `user_message`
+judges `ProjectError`.
+
+**Tests.** `testing/mod.rs`: `World::projects: Arc<ProjectManager>`; `session_of` (`:425`) makes
+the own project as `establish` does (or goes through `SessionManager::create`, which is the
+better fix: a finding to assess); `not_found` knows `ProjectError`; a helper `World::project`.
+`session/testing.rs:134,206,212` and `workspace/testing.rs:78` the same. The security suite
+(`tests/security_suite.rs`), after the workspace tests (`:1288-1460`):
+- `a_project_is_its_owners_alone` (create in own or global scope; another's refused; rename,
+  describe, members, access - `UpdateProject`);
+- `a_project_is_read_by_its_members_and_whom_its_list_names` (the group follows `set_members`);
+- `a_session_is_made_with_a_project_of_its_own_read_by_its_participants`;
+- `a_session_is_put_into_a_project_by_who_may_change_it_and_read_the_project` (the share
+  comes and goes; a session's own refused as the target; nothing moves);
+- `lifting_a_sessions_own_project_makes_it_shared_with_the_session_in_it` (`NameTaken`; under
+  `OWN`, `Validation`);
+- `deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_the_deleter_may`
+  (`ScopeNotEmpty` with `(Session::KIND, 1)` for another's session; restore; purge);
+- `deleting_a_session_deletes_its_own_project_with_what_lies_in_it`;
+- the asked sequences of `deleting_a_session_needs_owning_it` (`:844-850`) and
+  `only_its_owner_attaches_a_workspace…` (`:1421`) gain the own project's lines.
+
+### Step 3: the artifacts (`caelumora-artifacts`)
+
+- **`artifact.rs`**: module doc (`:3-5`); `ArtifactUpdateEvent::ScopeChanged` removed; the doc of
+  `name` (`:89-91`: "lies in its session's project"); `validate` (`:252`) asks for a project's
+  scope and an owner who is a user, no longer `validate_users_own`; `ArtifactSnapshot::can_change`
+  doc; tests `:361-387` with a project's scope.
+- **`manager.rs`**: module doc (`:10-14`); `InvalidScope` and `keep` (`:328-351`) removed;
+  `publish(ctx, channel: Address<Channel>, content, classification, name: &ScopedName,
+  description)`: the caller builds the name in its session's project's scope - `artifact_tool`
+  from what the turn's session holds (`Session::project`) - and vouches for it as for the
+  channel; the manager refuses a name in any other kind of scope (`Invalid`), and the project
+  is reached in the caller's name before anything is kept (`projects.get(ctx, ..)`, `GetProject`,
+  as a workspace made in a session's scope reaches the session: `NotFound` → `PermissionDenied`
+  of the store); the artifact's list gains `Subject::Group(GroupId::of_project(..))` for reading
+  beside the channel's (`:221-235`), the version's the channel's alone. The manager takes
+  `projects: Arc<dyn EntityStore<Project>>` (`plugin.rs:28`). `ScopeMember` stays as it is.
+- **`view.rs`**: `ArtifactProjectViews` on `ProjectView`, `artifacts()`: what lies in
+  `ProjectScope`, each `readable_by`, as `ArtifactChannelViews` does; module doc.
+- **`access.rs:14-16`** doc. **`api.rs`**: `ArtifactResponse` loses `scope` and `session_id`,
+  gains `project_id: ProjectId`; `KeepArtifactRequest` removed; module doc.
+- **`routes.rs`**: `PUT /artifacts/{id}/scope` and `keep_artifact` removed with the
+  `InvalidScope` arm; `GET /projects/{id}/artifacts` → `project_artifacts`, through
+  `views.project(id)` and the extension.
+- **`component.rs:115`**: "an artifact of that name in this project is someone else's".
+- **`tests/artifacts.rs`**: `:438` (a project's scope; the member group on the artifact, not the
+  version; what was published goes with the session - its own project -, nothing is kept);
+  `:531`, `:572`, `:593` (the session's own project with its artifacts, `ScopeNotEmpty` as before);
+  `:623` (the owner's `access` names the project's group); `:676` becomes "an artifact of a lifted
+  project drops its channel once the session is purged"; new: `an_artifact_of_a_shared_project_
+  outlives_the_session_it_was_published_in`, `a_member_of_the_project_reads_the_artifact_and_the_
+  versions_of_the_channels_they_were_in`, `publishing_into_a_project_needs_reading_it`.
+- `caelumora-runtime/src/scoped.rs:3-6, 26-28`, `caelumora-model/src/scope.rs:205-209`,
+  `event.rs:30-31` docs.
+
+### Step 4: REST and the web UI
+
+**`caelumora-rest-api`.** `src/project.rs`, new: `ProjectResponse { id, name, scope: ScopeKind,
+session_id: Option<SessionId>, description, members: Vec<MemberResponse { id, name }>,
+can_change, access: Vec<AccessEntry> }` from `ProjectSnapshot`; `CreateProjectRequest { name,
+scope: ScopeKind, description }`, `RenameProjectRequest`, `LiftProjectRequest { name, scope:
+ScopeKind }`, `SessionProjectRequest { project_id }`. `src/scope.rs`: `ScopeKind::Project`,
+`of` and `placed` answering the project's id in a third place (`GroupResponse::project_id`, for
+a project's members' group); the doc at `:1-13`. `src/access.rs`: `AccessKind::Project` (`of`:
+a group in a project's scope; `into_acl`: `GroupId::of_project`). `src/session.rs`:
+`CreateSessionRequest::project: Option<Uuid>`, `SessionResponse::project_id`,
+`SessionSnapshot::project_id`.
+
+**`caelumora-rest-server`.** `src/state.rs`: `project_manager: Arc<ProjectManager>` (made in
+`caelumora-app/src/main.rs:83` beside the session manager, `routes::tests::state` at
+`routes/mod.rs:306`). `src/routes/projects.rs`, new, after `workspaces.rs` and `groups.rs`:
+
+| Route | Does |
+|---|---|
+| `GET /projects` (`?deleted`) | the viewer's projects, or the deleted ones |
+| `POST /projects` (201) | `ProjectManager::create` |
+| `GET`, `PATCH`, `DELETE /projects/{id}` | fetch, rename, delete |
+| `PUT /projects/{id}/description`, `…/members`, `…/access` | describe, set members, share |
+| `POST /projects/{id}/lift` | lift |
+| `POST /projects/{id}/restore`, `…/purge` | restore, purge |
+| `PUT`, `DELETE /sessions/{id}/project` | put the session into a project, take it out |
+
+`routes/mod.rs:143` wires them; `routes/sessions.rs:18` passes the project to
+`create_from_template`. `src/error.rs`: `impl From<ProjectError>` (`404 project_not_found`,
+`400 invalid_scope`, `400 needs_name`, `400 unknown_member`, `409 scope_not_empty`,
+`ProjectError::Session` by its cause), `ViewError::ProjectNotFound`, `SessionError::
+ProjectOutOfScope` (`400 project_out_of_scope`), the `answer_as!` entry (`:456`), and the tests
+of `answer` (`:678`).
+
+**`caelumora-web-ui`.** `types/index.ts`: `ProjectResponse`, `CreateProjectRequest`, `ScopeKind`
+with `'project'`, `AccessEntry.kind` with `'project'`, `project_id` on `SessionResponse`,
+`SessionSnapshot`, `CreateSessionRequest`, `ArtifactResponse` (`scope`, `session_id` removed).
+`api/index.ts`: the project calls, `setSessionProject`, `liftProject`; `keepArtifact` removed.
+`page.ts`: `'project'`; `App.tsx:126`: the branch; `scope.ts`: `'project'` → "of one project".
+Components: `ProjectPage.tsx` (what it is, its members as `GroupPage` edits them, `AccessList`,
+its artifacts, its sessions; rename, describe, delete), `NewProjectDialog.tsx`,
+`SessionProjectDialog.tsx` (the session's project: its own, lifted under a name, or a shared one
+chosen; "none" takes it out), `NewSessionDialog.tsx` (a project select beside the workspace),
+`Sidebar.tsx` (the list "Projects" after workspaces, the session menu entry "Project", reload on
+its events), `ArtifactPage.tsx:106,119-122` (the project named instead of the name space, the
+buttons to keep removed), `ToolCallView.tsx:666-727` (`useArtifact` without `keep`, "Open"
+alone), `AccessList.tsx:14-21` (the label "project members"). Checked with `npm run build` and
+`npm run lint`.
+
+### Step 5: the documents
+
+- `docs/PROJECTS.md`, new: what a project is and what it is for beside a session and a channel;
+  a session's own project and lifting; a session in a project; who reads what; the lifecycle;
+  where the `ProjectManager` is made and why; what is not done yet (group scope, lookups from a
+  place, workspaces in projects). The table in `AGENTS.md`.
+- `ARCHITECTURE.md` (the concepts, the managers), `CHANNELS.md:12-33` (what goes with a session:
+  its own project), `SECURITY.md:119-180` (a project's ownership; the artifact's bullet),
+  `:321-347` (three kinds of group), `PERMISSION-CHECKS.md` (the rows of publishing, of the
+  project's actions, of putting a session into one), `STORAGE.md:189-215` (where a project and an
+  artifact lie), `REST-SERVER.md:99-108`, `WEB-UI.md:156-209`, `TOOLS.md:300-320`, `EVENTS.md`
+  (the kinds), `PLUGINS.md:68-70` (the extension of `ProjectView`).
+- Issues: 467 and 453 `done`, 338 `rejected` with the reason, each with its history.
 
 Stored data to delete: every session, since each now names its project, and every artifact, since
 none lies in a project's scope.
@@ -254,3 +695,248 @@ none lies in a project's scope.
   participants' group is; a session lies in a shared project's scope and goes with it; keeping is
   lifting the session's own project, and no artifact is moved by itself. The three questions
   left open - the move, who may publish, members as a list - were decided as recorded above.
+- **2026-10-28** — The plan written from the code and agreed with the maintainer, decision by
+  decision: the `ProjectManager` made by the program beside the `SessionManager`, which it holds;
+  a `ProjectController` as the one writer of a project, proposed by the maintainer since its
+  description will be read live; a session's own project found by the name `own`; no group's
+  scope yet; nothing used from a project's scope yet. In progress from here, step by step.
+- **2026-10-28** — Step 0a done: `ScopeNotEmpty` is an error of `scoped`, raised by what holds
+  the scope from what `ScopedEntities::delete_lying_in` answers is left; `SessionError` wraps
+  it, its message unchanged. Beyond the plan, at the reviewer's finding and the maintainer's
+  word: it answers for itself wherever it travels - `user_message` and the REST API know it, and
+  `SessionError`'s answer delegates to it -, so that a holder that forgets to wrap it is not
+  answered as a server error, and the second holder, a project, adds no second mapping. Deleting
+  a channel with another's agent in its scope is tested now, as deleting a session was.
+- **2026-10-28** — Step 0b done, and with it issue 453, not as planned: `ArtifactManager::publish`
+  takes the channel's `Address` (`Address<Channel>`), not its view - a view is a layer of access,
+  and an interface speaks of coordinates and properties, as the maintainer put it. In step 3 the
+  caller builds the `ScopedName` in the project's scope, so that `publish` takes where it lies and
+  where it is published as two coordinates.
+- **2026-10-28** — Step 1 done: `Project`, `ProjectId` and `ProjectUpdateEvent`
+  (`caelumora-model/src/project.rs`), `Scope::ProjectScope`, the members of a project as a third
+  kind of group (`GroupId::of_project`, `Group::of_project`, named `members`),
+  `EntityStores::projects` and the store suite. A session template, an agent, a skill, a workspace
+  and an artifact are refused in a project's scope by their own validation, which nothing is used
+  from yet. `own` is a session's own project's name alone, refused anywhere else by the model, so
+  that a lifted project is named anew without an error of its own (`NeedsName` dropped from step
+  2). `Group::is_participants` became `Group::is_team`, and `GroupError::Participants` became
+  `NotATeam` (REST `409 not_a_team`, was `group_of_participants`): the members of a project are
+  kept by what they belong to as the participants are.
+
+  Where step 1 ends: it holds what the model is and checks - the kind, its scope, its group, its
+  validation and how its changes are applied. What has its first caller in the runtime comes with
+  step 2: `Session::project` and what goes with it (`SessionUpdateEvent::ProjectChanged`,
+  `Filter::in_project`) - in step 1 every session would have named a project that does not exist -,
+  `ProjectSnapshot`, and `may_read_project`/`may_change_project`. The constructors and the update
+  event of step 1 are the model's rules, tested in it, and used from step 2 on.
+
+  Different from the plan besides: a project's fields are those of what lies in a scope
+  (`ScopeField`), as a workspace's, since nothing asks for its members by a list yet;
+  `MembersChanged` carries the members, since whoever reads a project may read them, unlike a
+  team's; `Lifted` carries the name as a text and the scope, as every update event carries what the
+  model validates as it applies it; `validate_users_own` refuses a project's scope with its message
+  of where a user's own thing lies. The doc comments of `event.rs` and `security/action.rs` on what
+  reading a project covers, and `STORAGE.md` on where a project lies, come with step 5, where what
+  a project is read for is settled.
+- **2026-10-28** — Step 2 split in two, to be reviewed apart: 2a, every session has a project of
+  its own, and 2b, shared projects - the `ProjectManager`, the `ProjectController`, putting a
+  session into a project, the views and `ProjectError`.
+
+  Step 2a done: `Session::project`, and `SessionTemplate::build` builds the session's own project
+  with it (`Project::own_of`, found by `Project::own_name`; `Project::holds` gives the scope it
+  holds). The `SessionManager` keeps it as it keeps the group of its participants: made with the
+  session in the runtime's name (`make_own`); deleted and restored with its mark after the groups,
+  all of them or none, each announced (`delete_kept`, `restore_kept`); purged with it (`purge_own`).
+  What lies in its scope is deleted and restored in the name of whoever deletes or restores the
+  session, together with what lies in the session's: `ScopedEntities` and the `GroupManager`'s
+  `…_participants` take several holders now, and count what is left over all of them, which keeps
+  the session as `ScopeNotEmpty` of its scope. Marking deleted and purging, which four places did
+  alike, is `scoped::purge_for_good`.
+
+  Different from the plan: the functions over the stores of `caelumora_runtime::project` the plan
+  agreed are private methods of the `SessionManager`, at the reviewer's finding - it is their one
+  caller and holds what they would be handed; `project/` comes with the `ProjectManager` in 2b. The
+  plan's `establish` is `make_own`, for a session's own alone. `build` takes no project and returns
+  the own project beside the session and its channels, a tuple of three: with the project as a
+  parameter it would take eight, and every session is made with its own, also one made in a shared
+  project in 2b, which then takes the shared one as the workspace is taken after `build`; the
+  maintainer kept the tuple, and CODING-GUIDELINES.md names it as the exception to small return
+  values. A session
+  whose owner is no user is no longer made, since its project needs a user as owner; the tests that
+  made sessions of nobody give them a user. Restoring takes the session's own project back however
+  long ago it was deleted, since it goes only with the session, whose mark a restoring that failed
+  renews. `World::session_of` makes the own project as `establish` does; that it does not go through
+  `SessionManager::create` stays a finding. Nothing reads `Session::project` yet but the tests: the
+  views (`SessionView::project`, naming an own project's group by its session) come with 2b, the
+  artifacts with step 3. Stored sessions are to be deleted: `project` has no default.
+- **2026-10-28** — Step 2b done, after 2a was accepted: shared projects and a session's place in
+  one. The model gains `SessionUpdateEvent::ProjectChanged`, `SessionField::Project` and
+  `Filter::in_project`. In the runtime: `ProjectError` (`caelumora-runtime/src/project`), judged by
+  `user_message`; the `ProjectManager` - `create`, `delete`, `restore`, `purge`, made from the
+  `SessionManager` (`SessionManager::runtime`, which replaces the test helper `runtime_of`); the
+  `ProjectController` - `update_name`, `update_description`, `update_members`, `update_access`,
+  `share`, `unshare`, `lift`, `process_global_event` -, one per project and instance in the
+  `ControllerManager` (`project_controller`); `SessionLoop::update_project`, with
+  `SessionController::update_project` and `SessionError::ProjectOutOfScope` (REST `400
+  project_out_of_scope`). `World::projects` and the security suite's tests of who makes, changes,
+  shares, lifts and deletes a project.
+
+  Different from the plan: step 2 has a third part, 2c, for the views - `ProjectView`,
+  `Views::projects`, `ProjectSnapshot`, `SessionView::project`, `may_read_project` and
+  `may_change_project`, naming an own project's group by its session. `create_from_template` takes
+  no project yet: with it it would take eight parameters; a session is made in its own project and
+  put into a shared one by `update_project`, which the REST API of step 4 calls, as it is then the
+  one caller - whether creating takes the project then is a question for step 4. The programs make
+  the `ProjectManager` once the REST API uses it, in step 4. `lift` lifts a session's own alone, and
+  into the global scope or its owner's (`InvalidScope` otherwise): it is the act of keeping, not a
+  move of shared projects. `update_members` asks `UpdateProject` before whether each member exists,
+  as the `GroupManager` asks for a team, and tells who left (`announce_also_to` takes several
+  subjects now). Deleting a project that something is left in keeps the project, and what the
+  deleter could delete - sessions among it - stays deleted, to be restored by hand, as what lies in
+  a session's scope does.
+
+  After the review: `update_project` changes one session's project at a time
+  (`SessionLoop::moving`), shares the project the session goes to - or makes its new own, both with
+  its group or neither (`make_own`) - before the session is stored there, and takes that back if
+  storing fails; the entry of the project it left goes last. `lift` reaches the project and refuses
+  it under the lock of its writing, so that who does not read it learns nothing and it is lifted
+  once. The controller reads its project as `load`, as the `WorkspaceController` does, not as the
+  plan's `project`. `SessionManager::runtime` is the crate's alone.
+  Decided with the maintainer: a session that lies in a deleted shared project is not restored
+  alone (`SessionError::ProjectDeleted`, REST `409 project_deleted`); it comes back with the
+  project.
+- **2026-10-28** — Step 2c done, after 2b was accepted: the views. `ProjectView` (`id`,
+  `may_change`, `snapshot`), `Views::projects` - the shared ones the store lists for the viewer; a
+  session's own is reached through its session -, `Views::project`, `Views::deleted_projects`,
+  `ViewError::ProjectNotFound` (REST `404 project_not_found`); `ProjectSnapshot`, and
+  `SessionSnapshot::project`, the project its results go to, where the viewer reads it, as its
+  workspace; `AccessQuestions::may_change_project`; the group of an own project's members named by
+  its session.
+
+  Different from the plan: `ProjectView` has no getters of name, scope, description, members and
+  whether it is a session's own, and `AccessQuestions` no `may_read_project`, since nothing asks for
+  them yet; `SessionView::project` is not there for the same reason - the snapshot reads the
+  session's field. The session's snapshot carries the project's snapshot, as it carries its
+  workspace's, not only its id.
+  After the review: the views list the shared projects by a condition of the query
+  (`Filter::shared_projects`), as teams are listed, and name members as every view names a user
+  (`Views::name_of`).
+  How a session's own project is named to a client - `own`, as stored, or by its session, as the
+  group of its members is - is decided in step 4, with the REST API.
+- **2026-10-28** — Step 3 done: artifacts lie in projects. `Artifact::validate` takes a project's
+  scope alone, and an owner who is a user; `Artifact::project` names it. `ArtifactManager::publish`
+  takes the name as a `ScopedName` in its session's project's scope, which `artifact_tool` builds
+  from the turn's session (`SessionView::project`); the manager reaches the project in the
+  publisher's name (`GetProject`), and the artifact's list names the members of the project for
+  reading beside the channel's participants, the version's the channel's alone. `keep`,
+  `ArtifactUpdateEvent::ScopeChanged`, `KeepArtifactRequest` and `PUT /artifacts/{id}/scope` are
+  gone; `ArtifactProjectViews::artifacts` on `ProjectView` (with `ProjectView::views`) and `GET
+  /projects/{id}/artifacts` list what lies in a project. `ArtifactResponse` carries `project_id` in
+  place of `scope` and `session_id`. The documents that described keeping (TOOLS.md, CHANNELS.md,
+  PERMISSION-CHECKS.md, REST-SERVER.md) say what holds now.
+
+  Different from the plan: `ArtifactError::InvalidScope` stays, for a name the publisher gave in
+  another scope than a project's - the plan had `Invalid`, which is a value's error; the REST API
+  answers it as the server's, since only a publisher vouches for the name. `ArtifactManager::new`
+  takes the `EntityStores`, from which it holds the projects and the groups, instead of one more
+  store as a parameter. `ArtifactResponse::project_id` is optional, absent only for an artifact
+  that could not be stored, as `Artifact::owner` is. The web UI still offers to keep an artifact,
+  which the API no longer serves, until step 4. Stored artifacts are to be deleted: they lie in a
+  session's scope, which an artifact no longer may.
+
+  After the review: the members of the project are granted reading as the artifact is made, not at
+  every publication, so that an owner who takes that back keeps it so; the channel's participants
+  are granted at every one, as before. A project the publisher does not read is the store's
+  `NotFound`, passed on as a workspace's session is - not `PermissionDenied` as the plan had; the
+  tool tells the model it failed. The plan's test of a member reading the versions of the channels
+  they took part in is part of `an_artifact_of_a_shared_project_outlives_the_session_it_was_
+  published_in`. `validate_users_own`, left with the workspace alone, is `Workspace::validate`.
+  What the documents said of keeping an artifact - SECURITY.md, STORAGE.md, WEB-UI.md,
+  ARCHITECTURE.md, PLUGINS.md and PERMISSION-CHECKS.md too - says what holds now.
+  Decided with the maintainer: `ArtifactResponse::project_id` stays optional. A required one would
+  need a conversion that can fail, or an artifact that holds its project apart from its name -
+  which the store's queries by `scope` and the uniqueness of names would have to be served for -,
+  for a case only a document that could not be stored reaches.
+- **2026-10-28** — Step 4 split in two: 4a, the REST API, and 4b, the web UI. Decided with the
+  maintainer before 4a: a session asked for in a shared project is made in its own and put there
+  by `update_project`, rolled back if that fails (`SessionManager::roll_back_creation`, public
+  now), so that `create_from_template` keeps its parameters and a session has one way into a
+  project; a session's own project is answered as it is stored - `name: own`, `scope: session`,
+  its `session_id` -, the client names it by its session; the events of an artifact reach whoever
+  reads the version, as before.
+
+  Step 4a done: `caelumora-rest-api` - `ProjectResponse` with `ProjectMemberResponse`,
+  `CreateProjectRequest`, `RenameProjectRequest`, `LiftProjectRequest`, `SessionProjectRequest`
+  (`src/project.rs`); `ScopeKind::Project`, `ScopeKind::of` exhaustive (a channel's names its
+  session, a group's is shown as the global one); `AccessKind::Project`;
+  `GroupResponse::project_id`; `CreateSessionRequest::project_id`, `SessionResponse::project_id`
+  (where the viewer reads it) and `SessionSnapshot::project`. `caelumora-rest-server` -
+  `AppState::project_manager`, made by the program (`caelumora-app`); the routes of
+  `routes/projects.rs` as the plan lists them; `impl From<ProjectError> for ApiError`
+  (`project_not_found`, `invalid_scope` - also for the name `own` or another's scope -,
+  `unknown_member`, `scope_not_empty`, a session's error as that session's) and its `answer_as!`
+  entry; `ViewError::ProjectNotFound` (`404`), `SessionError::ProjectDeleted` (`409`).
+  REST-SERVER.md lists the routes.
+  `routes::api` grew past the hundred lines a function may have; the routes of sessions and their
+  channels moved into `routes::session_routes`, which it merges.
+
+  Different from the plan: `ScopeKind::placed` keeps its three places; `GroupResponse::project_id`
+  is read by `Scope::project`, which `Artifact::project` uses too. `ScopeKind::Project` is answered
+  alone, never read from a request. There is no `400 needs_name`, which no error raises since step
+  1; a name or a scope a project may not have, or an access list naming whom it may not, is
+  `400 validation_failed`, as a workspace's. The request names `project_id`, a `ProjectId`.
+  `SessionResponse` is answered from the views wherever it is made - creating and renaming too -,
+  so that `project_id` is there exactly where the user reads the project.
+- **2026-10-28** — Step 4b done: the web UI. `types/index.ts`: `ProjectResponse`,
+  `ProjectMemberResponse`, `CreateProjectRequest`, `ScopeKind` with `project`, `AccessEntry.kind`
+  with `project`, `project_id` on `SessionResponse`, `GroupResponse` and `CreateSessionRequest`,
+  `project` on `SessionSnapshot`, `ArtifactResponse` with `project_id` in place of `scope` and
+  `session_id`. `api/index.ts`: the calls of projects, `getProjectArtifacts`, `setSessionProject`,
+  `liftProject`; `keepArtifact` gone. `project.ts`: `projectLabel` and `useProject` - a session's
+  own called by its session, as decided before 4a. `ProjectPage` (what it is, its members, whom it
+  is shared with, its sessions, its artifacts; rename, describe, delete, and keep a session's own by
+  lifting it), `NewProjectDialog`, `SessionProjectDialog` (from the session's menu), the project
+  in `NewSessionDialog`, the list "Projects" in the sidebar after the workspaces, loaded again on
+  its events; `ArtifactPage` names its project and links to it, the buttons to keep an artifact are
+  gone there and in `ToolCallView`. WEB-UI.md describes it. Checked with `npm run build` and `npm
+  run lint`.
+
+  Different from the plan: picking a user for the members of a team or a project is one component,
+  `AddUser`, taken out of `GroupPage`, and `userIdOf` stands in `actor.ts`. An
+  access list's grants need not offer changing (`GrantLabels.write` optional): a project's list
+  grants reading alone. Lifting is a small form on the project's page, not a dialog of its own.
+
+  After the review: a project's event reloads the sessions whose results go to it, so that a
+  project renamed or lifted is not shown as it was; a session's own is called by its session in one
+  place (`labelOf`), and offered for keeping only while its session publishes into it; a project of
+  a user's scope is not called "yours" (`placeOf`, `optionLabel`), since the API names no owner and
+  one may work on another's.
+
+  Decided with the maintainer, still in 4b: `GET /projects/{id}/sessions` lists the sessions that
+  lie in a project and the user reads (`ProjectView::sessions`, by `Filter::in_project`; the
+  listing shared with `GET /sessions`, `routes::sessions::all_listed`), so that the project's page
+  no longer fetches every session and filters them; and the entries of a project's access list the
+  runtime keeps - its members, the participants of its sessions - are shown fixed
+  (`AccessList.kept`), so that the owner cannot take a session's share away by hand.
+- **2026-10-28** — Step 5 done, and with it the issue: `docs/PROJECTS.md` describes what a
+  project is, a session's project, who reads what, the lifecycle and what is not done yet, with its
+  line in the table of AGENTS.md; ARCHITECTURE.md names projects among the domain, the managers and
+  the controllers; PERMISSION-CHECKS.md has the rows of projects, of putting a session into one and
+  of the session's own project in deleting, restoring and purging a session; STORAGE.md and
+  EVENTS.md name the kind; the doc comments of `Scope`, `ActionType::Entity` and `GlobalEvent`
+  name projects. Most of what the plan listed for this step - CHANNELS.md, SECURITY.md, TOOLS.md,
+  REST-SERVER.md, WEB-UI.md, PLUGINS.md - was written with the steps that changed it. Issue 338 is
+  rejected in favour of this one; 453 was done with step 0b.
+
+  Stored data to delete: every session, since each names its project, and every artifact, since
+  none lies in a project's scope - with its content.
+
+  After the review of step 5, in a commit of its own: what still did not hold is corrected -
+  PERMISSION-CHECKS.md (the `ProjectManager` and `ProjectController` among the managers, the rows of
+  making, restoring and purging, the refusals of `update_project` and `update_members`), CHANNELS.md
+  (`purge_for_good`, and the session's project told briefly, the rest left to PROJECTS.md, so that
+  two descriptions do not drift apart), SECURITY.md and ARCHITECTURE.md (a project among what
+  carries attributes, its members among the groups, an artifact published into its session's
+  project, who keeps a session's own project), STORAGE.md (what lies in a project's scope), TOOLS.md
+  (the link to PROJECTS.md), and the doc comments of `Scope` (every kind stored with its scope) and
+  `GlobalEvent` (who hears of a project).

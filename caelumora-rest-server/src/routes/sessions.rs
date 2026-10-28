@@ -1,3 +1,6 @@
+//! Sessions in the API: making them - in a shared project if asked (issue 467) -, listing,
+//! reading, changing, deleting and restoring them, and taking participants in.
+
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use caelumora_rest_api::session::{AddSessionParticipantRequest, CandidateResponse, CandidatesQuery, CreateSessionRequest, DescriptionRequest, JoinSessionRequest, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
@@ -12,6 +15,7 @@ use caelumora_model::snapshot::Detail;
 use caelumora_model::session::SessionId;
 use caelumora_model::template::SessionTemplateId;
 use std::sync::Arc;
+use caelumora_runtime::view::SessionView;
 use uuid::Uuid;
 use crate::routes::{change_error, ensure_session, session_view, views};
 
@@ -22,9 +26,18 @@ pub(super) async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
-    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref(), payload.language.as_deref(), payload.time_zone.as_deref(), payload.workspace.map(Into::into)).await?;
+    let ctx = user.security_context();
+    let session_loop = state.session_manager.create_from_template(&ctx, template_id, payload.name.as_deref(), payload.language.as_deref(), payload.time_zone.as_deref(), payload.workspace.map(Into::into)).await?;
+    // Made in its own project, then put into the shared one asked for (issue 467), as any session
+    // is; if it cannot be, it is not made.
+    if let Some(project) = payload.project_id {
+        if let Err(error) = session_loop.update_project(&ctx, Some(project)).await {
+            state.session_manager.roll_back_creation(session_loop.id()).await;
+            return Err(error.into());
+        }
+    }
 
-    Ok(Json(SessionResponse::from(&**session_loop.session())))
+    Ok(Json(listed(&state, &user, session_loop.id()).await?))
 }
 
 /// The sessions the user may read - or, with `?deleted=true`, those they
@@ -38,11 +51,17 @@ pub(super) async fn list_sessions(State(state): State<Arc<AppState>>, Query(opti
     }
     let sessions = views.sessions().await
         .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
+    Ok(Json(all_listed(sessions).await).into_response())
+}
+
+/// `sessions` as a list shows them: without their channels, the project their results go to where
+/// the user reads it.
+pub(super) async fn all_listed(sessions: Vec<SessionView>) -> Vec<SessionResponse> {
     let mut listed = Vec::with_capacity(sessions.len());
     for session in sessions {
         listed.push(SessionResponse::from(session.snapshot(Detail::empty()).await));
     }
-    Ok(Json(listed).into_response())
+    listed
 }
 
 /// One session with its channels, in the form the global snapshot uses - so
@@ -112,7 +131,7 @@ pub(super) async fn rename_session(
 
     session_loop.update_name(&user.security_context(), &payload.name).await?;
 
-    Ok(Json(SessionResponse::from(&**session_loop.session())))
+    Ok(Json(listed(&state, &user, session_id).await?))
 }
 
 /// Has the channels of session `id` that hold no language of their own held
@@ -255,4 +274,10 @@ pub(super) async fn join_session(
     let participant = payload.participant.unwrap_or(context.principal_id);
     state.session_manager.join(&context, session_id, participant, payload.channel).await?;
     Ok(Json(session_view(&state, &user, session_id).await?))
+}
+
+/// Session `id` as a list shows it to `user`: as the views reach it, the project its results go
+/// to where they read it.
+async fn listed(state: &Arc<AppState>, user: &AuthenticatedUser, id: SessionId) -> Result<SessionResponse, ApiError> {
+    Ok(views(state, user).session(id).await?.snapshot(Detail::empty()).await.into())
 }

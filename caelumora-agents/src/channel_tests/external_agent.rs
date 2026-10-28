@@ -1259,7 +1259,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     store.entity_stores().unwrap().agents.create(&system, &hermes).await.unwrap();
 
     let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let mut session = make_session("roster", ActorId::None);
+    let mut session = make_session("roster", ActorId::User(UserId::new()));
     session.participants = participants;
     session.participants.push(Participant::Agent(hermes.id));
     let session = create(&manager, &alice_ctx, session).await.unwrap();

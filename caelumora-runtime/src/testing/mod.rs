@@ -43,6 +43,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::project::Project;
 use caelumora_model::store::{EntityKind, Persistence, StoreError};
 use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
@@ -57,6 +58,8 @@ use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::session::testing::founded;
+use crate::session::make_own;
+use crate::project::{ProjectError, ProjectManager};
 use crate::error::refusal;
 use crate::view::Viewer;
 use crate::workspace::WorkspaceError;
@@ -249,6 +252,8 @@ pub struct World {
     pub store: Persistence,
     pub runtime: Arc<RuntimeManager>,
     pub manager: Arc<SessionManager>,
+    /// Made beside `manager`, as the programs make it (issue 467).
+    pub projects: Arc<ProjectManager>,
     pub alice: UserId,
     pub bob: UserId,
     pub carol: UserId,
@@ -286,7 +291,8 @@ impl World {
         let config = AppConfig { workspaces, content, ..Default::default() };
         let runtime = TestRuntime { store: store.clone(), access_policy, confidentiality: Arc::<Recorder>::clone(&recorder), config, registry: Some(registry), plugins: plugins.to_vec() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        let mut world = Self { access_policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
+        let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
+        let mut world = Self { access_policy: recorder, store, runtime, manager, projects, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
         world.bob = world.user("bob").await;
         world.carol = world.user("carol").await;
@@ -413,7 +419,8 @@ impl World {
 
     /// A session of alice with `others` in it, and a channel "main" of
     /// them all and `agents`; the session also has `waiting`, in no
-    /// channel. Stored as a setup would, then opened by alice.
+    /// channel, and a project of its own. Stored as a setup would, then
+    /// opened by alice.
     pub async fn session_of(&self, others: &[UserId], agents: &[AgentId], waiting: &[AgentId]) -> Arc<SessionLoop> {
         let alice = ActorId::User(self.alice);
         let users: Vec<Participant> = iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
@@ -422,10 +429,12 @@ impl World {
         let mut channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None);
         channel.participants = in_channel;
         channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
+        let own = Project::own_of(channel.session_id, self.alice);
         let session = Session {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: own.id,
             id: channel.session_id,
             name: Name::new("shared").unwrap(),
             commands: Default::default(),
@@ -438,9 +447,10 @@ impl World {
             deleted: None,
         };
         // Each with the group of its participants, as the runtime stores them
-        // (issue 286).
+        // (issue 286), the session with its own project (issue 467).
         self.runtime.entity_stores().sessions.create(&Self::system(), &session).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
+        make_own(self.runtime.entity_stores(), &own).await.unwrap();
         self.runtime.entity_stores().channels.create(&Self::system(), &channel).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
         self.runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
@@ -473,6 +483,7 @@ pub fn not_found(error: &Error) -> bool {
         || matches!(error.downcast_ref::<WorkspaceError>(), Some(WorkspaceError::NotFound(_)))
         || matches!(error.downcast_ref::<AgentError>(), Some(AgentError::NotFound(_) | AgentError::Store(StoreError::NotFound { .. })))
         || matches!(error.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_) | SessionError::TemplateNotFound(_)))
+        || matches!(error.downcast_ref::<ProjectError>(), Some(ProjectError::NotFound(_)))
 }
 
 /// A refusal, with what was refused (issue 323).

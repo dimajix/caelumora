@@ -8,6 +8,7 @@ import {
   Clock,
   Edit2,
   FileText,
+  FolderKanban,
   HardDrive,
   Languages,
   LogOut,
@@ -21,7 +22,7 @@ import {
   Users,
   UsersRound
 } from 'lucide-react';
-import type {ActorId, AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, Message, SessionSnapshot, SkillResponse, Unread, UserResponse, WorkspaceResponse} from '../types';
+import type {ActorId, AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, Message, ProjectResponse, SessionSnapshot, SkillResponse, Unread, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange} from '../globalEvents';
@@ -41,6 +42,8 @@ import {ProfileDialog} from './ProfileDialog';
 import {NewWorkspaceDialog} from './NewWorkspaceDialog';
 import {NewSkillDialog} from './NewSkillDialog';
 import {NewGroupDialog} from './NewGroupDialog';
+import {NewProjectDialog} from './NewProjectDialog';
+import {SessionProjectDialog} from './SessionProjectDialog';
 import {NewAgentDialog} from './NewAgentDialog';
 import {NewSessionDialog} from './NewSessionDialog';
 import {SessionWorkspaceDialog} from './SessionWorkspaceDialog';
@@ -98,7 +101,7 @@ function deletedChangedBy(event: GlobalEvent): boolean {
   return event.change === 'Deleted' || event.change === 'Restored';
 }
 
-/** Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`, `agent`. */
+/** Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`, `agent`, `project`. */
 function isAbout(event: GlobalEvent, kind: string): boolean {
   return event.kind === kind;
 }
@@ -154,11 +157,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onPageGone,
 }) => {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
-  // The workspaces (issue 253), skills (issue 22), artifacts (issue 291),
-  // teams (issue 286) and agents (issue 227) the user may read, loaded again
-  // on every event about one of them.
+  // The workspaces (issue 253), projects (issue 467), skills (issue 22),
+  // artifacts (issue 291), teams (issue 286) and agents (issue 227) the user
+  // may read, loaded again on every event about one of them.
   const workspaces = usePageList<WorkspaceResponse>('workspace', 'workspaces', () => api.getWorkspaces(), page, onPageGone);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const projects = usePageList<ProjectResponse>('project', 'projects', () => api.getProjects(), page, onPageGone);
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
   const skills = usePageList<SkillResponse>('skill', 'skills', () => api.getSkills(), page, onPageGone);
   const [isCreatingSkill, setIsCreatingSkill] = useState(false);
   const artifacts = usePageList<ArtifactResponse>('artifact', 'artifacts', () => api.getArtifacts(), page, onPageGone);
@@ -169,6 +174,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // The session whose workspace is shown, by id, so that the dialog follows it.
   const [workspaceOf, setWorkspaceOf] = useState<string | null>(null);
   const workspaceSession = sessions.find(s => s.id === workspaceOf) ?? null;
+  // The session whose project is shown (issue 467), likewise by id.
+  const [projectOf, setProjectOf] = useState<string | null>(null);
+  const projectSession = sessions.find(s => s.id === projectOf) ?? null;
   const panel = usePanelWidth('sidebar');
   // A new session is being made (issue 266): its template, name and workspace.
   const [isCreatingSession, setIsCreatingSession] = useState(false);
@@ -223,6 +231,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const removeSessionFromStream = useEffectEvent((sessionId: string) => removeSession(sessionId));
   const deletedChangedFromStream = useEffectEvent(() => deletedChanged());
   const workspacesChangedFromStream = useEffectEvent(() => workspaces.reload());
+  // A project changed - renamed, lifted - is shown anew with the sessions whose results go to it.
+  const projectChangedFromStream = useEffectEvent((projectId: string) => {
+    projects.reload();
+    for (const session of sessions.filter(s => s.project?.id === projectId)) void refreshSession(session.id);
+  });
   const skillsChangedFromStream = useEffectEvent(() => skills.reload());
   const artifactsChangedFromStream = useEffectEvent(() => artifacts.reload());
   const groupsChangedFromStream = useEffectEvent(() => groups.reload());
@@ -278,6 +291,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
         if (deletedChangedBy(event)) deletedChangedFromStream();
         if (isAbout(event, 'workspace')) workspacesChangedFromStream();
+        if (isAbout(event, 'project')) projectChangedFromStream(event.id);
         if (isAbout(event, 'skill')) skillsChangedFromStream();
         if (isAbout(event, 'artifact')) artifactsChangedFromStream();
         if (isAbout(event, 'group')) groupsChangedFromStream();
@@ -458,6 +472,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
                     {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
                     {label: 'Workspace', icon: HardDrive, onSelect: () => setWorkspaceOf(session.id)},
+                    {label: 'Project', icon: FolderKanban, onSelect: () => setProjectOf(session.id)},
                     {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete session?', onSelect: () => void handleDeleteSession(session.id)},
                   ]}
                 />
@@ -539,6 +554,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           deletedVersion={deletedVersion}
           restore={(workspaceId) => api.restoreWorkspace(workspaceId)}
           purge={(workspaceId) => api.purgeWorkspace(workspaceId)}
+        />
+
+        <PageList
+          list={projects}
+          title="Projects"
+          icon={FolderKanban}
+          page={page}
+          onSelectPage={onSelectPage}
+          onNew={() => setIsCreatingProject(true)}
+          newLabel="New project"
+          loadDeleted={() => api.getDeletedProjects()}
+          deletedVersion={deletedVersion}
+          restore={(projectId) => api.restoreProject(projectId)}
+          purge={(projectId) => api.purgeProject(projectId)}
         />
 
         <PageList
@@ -667,6 +696,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {isCreatingSession && (
         <NewSessionDialog
           workspaces={workspaces.items}
+          projects={projects.items}
           onCreated={(session) => void handleSessionCreated(session.id)}
           onClose={() => setIsCreatingSession(false)}
         />
@@ -691,6 +721,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onSelectPage({kind: 'skill', id: skill.id});
           }}
           onClose={() => setIsCreatingSkill(false)}
+        />
+      )}
+
+      {isCreatingProject && (
+        <NewProjectDialog
+          onCreated={(project) => {
+            setIsCreatingProject(false);
+            projects.add(project);
+            onSelectPage({kind: 'project', id: project.id});
+          }}
+          onClose={() => setIsCreatingProject(false)}
         />
       )}
 
@@ -725,6 +766,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSessions(prev => upsert(prev, updated));
           }}
           onClose={() => setWorkspaceOf(null)}
+        />
+      )}
+
+      {projectSession && (
+        <SessionProjectDialog
+          session={projectSession}
+          projects={projects.items}
+          onSubmit={async (projectId) => {
+            const updated = await api.setSessionProject(projectSession.id, projectId);
+            setSessions(prev => upsert(prev, updated));
+          }}
+          onSelectPage={onSelectPage}
+          onClose={() => setProjectOf(null)}
         />
       )}
 

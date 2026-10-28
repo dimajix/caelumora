@@ -10,9 +10,8 @@
 //! read; this only chooses among it, so it never widens what anybody
 //! reads.
 
-use crate::actor::ActorId;
 use crate::group::GroupId;
-use crate::security::SecurityAttributes;
+use crate::project::ProjectId;
 use crate::session::{ChannelId, SessionId};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
@@ -20,16 +19,24 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use crate::store::query::{Field, FieldValue, Filter};
 
-/// Where a personality, a session template or an agent lies: the name
-/// space it is found in by name (issue 177). A channel's name space is its
-/// session's scope, a user's the global one (issue 250), a workspace's its
-/// owner's (issue 253); none of them stores a scope of its own.
+/// Where something lies that is found by name (issue 177): the name space of
+/// a personality, a session template, a component bundle, an agent, a
+/// workspace, a skill, a group, a project or an artifact, each stored with
+/// its scope. A channel's name space
+/// is its session's scope, a user's the global one (issue 250); neither
+/// stores a scope of its own. A project lies in a scope and holds one, where
+/// its artifacts lie (issue 467).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Scope {
     /// A channel, by id: a renamed channel keeps what lies in it (issue
     /// 178).
     ChannelScope { session_id: SessionId, channel_id: ChannelId },
     SessionScope { session_id: SessionId },
+    /// A project's (issue 467): what lies in it goes with the project. It
+    /// contains nothing but itself: a session in a project is told by the
+    /// session, not by its scope, since sessions change projects and scopes
+    /// are stored.
+    ProjectScope { project_id: ProjectId },
     UserScope { user_id: UserId },
     /// Not yet a place anything is looked up from (issue 23): what lies in
     /// it is found from nowhere.
@@ -39,12 +46,21 @@ pub enum Scope {
 }
 
 impl Scope {
+    /// The project whose scope this is, if it is one (issue 467).
+    pub fn project(&self) -> Option<ProjectId> {
+        match self {
+            Scope::ProjectScope { project_id } => Some(*project_id),
+            Scope::GlobalScope | Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::SessionScope { .. } | Scope::ChannelScope { .. } => None,
+        }
+    }
+
     /// Whether `other` is this scope or lies within it.
     pub fn contains(&self, other: &Scope) -> bool {
         match (self, other) {
             (Scope::GlobalScope, _) => true,
             (Scope::GroupScope { group_id: id1 }, Scope::GroupScope { group_id: id2 }) => id1 == id2,
             (Scope::UserScope { user_id: id1 }, Scope::UserScope { user_id: id2 }) => id1 == id2,
+            (Scope::ProjectScope { project_id: id1 }, Scope::ProjectScope { project_id: id2 }) => id1 == id2,
             (Scope::SessionScope { session_id: id1 }, Scope::SessionScope { session_id: id2 }) => id1 == id2,
             (Scope::SessionScope { session_id: id1 }, Scope::ChannelScope { session_id: id2, .. }) => id1 == id2,
             (Scope::ChannelScope { session_id: s1, channel_id: c1 }, Scope::ChannelScope { session_id: s2, channel_id: c2 }) => s1 == s2 && c1 == c2,
@@ -57,10 +73,13 @@ impl Scope {
     /// lies in a session's or a channel's scope only within it, since it goes
     /// with it (issue 178); what lies in a user's or a group's scope or
     /// everywhere wherever the permissions allow - that scope says only
-    /// where its name is found.
+    /// where its name is found. What lies in a project's scope is used
+    /// nowhere yet (issue 467): whether a place is in the project, the
+    /// place's session says, not its scope.
     pub fn admits(&self, place: &Scope) -> bool {
         match self {
             Scope::SessionScope { .. } | Scope::ChannelScope { .. } => self.contains(place),
+            Scope::ProjectScope { .. } => false,
             Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => true,
         }
     }
@@ -72,6 +91,7 @@ impl Scope {
         match self {
             Scope::ChannelScope { session_id, channel_id } => format!("channel:{session_id}:{channel_id}"),
             Scope::SessionScope { session_id } => format!("session:{session_id}"),
+            Scope::ProjectScope { project_id } => format!("project:{project_id}"),
             Scope::UserScope { user_id } => format!("user:{user_id}"),
             Scope::GroupScope { group_id } => format!("group:{group_id}"),
             Scope::GlobalScope => "global".to_string(),
@@ -83,8 +103,9 @@ impl Scope {
         match self {
             Scope::GlobalScope => 0,
             Scope::UserScope { .. } | Scope::GroupScope { .. } => 1,
-            Scope::SessionScope { .. } => 2,
-            Scope::ChannelScope { .. } => 3,
+            Scope::ProjectScope { .. } => 2,
+            Scope::SessionScope { .. } => 3,
+            Scope::ChannelScope { .. } => 4,
         }
     }
 
@@ -119,7 +140,8 @@ pub trait ScopedField: Field {
 }
 
 /// The fields of a kind that a list asks by where it lies and what it is
-/// called: personalities, session templates, agents, workspaces, skills.
+/// called: personalities, session templates, agents, workspaces, skills,
+/// projects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeField {
     Scope,
@@ -178,6 +200,7 @@ impl From<&Scope> for FieldValue {
         match scope {
             Scope::ChannelScope { channel_id, .. } => FieldValue::tagged("ChannelScope", FieldValue::tagged("channel_id", *channel_id)),
             Scope::SessionScope { session_id } => FieldValue::tagged("SessionScope", FieldValue::tagged("session_id", *session_id)),
+            Scope::ProjectScope { project_id } => FieldValue::tagged("ProjectScope", FieldValue::tagged("project_id", *project_id)),
             Scope::UserScope { user_id } => FieldValue::tagged("UserScope", FieldValue::tagged("user_id", *user_id)),
             Scope::GroupScope { group_id } => FieldValue::tagged("GroupScope", FieldValue::tagged("group_id", *group_id)),
             Scope::GlobalScope => FieldValue::from("GlobalScope"),
@@ -194,27 +217,12 @@ impl From<Scope> for FieldValue {
 /// What lies in a scope and is found there by its name, which is unique of
 /// its kind in that scope (issue 250): a personality, a session template,
 /// an agent - and a channel, whose scope is its session, a user, who lies
-/// in the global one, and a workspace, which lies in its owner's. A kind is either `Scoped` or has
-/// no unique name at all.
+/// in the global one, a workspace, which lies in its owner's, and an artifact, which lies in its
+/// project's (issue 467). A kind is either `Scoped` or has no unique name at all.
 pub trait Scoped {
     /// Its name and the scope it lies in; made when asked by a kind that
     /// does not store it so.
     fn scoped_name(&self) -> ScopedName;
-}
-
-/// Whether `attributes` and `scope` are those of a user's own thing - a
-/// workspace (issue 253), an artifact (issue 271), named `kind` in what it
-/// says: it belongs to a user and lies in a session's scope, its owner's or the global
-/// one, never a channel's, since a session's channels share it. Checked
-/// when it is stored (`Stored::validate`).
-pub fn validate_users_own(kind: &str, attributes: &SecurityAttributes, scope: &Scope) -> Result<(), String> {
-    let ActorId::User(owner) = attributes.owner_id else { return Err(format!("a {kind} belongs to a user")) };
-    match scope {
-        Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),
-        Scope::UserScope { user_id } if *user_id == owner => Ok(()),
-        Scope::UserScope { .. } => Err(format!("a {kind} lies in no other user's scope than its owner's")),
-        Scope::ChannelScope { .. } | Scope::GroupScope { .. } => Err(format!("a {kind} lies in a session's scope, its owner's or the global one")),
-    }
 }
 
 /// The one of `name` that `user` finds from `place` among `scoped` -
@@ -300,6 +308,22 @@ mod tests {
         assert!(!session1.contains(&Scope::GlobalScope));
     }
 
+    /// A project's scope contains nothing but itself (issue 467): a session
+    /// in the project is told by the session.
+    #[test]
+    fn a_project_scope_contains_itself_alone() {
+        let project_id = ProjectId::new();
+        let project = Scope::ProjectScope { project_id };
+        assert_eq!((project.project(), Scope::GlobalScope.project()), (Some(project_id), None), "the project whose it is");
+        assert!(project.contains(&Scope::ProjectScope { project_id }));
+        assert!(!project.contains(&Scope::ProjectScope { project_id: ProjectId::new() }));
+        let session_id = SessionId::new();
+        for other in [Scope::SessionScope { session_id }, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }, Scope::GlobalScope] {
+            assert!(!project.contains(&other), "{other:?}");
+        }
+        assert!(Scope::GlobalScope.contains(&project));
+    }
+
     #[test]
     fn test_channel_scope_contains() {
         let s1 = SessionId::new();
@@ -366,6 +390,7 @@ mod tests {
             item("helper", Scope::SessionScope { session_id: SessionId::new() }, "another session's"),
             item("helper", Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }, "another channel's"),
             item("helper", Scope::GroupScope { group_id: GroupId::new() }, "a group's"),
+            item("helper", Scope::ProjectScope { project_id: ProjectId::new() }, "a project's, which the session's scope does not know"),
         ];
         assert_eq!(found(&items, "helper", &session, Some(UserId::new())), None);
 
@@ -387,6 +412,10 @@ mod tests {
         assert!(channel.admits(&channel), "a channel's in it");
         assert!(!channel.admits(&Scope::ChannelScope { session_id, channel_id: other_channel }), "not in another channel of its session");
         assert!(!channel.admits(&session), "nor in its session at large");
+        let project = Scope::ProjectScope { project_id: ProjectId::new() };
+        for place in [&channel, &session, &project] {
+            assert!(!project.admits(place), "what lies in a project's is used nowhere yet (issue 467): {place:?}");
+        }
         for anywhere in [Scope::UserScope { user_id: UserId::new() }, Scope::GroupScope { group_id: GroupId::new() }, Scope::GlobalScope] {
             assert!(anywhere.admits(&elsewhere), "{anywhere:?} only says where its name is found");
         }
@@ -428,6 +457,7 @@ mod tests {
             Scope::SessionScope { session_id: s1 }, Scope::SessionScope { session_id: s2 },
             Scope::ChannelScope { session_id: s1, channel_id: c1 }, Scope::ChannelScope { session_id: s1, channel_id: c2 },
             Scope::ChannelScope { session_id: s2, channel_id: ChannelId(Uuid::new_v4()) }, Scope::GroupScope { group_id: GroupId::new() },
+            Scope::ProjectScope { project_id: ProjectId(Uuid::new_v4()) }, Scope::ProjectScope { project_id: ProjectId(Uuid::new_v4()) },
         ];
         let document = |scope: &Scope| serde_json::json!({ "scope": scope });
         for holder in &scopes {
@@ -454,6 +484,7 @@ mod tests {
         let id = Uuid::new_v4();
         meets_exactly_its_equals(&[
             Scope::GlobalScope, Scope::UserScope { user_id: UserId(id) }, Scope::GroupScope { group_id: GroupId(id) },
+            Scope::ProjectScope { project_id: ProjectId(id) }, Scope::ProjectScope { project_id: ProjectId::new() },
             Scope::SessionScope { session_id: SessionId(id) }, Scope::SessionScope { session_id: SessionId::new() },
             Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId(id) },
             Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId::new() },

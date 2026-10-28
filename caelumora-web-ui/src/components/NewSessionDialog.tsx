@@ -5,16 +5,19 @@
 // in the language its template names, else in the one the user prefers (issues 331, 425): the server
 // holds it in none unless asked, and its channels without a language of their own follow it. Its time
 // zone is the template's, else the browser's (issue 424); the server holds it in UTC unless asked.
+// Its results go to a project of its own, unless a shared project the user reads is chosen (issue
+// 467).
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
-import type {SessionResponse, SessionTemplate, SessionWorkspaceRequest, StorageResponse, WorkspaceResponse} from '../types';
+import type {ProjectResponse, SessionResponse, SessionTemplate, SessionWorkspaceRequest, StorageResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {storageLabel} from '../workspace';
 import {scopeLabel} from '../scope';
+import {optionLabel} from '../project';
 import {ClassificationFields} from './ClassificationFields';
 import {ShareSelect, type Share} from './ShareSelect';
 import {LanguageField} from './LanguageField';
@@ -30,11 +33,13 @@ const NEW = 'new';
 interface NewSessionDialogProps {
   /** The user's own workspaces. */
   workspaces: WorkspaceResponse[];
+  /** The shared projects the user reads, one of which it may lie in. */
+  projects: ProjectResponse[];
   onCreated: (session: SessionResponse) => void;
   onClose: () => void;
 }
 
-export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, onCreated, onClose}) => {
+export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, projects, onCreated, onClose}) => {
   const [templates, setTemplates] = useState<SessionTemplate[] | null>(null);
   const [lastTemplateId] = useState<string | null>(() => loadLastTemplate());
   const [templateId, setTemplateId] = useState<string | null>(lastTemplateId);
@@ -53,6 +58,8 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
   const [language, setLanguage] = useState<string | null>(null);
   // `null` while the user has not changed the time zone, which then follows the template.
   const [timeZone, setTimeZone] = useState<string | null>(null);
+  // The shared project it lies in; empty for one of its own.
+  const [projectId, setProjectId] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -111,6 +118,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
         language: sessionLanguage.trim() || undefined,
         time_zone: sessionTimeZone.trim() || undefined,
         workspace: workspaceRequest(),
+        project_id: projectId || undefined,
       });
       saveLastTemplate(template.id);
       onCreated(session);
@@ -200,6 +208,23 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
             empty={template?.time_zone ? `As the template says: ${template.time_zone}` : 'UTC'}
             hint="its agents are given the times of messages in it."
           />
+
+          {projects.length > 0 && (
+            <label className="block space-y-1">
+              <span className="text-xs text-gray-400">Project</span>
+              <select
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
+              >
+                <option value="">Its own</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{optionLabel(p)}</option>)}
+              </select>
+              <span className="block text-xs text-gray-500">
+                {projectId ? 'What it publishes lies in the project and outlives the session.' : 'What it publishes goes with the session, unless you keep its project.'}
+              </span>
+            </label>
+          )}
 
           <label className="block space-y-1">
             <span className="text-xs text-gray-400">Workspace</span>

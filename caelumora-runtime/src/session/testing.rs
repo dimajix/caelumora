@@ -23,6 +23,7 @@ use caelumora_model::channel::{Channel, ChannelState, moderation_components};
 use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::project::ProjectId;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::actor::{ActorEvent, Rejection};
 use caelumora_model::message::{MessageId, Message};
@@ -99,6 +100,7 @@ pub fn bare_session(session_id: SessionId) -> Session {
         privacy: Default::default(),
         approval_rules: Vec::new(),
         workspace: None,
+        project: ProjectId::new(),
         created_at: now,
         updated_at: now,
         security_attributes: Default::default(),
@@ -138,6 +140,7 @@ pub fn make_session(name: &str, owner: ActorId) -> Session {
         summary: None, briefing: None, language: None, time_zone: None,
         approval_rules: Vec::new(),
         workspace: None,
+        project: ProjectId::new(),
         commands: Default::default(),
         privacy: Default::default(),
         id,
@@ -260,9 +263,4 @@ pub async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<Message> {
         time::sleep(Duration::from_millis(10)).await;
     }
     panic!("the channel's history never reached {count} messages");
-}
-
-/// The runtime `manager` works with, for tests that ask it directly.
-pub fn runtime_of(manager: &SessionManager) -> &Arc<RuntimeManager> {
-    &manager.runtime_manager
 }

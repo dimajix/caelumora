@@ -1,16 +1,17 @@
-//! Where something lies that is kept in a scope: a workspace, a skill, an artifact, a group,
-//! an agent, a personality.
+//! Where something lies that is kept in a scope: a workspace, a skill, a group, an agent, a
+//! personality, a project (issue 467).
 
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::user::UserId;
 use serde::{Deserialize, Serialize};
 
-/// Where a workspace (issue 251, decision 13), a skill (issue 22) or an
-/// artifact (issue 271) lies: a session's scope, its owner's or the global
+/// Where a workspace (issue 251, decision 13), a skill (issue 22) or a
+/// project (issue 467) lies: a session's scope, its owner's or the global
 /// one. One of a session's scope is made with the session - a workspace by
 /// its template or as chosen when it is made (issue 266), a skill by an
-/// agent in it, an artifact by publishing it -, not on its own.
+/// agent in it, the session's own project -, not on its own. The members of
+/// a project lie in its scope (`project`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeKind {
@@ -20,17 +21,23 @@ pub enum ScopeKind {
     User,
     /// The global one: its name unique among all.
     Global,
+    /// A project's (issue 467): where the group of its members lies. Answered alone: nothing a
+    /// request makes lies there.
+    #[serde(skip_deserializing)]
+    Project,
 }
 
 impl ScopeKind {
-    /// The kind of `scope`, and the session it names if it is a session's.
-    /// A workspace, a skill and an artifact lie in no other than these three
-    /// (`Stored::validate`).
+    /// The kind of `scope`, and the session it names if it is a session's -
+    /// a channel's names its session. A workspace, a skill and a project lie
+    /// in no other than the first three (`Stored::validate`); a group's scope
+    /// is no place anything lies in yet, and is shown as the global one.
     pub fn of(scope: &Scope) -> (Self, Option<SessionId>) {
         match scope {
-            Scope::SessionScope { session_id } => (ScopeKind::Session, Some(*session_id)),
+            Scope::SessionScope { session_id } | Scope::ChannelScope { session_id, .. } => (ScopeKind::Session, Some(*session_id)),
             Scope::UserScope { .. } => (ScopeKind::User, None),
-            _ => (ScopeKind::Global, None),
+            Scope::ProjectScope { .. } => (ScopeKind::Project, None),
+            Scope::GlobalScope | Scope::GroupScope { .. } => (ScopeKind::Global, None),
         }
     }
 
@@ -61,12 +68,13 @@ impl ScopeKind {
     }
 
     /// The scope of `user`'s own thing put here on its own: theirs or the
-    /// global one; `None` for a session's, which nothing is put into so.
+    /// global one; `None` for a session's or a project's, which nothing is
+    /// put into so.
     pub fn of_user(self, user: UserId) -> Option<Scope> {
         match self {
             Self::User => Some(Scope::UserScope { user_id: user }),
             Self::Global => Some(Scope::GlobalScope),
-            Self::Session => None,
+            Self::Session | Self::Project => None,
         }
     }
 }
@@ -82,6 +90,7 @@ pub struct ItemDescriptionRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::project::ProjectId;
 
     /// A request names a scope as a response does: a session's with its
     /// session, a channel's with its channel besides; nothing else names
@@ -97,5 +106,15 @@ mod tests {
         assert_eq!(ScopeKind::Session.place(user, None, Some(channel_id)), None);
         assert_eq!(ScopeKind::User.place(user, Some(session_id), None), None, "a session named for another kind");
         assert_eq!(ScopeKind::Global.place(user, None, Some(channel_id)), None);
+    }
+
+    /// Issue 467: the scope of a project is where its members lie, and nothing is put there by a
+    /// request.
+    #[test]
+    fn a_project_s_scope_is_shown_and_placed_nothing_in() {
+        let user = UserId::new();
+        assert_eq!(ScopeKind::of(&Scope::ProjectScope { project_id: ProjectId::new() }), (ScopeKind::Project, None));
+        assert_eq!(ScopeKind::Project.of_user(user), None);
+        assert_eq!(ScopeKind::Project.place(user, None, None), None);
     }
 }

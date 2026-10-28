@@ -12,6 +12,8 @@ use crate::attachment::AttachmentError;
 use crate::command::CommandError;
 use crate::content::ContentError;
 use crate::component::ComponentError;
+use crate::project::ProjectError;
+use crate::scoped::ScopeNotEmpty;
 use crate::session::SessionError;
 use crate::view::{AgentContextError, ViewError};
 use crate::channel::ChannelError;
@@ -63,12 +65,22 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
             SessionError::ChannelUnavailable { cause, .. } => component_message(cause).map(|_| e.to_string()),
             _ => Some(e.to_string()),
         }
+    } else if let Some(e) = e.downcast_ref::<ScopeNotEmpty>() {
+        // How many of which kind are left, never which: whoever holds the scope raises it.
+        Some(e.to_string())
     } else if let Some(e) = e.downcast_ref::<WorkspaceError>() {
         // Its store errors are judged as store errors are, a storage no longer configured is the
         // configuration's; the rest name the workspace and what the caller wrote, never a place.
         match e {
             WorkspaceError::Store(e) => store_message(e),
             WorkspaceError::StorageGone(_) => None,
+            _ => Some(e.to_string()),
+        }
+    } else if let Some(e) = e.downcast_ref::<ProjectError>() {
+        // As a workspace's; what a session of it reported is judged further along the chain.
+        match e {
+            ProjectError::Store(e) => store_message(e),
+            ProjectError::Session(_) => None,
             _ => Some(e.to_string()),
         }
     } else if let Some(e) = e.downcast_ref::<AgentError>() {
@@ -165,8 +177,12 @@ mod tests {
     use super::*;
     use crate::backend::StorageGone;
     use caelumora_model::actor::ActorId;
+    use caelumora_model::agent::Agent;
     use caelumora_model::channel::ChannelId;
     use caelumora_model::content::ContentId;
+    use caelumora_model::scope::Scope;
+    use caelumora_model::session::SessionId;
+    use caelumora_model::store::Stored;
 
     /// An error of a type of another crate's, holding one of the runtime's.
     #[derive(Debug, thiserror::Error)]
@@ -217,6 +233,17 @@ mod tests {
         assert_eq!(user_message(&anyhow::Error::new(SessionError::InvalidComponents(failed()))), None, "nor by the session that repeats it");
         let gone = built(StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() });
         assert!(user_message(&anyhow::Error::new(gone)).is_some_and(|message| message.contains("'tools'")));
+    }
+
+    /// What is left in a scope is shown as its holder raises it, and alone: by kind and count.
+    #[test]
+    fn what_is_left_in_a_scope_is_shown_however_it_travels() {
+        let session_id = SessionId::new();
+        let left = || ScopeNotEmpty { holder: Scope::SessionScope { session_id }, left: vec![(Agent::KIND, 1)] };
+        let shown = left().to_string();
+        assert!(shown.contains("1 agent"), "{shown}");
+        assert_eq!(user_message(&anyhow::Error::new(SessionError::from(left()))).as_deref(), Some(shown.as_str()), "as the session raises it");
+        assert_eq!(user_message(&anyhow::Error::new(left())).as_deref(), Some(shown.as_str()), "and alone");
     }
 
     #[test]

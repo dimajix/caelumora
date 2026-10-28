@@ -17,22 +17,23 @@ reached only through its session -, purging it removes them. A session is loaded
 name, since starting a session the caller may read must not fail on a channel the caller is not in.
 
 What lies in a session's scope - its personalities, session templates and agents, those of its
-channels' scopes, its workspace if made for it, the artifacts published in it and not kept - goes
+channels' scopes, its workspace if made for it - goes
 with it (`ScopedEntities`, `caelumora-runtime/src/scoped.rs`): deleting the session deletes them,
 restoring it restores those deleted with it - not one deleted by hand before, nor one whose name was
 taken meanwhile -, purging it purges them. They are found in the runtime's name, but deleted and
 restored in the name of whoever deletes or restores the session (issue 320): if something is left
-they may not delete, the session is kept and the deletion fails with `SessionError::ScopeNotEmpty`,
-saying how much of which kind is left; what they may not restore stays deleted, and the session
-comes back all the same. The session is marked before its scope is deleted, so that what goes with
-it is deleted with it, not before it; if something is left, the mark is taken away again in the
-runtime's name, and what was deleted stays deleted - restored by hand, not with the session. Purging
-is done in the runtime's name. Each kind that may lie in a scope is a `ScopeMember` (issue 323), and
-`ScopedEntities` goes through them in the order they were registered. What has a manager of its
-own - agents, workspaces, skills, artifacts - is a member by it (`…_lying_in`), deleted, restored
-and purged by it and announced as it announces its own deletions: an artifact to whoever reads it,
-as when it is deleted alone (issues 319, 316). Personalities and session templates, which have
-none, are members by their store (`Unowned`), which marks them and announces nothing.
+they may not delete, the session is kept and the deletion fails with `ScopeNotEmpty` (`scoped`,
+raised by the session as `SessionError::ScopeNotEmpty`), saying how much of which kind is left;
+what they may not restore stays deleted, and the session comes back all the same. The session is
+marked before its scope is deleted, so that what goes with it is deleted with it, not before it; if
+something is left, the mark is taken away again in the runtime's name, and what was deleted stays
+deleted - restored by hand, not with the session. Purging is done in the runtime's name. Each kind
+that may lie in a scope is a `ScopeMember` (issue 323), and `ScopedEntities` goes through them in
+the order they were registered. What has a manager of its own - agents, workspaces, skills,
+artifacts - is a member by it (`…_lying_in`), deleted, restored and purged by it and announced as
+it announces its own deletions: an artifact to whoever reads it, as when it is deleted alone
+(issues 319, 316). Personalities and session templates, which have none, are members by their
+store (`Unowned`), which marks them and announces nothing.
 
 The groups of the participants of a session and of its channels lie in its scope as well, but are
 not among what lies there: they belong to the session or channel itself, and its participants reach
@@ -42,7 +43,7 @@ announced as a team. Deleting deletes them last, once nothing else of the scope 
 session kept keeps its members; if they cannot go, the mark is taken away again, and they stay.
 Restoring restores them first, with the mark; if they cannot come back, the session or channel is
 deleted again and the restoring fails. So a session or channel that is there always has the group of
-its participants there, too. Purging purges them with it (`purge_participants`).
+its participants there, too. Purging purges them with it (`scoped::purge_for_good`).
 
 That holds because what lies in a session's or a channel's scope is used only within it
 (`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel,
@@ -50,6 +51,15 @@ and a personality of it makes agents only within it. What lies in a user's scope
 used wherever the permissions allow: that scope only says where its name is found. A session
 template lies only in a user's scope or everywhere; one of a session's or a channel's would make
 sessions it can never lie in, and is not stored.
+
+Every session has a **project** its results go to (`Session::project`, issue 467): one of its own,
+made with it in its scope, or a shared one it lies in, which it goes with. The session keeps its own
+project as it keeps the group of its participants (`SessionManager`): made with it, in the runtime's
+name; deleted and restored with its mark, the project after the groups, all of them or none; and
+purged with it. What lies in the project's scope goes with the session as what lies in the
+session's does, and what is left of it keeps the session as well (`ScopeNotEmpty`). A session is a
+user's, so that its project has an owner. How a session is put into a project, and how its own is
+kept, is in [PROJECTS.md](PROJECTS.md).
 
 Every session has a privacy policy: whom it lets read what was said in it from other sessions. It is
 taken over from its template (private unless the template says otherwise), changed only by the

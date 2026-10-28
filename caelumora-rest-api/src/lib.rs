@@ -18,6 +18,7 @@ pub mod deleted;
 pub mod group;
 pub mod history;
 pub mod profile;
+pub mod project;
 pub mod scope;
 pub mod session;
 pub mod stream;

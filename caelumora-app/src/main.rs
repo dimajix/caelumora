@@ -28,6 +28,7 @@ use caelumora_compaction::plugin::CompactionPlugin;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
+use caelumora_runtime::project::ProjectManager;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_skills::plugin::SkillsPlugin;
 use clap::Parser;
@@ -105,6 +106,7 @@ async fn main() -> Result<()> {
         auth,
         runtime_manager,
         session_manager: Arc::clone(&session_manager),
+        project_manager: Arc::new(ProjectManager::new(Arc::clone(&session_manager))),
         compartments: Arc::new(config.compartments.clone()),
         shutdown: shutdown.clone(),
     });

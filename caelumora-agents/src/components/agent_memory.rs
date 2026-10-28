@@ -244,6 +244,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::project::ProjectId;
     use caelumora_model::confidentiality::{ConfidentialityRules, Compartments, Reading, Place};
     use caelumora_runtime::transport::Discard;
     use crate::testing::{self, TestAgents};
@@ -385,6 +386,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             id,
             name: Name::new("s").unwrap(),
             participants: privacy.people.iter().map(|user| Participant::User(*user)).collect(),

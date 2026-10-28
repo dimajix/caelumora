@@ -1,3 +1,6 @@
+//! A session (issue 88): the container of one interaction - who takes part, its channels, how
+//! private it is, the workspace it is done in and the project its results go to - and its changes.
+
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::approval::ApprovalRule;
 use crate::component::ComponentConfig;
@@ -13,6 +16,7 @@ use crate::value::name::Name;
 use crate::value::time_zone::TimeZone;
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
+use crate::project::ProjectId;
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use crate::removal::Removal;
@@ -39,6 +43,9 @@ pub enum SessionUpdateEvent {
     /// A workspace was attached, or the one attached taken away (issue
     /// 253), as it now stands.
     WorkspaceChanged(Option<WorkspaceId>),
+    /// It was put into another project, or taken out into its own (issue
+    /// 467): the project its results go to from now on.
+    ProjectChanged(ProjectId),
     /// Someone was taken in after it was built (issue 221): by whoever may
     /// change it, or by themselves, where an entry let them join.
     ParticipantJoined(Participant),
@@ -97,6 +104,9 @@ pub struct Session {
     /// of its channels may use it, the workspace's classification decides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<WorkspaceId>,
+    /// The project its results go to (issue 467): its own, lying in its
+    /// scope, or a shared one it lies in.
+    pub project: ProjectId,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub security_attributes: SecurityAttributes,
@@ -139,6 +149,7 @@ impl Updatable for Session {
             SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
             SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
             SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
+            SessionUpdateEvent::ProjectChanged(project) => self.project = *project,
             SessionUpdateEvent::ParticipantJoined(participant) => self.take_in(participant.clone()),
         }
         Ok(())
@@ -205,6 +216,8 @@ pub enum SessionField {
     Participants,
     /// A participant, within `Participants`.
     Participant,
+    /// The project its results go to (issue 467).
+    Project,
 }
 
 impl Field for SessionField {
@@ -212,6 +225,7 @@ impl Field for SessionField {
         match self {
             SessionField::Participants => &["participants"],
             SessionField::Participant => &[],
+            SessionField::Project => &["project"],
         }
     }
 }
@@ -221,6 +235,11 @@ impl Filter<SessionField> {
     /// The sessions `actor` takes part in (`Session::takes_part`).
     pub fn with_participant(actor: ActorId) -> Self {
         Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, actor))
+    }
+
+    /// The sessions whose results go to `project` (issue 467): those that lie in it.
+    pub fn in_project(project: ProjectId) -> Self {
+        Filter::eq(SessionField::Project, project)
     }
 }
 
@@ -248,7 +267,7 @@ mod tests {
         let now = Utc::now();
         let mut session = Session {
             id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &access), deleted: None,
         };
         session.take_in(Participant::User(bob));
@@ -270,7 +289,7 @@ mod tests {
         let session = Session {
             id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None,
             participants: vec![Participant::User(alice), Participant::Agent(agent)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
         };
         let document = serde_json::to_value(&session).unwrap();
@@ -279,12 +298,29 @@ mod tests {
         }
     }
 
+    /// Issue 467: the condition of the sessions of a project meets those
+    /// whose results go to it, as it is changed.
+    #[test]
+    fn the_sessions_in_a_project_are_those_whose_results_go_to_it() {
+        let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
+        let mut session = Session {
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: Vec::new(), channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
+            security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
+        };
+        let shared = ProjectId::new();
+        assert!(!Filter::in_project(shared).matches(&serde_json::to_value(&session).unwrap()));
+        session.apply(&SessionUpdateEvent::ProjectChanged(shared)).unwrap();
+        assert_eq!(session.project, shared);
+        assert!(Filter::in_project(shared).matches(&serde_json::to_value(&session).unwrap()));
+    }
+
     #[test]
     fn a_change_is_made_into_the_session_s_values_or_leaves_it_as_it_was() {
         let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
         let mut session = Session {
             id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
         };
         session.apply(&SessionUpdateEvent::NameChanged("planning".to_string())).unwrap();

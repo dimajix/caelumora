@@ -126,7 +126,7 @@ impl Stored for Skill {
             (ActorId::User(_), Scope::GlobalScope | Scope::SessionScope { .. }) => Ok(()),
             (ActorId::User(owner), Scope::UserScope { user_id }) if *user_id == owner => Ok(()),
             (ActorId::User(_), Scope::UserScope { .. }) => Err("a skill lies in no other user's scope than its owner's".to_string()),
-            (ActorId::User(_), Scope::ChannelScope { .. } | Scope::GroupScope { .. }) => Err("a skill lies in the global scope, a session's or its owner's".to_string()),
+            (ActorId::User(_), Scope::ChannelScope { .. } | Scope::GroupScope { .. } | Scope::ProjectScope { .. }) => Err("a skill lies in the global scope, a session's or its owner's".to_string()),
             (ActorId::System, Scope::GlobalScope) => Ok(()),
             (ActorId::System, _) => Err("a skill of the system lies in the global scope".to_string()),
             _ => Err("a skill belongs to a user or to the system".to_string()),

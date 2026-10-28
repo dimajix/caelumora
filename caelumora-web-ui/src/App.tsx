@@ -6,6 +6,7 @@ import {SkillPage} from './components/SkillPage';
 import {ArtifactPage} from './components/ArtifactPage';
 import {GroupPage} from './components/GroupPage';
 import {AgentPage} from './components/AgentPage';
+import {ProjectPage} from './components/ProjectPage';
 import {Login} from './components/Login';
 import {ErrorBanner} from './components/ErrorBanner';
 import {api} from './api';
@@ -72,13 +73,13 @@ interface LayoutProps {
   onLogout: () => void;
 }
 
-/** The sidebar, and beside it a channel or a page in its place - a workspace, a skill, an artifact, a team or an agent. */
+/** The sidebar, and beside it a channel or a page in its place - a workspace, a skill, an artifact, a team, an agent or a project. */
 function Layout({ user, onLogout }: LayoutProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   // What is shown in the place of a channel: one of the user's workspaces
   // (issue 253), a skill (issue 22), an artifact (issue 291), a team
-  // (issue 286) or an agent (issue 227).
+  // (issue 286), an agent (issue 227) or a project (issue 467).
   const [page, setPage] = useState<Page | null>(null);
 
   const handleSelectChannel = (sessionId: string, channelId: string) => {
@@ -128,9 +129,11 @@ function Layout({ user, onLogout }: LayoutProps) {
         ) : page?.kind === 'skill' ? (
           <SkillPage key={page.id} skillId={page.id} onDeleted={(id) => handlePageGone('skill', id)} />
         ) : page?.kind === 'artifact' ? (
-          <ArtifactPage key={page.id} artifactId={page.id} onDeleted={(id) => handlePageGone('artifact', id)} onSelectChannel={handleSelectChannel} />
+          <ArtifactPage key={page.id} artifactId={page.id} onDeleted={(id) => handlePageGone('artifact', id)} onSelectChannel={handleSelectChannel} onSelectPage={handleSelectPage} />
         ) : page?.kind === 'group' ? (
           <GroupPage key={page.id} groupId={page.id} onDeleted={(id) => handlePageGone('group', id)} />
+        ) : page?.kind === 'project' ? (
+          <ProjectPage key={page.id} projectId={page.id} onDeleted={(id) => handlePageGone('project', id)} onSelectPage={handleSelectPage} onSelectChannel={handleSelectChannel} />
         ) : page?.kind === 'agent' ? (
           <AgentPage key={page.id} agentId={page.id} userId={user.id} onDeleted={(id) => handlePageGone('agent', id)} onSelectChannel={handleSelectChannel} />
         ) : selectedSessionId && selectedChannelId ? (

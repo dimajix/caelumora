@@ -8,7 +8,7 @@
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::removal::Removal;
-use crate::scope::{Scope, ScopeField, Scoped, validate_users_own};
+use crate::scope::{Scope, ScopeField, Scoped};
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
@@ -135,7 +135,13 @@ impl Stored for Workspace {
     /// lies in a session's scope, its owner's or the global one: not in a
     /// channel's, since a session's channels share one.
     fn validate(&self) -> Result<(), String> {
-        validate_users_own("workspace", &self.security_attributes, &self.name.scope)
+        let ActorId::User(owner) = self.security_attributes.owner_id else { return Err("a workspace belongs to a user".to_string()) };
+        match &self.name.scope {
+            Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),
+            Scope::UserScope { user_id } if *user_id == owner => Ok(()),
+            Scope::UserScope { .. } => Err("a workspace lies in no other user's scope than its owner's".to_string()),
+            Scope::ChannelScope { .. } | Scope::GroupScope { .. } | Scope::ProjectScope { .. } => Err("a workspace lies in a session's scope, its owner's or the global one".to_string()),
+        }
     }
 
     fn classification(&self) -> Option<&Classification> {

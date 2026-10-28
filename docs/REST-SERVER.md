@@ -12,7 +12,7 @@ frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind t
 
 | File | Holds |
 |---|---|
-| `state.rs` | `AppState`: the `Auth`, the `RuntimeManager` and the `SessionManager` every handler reaches |
+| `state.rs` | `AppState`: the `Auth`, the `RuntimeManager`, the `SessionManager` and the `ProjectManager` every handler reaches |
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
 | `routes/` | The handlers, by resource, and `routes::api`, the router of all of them and of the plugins' routes |
 | `plugin.rs` | `RestPlugin`, a plugin that serves routes of its own |
@@ -96,16 +96,17 @@ its handler's doc comment.
 | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/refresh` | Log in and out, the logged-in user, renew the session |
 | `GET /templates`, `GET /compartments` | The session templates, with the workspace their sessions get; the compartments a classification may name |
 | `GET`, `PUT /profile`; `POST /profile/approval-rules`, `DELETE /profile/approval-rules/{id}` | The user's own profile - introduction, preferred language, approval rules; add or take back one of the rules |
-| `GET`, `POST /sessions`; `GET`, `PATCH`, `DELETE /sessions/{id}`; `POST /sessions/{id}/restore`, `…/purge` | Sessions: list, create from a template (with a workspace chosen instead of the template's), fetch without starting, rename, delete, restore, purge |
-| `PUT /sessions/{id}/language`, `…/time-zone`, `…/privacy`, `…/description`, `…/approval-rules`; `PUT`, `DELETE /sessions/{id}/workspace` | Change the language its channels without one of their own are held in, its time zone, whom the session lets read what was said, what it is for, what it restricts of tool calls; attach or take away its workspace |
+| `GET`, `POST /sessions`; `GET`, `PATCH`, `DELETE /sessions/{id}`; `POST /sessions/{id}/restore`, `…/purge` | Sessions: list, create from a template (with a workspace chosen instead of the template's, and in a shared project - made in its own and put there, or not made at all), fetch without starting, rename, delete, restore, purge |
+| `PUT /sessions/{id}/language`, `…/time-zone`, `…/privacy`, `…/description`, `…/approval-rules`; `PUT`, `DELETE /sessions/{id}/workspace`; `PUT`, `DELETE /sessions/{id}/project` | Change the language its channels without one of their own are held in, its time zone, whom the session lets read what was said, what it is for, what it restricts of tool calls; attach or take away its workspace; put it into a shared project or take it out into its own (issue 467) |
 | `POST /sessions/{id}/participants`, `…/join`; `GET /sessions/{id}/candidates?prefix=&channel=` | Take a user or agent into the session - and a channel at once; join it by one's own act; search whom to take in by the beginning of their name, with whether they take part and why they cannot be taken in |
 | `GET /sessions/{id}/actors/{aid}/private_notes` | The private notes an agent wrote in the channels of the session the user may read |
 | `GET`, `POST /agents`; `GET`, `PATCH`, `DELETE /agents/{id}`; `POST /agents/{id}/restore`, `…/purge`; `GET /personalities` | Agents: list, make one of a personality in the user's scope, the global one or a session's or channel's they may read, fetch with the channels it takes part in that the user may read, rename, delete (it rests in its channels as a former participant), restore (back into them), purge; the personalities the user may make an agent of |
 | `GET`, `POST /workspaces`; `GET /workspaces/storages`; `GET`, `PATCH`, `DELETE /workspaces/{id}`; `PUT /workspaces/{id}/access`, `…/description`, `…/classification`; `POST /workspaces/{id}/restore`, `…/purge` | Workspaces: list, make, the storages they can be made in, fetch, rename, delete, share, describe, reclassify, restore, purge |
 | `GET /workspaces/{id}/files?path=`; `GET`, `PUT`, `DELETE /workspaces/{id}/files/{path}` | List a directory of a workspace, download, upload or delete a file |
 | `GET`, `POST /skills`; `GET`, `PATCH`, `DELETE /skills/{id}`; `PUT /skills/{id}/description`, `…/body`, `…/classification`; `POST /skills/{id}/restore`, `…/purge` | Skills, served by the plugin `caelumora-skills`: list without bodies, make, fetch with body, rename, delete, change, restore, purge |
-| `GET`, `POST /groups`; `GET`, `PATCH`, `DELETE /groups/{id}`; `PUT /groups/{id}/members`; `POST /groups/{id}/restore`, `…/purge` | Teams, and the groups of the participants of a session or channel the user reads: list, make, fetch, rename, delete, set a team's members, restore, purge |
-| `GET /artifacts`; `GET`, `DELETE /artifacts/{id}`; `PUT /artifacts/{id}/scope`, `…/description`, `…/access`; `POST /artifacts/{id}/restore`, `…/purge` | Artifacts, served by the plugin `caelumora-artifacts`: list the user's own and those shared with them, fetch, delete, keep beyond the session, describe, share, restore, purge |
+| `GET`, `POST /groups`; `GET`, `PATCH`, `DELETE /groups/{id}`; `PUT /groups/{id}/members`; `POST /groups/{id}/restore`, `…/purge` | Teams, and the groups of the participants of a session or channel, or of the members of a project (`scope: project`, `project_id`), the user reads: list, make, fetch, rename, delete, set a team's members, restore, purge |
+| `GET`, `POST /projects`; `GET`, `PATCH`, `DELETE /projects/{id}`; `GET /projects/{id}/sessions`; `PUT /projects/{id}/description`, `…/members`, `…/access`; `POST /projects/{id}/lift`, `…/restore`, `…/purge` | Projects (issue 467): list the shared ones the user reaches, make one, fetch any they read - a session's own too, `name: own` with its `session_id` -, list the sessions in it they read, rename, describe, set its members, share, lift a session's own into the user's scope or the global one, delete with its sessions and what lies in it, restore, purge. An access entry names a project's members as `kind: project` with the project's id |
+| `GET /artifacts`; `GET`, `DELETE /artifacts/{id}`; `PUT /artifacts/{id}/description`, `…/access`; `POST /artifacts/{id}/restore`, `…/purge`; `GET /projects/{id}/artifacts` | Artifacts, served by the plugin `caelumora-artifacts`: list the user's own and those shared with them, fetch, delete, describe, share, restore, purge; those that lie in a project (issue 467) |
 | `GET /artifacts/{id}/versions/{n}/content` | Download a version's content (the plugin's) |
 | `GET`, `POST …/channels`; `GET`, `DELETE …/channels/{cid}`; `POST …/channels/{cid}/restore` | Channels: list, create, fetch (with its former participants), delete, restore |
 | `PUT …/channels/{cid}/classification`, `…/language`, `…/description`, `…/uses-workspace`, `…/approval-rules` | Change a channel: reclassify it, its language, what it is for, whether it uses the session's workspace, what it restricts of tool calls |
@@ -130,10 +131,10 @@ Some rules hold across the endpoints:
 
 *   **Deleted things are kept.** `DELETE` marks and keeps; `?deleted=true` on a list lists what was
     deleted, each entry saying whether the user may restore or purge it. Restoring answers
-    `409 name_taken` if the name was taken meanwhile. Deleting a session or channel answers
-    `409 scope_not_empty` if something of its scope is left that the user may not delete; what they
-    may is deleted. Purging is as the policy allows, by default the system's alone. A channel is
-    purged only with its session.
+    `409 name_taken` if the name was taken meanwhile. Deleting a session, channel or project answers
+    `409 scope_not_empty` if something of its scope - of a project, its sessions among it - is left
+    that the user may not delete; what they may is deleted. Purging is as the policy allows, by
+    default the system's alone. A channel is purged only with its session.
 *   **A channel can be unavailable.** One whose components cannot be read does not run, though its
     session does (see [CHANNELS.md](CHANNELS.md#running-channels)): it is listed, read and deleted
     as any other, says why in `unavailable`, and whatever is to be done in it answers

@@ -199,6 +199,11 @@ bundles a return value is one more name to read and keep. A type is worth it onc
 meaning of its own: it gets methods, travels further than its caller, is stored or serialized, has
 more than two parts, or its parts have the same type and could be swapped unnoticed.
 
+One exception: what builds several new documents at once for its one caller to store returns
+them as a tuple, also from another crate and with more than two parts - `SessionTemplate::build`
+returns the session, its own project and its channels. The parts have types of their own, are
+taken apart at once and go no further; a type for them would only name the call.
+
 ### States are types
 
 Fields that make sense only in certain combinations - two `bool`s of which only three combinations

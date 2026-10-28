@@ -46,6 +46,8 @@ export interface SessionResponse {
   time_zone: string | null;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
+  /** The project its results go to (issue 467) - its own, or the shared one it lies in -, if you may read it. */
+  project_id?: string;
 }
 
 /** What a session or channel is for (issue 245), as it is set: `null` removes one. */
@@ -375,21 +377,27 @@ export interface SessionSnapshot {
   participants: SessionParticipant[];
   /** The workspace attached to it (issue 253), if you may read it - its owner; absent otherwise. */
   workspace?: WorkspaceResponse;
+  /** The project its results go to (issue 467), if you may read it: its participants do. */
+  project?: ProjectResponse;
 }
 
-/** Where a workspace (issue 251), a skill (issue 22) or an artifact (issue 271) lies: of one session, the owner's, or global. */
-export type ScopeKind = 'session' | 'user' | 'global';
+/**
+ * Where a workspace (issue 251), a skill (issue 22) or a project (issue 467) lies: of one session,
+ * the owner's, or global; `project` only where the members of a project lie, which nothing made is
+ * put into.
+ */
+export type ScopeKind = 'session' | 'user' | 'global' | 'project';
 
 /** What an entry of an access list grants (issue 23): reading, changing the files too, or - for a session or channel - joining it (issue 221). */
 export type Grant = 'read' | 'write' | 'join';
 
 /**
- * An entry of a workspace's access list (issue 23): whom - a user, a role,
- * the members of a session or a channel, or a team (issue 286) - it grants
- * what, with how whom is called where the server knows it.
+ * An entry of an access list (issue 23): whom - a user, a role, the members of a session or a
+ * channel, the members of a project (issue 467), or a team (issue 286) - it grants what, with how
+ * whom is called where the server knows it.
  */
 export interface AccessEntry {
-  kind: 'user' | 'role' | 'session' | 'channel' | 'group' | 'everyone';
+  kind: 'user' | 'role' | 'session' | 'channel' | 'project' | 'group' | 'everyone';
   /** Absent for everyone (issue 221). */
   id?: string;
   grant: Grant;
@@ -449,15 +457,16 @@ export interface CreateSkillRequest {
 
 /**
  * A group (issue 286), as its owner and its members see it: a team a user
- * made, or the participants of a session or a channel.
+ * made, the participants of a session or a channel, or the members of a project (issue 467).
  */
 export interface GroupResponse {
   id: string;
   name: string;
-  /** `user` or `global` for a team; `session` for the participants of the session `session_id` - or of its channel `channel_id`. */
+  /** `user` or `global` for a team; `session` for the participants of the session `session_id` - or of its channel `channel_id`; `project` for the members of the project `project_id`. */
   scope: ScopeKind;
   session_id?: string;
   channel_id?: string;
+  project_id?: string;
   /** Whose it is. */
   owner: ActorId;
   /** Who belongs to it - users alone in a team. */
@@ -532,15 +541,14 @@ export interface PersonalityResponse {
 export interface ArtifactResponse {
   id: string;
   name: string;
-  /** `session`: published in it, and gone with it unless kept. */
-  scope: ScopeKind;
-  session_id?: string;
+  /** The project it lies in (issue 467), and lives as long as: with its session where that is the session's own. */
+  project_id?: string;
   /** What it is as a whole, as its owner describes it. */
   description?: string;
   classification: Classification;
   /** Oldest first; those you may read alone (issue 23). */
   versions: ArtifactVersion[];
-  /** Whether you may keep, describe, share or delete it: its owner. */
+  /** Whether you may describe, share or delete it: its owner. */
   can_change: boolean;
   /** Whether you may add a version (issue 23). */
   can_write: boolean;
@@ -958,6 +966,41 @@ export interface CreateSessionRequest {
   time_zone?: string;
   /** Its workspace in place of the template's (issue 266); the template's if absent. */
   workspace?: SessionWorkspaceRequest;
+  /** The shared project it lies in (issue 467); a project of its own if absent. */
+  project_id?: string;
+}
+
+/**
+ * A project (issue 467): what holds the results of sessions, as whoever may read it sees it - a
+ * shared one, or a session's own (`scope: session`, named `own`, the session `session_id`).
+ */
+export interface ProjectResponse {
+  id: string;
+  name: string;
+  /** `user` or `global` for a shared project; `session` for the own project of the session `session_id`. */
+  scope: ScopeKind;
+  session_id?: string;
+  description?: string;
+  /** Who works on it. */
+  members: ProjectMemberResponse[];
+  /** Whether you may change it - rename, describe, name its members, share, lift, delete: its owner. */
+  can_change: boolean;
+  /** Whom it is shared with - only for its owner. */
+  access?: AccessEntry[];
+}
+
+/** A member of a project, with their name where the server knows it. */
+export interface ProjectMemberResponse {
+  id: string;
+  name?: string;
+}
+
+/** A shared project to make (issue 467): with nobody among its members yet. */
+export interface CreateProjectRequest {
+  name: string;
+  /** `user` unless given. */
+  scope?: 'user' | 'global';
+  description?: string;
 }
 
 /** The workspace a new session is given in place of its template's (issue 266). */

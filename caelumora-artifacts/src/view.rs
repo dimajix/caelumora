@@ -1,8 +1,10 @@
 //! Artifacts as a viewer reaches them (issues 271, 23, 316): their own and
 //! those shared with them by name, among their artifacts; those published
-//! in a channel they read, through the channel - the plugin's views, an
-//! extension of the runtime's (`ArtifactViews`) and of the channel's view
-//! (`ArtifactChannelViews`, issue 328). An artifact is read by its list,
+//! in a channel they read, through the channel; those that lie in a project
+//! they read, through the project (issue 467) - the plugin's views, an
+//! extension of the runtime's (`ArtifactViews`), of the channel's view
+//! (`ArtifactChannelViews`, issue 328) and of the project's
+//! (`ArtifactProjectViews`). An artifact is read by its list,
 //! wherever the viewer acts and cleared for its classification, with the
 //! versions whose own list they are read by as well
 //! (`Artifact::version_attributes`). Nothing of its content is reachable
@@ -18,7 +20,8 @@ use caelumora_model::confidentiality::Reading;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{StoreResultExt, Stored};
 use caelumora_runtime::terminal::ByteStream;
-use caelumora_runtime::view::{ChannelView, Views};
+use caelumora_model::scope::Scope;
+use caelumora_runtime::view::{ChannelView, ProjectView, Views};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::warn;
@@ -149,6 +152,33 @@ impl ArtifactChannelViews for ChannelView {
             }
         }
         Ok(published)
+    }
+}
+
+/// The artifacts a project's view reaches (issue 467): what lies in it, from the plugin.
+#[async_trait]
+pub trait ArtifactProjectViews {
+    /// The artifacts that lie in this project and the viewer may read, each with the versions
+    /// they may read: a member reads every artifact - its list names the project's members -,
+    /// and the versions published in the channels they took part in. The store is asked for
+    /// these alone, in the viewer's name.
+    ///
+    /// # Errors
+    /// `Store` if the store cannot list them, `NotJoined` without the plugin.
+    async fn artifacts(&self) -> ArtifactResult<Vec<ArtifactView>>;
+}
+
+#[async_trait]
+impl ArtifactProjectViews for ProjectView {
+    async fn artifacts(&self) -> ArtifactResult<Vec<ArtifactView>> {
+        let views = self.views();
+        let lying_here = Query::filtered(Filter::lying_within(&Scope::ProjectScope { project_id: self.id() }));
+        let artifacts = views.artifact_manager()?.store().list(views.context(), &lying_here).await?.items;
+        let mut readable = Vec::with_capacity(artifacts.len());
+        for artifact in artifacts {
+            readable.push(readable_by(views, artifact).await);
+        }
+        Ok(readable)
     }
 }
 

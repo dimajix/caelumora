@@ -32,6 +32,8 @@ use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::error::{refusal, user_message};
 use caelumora_runtime::group::GroupError;
+use caelumora_runtime::project::ProjectError;
+use caelumora_runtime::scoped::ScopeNotEmpty;
 use caelumora_runtime::session::SessionError;
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{AgentContextError, ViewError};
@@ -235,6 +237,7 @@ impl From<ViewError> for ApiError {
             ViewError::ParticipantNotFound { .. } => Self::not_found("actor_not_found", detail),
             ViewError::MessageNotFound { .. } => Self::not_found("message_not_found", detail),
             ViewError::WorkspaceNotFound(_) => Self::not_found("workspace_not_found", detail),
+            ViewError::ProjectNotFound(_) => Self::not_found("project_not_found", detail),
             ViewError::GroupNotFound(_) => Self::not_found("group_not_found", detail),
             ViewError::AgentNotFound(_) => Self::not_found("agent_not_found", detail),
             ViewError::NoContext { .. } => Self::not_found("context_not_recorded", detail),
@@ -331,13 +334,32 @@ impl From<GroupError> for ApiError {
         let detail = error.to_string();
         match error {
             GroupError::NotFound(_) | GroupError::Store(StoreError::NotFound { .. }) => Self::not_found("group_not_found", detail),
-            GroupError::Participants(_) => Self::conflict("group_of_participants", detail),
+            GroupError::NotATeam(_) => Self::conflict("not_a_team", detail),
             GroupError::UnknownMember(_) => Self::bad_request("unknown_member", detail),
             GroupError::Invalid(e) => e.into(),
             GroupError::Store(StoreError::Validation(_)) => Self::bad_request("invalid_scope", detail),
             GroupError::Store(e) => Self::of_store(e),
             // A caller that is no user: not the client's request.
             GroupError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
+        }
+    }
+}
+
+impl From<ProjectError> for ApiError {
+    /// What a project failed with (issue 467): what does not fit is the client's; a session of it
+    /// that could not go answers as that session's error does.
+    fn from(error: ProjectError) -> Self {
+        let detail = error.to_string();
+        match error {
+            ProjectError::NotFound(_) | ProjectError::Store(StoreError::NotFound { .. }) => Self::not_found("project_not_found", detail),
+            ProjectError::InvalidScope => Self::bad_request("invalid_scope", detail),
+            ProjectError::UnknownMember(_) => Self::bad_request("unknown_member", detail),
+            ProjectError::ScopeNotEmpty(e) => e.into(),
+            ProjectError::Invalid(e) => e.into(),
+            ProjectError::Store(e) => Self::of_store(e),
+            ProjectError::Session(e) => e.into(),
+            // A caller that is no user: not the client's request.
+            ProjectError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
         }
     }
 }
@@ -384,13 +406,23 @@ impl From<SessionError> for ApiError {
             }
             SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
             SessionError::WorkspaceOutOfScope(_) => Self::bad_request("workspace_out_of_scope", detail),
-            SessionError::ScopeNotEmpty { .. } => Self::conflict("scope_not_empty", detail),
+            SessionError::ProjectOutOfScope(_) => Self::bad_request("project_out_of_scope", detail),
+            SessionError::ProjectDeleted(_) => Self::conflict("project_deleted", detail),
+            SessionError::ScopeNotEmpty(e) => e.into(),
             SessionError::ShuttingDown => Self::unavailable("shutting_down", detail),
             SessionError::AlreadyParticipant { .. } => Self::conflict("already_participant", detail),
             SessionError::CannotTakeIn(_) => Self::bad_request("invalid_participant", detail),
             // A caller that is no user: not the client's request.
             SessionError::OwnerNotAUser(_) => Self::internal("internal_error", "the request", &error.into()),
         }
+    }
+}
+
+/// What is left in a scope, which the caller may not delete (issue 320): the others' to take away,
+/// whatever holds the scope.
+impl From<ScopeNotEmpty> for ApiError {
+    fn from(error: ScopeNotEmpty) -> Self {
+        Self::conflict("scope_not_empty", error.to_string())
     }
 }
 
@@ -453,7 +485,7 @@ impl From<Error> for ApiError {
                 };
             )*};
         }
-        answer_as!(error, AgentContextError, ViewError, WorkspaceError, AttachmentError, AgentError, GroupError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
+        answer_as!(error, AgentContextError, ViewError, WorkspaceError, AttachmentError, AgentError, GroupError, ProjectError, TerminalError, SessionError, ScopeNotEmpty, ChannelError, CommandError, TemplateError);
         if error.chain().any(|e| matches!(e.downcast_ref(), Some(StoreError::NameTaken { .. }))) {
             return Self::conflict("name_taken", user_message(&error).unwrap_or_else(|| error.to_string()));
         }
@@ -544,6 +576,7 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::content::ContentId;
     use caelumora_model::message::MessageId;
+    use caelumora_model::project::ProjectId;
     use caelumora_model::question::QuestionId;
     use caelumora_model::store::Stored;
     use caelumora_model::scope::Scope;
@@ -704,8 +737,26 @@ mod tests {
         assert_eq!(answer(SessionError::AlreadyParticipant { session, participant: ActorId::User(UserId::new()) }), (409, "already_participant".to_string()));
         assert_eq!(answer(SessionError::CannotTakeIn(ActorId::System)), (400, "invalid_participant".to_string()));
         assert_eq!(answer(SessionError::ShuttingDown), (503, "shutting_down".to_string()), "for now, not for good (issue 297)");
-        let left = vec![(Agent::KIND, 1)];
-        assert_eq!(answer(SessionError::ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left }), (409, "scope_not_empty".to_string()), "what is left is the others' to take away (issue 320)");
+        let left = || ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left: vec![(Agent::KIND, 1)] };
+        assert_eq!(answer(SessionError::ScopeNotEmpty(left())), (409, "scope_not_empty".to_string()), "what is left is the others' to take away (issue 320)");
+        assert_eq!(answer(Error::new(left())), (409, "scope_not_empty".to_string()), "whatever holds the scope, and however it travels");
+    }
+
+    /// Issue 467: what a project fails with, as the API answers it.
+    #[test]
+    fn a_project_s_errors_answer_with_status_and_code() {
+        let project = ProjectId::new();
+        assert_eq!(answer(ProjectError::NotFound(project)), (404, "project_not_found".to_string()));
+        assert_eq!(answer(ViewError::ProjectNotFound(project)), (404, "project_not_found".to_string()));
+        assert_eq!(answer(ProjectError::InvalidScope), (400, "invalid_scope".to_string()));
+        assert_eq!(answer(ProjectError::Store(StoreError::Validation("own".to_string()))), (400, "validation_failed".to_string()), "a name, a scope or an access list it may not have, as a workspace's");
+        assert_eq!(answer(ProjectError::UnknownMember(UserId::new())), (400, "unknown_member".to_string()));
+        let left = ScopeNotEmpty { holder: Scope::ProjectScope { project_id: project }, left: vec![(Agent::KIND, 1)] };
+        assert_eq!(answer(ProjectError::ScopeNotEmpty(left)), (409, "scope_not_empty".to_string()));
+        assert_eq!(answer(ProjectError::Session(Error::new(SessionError::ShuttingDown))), (503, "shutting_down".to_string()), "a session of it as that session's error");
+        assert_eq!(answer(Error::new(ProjectError::NotFound(project)).context("renaming")), (404, "project_not_found".to_string()), "below a context too");
+        assert_eq!(answer(SessionError::ProjectOutOfScope(project)), (400, "project_out_of_scope".to_string()));
+        assert_eq!(answer(SessionError::ProjectDeleted(project)), (409, "project_deleted".to_string()));
     }
 
     #[test]

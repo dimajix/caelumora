@@ -1,6 +1,6 @@
 # 453 — Publishing an artifact takes eight parameters
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -52,3 +52,15 @@ Done when `publish` takes the values in the groups that belong together, and its
 - **2026-10-23** — Issue created during step 1 of
   [452](452-guideline-rules-not-checked-by-lints.md), where the
   `allow(clippy::too_many_arguments)` on `publish` became an `expect`.
+- **2026-10-28** — Done as step 0b of [467](467-projects-hold-what-outlasts-a-session.md):
+  `publish` takes where it is published as the channel's `Address` (`Address<Channel>`, a
+  channel's `(SessionId, ChannelId)`), beside the caller's context; its `expect` is gone. First
+  built with the view of the channel (`&ChannelView`), as `AttachmentManager::create` takes it,
+  and taken back at the maintainer's word: a view is a layer of access, and an interface speaks of
+  coordinates and properties - the view asked for the session and the channel once more, and made
+  a test build a session only to have one. The caller vouches for the channel as it vouches for
+  the classification. That `AttachmentManager::create` takes a view is issue 468. Content
+  and classification stay two values, as issue 296 decided: whether what is read from a workspace
+  should carry its classification is kept by every reader of a workspace alike, and is a question
+  of its own. The name stays a name until issue 467 makes where an artifact lies a project's
+  scope, when the caller builds the `ScopedName`.

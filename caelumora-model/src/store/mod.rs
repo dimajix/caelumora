@@ -32,6 +32,7 @@ use crate::value::ValueError;
 use chrono::{DateTime, Utc};
 use crate::workspace::Workspace;
 use crate::group::Group;
+use crate::project::Project;
 use crate::intern::intern;
 use crate::store::history::HistoryStore;
 use crate::store::transcript::TranscriptStore;
@@ -395,6 +396,7 @@ pub trait EntityStoreFactory {
 pub struct EntityStores {
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
     pub groups: Arc<dyn EntityStore<Group>>,
+    pub projects: Arc<dyn EntityStore<Project>>,
     pub session_templates: Arc<dyn EntityStore<SessionTemplate>>,
     pub user_profiles: Arc<dyn EntityStore<UserProfile>>,
     pub personalities: Arc<dyn EntityStore<Personality>>,
@@ -414,6 +416,7 @@ impl EntityStores {
         Ok(Self {
             workspaces: factory.entity_store()?,
             groups: factory.entity_store()?,
+            projects: factory.entity_store()?,
             session_templates: factory.entity_store()?,
             user_profiles: factory.entity_store()?,
             personalities: factory.entity_store()?,
@@ -683,6 +686,7 @@ pub trait StateStore : Debug + Sync + Send {
 #[cfg(test)]
 mod tests {
     use crate::session::SessionId;
+    use crate::project::ProjectId;
     use crate::store::query::NoField;
     use super::*;
     use crate::security::{SecurityAttributes, SecurityContext};
@@ -711,6 +715,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
@@ -726,6 +731,7 @@ mod tests {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            project: ProjectId::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),

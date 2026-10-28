@@ -15,6 +15,7 @@ use serde_json::json;
 use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
+use caelumora_model::project::ProjectId;
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::Persistence;
 use caelumora_model::user::UserId;
@@ -79,6 +80,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
         summary: None, briefing: None, language: None, time_zone: None,
         approval_rules: Vec::new(),
         workspace: Some(workspace.id),
+        project: ProjectId::new(),
         id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
         commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
         deleted: None,

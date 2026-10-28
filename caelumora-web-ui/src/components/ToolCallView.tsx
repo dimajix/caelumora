@@ -5,11 +5,11 @@
 // their record (`AnswersRecord`, issue 268), and what its result showed its model (issue 282).
 
 import React, {useEffect, useState} from 'react';
-import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import {BookOpen, CheckCircle2, Download, EyeOff, Package, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type ChannelAttachments, type WorkspaceFiles} from '../api';
 import type {Page} from '../page';
-import {ApiRequestError, reportError} from '../errors';
+import {ApiRequestError} from '../errors';
 import {commandResult, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandResult} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -659,11 +659,8 @@ const DownloadCard: React.FC<{
   </div>
 );
 
-/**
- * Artifact `id` as the user sees it - `null` if they may not read it, or it is not known yet - and
- * keeping it, which is its owner's (`can_change`).
- */
-function useArtifact(id: string | null): [ArtifactResponse | null, () => Promise<void>] {
+/** Artifact `id` as the user sees it - `null` if they may not read it, or it is not known yet. */
+function useArtifact(id: string | null): ArtifactResponse | null {
   const [artifact, setArtifact] = useState<ArtifactResponse | null>(null);
   useEffect(() => {
     if (id === null) return;
@@ -672,57 +669,36 @@ function useArtifact(id: string | null): [ArtifactResponse | null, () => Promise
     api.getArtifact(id).then(found => { if (current) setArtifact(found); }).catch(() => { if (current) setArtifact(null); });
     return () => { current = false; };
   }, [id]);
-  const keep = async () => {
-    if (id === null) return;
-    try {
-      setArtifact(await api.keepArtifact(id, 'user'));
-    } catch (error) {
-      reportError('Failed to keep the artifact', error);
-    }
-  };
-  return [artifact, keep];
+  return artifact;
 }
 
 /**
  * A file published as a version of an artifact (issue 271): a card with its name, version and size,
- * a download of that version - fixed, whatever became of the file -, for its owner "Keep" while it
- * lies in the session's scope, so that it outlives the session, and "Open" to its page (issue 291)
- * for whoever reaches the artifact itself.
+ * a download of that version - fixed, whatever became of the file -, and "Open" to its page (issue
+ * 291) for whoever reaches the artifact itself. It lives as long as its project (issue 467).
  */
 const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, artifacts, onSelectPage}) => {
   const args = argumentsObject(call.arguments);
   const published = resultObject(result);
   const id = textOf(published, 'artifact');
   const version = numberOf(published, 'version');
-  const [artifact, keep] = useArtifact(id);
-  const owned = artifact?.can_change ? artifact : null;
+  const artifact = useArtifact(id);
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">File not shown</span>;
   const path = textOf(published, 'path') ?? textOf(args, 'path');
   if (!published) {
     return result ? <FailedResult result={result} /> : <FilePath icon={<Package size={12} />} path={path} detail="being published" />;
   }
   const size = numberOf(published, 'size');
-  const kept = owned && owned.scope !== 'session' ? (owned.scope === 'global' ? 'Kept for everyone.' : 'Kept in your artifacts.') : null;
   return (
     <DownloadCard
       icon={<Package size={20} />}
       name={textOf(published, 'name') ?? '?'}
       details={[version !== null ? `version ${version}` : null, size !== null ? formatSize(size) : null, path]}
       description={textOf(published, 'description')}
-      note={kept ?? (artifacts ? null : 'Download it from the chat.')}
+      note={artifacts ? null : 'Download it from the chat.'}
       href={artifacts && id !== null && version !== null ? artifacts.url(id, version) : null}
       actions={(
         <>
-          {owned?.scope === 'session' && (
-            <button
-              type="button"
-              onClick={() => void keep()}
-              title="Keep it beyond this session, among your artifacts"
-              className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs px-2.5 py-1"
-            >
-              <PackageCheck size={12} /> Keep
-            </button>
-          )}
           {artifact && onSelectPage && (
             <button
               type="button"

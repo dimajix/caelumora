@@ -1,13 +1,13 @@
-//! `GroupManager`: making, changing, deleting, restoring and purging teams,
-//! and deleting and restoring the groups of participants with their
-//! session or channel (issues 286, 348).
+//! `GroupManager`: making, changing, deleting, restoring and purging teams, and deleting and
+//! restoring the groups of participants and members with their session, channel or project
+//! (issues 286, 348, 467).
 
 use super::{store_error, GroupError, GroupResult};
 use crate::event::EventBus;
 use crate::scoped::deleted_since;
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
+use caelumora_model::group::{Group, GroupField, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::store::query::{Filter, Query};
@@ -20,9 +20,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-/// The one writer of teams (issue 286), and what deletes and restores
-/// the groups of the participants of a session or channel with it (issue
-/// 348).
+/// The one writer of teams (issue 286), and what deletes and restores the groups of the
+/// participants of a session or channel, and of the members of a session's own project, with it
+/// (issues 348, 467).
 pub struct GroupManager {
     users: Arc<dyn EntityStore<User>>,
     groups: Arc<dyn EntityStore<Group>>,
@@ -88,15 +88,15 @@ impl GroupManager {
     /// who may not change it learns nothing of who exists.
     ///
     /// # Errors
-    /// `NotFound` if there is none the caller may read, `Participants` for
-    /// the participants of a session or channel, `Invalid` if a name does
+    /// `NotFound` if there is none the caller may read, `NotATeam` for a
+    /// group that is no team, `Invalid` if a name does
     /// not fit, `UnknownMember` for a user that does not exist, or whatever
     /// the store reports.
     async fn update(&self, ctx: &SecurityContext, id: GroupId, event: GroupUpdateEvent, members: Option<Vec<UserId>>) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
         let mut group = self.groups.get(ctx, id).await.map_err(store_error(id))?;
-        if group.is_participants() {
-            return Err(GroupError::Participants(id));
+        if !group.is_team() {
+            return Err(GroupError::NotATeam(id));
         }
         let before = group.security_attributes.clone();
         let mut told: Vec<ActorId> = group.members.clone();
@@ -133,13 +133,13 @@ impl GroupManager {
     /// caller could see.
     ///
     /// # Errors
-    /// `Participants` for the participants of a session or channel, or
-    /// whatever the store reports, `PermissionDenied` included.
+    /// `NotATeam` for a group that is no team, or whatever the store
+    /// reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(group) = self.groups.get(ctx, id).await.optional()? else { return Ok(false) };
-        if group.is_participants() {
-            return Err(GroupError::Participants(id));
+        if !group.is_team() {
+            return Err(GroupError::NotATeam(id));
         }
         if !self.groups.delete(ctx, id).await? {
             return Ok(false);
@@ -154,14 +154,14 @@ impl GroupManager {
     ///
     /// # Errors
     /// `NotFound` if it is not deleted or not the caller's to restore,
-    /// `Participants` for the participants of a session or channel, which
-    /// come back with it, or whatever else the store reports - `NameTaken`
+    /// `NotATeam` for a group that is no team, which comes back with what
+    /// it belongs to, or whatever else the store reports - `NameTaken`
     /// among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
         let deleted = self.groups.get_deleted(ctx, id).await.map_err(store_error(id))?;
-        if deleted.is_participants() {
-            return Err(GroupError::Participants(id));
+        if !deleted.is_team() {
+            return Err(GroupError::NotATeam(id));
         }
         let group = self.groups.restore(ctx, id).await.map_err(store_error(id))?;
         self.events.publish(GlobalEvent::restored::<Group>(&id), group.security_attributes.clone());
@@ -174,13 +174,13 @@ impl GroupManager {
     /// deleted the caller could see.
     ///
     /// # Errors
-    /// `Participants` for the participants of a session or channel, which
-    /// go with it, `PermissionDenied`, or whatever the store reports.
+    /// `NotATeam` for a group that is no team, which goes with what it
+    /// belongs to, `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(deleted) = self.groups.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
-        if deleted.is_participants() {
-            return Err(GroupError::Participants(id));
+        if !deleted.is_team() {
+            return Err(GroupError::NotATeam(id));
         }
         let purged = self.groups.purge(ctx, id).await?;
         info!(group = %id, by = %ctx.caller_id, "Group purged");
@@ -188,27 +188,26 @@ impl GroupManager {
     }
 }
 
-/// The groups of the participants of a session or a channel, which go and
-/// come back with it (issue 348): written in the runtime's name by what
-/// deletes and restores the session or channel - the act that was
-/// permitted -, as what changes its participants writes them, and announced
-/// as a team is (issue 319). Never in the caller's: a session or channel
-/// that is there has the group of its participants there as well, whatever
-/// the caller may do with groups.
+/// The groups of the participants of a session or a channel, and of the members of a session's
+/// own project, which go and come back with it (issues 348, 467): written in the runtime's name by
+/// what deletes and restores the session or channel - the act that was permitted -, as what
+/// changes its participants writes them, and announced as a team is (issue 319). Never in the
+/// caller's: a session or channel that is there has the group of its participants there as well,
+/// whatever the caller may do with groups.
 impl GroupManager {
-    /// Deletes the groups of the participants that lie in `holder` or
-    /// within it - of a session and its channels, or of a channel -, as
-    /// `holder` is deleted: all of them or, if one fails, none - those
-    /// deleted before are restored again, so that `holder`, which is then
-    /// kept, keeps its members. Announced once all are deleted.
+    /// Deletes the groups of the participants that lie in `holders` or within them - of a session,
+    /// its channels and its own project's members (issue 467), or of a channel -, as what holds
+    /// them is deleted: all of them or, if one fails, none - those deleted before are restored
+    /// again, so that what holds them, which is then kept, keeps its members. Announced once all
+    /// are deleted.
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn delete_participants(&self, holder: &Scope) -> StoreResult<()> {
+    pub(crate) async fn delete_participants(&self, holders: &[Scope]) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut deleted: Vec<Group> = Vec::new();
-        for group in self.groups.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for group in self.groups.list(&system, &lying_in(holders)).await?.items {
             if let Err(e) = self.groups.delete(&system, group.id).await {
                 for group in &deleted {
                     if let Err(undo) = self.groups.restore(&system, group.id).await {
@@ -225,20 +224,19 @@ impl GroupManager {
         Ok(())
     }
 
-    /// Restores the groups of the participants that lie in `holder` or
-    /// within it and were deleted at `since` or later - with `holder`, not
-    /// with a channel deleted before it -, as `holder` is restored: all of
-    /// them or, if one fails, none - those restored before are deleted
-    /// again, so that `holder`, which is then deleted again, takes them
-    /// along. Announced once all are restored.
+    /// Restores the groups of the participants that lie in `holders` or within them and were
+    /// deleted at `since` or later - with what holds them, not with a channel deleted before it -,
+    /// as that is restored: all of them or, if one fails, none - those restored before are deleted
+    /// again, so that what holds them, which is then deleted again, takes them along. Announced
+    /// once all are restored.
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn restore_participants(&self, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    pub(crate) async fn restore_participants(&self, holders: &[Scope], since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut restored = Vec::new();
-        for group in deleted_since(self.groups.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, since) {
+        for group in deleted_since(self.groups.list_deleted(&system, &lying_in(holders)).await?.items, since) {
             match self.groups.restore(&system, group.id).await {
                 Ok(group) => restored.push(group),
                 Err(e) => {
@@ -256,4 +254,9 @@ impl GroupManager {
         }
         Ok(())
     }
+}
+
+/// What lies in one of `holders` or within it.
+fn lying_in(holders: &[Scope]) -> Query<GroupField> {
+    Query::filtered(Filter::any_of(holders.iter().map(Filter::lying_within)))
 }

@@ -30,6 +30,7 @@ use crate::digest::Digest;
 use crate::message::{MessageId, TokenUsage};
 use crate::note::Note;
 use crate::privacy::PrivacyConfig;
+use crate::project::ProjectId;
 use crate::session::{ChannelId, SessionId};
 use crate::work::TurnId;
 use crate::command::Command;
@@ -37,6 +38,7 @@ use crate::question::QuestionRequest;
 use crate::removal::Removal;
 use crate::security::{Grant, Subject};
 use crate::workspace::WorkspaceId;
+use crate::user::UserId;
 use serde::Serialize;
 
 bitflags::bitflags! {
@@ -101,6 +103,9 @@ pub struct SessionSnapshot {
     /// its owner, who attached it. Who uses it in a channel learns of it
     /// there (`ChannelView::workspace`).
     pub workspace: Option<WorkspaceSnapshot>,
+    /// The project its results go to (issue 467), if the viewer may read it: its own, or the
+    /// shared one it lies in, which its participants read.
+    pub project: Option<ProjectSnapshot>,
 }
 
 /// A participant of a session.
@@ -316,6 +321,25 @@ pub struct GroupSnapshot {
     /// (`UpdateGroup`): the owner of a team. The participants of a session
     /// or channel are changed by taking part, never here.
     pub can_change: bool,
+}
+
+/// A project as the viewer sees it (issue 467): one they own, work on or are shared, in the list of
+/// projects, or the one a session's results go to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectSnapshot {
+    pub id: ProjectId,
+    pub name: String,
+    /// Where it lies: the global scope or its owner's for a shared project, a session's for its
+    /// own.
+    pub scope: Scope,
+    pub description: Option<Description>,
+    /// Who works on it, each with their name where it is known.
+    pub members: Vec<(UserId, Option<String>)>,
+    /// Whether the viewer may change it - rename, describe, name its members, share, lift
+    /// (`UpdateProject`): its owner.
+    pub can_change: bool,
+    /// Its access list, for whoever may change it - empty for everybody else.
+    pub access: Vec<AccessSnapshot>,
 }
 
 /// A workspace as the viewer sees it (issue 253): its own, in the list of

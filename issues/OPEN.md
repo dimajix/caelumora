@@ -21,7 +21,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [467](467-projects-hold-what-outlasts-a-session.md) | open | high | feature | An artifact lies in the scope of the session it was published in and goes with it, because nothing above a session holds what is meant to outlast one piece of work. |
 | [381](381-inactive-channels-held-in-memory.md) | open | medium | feature | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. Part of epic [378](378-resource-management-epic.md). |
 | [382](382-agents-held-without-a-session.md) | open | medium | feature | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. Part of epic [378](378-resource-management-epic.md). |
 
@@ -59,7 +58,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [58](58-notes-in-every-prompt.md) | open | high | feature | Every note is put into every prompt in full, which grows without bound, and the writing agent sees its notes a second time as tool calls - revoked ones included. |
-| [338](338-artifacts-go-with-their-session.md) | open | high | feature | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [465](465-attachments-in-the-context.md) | open | medium | feature | What of a message's attachments is put into a model's context and what it has to fetch through a tool is decided by no bound, so a few images or one long text can fill the context and are sent again with every call. |
@@ -109,7 +107,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [433](433-mcp-tools-list-changed.md) | open | low | feature | An MCP server that announces a change of its tools (`notifications/tools/list_changed`) is not heard, so an agent follows the change only once its list of the server's tools expires. |
 | [443](443-errors-carry-only-an-english-text.md) | open | low | feature | What an error tells a person - a problem detail of the REST API, what a failed turn or command tells its owner - is an English text written by the runtime, with nothing beside it from which a frontend could say the same in the person's language. |
 | [444](444-texts-compiled-in-cannot-be-exported.md) | open | low | feature | A variant of the texts given to models is a directory of files of the form of those compiled in, but whoever runs the program without its sources has no copy of them to begin one with. |
-| [453](453-artifact-publish-takes-eight-parameters.md) | open | low | refactoring | `ArtifactManager::publish` takes the caller, the content, its classification, the name, the description, the session and the channel one by one, and carries an `expect(clippy::too_many_arguments)`. |
 | [454](454-rustdoc-warnings-unchecked.md) | open | low | refactoring | `cargo doc --workspace` warns 31 times that public documentation links to a private item, and neither clippy nor the pre-commit hook runs rustdoc, so such warnings only grow. |
 | [460](460-kinds-kept-in-one-form-in-postgres.md) | open | low | feature | The Postgres store keeps every kind alike - a table of id, name, mark and body, searched by a GIN index of the body -, so a kind that is reached in a way of its own, such as the groups by their members, cannot have a table or column of its own that answers that faster. |
 | [461](461-scope-members-repeat-their-loops.md) | open | low | refactoring | The managers of agents, workspaces, skills and artifacts, and `Unowned` for the kinds without one, each implement `ScopeMember` with the same three loops - list what lies in the scope, delete, restore or purge each, count or skip what was refused -, differing only in what they announce and what they remove besides. |

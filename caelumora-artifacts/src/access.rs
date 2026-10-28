@@ -11,9 +11,8 @@ use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext,
 
 #[async_trait]
 pub trait ArtifactAccess {
-    /// Whether `context` may change an artifact with these attributes -
-    /// keep it in another scope, describe it, share it, delete it
-    /// (`UpdateArtifact`, issue 271).
+    /// Whether `context` may change an artifact with these attributes - describe it, share it,
+    /// delete it (`UpdateArtifact`, issue 271).
     async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool;
 
     /// Whether `context` may read what has these attributes - an artifact,

@@ -1,26 +1,32 @@
-//! Groups (issue 286): teams, and the participants of a session or a channel.
+//! Groups (issue 286): teams, the participants of a session or a channel, and the members of a
+//! project (issue 467).
 
 use crate::scope::ScopeKind;
 use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
 use caelumora_model::group::GroupId;
+use caelumora_model::project::ProjectId;
 use caelumora_model::session::{ChannelId, SessionId};
 use serde::{Deserialize, Serialize};
 
-/// A group (issue 286) as whoever may read it sees it: a team, or the
-/// participants of a session or a channel.
+/// A group (issue 286) as whoever may read it sees it: a team, the
+/// participants of a session or a channel, or the members of a project
+/// (issue 467).
 #[derive(Debug, Serialize)]
 pub struct GroupResponse {
     pub id: GroupId,
     pub name: String,
     /// Where it lies: `user` or `global` for a team, `session` for the
     /// participants of the session `session_id` names - or of its channel
-    /// `channel_id`.
+    /// `channel_id` -, `project` for the members of the project `project_id`
+    /// names.
     pub scope: ScopeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<ChannelId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
     /// Whose it is.
     pub owner: ActorId,
     /// Who belongs to it, each with their name where it is known.
@@ -41,8 +47,9 @@ pub struct GroupMemberResponse {
 impl From<snapshot::GroupSnapshot> for GroupResponse {
     fn from(view: snapshot::GroupSnapshot) -> Self {
         let (scope, session_id, channel_id) = ScopeKind::placed(&view.scope);
+        let project_id = view.scope.project();
         let members = view.members.into_iter().map(|(id, name)| GroupMemberResponse { id, name }).collect();
-        Self { id: view.id, name: view.name, scope, session_id, channel_id, owner: view.owner, members, can_change: view.can_change }
+        Self { id: view.id, name: view.name, scope, session_id, channel_id, project_id, owner: view.owner, members, can_change: view.can_change }
     }
 }
 

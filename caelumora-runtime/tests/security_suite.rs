@@ -31,7 +31,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::Detail;
-use caelumora_model::store::{StoreError, Stored};
+use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::user::{UserId, UserProfile, User};
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
@@ -39,11 +39,15 @@ use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KI
 use caelumora_runtime::moderator::ResponderPolicy;
 use caelumora_runtime::moderator::broadcast_policy::BroadcastPolicy;
 use caelumora_runtime::testing::{attributes, checks, denied, file, not_found, quiet, read, shown, workspace, World, STAFF};
+use caelumora_runtime::scoped::ScopeNotEmpty;
 use caelumora_runtime::session::{ChannelSpec, SessionError};
+use caelumora_runtime::session::testing::{create, make_session};
 use caelumora_runtime::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::group::GroupError;
+use caelumora_runtime::project::ProjectError;
+use caelumora_model::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_runtime::event::EventSubscription;
 use caelumora_runtime::actor::Shown;
@@ -840,7 +844,7 @@ async fn deleting_a_session_needs_owning_it() {
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: DeleteSession(alice's) no"]));
     let (refused, asked) = world.asked(world.manager.delete(&alice, session.id())).await;
     let refused = refused.expect_err("bob's agent is left");
-    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(Agent::KIND, 1)]), "{refused}");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { left, .. })) if *left == [(Agent::KIND, 1)]), "{refused}");
     assert_eq!(asked, checks(&[
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
@@ -858,10 +862,292 @@ async fn deleting_a_session_needs_owning_it() {
     assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
 }
 
+/// A session's own project (issue 467) is read by who reads the session:
+/// its owner and its participants, nobody else. What lies in its scope goes
+/// with the session as what lies in the session's does, in the deleter's
+/// name: a bundle of bob's she may not delete keeps the session, the
+/// project and their groups, and she is told what is left of the session.
+#[tokio::test]
+async fn a_session_s_own_project_is_read_by_its_participants_and_goes_with_it() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let (alice, project) = (World::as_user(world.alice), session.session().project);
+    let stores = world.runtime.entity_stores();
+    for (user, reads) in [(world.alice, true), (world.bob, true), (world.carol, false)] {
+        assert_eq!(stores.projects.get(&World::as_user(user), project).await.is_ok(), reads, "{user}");
+    }
+    let holder = Scope::ProjectScope { project_id: project };
+    let bobs = ComponentBundle::new(ScopedName::new("tools", holder).unwrap(), quiet(), attributes(Some(world.bob), &[]));
+    stores.component_bundles.create(&World::system(), &bobs).await.unwrap();
+
+    let (refused, asked) = world.asked(world.manager.delete(&alice, session.id())).await;
+    let refused = refused.expect_err("bob's bundle is left");
+    let session_scope = Scope::SessionScope { session_id: session.id() };
+    let left = [(ComponentBundle::KIND, 1)];
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { holder, left: l })) if *holder == session_scope && *l == left), "{refused}");
+    assert!(asked.contains(&"alice: GetComponentBundle(bob's) no".to_string()), "asked in her name: {asked:?}");
+    assert!(stores.projects.get(&alice, project).await.is_ok(), "the project is kept");
+    assert!(stores.groups.get(&World::system(), GroupId::of_project(project)).await.is_ok(), "with its group");
+
+    stores.component_bundles.delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
+    assert!(world.manager.delete(&alice, session.id()).await.unwrap(), "nothing of anybody else's is left");
+    assert!(stores.projects.get(&World::system(), project).await.is_err(), "the project goes with it");
+}
+
+/// A shared project (issue 467) is its owner's: made in her own scope or the global one, never
+/// in another's or a session's, and changed by her alone - who does not read it does not find
+/// it, who reads it may change nothing. Its members read it through their group, which follows
+/// them; who leaves reads it no longer, and hears so.
+#[tokio::test]
+async fn a_project_is_its_owners_and_read_by_its_members() {
+    let world = World::new().await;
+    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let projects = &world.projects;
+    let mine = Scope::UserScope { user_id: world.alice };
+    let project = projects.create(&alice, "report", mine.clone(), Some("The yearly report")).await.expect("in her own scope");
+    projects.create(&alice, "handbook", Scope::GlobalScope, None).await.expect("or everywhere");
+    let refused = projects.create(&alice, "theirs", Scope::UserScope { user_id: world.bob }, None).await;
+    assert!(matches!(refused, Err(ProjectError::Store(StoreError::Validation(_)))), "not in another's scope: {refused:?}");
+    let refused = projects.create(&alice, Project::OWN, mine.clone(), None).await;
+    assert!(matches!(refused, Err(ProjectError::Store(StoreError::Validation(_)))), "not under a session's own name: {refused:?}");
+    let refused = projects.create(&alice, "results", Scope::SessionScope { session_id: SessionId::new() }, None).await;
+    assert!(matches!(refused, Err(ProjectError::InvalidScope)), "a session's own is made with the session: {refused:?}");
+
+    let controller = world.runtime.controller_manager().project_controller(project.id).await.unwrap();
+    controller.update_name(&alice, "annual report").await.expect("hers to rename");
+    controller.update_description(&alice, Some("The annual report")).await.expect("and to describe");
+    let refused = controller.update_name(&bob, "mine").await;
+    assert!(matches!(refused, Err(ProjectError::NotFound(_))), "who does not read it does not find it: {refused:?}");
+    let (made, asked) = world.asked(controller.update_members(&alice, vec![world.bob])).await;
+    made.expect("she names its members");
+    assert_eq!(asked, checks(&["alice: GetProject(alice's) yes", "alice: UpdateProject(alice's) yes", "alice: GetProject(alice's) yes", "alice: UpdateProject(alice's) yes"]),
+        "reached, changed - before whether its members exist is asked (issue 312) -, then changed as stored");
+    assert!(world.runtime.entity_stores().projects.get(&bob, project.id).await.is_ok(), "a member reads it");
+    assert!(world.runtime.entity_stores().projects.get(&carol, project.id).await.is_err(), "a stranger does not");
+    let (refused, asked) = world.asked(controller.update_members(&bob, vec![world.bob, world.carol])).await;
+    assert!(matches!(refused, Err(ProjectError::Store(StoreError::PermissionDenied(_)))), "a member changes nothing: {refused:?}");
+    assert_eq!(asked, checks(&["bob: GetProject(alice's) yes", "bob: UpdateProject(alice's) no"]), "refused before he learns whether carol exists");
+    let refused = controller.update_members(&alice, vec![UserId::new()]).await;
+    assert!(matches!(refused, Err(ProjectError::UnknownMember(_))), "{refused:?}");
+
+    let mut bobs = world.runtime.event_bus().subscribe_as(bob.clone());
+    controller.update_members(&alice, Vec::new()).await.unwrap();
+    assert!(world.runtime.entity_stores().projects.get(&bob, project.id).await.is_err(), "who left reads it no longer");
+    hears(&mut bobs, [GlobalEvent::updated::<Project>(&project.id, &ProjectUpdateEvent::MembersChanged(Vec::new()))]).await;
+
+    let to_carol = vec![AclEntry { subject: Subject::Actor(ActorId::User(world.carol)), grant: Grant::Read }];
+    let refused = controller.update_access(&bob, to_carol.clone()).await;
+    assert!(matches!(refused, Err(ProjectError::NotFound(_))), "who does not read it shares nothing: {refused:?}");
+    controller.update_access(&alice, to_carol).await.expect("hers to share");
+    assert!(world.runtime.entity_stores().projects.get(&carol, project.id).await.is_ok(), "whom its list names reads it");
+    let refused = controller.update_name(&carol, "mine").await;
+    assert!(matches!(refused, Err(ProjectError::Store(StoreError::PermissionDenied(_)))), "and changes nothing: {refused:?}");
+
+    assert!(world.projects.delete(&alice, project.id).await.unwrap());
+    let refused = world.projects.restore(&carol, project.id).await;
+    assert!(matches!(refused, Err(ProjectError::NotFound(_))), "deleted, it is hers alone to restore: {refused:?}");
+    assert!(!world.projects.purge(&carol, project.id).await.unwrap(), "or to purge");
+    world.projects.restore(&alice, project.id).await.expect("she restores it");
+}
+
+/// The views show a project to who reads it (issue 467): the shared ones in the list of
+/// projects, a session's own with the session. Its members are named; its access list only its
+/// owner sees, the group of an own project's members named by its session, as every own is
+/// called alike.
+#[tokio::test]
+async fn a_project_is_seen_by_who_reads_it() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
+    let project = world.projects.create(&alice, "report", Scope::UserScope { user_id: world.alice }, None).await.unwrap();
+    world.runtime.controller_manager().project_controller(project.id).await.unwrap().update_members(&alice, vec![world.bob]).await.unwrap();
+
+    let listed: Vec<ProjectId> = views(&bob).projects().await.unwrap().iter().map(|p| p.id()).collect();
+    assert_eq!(listed, [project.id], "the shared ones he works on, not the own of a session he reads");
+    let his = views(&bob).project(project.id).await.unwrap().snapshot().await;
+    assert_eq!((his.members, his.can_change, his.access.len()), (vec![(world.bob, Some("bob".to_string()))], false, 0), "its members named, its list not his to see");
+    let hers = views(&alice).project(project.id).await.unwrap().snapshot().await;
+    assert!(hers.can_change && hers.access.iter().any(|e| e.name.as_deref() == Some("report")), "she sees its list, its members by its name: {:?}", hers.access);
+    assert!(matches!(views(&carol).project(project.id).await, Err(ViewError::ProjectNotFound(_))), "a stranger does not find it");
+
+    let hers = world.session_of(&[], &[], &[]).await;
+    for lying_there in [&session, &hers] {
+        lying_there.update_project(&alice, Some(project.id)).await.unwrap();
+    }
+    let in_it = |ctx: SecurityContext| {
+        let views = views(&ctx);
+        async move {
+            let mut ids: Vec<SessionId> = views.project(project.id).await.unwrap().sessions().await.unwrap().iter().map(|s| s.id()).collect();
+            ids.sort();
+            ids
+        }
+    };
+    let mut both = vec![session.id(), hers.id()];
+    both.sort();
+    assert_eq!(in_it(alice.clone()).await, both, "its owner reads both sessions in it");
+    assert_eq!(in_it(bob.clone()).await, [session.id()], "a member those he reads alone");
+    for lying_there in [&session, &hers] {
+        lying_there.update_project(&alice, None).await.unwrap();
+    }
+
+    let shown = views(&bob).session(session.id()).await.unwrap().snapshot(Detail::empty()).await.project.expect("a participant sees the session's project");
+    assert_eq!(shown.id, session.session().project);
+    let own = views(&alice).project(shown.id).await.unwrap().snapshot().await;
+    let names: Vec<Option<&str>> = own.access.iter().map(|e| e.name.as_deref()).collect();
+    assert_eq!(names, [Some("shared"), Some("shared")], "its members and its participants, both called by the session");
+
+    world.projects.delete(&alice, project.id).await.unwrap();
+    world.manager.delete(&alice, session.id()).await.unwrap();
+    let deleted: Vec<ProjectId> = views(&alice).deleted_projects().await.unwrap().iter().map(|d| d.id).collect();
+    assert_eq!(deleted, [project.id], "hers to restore; a session's own comes back with its session");
+}
+
+/// A session is put into a shared project by who may change the session and read the project
+/// (issue 467), and taken out into its own again: the project it lies in is shared with its
+/// participants, the one it leaves no longer. Nothing moves; another session's own takes no other
+/// session in.
+#[tokio::test]
+async fn a_session_is_put_into_a_project_by_who_may_change_it_and_read_the_project() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let own = session.session().project;
+    let project = world.projects.create(&alice, "report", Scope::UserScope { user_id: world.alice }, None).await.unwrap();
+    let carols = world.projects.create(&World::as_user(world.carol), "hers", Scope::UserScope { user_id: world.carol }, None).await.unwrap();
+    let projects = &world.runtime.entity_stores().projects;
+
+    let refused = session.update_project(&bob, Some(project.id)).await.expect_err("bob may not change the session");
+    assert!(denied(&refused), "{refused}");
+    let refused = session.update_project(&alice, Some(carols.id)).await.expect_err("alice does not read carol's");
+    assert!(not_found(&refused), "{refused}");
+    let other = world.shared_session(&[], &[]).await;
+    let refused = session.update_project(&alice, Some(other.session().project)).await.expect_err("another session's own");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ProjectOutOfScope(_))), "{refused}");
+
+    let (put, asked) = world.asked(session.update_project(&alice, Some(project.id))).await;
+    put.expect("hers to put it there");
+    assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetProject(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]),
+        "changing the session, reaching the project, then storing the session; the share is the runtime's, the session's change asked");
+    assert_eq!(session.session().project, project.id, "its results go there now");
+    assert!(projects.get(&bob, project.id).await.is_ok(), "shared with its participants");
+    assert!(projects.get(&World::system(), own).await.is_ok(), "its own stays, with what lies in it");
+
+    session.update_project(&alice, None).await.expect("and to take it out");
+    assert_eq!(session.session().project, own, "into its own again");
+    assert!(projects.get(&bob, project.id).await.is_err(), "the project it left is no longer shared with them");
+}
+
+/// Lifting a session's own project (issue 467) makes it a shared project of its owner's, with the
+/// session in it: its participants read it still. It is named anew - `own` is a session's own's
+/// alone -, lifted once, and only by its owner. Taken out of it again, the session is made a new
+/// project of its own, and the lifted one is no longer shared with its participants.
+#[tokio::test]
+async fn lifting_a_sessions_own_project_makes_it_shared_with_the_session_in_it() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let own = session.session().project;
+    let controller = world.runtime.controller_manager().project_controller(own).await.unwrap();
+    let mine = Scope::UserScope { user_id: world.alice };
+    let projects = &world.runtime.entity_stores().projects;
+
+    let refused = controller.lift(&World::as_user(world.carol), "results", Scope::GlobalScope).await;
+    assert!(matches!(refused, Err(ProjectError::NotFound(_))), "who does not read it learns nothing of it: {refused:?}");
+    let refused = controller.lift(&bob, "results", Scope::UserScope { user_id: world.bob }).await;
+    assert!(matches!(refused, Err(ProjectError::Store(StoreError::PermissionDenied(_)))), "bob reads it, but it is not his: {refused:?}");
+    let refused = controller.lift(&alice, Project::OWN, mine.clone()).await;
+    assert!(matches!(refused, Err(ProjectError::Store(StoreError::Validation(_)))), "named anew: {refused:?}");
+    let refused = controller.lift(&alice, "results", Scope::SessionScope { session_id: SessionId::new() }).await;
+    assert!(matches!(refused, Err(ProjectError::InvalidScope)), "not into another session's scope: {refused:?}");
+    controller.lift(&alice, "results", mine.clone()).await.expect("hers to lift");
+    let lifted = projects.get(&bob, own).await.expect("its participants read it still");
+    assert_eq!(lifted.name.scope, mine, "in her scope");
+    assert_eq!(session.session().project, own, "the session lies in it");
+    let refused = controller.lift(&alice, "again", Scope::GlobalScope).await;
+    assert!(matches!(refused, Err(ProjectError::InvalidScope)), "lifted once: {refused:?}");
+
+    session.update_project(&alice, None).await.expect("taken out");
+    let anew = session.session().project;
+    assert_ne!(anew, own, "into a new project of its own");
+    assert_eq!(projects.get(&bob, anew).await.unwrap().name, Project::own_name(session.id()), "read by its participants");
+    assert!(projects.get(&bob, own).await.is_err(), "the lifted one is no longer shared with them");
+}
+
+/// Deleting a project (issue 467) deletes the sessions that lie in it and what lies in its scope,
+/// in the deleter's name: a bundle of bob's she may not delete keeps the project - what she could
+/// delete stays deleted, to be restored by hand -, and she is told what is left. Restored, what
+/// went with it comes back; purged, it goes for good. A session's own goes with its session alone.
+#[tokio::test]
+async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_the_deleter_may() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    let own = session.session().project;
+    assert!(matches!(world.projects.delete(&alice, own).await, Err(ProjectError::InvalidScope)), "a session's own goes with its session");
+    let project = world.projects.create(&alice, "report", Scope::UserScope { user_id: world.alice }, None).await.unwrap();
+    session.update_project(&alice, Some(project.id)).await.unwrap();
+    let bobs = ComponentBundle::new(ScopedName::new("tools", project.holds()).unwrap(), quiet(), attributes(Some(world.bob), &[]));
+    let stores = world.runtime.entity_stores();
+    stores.component_bundles.create(&World::system(), &bobs).await.unwrap();
+
+    let refused = world.projects.delete(&alice, project.id).await.expect_err("bob's bundle is left");
+    assert!(matches!(&refused, ProjectError::ScopeNotEmpty(ScopeNotEmpty { holder, left }) if *holder == project.holds() && *left == [(ComponentBundle::KIND, 1)]), "{refused:?}");
+    assert!(stores.projects.get(&alice, project.id).await.is_ok(), "the project is kept");
+    assert!(stores.sessions.get(&World::system(), session.id()).await.is_err(), "what she could delete stays deleted");
+    world.manager.restore(&alice, session.id()).await.expect("restored by hand");
+
+    stores.component_bundles.delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
+    let bob = World::as_user(world.bob);
+    world.runtime.controller_manager().project_controller(project.id).await.unwrap().update_members(&alice, vec![world.bob]).await.unwrap();
+    let his = create(&world.manager, &bob, make_session("his", ActorId::User(world.bob))).await.expect("bob's session");
+    his.update_project(&bob, Some(project.id)).await.expect("a member puts his session into it");
+    let refused = world.projects.delete(&alice, project.id).await.expect_err("bob's session is left");
+    assert!(matches!(&refused, ProjectError::ScopeNotEmpty(ScopeNotEmpty { left, .. }) if *left == [(Session::KIND, 1)]), "{refused:?}");
+    world.manager.restore(&alice, session.id()).await.expect("hers restored by hand");
+    his.update_project(&bob, None).await.expect("bob takes his out");
+    assert!(world.projects.delete(&alice, project.id).await.unwrap(), "nothing of anybody else's is left");
+    assert!(stores.sessions.get(&World::system(), session.id()).await.is_err(), "its session goes with it");
+    let refused = world.manager.restore(&alice, session.id()).await.expect_err("not alone");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ProjectDeleted(_))), "it comes back with its project: {refused}");
+    assert!(stores.projects.get(&World::system(), own).await.is_err(), "with the session's own project");
+    world.projects.restore(&alice, project.id).await.expect("restored");
+    assert!(stores.sessions.get(&World::system(), session.id()).await.is_ok(), "with its session");
+    assert!(stores.projects.get(&World::system(), own).await.is_ok(), "and the session's own project");
+    assert!(world.projects.delete(&alice, project.id).await.unwrap());
+    assert!(world.projects.purge(&World::system(), project.id).await.unwrap(), "purged");
+    assert!(stores.sessions.get_deleted(&World::system(), session.id()).await.is_err(), "with its session");
+    assert!(stores.groups.get_deleted(&World::system(), GroupId::of_project(project.id)).await.is_err(), "and the group of its members");
+}
+
+/// Deleting a channel is refused as deleting its session is (issue 320):
+/// an agent of somebody else's in its scope, which she may not delete,
+/// keeps the channel, running, and she is told what is left of which
+/// channel.
+#[tokio::test]
+async fn a_channel_is_kept_with_what_of_its_scope_is_not_the_deleters() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.unwrap().id();
+    let holder = Scope::ChannelScope { session_id: session.id(), channel_id: side };
+    let personality = world.personality("plain", None, &[]).await;
+    let bobs = Agent::new(ScopedName::new("helper", holder.clone()).unwrap(), personality.id, ActorId::User(world.bob));
+    world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
+
+    let refused = session.delete_channel(&alice, side).await.expect_err("bob's agent is left");
+    let left_in = |scope: &Scope, left: &[(EntityKind, usize)]| *scope == holder && left == [(Agent::KIND, 1)];
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { holder, left })) if left_in(holder, left)), "{refused}");
+    assert!(refused.to_string().contains(&format!("channel {side} of session {}", session.id())), "names the channel: {refused}");
+    assert!(session.channel(side).is_some(), "the channel is kept and runs on");
+    assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
+}
+
 /// Issue 320: what went with a session comes back with it in the name of
 /// whoever restores it, as far as they may; the session comes back all the
-/// same, and what they may not restore - an agent of bob's in its scope -
-/// stays deleted for its owner to restore.
+/// same, and what they may not restore - an agent of bob's in its scope, a
+/// bundle of his in its own project's (issue 467) - stays deleted for its
+/// owner to restore.
 #[tokio::test]
 async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it_may() {
     let world = World::new().await;
@@ -870,12 +1156,17 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
     let personality = world.personality("plain", None, &[]).await;
     let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), personality.id, ActorId::User(world.bob));
     world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
+    let project = Scope::ProjectScope { project_id: session.session().project };
+    let bundle = ComponentBundle::new(ScopedName::new("tools", project).unwrap(), quiet(), attributes(Some(world.bob), &[]));
+    world.runtime.entity_stores().component_bundles.create(&World::system(), &bundle).await.unwrap();
     world.manager.delete(&World::system(), session.id()).await.expect("the system's to delete, all of it");
 
     let (restored, asked) = world.asked(world.manager.restore(&alice, session.id())).await;
     restored.expect("restored all the same");
     assert!(asked.contains(&"alice: ReadDeletedAgent(bob's) no".to_string()), "asked in her name: {asked:?}");
+    assert!(asked.contains(&"alice: ReadDeletedComponentBundle(bob's) no".to_string()), "for its project's too: {asked:?}");
     assert!(world.runtime.entity_stores().agents.get_deleted(&World::system(), bobs.id).await.is_ok(), "bob's agent stays deleted: not hers to restore");
+    assert!(world.runtime.entity_stores().component_bundles.get_deleted(&World::system(), bundle.id).await.is_ok(), "and his bundle");
     world.runtime.agent_manager().restore(&World::as_user(world.bob), bobs.id).await.expect("bob restores his");
 }
 
@@ -1710,7 +2001,7 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
     let group = world.runtime.entity_stores().groups.get(&World::system(), GroupId::of_channel(main.id())).await.unwrap();
     assert!(!group.has_member(ActorId::User(world.bob)), "the group followed");
     let refused = world.runtime.group_manager().set_members(&World::as_user(world.alice), group.id, vec![world.bob]).await;
-    assert!(matches!(refused, Err(GroupError::Participants(_))), "nor is it changed by hand, not even by its owner: {refused:?}");
+    assert!(matches!(refused, Err(GroupError::NotATeam(_))), "nor is it changed by hand, not even by its owner: {refused:?}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

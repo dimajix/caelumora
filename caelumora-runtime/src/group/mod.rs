@@ -1,5 +1,6 @@
-//! Groups in the runtime (issues 286, 304): the groups of the participants
-//! of sessions and channels, which those keep, and the teams users make.
+//! Groups in the runtime (issues 286, 304): the teams users make, and the
+//! groups that sessions, channels and projects keep of who belongs to
+//! them.
 //!
 //! The participants of a session or a channel are a group an access list
 //! names - the session's and the channel's own, a workspace attached to the
@@ -15,7 +16,9 @@
 //! and purges the group with it, in the runtime's name as well - the
 //! `GroupManager` deletes and restores it, announcing it as a team
 //! (`…_participants`) -, so that a session or channel that is there has
-//! its group there, too.
+//! its group there, too. The members of a session's own project are a group
+//! kept the same way, made, deleted, restored and purged with the project by
+//! the `SessionManager` (issue 467).
 //!
 //! A team is made and changed by the `GroupManager`, its one writer, which
 //! leaves the permissions to the store - who reads, changes and deletes a
@@ -49,10 +52,11 @@ pub enum GroupError {
     NotFound(GroupId),
     #[error("a team belongs to a user")]
     OwnerNotAUser,
-    /// The participants of a session or a channel change by taking part in
-    /// it, not by hand.
-    #[error("group {0} is the participants of a session or channel and changes with them")]
-    Participants(GroupId),
+    /// A group that is no team - the participants of a session or a channel,
+    /// the members of a project - changes with what it belongs to, not by
+    /// hand.
+    #[error("group {0} is no team: it changes with the session, channel or project it belongs to")]
+    NotATeam(GroupId),
     #[error("there is no user {0}")]
     UnknownMember(UserId),
     #[error(transparent)]
@@ -139,12 +143,11 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
     })
 }
 
-/// Stores `participants` as the group of the participants of a session or
-/// channel, in the runtime's name: its members replace those stored, and
-/// the group is made if there is none yet. Called only while the session
-/// or channel is there, so a group found deleted is restored first
-/// (issue 347): it goes and comes back with the session or channel (issue
-/// 348), but taking back a deletion that failed may have failed, too.
+/// Stores `participants` as the group of the participants of a session or channel - or of the
+/// members of a project (issue 467) -, in the runtime's name: its members replace those stored, and
+/// the group is made if there is none yet. Called only while the session, channel or project is
+/// there, so a group found deleted is restored first (issue 347): it goes and comes back with it
+/// (issue 348), but taking back a deletion that failed may have failed, too.
 ///
 /// # Errors
 /// Whatever the store reports.
@@ -163,21 +166,6 @@ pub(crate) async fn keep_participants(store: &dyn EntityStore<Group>, participan
     stored.members = participants.members;
     stored.updated_at = Utc::now();
     store.update(&system, &stored).await
-}
-
-/// Removes the group `id` for good, in the runtime's name: marked deleted
-/// first if it is not, since only what was deleted is purged (issue 164).
-/// For the participants of a session or a channel purged, and of one whose
-/// creation failed. `false` if there is no such group.
-///
-/// # Errors
-/// Whatever else the store reports.
-pub(crate) async fn purge_participants(store: &dyn EntityStore<Group>, id: GroupId) -> StoreResult<bool> {
-    let system = SecurityContext::system();
-    if store.delete(&system, id).await.optional()?.is_none() {
-        return Ok(false);
-    }
-    store.purge(&system, id).await
 }
 
 #[cfg(test)]
@@ -200,6 +188,7 @@ mod tests {
     use caelumora_model::store::Persistence;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::channel::ChannelId;
+    use caelumora_model::project::Project;
     use caelumora_model::group::GroupField;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -275,10 +264,10 @@ mod tests {
         assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob], "there again, following who takes part");
     }
 
-    /// Issue 348: the groups of the participants of a session and its
-    /// channel go and come back with it all or none - one that fails takes
-    /// back those done before it -, so that a session still there, or left
-    /// deleted, has them as it has itself.
+    /// Issue 348: the groups of the participants of a session and its channel, and of the members
+    /// of its own project (issue 467), go and come back with it all or none - one that fails takes
+    /// back those done before it -, so that a session still there, or left deleted, has them as it
+    /// has itself.
     #[tokio::test]
     async fn the_participants_go_and_come_back_all_or_none() {
         let stores = Persistence::in_memory().entity_stores().unwrap();
@@ -292,28 +281,38 @@ mod tests {
         let participants = |id: GroupId, scope: Scope| Group { id, ..Group::team(ScopedName::new("participants", scope).unwrap(), owner) };
         let of_session = participants(GroupId::of_session(session_id), Scope::SessionScope { session_id });
         let of_channel = participants(GroupId::of_channel(channel_id), Scope::ChannelScope { session_id, channel_id });
-        for group in [&of_session, &of_channel] {
+        let own = Project::own_of(session_id, owner);
+        let of_project = Group::of_project(&own);
+        let groups = [&of_session, &of_channel, &of_project];
+        for group in groups {
             keep_participants(stores.groups.as_ref(), group.clone()).await.unwrap();
         }
-        let holder = Scope::SessionScope { session_id };
+        let holders = [Scope::SessionScope { session_id }, own.holds()];
         let there = async |id: GroupId| stores.groups.get(&system, id).await.is_ok();
+        let how_many_there = async || {
+            let mut count = 0;
+            for group in groups {
+                count += usize::from(there(group.id).await);
+            }
+            count
+        };
 
-        failing.passing.store(1, Ordering::SeqCst);
-        manager.delete_participants(&holder).await.expect_err("the second fails");
-        assert!(there(of_session.id).await && there(of_channel.id).await, "neither is deleted: the first is restored again");
+        failing.passing.store(2, Ordering::SeqCst);
+        manager.delete_participants(&holders).await.expect_err("the third fails");
+        assert_eq!(how_many_there().await, 3, "none is deleted: those before are restored again");
 
         failing.passing.store(usize::MAX, Ordering::SeqCst);
         let since = Utc::now();
-        manager.delete_participants(&holder).await.expect("both deleted");
-        assert!(!there(of_session.id).await && !there(of_channel.id).await);
+        manager.delete_participants(&holders).await.expect("all deleted");
+        assert_eq!(how_many_there().await, 0);
 
-        failing.passing.store(1, Ordering::SeqCst);
-        manager.restore_participants(&holder, since).await.expect_err("the second fails");
-        assert!(!there(of_session.id).await && !there(of_channel.id).await, "neither is restored: the first is deleted again");
+        failing.passing.store(2, Ordering::SeqCst);
+        manager.restore_participants(&holders, since).await.expect_err("the third fails");
+        assert_eq!(how_many_there().await, 0, "none is restored: those before are deleted again");
 
         failing.passing.store(usize::MAX, Ordering::SeqCst);
-        manager.restore_participants(&holder, since).await.expect("both restored");
-        assert!(there(of_session.id).await && there(of_channel.id).await);
+        manager.restore_participants(&holders, since).await.expect("all restored");
+        assert_eq!(how_many_there().await, 3);
     }
 
     #[tokio::test]

@@ -1,8 +1,9 @@
 //! `ControllerManager`: where the runtime gets its controllers - made for
 //! the documents of a running session, or shared in this instance for
-//! agents, personalities, users and workspaces (issues 121, 406).
+//! agents, personalities, users, workspaces and projects (issues 121, 406,
+//! 467).
 
-use super::{AgentController, ChannelController, PersonalityController, SessionController, UserController, WorkspaceController};
+use super::{AgentController, ChannelController, PersonalityController, ProjectController, SessionController, UserController, WorkspaceController};
 use crate::event::EventBus;
 use crate::backend::NamedBackends;
 use crate::terminal::TerminalProvider;
@@ -17,6 +18,7 @@ use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultE
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::user::{User, UserId, UserProfile};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_model::project::{Project, ProjectId};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, OnceLock, Weak};
@@ -37,8 +39,8 @@ type Registry<K, C> = Arc<Mutex<HashMap<K, Weak<C>>>>;
 ///   session that runs it owns the controller; that there is only one per
 ///   document follows from a session running only once (`SessionManager`).
 /// - `…_controller(id)` gives the controller of an agent, a personality, a
-///   user or a workspace that this instance shares among all that use it
-///   (issues 121, 344, 406): the one that lives,
+///   user, a workspace or a project that this instance shares among all
+///   that use it (issues 121, 344, 406, 467): the one that lives,
 ///   or loaded from the store if none does. Hence an id rather than a
 ///   document - whether to load is the manager's to decide - and `async`
 ///   and fallible.
@@ -63,8 +65,9 @@ pub struct ControllerManager {
     personalities: Registry<PersonalityId, PersonalityController>,
     users: Registry<UserId, UserController>,
     workspaces: Registry<WorkspaceId, WorkspaceController>,
-    /// The task that takes announced changes into the live agent, user and
-    /// workspace controllers, started with the first of them.
+    projects: Registry<ProjectId, ProjectController>,
+    /// The task that takes announced changes into the live agent, user,
+    /// workspace and project controllers, started with the first of them.
     follower: OnceLock<()>,
 }
 
@@ -82,6 +85,7 @@ impl ControllerManager {
             personalities: Default::default(),
             users: Default::default(),
             workspaces: Default::default(),
+            projects: Default::default(),
             follower: OnceLock::new(),
         }
     }
@@ -183,6 +187,25 @@ impl ControllerManager {
         Ok(controller)
     }
 
+    /// The controller of project `id` in this instance, like
+    /// `workspace_controller`. Read as the runtime: whoever changes the
+    /// project through it is asked as they do.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the project no longer exists, or whatever
+    /// else the store reports.
+    pub async fn project_controller(&self, id: ProjectId) -> StoreResult<Arc<ProjectController>> {
+        self.start_follower();
+        let mut projects = self.projects.lock().await;
+        if let Some(controller) = projects.get(&id).and_then(Weak::upgrade) {
+            return Ok(controller);
+        }
+        let project = self.stores.projects.get(&SecurityContext::system(), id).await?;
+        let controller = Arc::new(ProjectController::new(project, Arc::<EventBus>::clone(&self.event_bus), &self.stores, Arc::clone(&self.access_policy)));
+        remember(&mut projects, id, &controller);
+        Ok(controller)
+    }
+
     /// The context in which what `owner` owns is built, in `channel` of
     /// `session`: a channel's components, a session's commands (issue
     /// 321). A user's as their controller gives it, with their roles as they
@@ -229,7 +252,7 @@ impl ControllerManager {
     }
 
     /// Starts the task that takes the changes announced about agents,
-    /// users and workspaces into their live controllers - once per instance, not once per
+    /// users, workspaces and projects into their live controllers - once per instance, not once per
     /// session that uses them, and the one place where changes made in
     /// other instances will arrive. Started before the first controller is
     /// loaded, so that nothing announced after loading is missed; an event
@@ -238,7 +261,7 @@ impl ControllerManager {
     fn start_follower(&self) {
         self.follower.get_or_init(|| {
             let mut events = self.event_bus.subscribe_all();
-            let (agents, users, workspaces) = (Arc::clone(&self.agents), Arc::clone(&self.users), Arc::clone(&self.workspaces));
+            let (agents, users, workspaces, projects) = (Arc::clone(&self.agents), Arc::clone(&self.users), Arc::clone(&self.workspaces), Arc::clone(&self.projects));
             tokio::spawn(async move {
                 while let Some(event) = events.recv().await {
                     if let Some((id, EntityChange::Updated(_))) = event.about::<Agent>() {
@@ -255,6 +278,14 @@ impl ControllerManager {
                         if let Some(controller) = controller {
                             if let Err(e) = controller.process_global_event(&event).await {
                                 warn!(workspace = %id, "A change of the workspace made elsewhere could not be taken over: {e}");
+                            }
+                        }
+                    } else if let Some((id, EntityChange::Updated(_))) = event.about::<Project>() {
+                        // Read again as stored, as a workspace is.
+                        let controller = projects.lock().await.get(&id).and_then(Weak::upgrade);
+                        if let Some(controller) = controller {
+                            if let Err(e) = controller.process_global_event(&event).await {
+                                warn!(project = %id, "A change of the project made elsewhere could not be taken over: {e}");
                             }
                         }
                     }
@@ -287,6 +318,7 @@ mod tests {
     use caelumora_model::store::Persistence;
     use caelumora_model::user::{User, UserUpdateEvent};
     use caelumora_model::workspace::WorkspaceUpdateEvent;
+    use caelumora_model::project::ProjectUpdateEvent;
     use caelumora_model::security::{AclEntry, Grant, Subject};
     use std::time::Duration;
     use caelumora_model::confidentiality::{ConfidentialityRules, Visibility};
@@ -447,6 +479,28 @@ mod tests {
         eventually(|| controller.load().name.name.as_str() == "notes" && controller.load().security_attributes.acl.len() == 1).await;
         let gone = manager.workspace_controller(WorkspaceId::new()).await;
         assert!(matches!(gone, Err(StoreError::NotFound { .. })), "a workspace that does not exist has none, got {gone:?}");
+    }
+
+    /// A project has one controller in the instance, however many sessions lie in it (issue
+    /// 467); a change made elsewhere reaches it as stored - an access list too.
+    #[tokio::test]
+    async fn a_project_has_one_controller_which_takes_over_what_was_changed_elsewhere() {
+        let (store, bus, manager) = manager();
+        let owner = UserId::new();
+        let project = Project::new(ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(), owner);
+        store.entity_stores().unwrap().projects.create(&SecurityContext::system(), &project).await.unwrap();
+        let controller = manager.project_controller(project.id).await.unwrap();
+        assert!(Arc::ptr_eq(&controller, &manager.project_controller(project.id).await.unwrap()), "every session gets the same one");
+
+        let mut changed = project.clone();
+        changed.name.name = Name::new("annual").unwrap();
+        changed.security_attributes.acl = vec![AclEntry { subject: Subject::Actor(ActorId::User(UserId::new())), grant: Grant::Read }];
+        store.entity_stores().unwrap().projects.update(&SecurityContext::system(), &changed).await.unwrap();
+        bus.publish(GlobalEvent::updated::<Project>(&project.id, &ProjectUpdateEvent::AccessChanged), Default::default());
+
+        eventually(|| controller.load().name.name.as_str() == "annual" && controller.load().security_attributes.acl == changed.security_attributes.acl).await;
+        let gone = manager.project_controller(ProjectId::new()).await;
+        assert!(matches!(gone, Err(StoreError::NotFound { .. })), "a project that does not exist has none, got {gone:?}");
     }
 
     /// A workspace whose storage was removed from the configuration has its controller, but no

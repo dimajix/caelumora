@@ -4,7 +4,7 @@ use caelumora_model::value::name::Name;
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
-use crate::scoped::ScopedEntities;
+use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::event::{EventBus, SubscriptionTopic};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
@@ -14,18 +14,21 @@ use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::group::GroupId;
-use crate::group::{GroupManager, purge_participants};
+use crate::group::{keep_participants, GroupManager};
+use caelumora_model::group::Group;
+use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use crate::workspace::WorkspaceManager;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
 use arc_swap::{ArcSwapOption, Guard};
 use dashmap::DashMap;
 use std::sync::Arc;
+use tracing::warn;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
@@ -65,7 +68,7 @@ pub enum SessionError {
     /// (issue 221); an approver is made with it.
     #[error("{0} cannot be taken into a session: only a user or an agent can")]
     CannotTakeIn(ActorId),
-    /// Only a user owns a session made from a template (issue 88).
+    /// Only a user owns a session (issue 88), and the project of its own with it (issue 467).
     #[error("{0} cannot own a session: only a user can")]
     OwnerNotAUser(ActorId),
     /// There is no such session, or none the caller may see (issue 323).
@@ -88,31 +91,22 @@ pub enum SessionError {
     /// that session alone (issue 251, `Scope::admits`).
     #[error("The workspace {0} lies in another session's scope")]
     WorkspaceOutOfScope(WorkspaceId),
+    /// The project is another session's own, which takes no other session in (issue 467).
+    #[error("The project {0} is another session's own")]
+    ProjectOutOfScope(ProjectId),
+    /// The shared project a deleted session lies in is deleted too: the session comes back with
+    /// it, not alone (issue 467).
+    #[error("The session lies in the project {0}, which is deleted: it comes back with the project")]
+    ProjectDeleted(ProjectId),
     /// What lies in the scope of a session or channel being deleted is not
     /// all the caller's to delete (issue 320): what was is deleted, the
-    /// session or channel is kept. `left` says how many of each kind are
-    /// left - not which, since they need not be the caller's to read.
-    #[error("The {} is not deleted: {} of what lies in its scope may not be deleted by you", shown_holder(.holder), shown_left(.left))]
-    ScopeNotEmpty { holder: Scope, left: Vec<(EntityKind, usize)> },
+    /// session or channel is kept.
+    #[error(transparent)]
+    ScopeNotEmpty(#[from] ScopeNotEmpty),
     /// The sessions are shut down as the process ends (issue 297): none is
     /// started any more.
     #[error("Caelumora is shutting down: no session is started")]
     ShuttingDown,
-}
-
-/// The session or channel whose scope `holder` is, as an error names it.
-fn shown_holder(holder: &Scope) -> String {
-    match holder {
-        Scope::SessionScope { session_id } => format!("session {session_id}"),
-        Scope::ChannelScope { session_id, channel_id } => format!("channel {channel_id} of session {session_id}"),
-        // Nothing else holds a scope that is deleted with it.
-        _ => "holder of the scope".to_string(),
-    }
-}
-
-/// How many of each kind are left, as an error says it: "1 agent, 2 workspace".
-fn shown_left(left: &[(EntityKind, usize)]) -> String {
-    left.iter().map(|(kind, count)| format!("{count} {kind}")).collect::<Vec<_>>().join(", ")
 }
 
 /// Nothing if a channel may be given `classification` at all - it names
@@ -197,6 +191,10 @@ pub struct SessionLoop {
     start_tx: mpsc::UnboundedSender<ChannelId>,
     /// Taken by `run`, which is how it knows it is not already running.
     start_rx: Mutex<mpsc::UnboundedReceiver<ChannelId>>,
+    /// Held while the session is put into another project (issue 467), so
+    /// that two such changes do not share and unshare projects across each
+    /// other.
+    moving: Mutex<()>,
 }
 
 /// Removes the document of channel `channel_id` for good, in the runtime's
@@ -205,10 +203,34 @@ pub struct SessionLoop {
 /// session, or one whose creation failed - since only what was deleted is
 /// purged (issue 164).
 async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) -> StoreResult<bool> {
-    let system = SecurityContext::system();
-    purge_participants(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await?;
-    stores.channels.delete(&system, channel_id).await?;
-    stores.channels.purge(&system, channel_id).await
+    purge_for_good(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await?;
+    purge_for_good(stores.channels.as_ref(), channel_id).await
+}
+
+/// The own project of session `id`, if it is there: the one in its scope, found by its name
+/// (`Project::own_name`) in the runtime's name - none once it was lifted (issue 467).
+///
+/// # Errors
+/// Whatever the store reports.
+async fn load_own(stores: &EntityStores, id: SessionId) -> StoreResult<Option<Project>> {
+    stores.projects.find_by_name(&SecurityContext::system(), &Project::own_name(id)).await.optional()
+}
+
+/// Makes `own`, a session's own project, with the group of its members, in the runtime's name
+/// (issue 467) - both, or, if the group cannot be made, neither: as the session is made, or taken
+/// out of a project once its own was lifted. Announcing it is the caller's.
+///
+/// # Errors
+/// Whatever the store reports.
+pub(crate) async fn make_own(stores: &EntityStores, own: &Project) -> StoreResult<()> {
+    stores.projects.create(&SecurityContext::system(), own).await?;
+    if let Err(error) = keep_participants(stores.groups.as_ref(), Group::of_project(own)).await {
+        if let Err(undo) = purge_for_good(stores.projects.as_ref(), own.id).await {
+            warn!(project = %own.id, "A session's own project whose group could not be made is left: {undo}");
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session
@@ -289,6 +311,7 @@ impl SessionLoop {
             channels: DashMap::new(),
             start_tx,
             start_rx: Mutex::new(start_rx),
+            moving: Mutex::new(()),
         });
         for channel in channels {
             session_loop.add_listed_channel(channel).await?;

@@ -8,6 +8,7 @@ use std::fmt::Debug;
 use crate::agent::Agent;
 use crate::channel::Channel;
 use crate::group::Group;
+use crate::project::Project;
 use crate::session::Session;
 use crate::workspace::Workspace;
 use super::{ActionType, Admission, Refused, SecurityAttributes, SecurityContext, Verb, WRITE};
@@ -64,6 +65,10 @@ pub trait AccessQuestions {
     /// name, description, classification, access list - and attach it to a
     /// session (`UpdateWorkspace`, issue 253).
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may change a project with these attributes - its name, description,
+    /// members, access list, where it lies (`UpdateProject`, issue 467).
+    async fn may_change_project(&self, context: &SecurityContext, project: &SecurityAttributes) -> bool;
 
     /// Whether `context` may change the files of a workspace with these
     /// attributes (`WriteWorkspace`, issue 23).
@@ -145,6 +150,10 @@ impl<T: AccessPolicy + ?Sized> AccessQuestions for T {
 
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
         self.check(context, ActionType::update(Workspace::KIND, workspace)).await
+    }
+
+    async fn may_change_project(&self, context: &SecurityContext, project: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::update(Project::KIND, project)).await
     }
 
     async fn may_write_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {

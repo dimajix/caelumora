@@ -1,15 +1,20 @@
 //! Changing a running session: its name, language, time zone, privacy, approval rules,
-//! description and workspace.
+//! description, workspace and project.
 
 use caelumora_model::approval::ApprovalRule;
-use anyhow::Result;
+use anyhow::{Error, Result};
 use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, Subject};
 use caelumora_model::privacy::PrivacyConfig;
-use caelumora_model::store::{StoreError, Stored};
-use tracing::info;
+use caelumora_model::store::{StoreError, StoreResultExt, Stored};
+use tracing::{info, warn};
 use caelumora_model::group::GroupId;
 use caelumora_model::workspace::WorkspaceId;
-use super::{held_workspace, SessionLoop, require_attachable};
+use super::{held_workspace, load_own, make_own, SessionError, SessionLoop, require_attachable};
+use crate::project;
+use crate::scoped::purge_for_good;
+use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::project::{Project, ProjectId};
+use caelumora_model::scope::Scope;
 use caelumora_model::session::Session;
 use crate::controller::WorkspaceController;
 use std::sync::Arc;
@@ -123,6 +128,98 @@ impl SessionLoop {
         Ok(())
     }
 
+    /// Puts the session into the shared project `project`, or with `None` takes it out into its
+    /// own (issue 467) - the one in its scope, or a new one if that was lifted -, on behalf of
+    /// `context`: whoever may change the session (`UpdateSession`) and reach the project
+    /// (`GetProject`). The project it now lies in is shared with its participants for reading, in
+    /// the runtime's name - the session's act was asked -, so that every participant publishes
+    /// into it; the entry of the shared one it leaves is taken away. Nothing moves: what went to
+    /// the project before stays there, only what comes now goes to the other.
+    ///
+    /// The project it goes to is shared, or its new own made, before the session is stored as
+    /// lying there, so that it never lies where its participants read nothing; if storing the
+    /// session fails, that is taken back. One change at a time (`moving`).
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the session,
+    /// `ProjectError::NotFound` if there is no project they may read,
+    /// `SessionError::ProjectOutOfScope` for another session's own, `SessionError::OwnerNotAUser`
+    /// if a new own is needed and the session is no user's, or whatever else storing reports.
+    pub async fn update_project(&self, context: &SecurityContext, project: Option<ProjectId>) -> Result<()> {
+        let _moving = self.moving.lock().await;
+        let session = self.session();
+        self.access_policy.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
+        let (target, made) = match project {
+            Some(id) => (self.reached_project(context, id).await?, false),
+            None => match load_own(&self.stores, self.id).await? {
+                Some(own) => (own, false),
+                None => {
+                    let owner = session.security_attributes.owner_id;
+                    (Project::own_of(self.id, owner.as_user_id().ok_or(SessionError::OwnerNotAUser(owner))?), true)
+                }
+            },
+        };
+        if target.id == session.project {
+            return Ok(());
+        }
+        let system = SecurityContext::system();
+        let left = self.stores.projects.get(&system, session.project).await.optional()?.filter(|left| !left.is_own());
+        let participants = Subject::Group(GroupId::of_session(self.id));
+        if made {
+            make_own(&self.stores, &target).await?;
+        } else if !target.is_own() {
+            self.controllers.project_controller(target.id).await?.share(&system, participants, Grant::Read).await?;
+        }
+        if let Err(error) = self.session_controller.update_project(context, target.id).await {
+            self.take_back_entering(&target, made).await;
+            return Err(error.into());
+        }
+        if made {
+            self.events.announce(GlobalEvent::created::<Project>(&target.id), &target);
+        }
+        if let Some(left) = left {
+            let unshared = async { self.controllers.project_controller(left.id).await?.unshare(&system, participants).await };
+            if let Err(e) = unshared.await {
+                warn!(session = %self.id, project = %left.id, "The project a session left is still shared with its participants: {e}");
+            }
+        }
+        info!(session = %self.id, project = %target.id, by = %context.caller_id, "Session's project changed");
+        Ok(())
+    }
+
+    /// Project `id` as `context` reaches it (`GetProject`), if the session may lie in it: a shared
+    /// one, or its own.
+    ///
+    /// # Errors
+    /// `ProjectError::NotFound` if there is none they may read, `SessionError::ProjectOutOfScope`
+    /// for another session's own.
+    async fn reached_project(&self, context: &SecurityContext, id: ProjectId) -> Result<Project> {
+        let target = self.stores.projects.get(context, id).await.map_err(project::store_error(id))?;
+        if target.is_own() && target.name.scope != (Scope::SessionScope { session_id: self.id }) {
+            return Err(SessionError::ProjectOutOfScope(id).into());
+        }
+        Ok(target)
+    }
+
+    /// Takes back what `update_project` did for `target` before storing the session failed: its
+    /// new own purged if it was `made`, the entry of a shared one taken away; in the runtime's
+    /// name. What cannot be is logged.
+    async fn take_back_entering(&self, target: &Project, made: bool) {
+        let system = SecurityContext::system();
+        let taken_back = async {
+            if made {
+                purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(target.id)).await?;
+                purge_for_good(self.stores.projects.as_ref(), target.id).await?;
+            } else if !target.is_own() {
+                self.controllers.project_controller(target.id).await?.unshare(&system, Subject::Group(GroupId::of_session(self.id))).await?;
+            }
+            Ok::<_, Error>(())
+        }.await;
+        if let Err(e) = taken_back {
+            warn!(session = %self.id, project = %target.id, "What was done for a project a session did not go to stays: {e}");
+        }
+    }
+
     /// Attaches `workspace` to the session on behalf of `context`, or with
     /// `None` takes the one attached away, and holds it live (issue 344):
     /// stored as changing the session, without asking whether it may be
@@ -162,7 +259,7 @@ mod tests {
         use caelumora_model::user::UserId;
 
         let (_, manager) = owned_runtime(Default::default());
-        let runtime = Arc::clone(runtime_of(&manager));
+        let runtime = Arc::clone(manager.runtime());
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let mut session = make_session("hers", ActorId::User(alice.id));

@@ -19,7 +19,7 @@ pub(crate) mod testing;
 
 use crate::actor::ActorId;
 use crate::removal::Removal;
-use crate::scope::{ScopeField, Scoped};
+use crate::scope::{Scope, ScopeField, Scoped};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::session::{ChannelId, SessionId};
 use crate::store::{EntityKind, NoEntity, Stored, Updatable};
@@ -119,13 +119,17 @@ impl Stored for Agent {
     }
 
     /// An agent acts in its owner's name (issue 341): whoever may change it
-    /// cannot lend it another's rights by naming them as its principal.
+    /// cannot lend it another's rights by naming them as its principal. It
+    /// lies in no project's scope, which nothing is used from yet
+    /// (`Scope::admits`, issue 467): it would take part nowhere.
     fn validate(&self) -> Result<(), String> {
-        if self.principal_id == self.security_attributes.owner_id {
-            Ok(())
-        } else {
-            Err("an agent acts in its owner's name".to_string())
+        if self.principal_id != self.security_attributes.owner_id {
+            return Err("an agent acts in its owner's name".to_string());
         }
+        if matches!(self.name.scope, Scope::ProjectScope { .. }) {
+            return Err("an agent lies in no project's scope yet".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -157,6 +161,7 @@ impl Scoped for Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::ProjectId;
     use crate::user::UserId;
 
     /// Issue 341: an agent acting when nobody asked it is the caller and
@@ -183,5 +188,14 @@ mod tests {
         assert!(agent.validate().is_ok());
         agent.principal_id = ActorId::User(UserId::new());
         assert!(agent.validate().is_err(), "not lent another's rights");
+    }
+
+    /// Issue 467: what lies in a project's scope is used nowhere yet, so an
+    /// agent, which would take part nowhere, does not lie there.
+    #[test]
+    fn an_agent_lies_in_no_project_s_scope() {
+        let project = Scope::ProjectScope { project_id: ProjectId::new() };
+        let agent = Agent::new(ScopedName::new("helper", project).unwrap(), PersonalityId::new(), ActorId::User(UserId::new()));
+        assert!(agent.validate().is_err());
     }
 }

@@ -7,6 +7,8 @@ import type {
   SkillResponse,
   CreateGroupRequest,
   GroupResponse,
+  CreateProjectRequest,
+  ProjectResponse,
   Description,
   AgentToolsResponse,
   AgentResponse,
@@ -967,6 +969,136 @@ export const api = {
     await ensureOk(res, 'Failed to delete the team for good');
   },
 
+  /** The shared projects the user reaches (issue 467): their own, those they work on, those shared with them. */
+  async getProjects(): Promise<ProjectResponse[]> {
+    const res = await request('/projects');
+    await ensureOk(res, 'Failed to fetch the projects');
+    return res.json();
+  },
+
+  /** The shared projects deleted that the user may read as such. */
+  async getDeletedProjects(): Promise<Deleted[]> {
+    const res = await request('/projects?deleted=true');
+    await ensureOk(res, 'Failed to fetch the deleted projects');
+    return res.json();
+  },
+
+  /** One project the user reads: a shared one, or a session's own. */
+  async getProject(projectId: string): Promise<ProjectResponse> {
+    const res = await request(`/projects/${projectId}`);
+    await ensureOk(res, 'Failed to fetch the project');
+    return res.json();
+  },
+
+  /** Makes a shared project of the user's, with nobody among its members yet. */
+  async createProject(payload: CreateProjectRequest): Promise<ProjectResponse> {
+    const res = await request('/projects', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    await ensureOk(res, 'Failed to create the project');
+    return res.json();
+  },
+
+  async renameProject(projectId: string, name: string): Promise<ProjectResponse> {
+    const res = await request(`/projects/${projectId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name}),
+    });
+    await ensureOk(res, 'Failed to rename the project');
+    return res.json();
+  },
+
+  /** Says what the project is for; `null` or empty takes it away. */
+  async describeProject(projectId: string, description: string | null): Promise<ProjectResponse> {
+    const res = await request(`/projects/${projectId}/description`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({description}),
+    });
+    await ensureOk(res, 'Failed to describe the project');
+    return res.json();
+  },
+
+  /** Makes the users `userIds` the members of the project, replacing who was among them. */
+  async setProjectMembers(projectId: string, userIds: string[]): Promise<ProjectResponse> {
+    const res = await request(`/projects/${projectId}/members`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(userIds),
+    });
+    await ensureOk(res, 'Failed to change the members of the project');
+    return res.json();
+  },
+
+  /** Gives the project the access list `access`, replacing the one it had. */
+  async setProjectAccess(projectId: string, access: AccessEntry[]): Promise<ProjectResponse> {
+    const res = await request(`/projects/${projectId}/access`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(access.map(({kind, id, grant}) => ({kind, id, grant}))),
+    });
+    await ensureOk(res, 'Failed to share the project');
+    return res.json();
+  },
+
+  /** Lifts a session's own project into the user's scope or the global one under `name`: kept beyond the session. */
+  async liftProject(projectId: string, name: string, scope: 'user' | 'global'): Promise<ProjectResponse> {
+    const res = await request(`/projects/${projectId}/lift`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, scope}),
+    });
+    await ensureOk(res, 'Failed to keep the project');
+    return res.json();
+  },
+
+  /** Deletes the project with its sessions and what lies in it: kept until it is purged. */
+  async deleteProject(projectId: string): Promise<void> {
+    const res = await request(`/projects/${projectId}`, {method: 'DELETE'});
+    await ensureOk(res, 'Failed to delete the project');
+  },
+
+  async restoreProject(projectId: string): Promise<ProjectResponse> {
+    const res = await request(`/projects/${projectId}/restore`, {method: 'POST'});
+    await ensureOk(res, 'Failed to restore the project');
+    return res.json();
+  },
+
+  async purgeProject(projectId: string): Promise<void> {
+    const res = await request(`/projects/${projectId}/purge`, {method: 'POST'});
+    await ensureOk(res, 'Failed to delete the project for good');
+  },
+
+  /** The sessions that lie in a project - whose results go to it - that the user reads (issue 467). */
+  async getProjectSessions(projectId: string): Promise<SessionResponse[]> {
+    const res = await request(`/projects/${projectId}/sessions`);
+    await ensureOk(res, 'Failed to fetch the sessions of the project');
+    return res.json();
+  },
+
+  /** The artifacts that lie in a project, as the user reads them (issue 467). */
+  async getProjectArtifacts(projectId: string): Promise<ArtifactResponse[]> {
+    const res = await request(`/projects/${projectId}/artifacts`);
+    await ensureOk(res, 'Failed to fetch the artifacts of the project');
+    return res.json();
+  },
+
+  /** Puts the session into the shared project `projectId`, or with `null` takes it out into its own (issue 467). */
+  async setSessionProject(sessionId: string, projectId: string | null): Promise<SessionSnapshot> {
+    const res = projectId === null
+      ? await request(`/sessions/${sessionId}/project`, {method: 'DELETE'})
+      : await request(`/sessions/${sessionId}/project`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({project_id: projectId}),
+      });
+    await ensureOk(res, projectId === null ? 'Failed to take the session out of the project' : 'Failed to put the session into the project');
+    return res.json();
+  },
+
   /** The files of a workspace the user may read (issue 23), wherever it is used. */
   workspaceFiles(workspaceId: string): WorkspaceFiles {
     return filesAt(`/workspaces/${workspaceId}`);
@@ -1081,17 +1213,6 @@ export const api = {
   async purgeArtifact(artifactId: string): Promise<void> {
     const res = await request(`/artifacts/${artifactId}/purge`, {method: 'POST'});
     await ensureOk(res, 'Failed to delete the artifact for good');
-  },
-
-  /** Keeps the user's artifact beyond its session, in their scope or the global one. */
-  async keepArtifact(artifactId: string, scope: 'user' | 'global'): Promise<ArtifactResponse> {
-    const res = await request(`/artifacts/${artifactId}/scope`, {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({scope}),
-    });
-    await ensureOk(res, 'Failed to keep the artifact');
-    return res.json();
   },
 
   /**
