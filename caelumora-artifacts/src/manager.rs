@@ -16,15 +16,15 @@
 use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
+use caelumora_model::channel::Channel;
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, WRITE};
-use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{Address, EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -166,18 +166,19 @@ impl ArtifactManager {
 
     /// Publishes `content` - its size and its bytes, as a file of a
     /// workspace is read -, classified as `classification`, as a version
-    /// of the artifact `name` in the session `session`'s scope, published in
-    /// `channel` by the agent `ctx` names as its caller, for the user it
-    /// acts for: the artifact of that name there gains a version, or is
-    /// made with its first. Its owner may change it, or make it
-    /// (`UpdateArtifact`, `CreateArtifact`), asked before anything is kept;
-    /// its storage may hold what is so classified. Where the content comes
-    /// from is the caller's (issue 296): read before the artifact's own
-    /// permission is asked, it gives nothing away to one who could read it.
-    /// The caller vouches for `classification`: it is that of the workspace
-    /// the content was read from (`artifact_tool` reads it through
-    /// `Turn::workspace_terminal`), never one a client names.
-    /// The content is kept first, its digest taken as it is; a document that
+    /// of the artifact `name` in the scope of the session `channel` lies
+    /// in, published in the channel at `channel` - its `Address` - by the
+    /// agent `ctx` names as its caller, for the user it acts for: the
+    /// artifact of that name there gains a version, or is made with its
+    /// first. Its owner may change it, or make it (`UpdateArtifact`,
+    /// `CreateArtifact`), asked before anything is kept; its storage may hold
+    /// what is so classified. Where the content comes from is the caller's
+    /// (issue 296): read before the artifact's own permission is asked, it
+    /// gives nothing away to one who could read it. The caller vouches for
+    /// `classification` and `channel`: the workspace the content was read
+    /// from, and the channel it was reached through (`artifact_tool` reads it
+    /// through `Turn::workspace_terminal`) - never what a client names. The
+    /// content is kept first, its digest taken as it is; a document that
     /// cannot be stored leaves no content. Answers the artifact as it is
     /// now, and the number of the new version.
     ///
@@ -186,8 +187,7 @@ impl ArtifactManager {
     /// `StorageNotCleared`, `StorageGone` for an artifact whose storage is no longer configured,
     /// `Content` for a version too large, other than said, or a storage that failed, or whatever
     /// the store reports - `PermissionDenied` and `NameTaken` among it.
-    #[expect(clippy::too_many_arguments, reason = "an artifact is published with what describes it and where it goes")]
-    pub async fn publish(&self, ctx: &SecurityContext, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
+    pub async fn publish(&self, ctx: &SecurityContext, (session, channel): Address<Channel>, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>) -> ArtifactResult<(Artifact, u32)> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
         let name = ScopedName::new(name, Scope::SessionScope { session_id: session })?;
         let description = Description::optional(description)?;

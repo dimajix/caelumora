@@ -163,10 +163,10 @@ impl ToolProvider for ArtifactTool {
             _ => at.file_name().unwrap_or_default().to_string(),
         };
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
-        let (ctx, session, channel) = (turn.situation().security_context(), turn.situation().session_id(), turn.situation().channel_id());
+        let (ctx, channel) = (turn.situation().security_context(), (turn.situation().session_id(), turn.situation().channel_id()));
         let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await?;
         let content = terminal.read(&at).await?;
-        let (artifact, number) = self.artifacts.publish(ctx, content, &workspace.classification, &name, description, session, channel).await?;
+        let (artifact, number) = self.artifacts.publish(ctx, channel, content, &workspace.classification, &name, description).await?;
         let version = artifact.version(number).ok_or_else(|| ToolError::ExecutionFailed(format!("version {number} of the artifact is missing")))?;
         let mut result = json!({
             "artifact": artifact.id,

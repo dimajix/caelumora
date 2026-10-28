@@ -197,10 +197,10 @@ async fn a_storage_of_content_takes_nothing_above_its_destination() {
     let manager = Arc::clone(runtime.services().get::<ArtifactManager>().unwrap());
     let alice = SecurityContext::new(ActorId::User(UserId::new()), SessionId::new(), ChannelId::new());
     let internal = Classification::general(Confidentiality::Internal);
-    let refused = manager.publish(&alice, (3, file("a,b")), &internal, "r.csv", None, SessionId::new(), ChannelId::new()).await;
+    let refused = manager.publish(&alice, (SessionId::new(), ChannelId::new()), (3, file("a,b")), &internal, "r.csv", None).await;
     assert!(matches!(refused, Err(ArtifactError::StorageNotCleared(ref name)) if name == "kept"), "{refused:?}");
     assert!(fs::read_dir(files.path()).unwrap().next().is_none(), "nothing kept");
-    let public = manager.publish(&alice, (3, file("a,b")), &Classification::PUBLIC, "r.csv", None, SessionId::new(), ChannelId::new()).await;
+    let public = manager.publish(&alice, (SessionId::new(), ChannelId::new()), (3, file("a,b")), &Classification::PUBLIC, "r.csv", None).await;
     assert!(public.is_ok(), "what it may hold it takes: {public:?}");
 }
 
@@ -347,7 +347,7 @@ async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, chann
     let running = world.manager.open(&World::system(), session).await.expect("the session");
     let (workspace, terminal) = running.channel(channel).expect("the channel").workspace_terminal(ctx, Grant::Read).await.expect("the workspace, to read");
     let content = terminal.read(at).await.expect("the file");
-    manager(world).publish(ctx, content, &workspace.classification, name, description, session, channel).await
+    manager(world).publish(ctx, (session, channel), content, &workspace.classification, name, description).await
 }
 
 /// G4 (issue 308): an artifact shared with a team is among the artifacts

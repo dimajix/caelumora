@@ -577,7 +577,10 @@ better fix: a finding to assess); `not_found` knows `ProjectError`; a helper `Wo
   scope and an owner who is a user, no longer `validate_users_own`; `ArtifactSnapshot::can_change`
   doc; tests `:361-387` with a project's scope.
 - **`manager.rs`**: module doc (`:10-14`); `InvalidScope` and `keep` (`:328-351`) removed;
-  `publish`: the scope is `ProjectScope { project_id: channel.session().project() }`; the project
+  `publish(ctx, channel: Address<Channel>, content, classification, name: &ScopedName,
+  description)`: the caller builds the name in its session's project's scope - `artifact_tool`
+  from what the turn's session holds (`Session::project`) - and vouches for it as for the
+  channel; the manager refuses a name in any other kind of scope (`Invalid`), and the project
   is reached in the caller's name before anything is kept (`projects.get(ctx, ..)`, `GetProject`,
   as a workspace made in a session's scope reaches the session: `NotFound` → `PermissionDenied`
   of the store); the artifact's list gains `Subject::Group(GroupId::of_project(..))` for reading
@@ -705,3 +708,8 @@ none lies in a project's scope.
   `SessionError`'s answer delegates to it -, so that a holder that forgets to wrap it is not
   answered as a server error, and the second holder, a project, adds no second mapping. Deleting
   a channel with another's agent in its scope is tested now, as deleting a session was.
+- **2026-10-28** — Step 0b done, and with it issue 453, not as planned: `ArtifactManager::publish`
+  takes the channel's `Address` (`Address<Channel>`), not its view - a view is a layer of access,
+  and an interface speaks of coordinates and properties, as the maintainer put it. In step 3 the
+  caller builds the `ScopedName` in the project's scope, so that `publish` takes where it lies and
+  where it is published as two coordinates.
