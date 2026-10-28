@@ -783,11 +783,13 @@ mod tests {
     #[tokio::test]
     async fn a_channel_deleted_before_the_session_runs_is_never_started() {
         let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
         let session = make_session("waiting", ActorId::User(UserId::new()));
         let channel_id = session.channels[0];
-        persist(&runtime, &ctx, &session).await;
-        let session_loop = SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&runtime)).await.unwrap();
+        let channels = [main_channel(&session)];
+        let session = persist(&manager, &ctx, session, &channels).await;
+        let session_loop = SessionLoop::new(session.clone(), channels.to_vec(), Arc::clone(&runtime)).await.unwrap();
         let mut rx = runtime.event_bus().subscribe_all();
 
         // Queued to be started, but deleted before `run` gets to it.
