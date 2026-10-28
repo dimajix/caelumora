@@ -9,7 +9,7 @@
 import React, {useState} from 'react';
 import {Plus, Trash2, X} from 'lucide-react';
 import type {ApprovalRule, ArgumentMatcher, RuleDecision} from '../types';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 
 interface ApprovalRulesDialogProps {
   title: string;
@@ -99,11 +99,7 @@ export const ApprovalRulesDialog: React.FC<ApprovalRulesDialogProps> = ({title, 
     } catch (error) {
       // What the server says about the rules - a pattern that is none, say -
       // is shown here; anything else as usual.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to change the approval rules', error);
-      }
+      reportUnlessRefused('Failed to change the approval rules', error, setProblem);
     } finally {
       setIsSaving(false);
     }

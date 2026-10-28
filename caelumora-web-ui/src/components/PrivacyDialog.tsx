@@ -5,7 +5,7 @@
 import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import {PRIVACY_POLICIES, type PrivacyPolicy, privacyInfo} from '../privacy';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 
 interface PrivacyDialogProps {
   sessionName: string;
@@ -33,11 +33,7 @@ export const PrivacyDialog: React.FC<PrivacyDialogProps> = ({sessionName, curren
       await onSubmit(privacy);
       onClose();
     } catch (error) {
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to change the privacy', error);
-      }
+      reportUnlessRefused('Failed to change the privacy', error, setProblem);
     } finally {
       setIsSaving(false);
     }

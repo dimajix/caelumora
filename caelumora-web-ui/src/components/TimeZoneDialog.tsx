@@ -3,7 +3,7 @@
 
 import React, {useState} from 'react';
 import {X} from 'lucide-react';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 import {timeZoneLabel} from '../timeZone';
 import {TimeZoneField} from './TimeZoneField';
 
@@ -33,11 +33,7 @@ export const TimeZoneDialog: React.FC<TimeZoneDialogProps> = ({title, current, o
     } catch (error) {
       // What the server says about the request - a refusal or no time zone,
       // say - is shown here; anything else as usual.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to change the time zone', error);
-      }
+      reportUnlessRefused('Failed to change the time zone', error, setProblem);
     } finally {
       setIsSaving(false);
     }

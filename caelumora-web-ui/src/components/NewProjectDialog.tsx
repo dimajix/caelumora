@@ -6,7 +6,7 @@ import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import type {ProjectResponse} from '../types';
 import {api} from '../api';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 
 interface NewProjectDialogProps {
   onCreated: (project: ProjectResponse) => void;
@@ -31,11 +31,7 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({onCreated, on
     } catch (error) {
       // What the server says about the request - a taken name, say - is
       // shown here.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to create the project', error);
-      }
+      reportUnlessRefused('Failed to create the project', error, setProblem);
     } finally {
       setIsCreating(false);
     }

@@ -8,7 +8,7 @@ import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
 import type {StorageResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
-import {ApiRequestError, reportError} from '../errors';
+import {reportError, reportUnlessRefused} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {storageLabel} from '../workspace';
 import {ClassificationFields} from './ClassificationFields';
@@ -57,11 +57,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
     } catch (error) {
       // What the server says about the request - a taken name, a
       // classification the user is not cleared for - is shown here.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to create the workspace', error);
-      }
+      reportUnlessRefused('Failed to create the workspace', error, setProblem);
     } finally {
       setIsCreating(false);
     }

@@ -7,7 +7,7 @@ import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import type {Page} from '../page';
 import type {ProjectResponse, SessionSnapshot} from '../types';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 import {optionLabel, projectLabel} from '../project';
 
 interface SessionProjectDialogProps {
@@ -35,11 +35,7 @@ export const SessionProjectDialog: React.FC<SessionProjectDialogProps> = ({sessi
       await onSubmit(projectId);
       onClose();
     } catch (error) {
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError(projectId === null ? 'Failed to take the session out of the project' : 'Failed to put the session into the project', error);
-      }
+      reportUnlessRefused(projectId === null ? 'Failed to take the session out of the project' : 'Failed to put the session into the project', error, setProblem);
     } finally {
       setIsSaving(false);
     }

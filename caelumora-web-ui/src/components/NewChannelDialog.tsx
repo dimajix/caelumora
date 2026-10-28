@@ -9,7 +9,7 @@ import {X} from 'lucide-react';
 import type {ChannelResponse, Compartment, SessionSnapshot, UserResponse} from '../types';
 import {actorKey, userIdOf} from '../actor';
 import {api} from '../api';
-import {ApiRequestError, reportError} from '../errors';
+import {reportError, reportUnlessRefused} from '../errors';
 import {DEFAULT_RESPONDER_POLICY, RESPONDER_POLICY_KINDS, responderPolicyInfo} from '../moderator';
 import {CONFIDENTIALITY_LEVELS, DEFAULT_CLASSIFICATION, confidentialityInfo, type ConfidentialityLevel} from '../confidentiality';
 import {LanguageField} from './LanguageField';
@@ -84,11 +84,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
     } catch (error) {
       // What the server says about the request - a taken name, say - is
       // shown here, next to what can be corrected; anything else as usual.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to create the channel', error);
-      }
+      reportUnlessRefused('Failed to create the channel', error, setProblem);
     } finally {
       setIsCreating(false);
     }

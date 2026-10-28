@@ -6,7 +6,7 @@ import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
 import type {AgentResponse, PersonalityResponse} from '../types';
 import {api} from '../api';
-import {ApiRequestError, reportError} from '../errors';
+import {reportError, reportUnlessRefused} from '../errors';
 
 interface NewAgentDialogProps {
   onCreated: (agent: AgentResponse) => void;
@@ -47,11 +47,7 @@ export const NewAgentDialog: React.FC<NewAgentDialogProps> = ({onCreated, onClos
     } catch (error) {
       // What the server says about the request - a taken name, say - is
       // shown here.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to create the agent', error);
-      }
+      reportUnlessRefused('Failed to create the agent', error, setProblem);
     } finally {
       setIsCreating(false);
     }

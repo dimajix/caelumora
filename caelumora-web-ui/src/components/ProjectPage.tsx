@@ -8,7 +8,7 @@ import React, {useEffect, useState} from 'react';
 import {Edit2, FileText, FolderKanban, FolderUp, MessageSquare, Package, Trash2} from 'lucide-react';
 import type {AccessEntry, ArtifactResponse, ProjectResponse, SessionResponse} from '../types';
 import {api} from '../api';
-import {ApiRequestError, reportError} from '../errors';
+import {reportError, reportUnlessRefused} from '../errors';
 import {labelOf, placeOf} from '../project';
 import type {Page} from '../page';
 import {AccessList} from './AccessList';
@@ -290,11 +290,7 @@ const LiftProject: React.FC<LiftProjectProps> = ({project, onLifted, onCancel}) 
       onLifted(await api.liftProject(project.id, name.trim(), scope));
     } catch (error) {
       // What the server says about the request - a taken name, say - is shown here.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to keep the project', error);
-      }
+      reportUnlessRefused('Failed to keep the project', error, setProblem);
     }
   };
 

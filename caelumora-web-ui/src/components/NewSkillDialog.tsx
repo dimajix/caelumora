@@ -6,7 +6,7 @@ import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import type {SkillResponse} from '../types';
 import {api} from '../api';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {ClassificationFields} from './ClassificationFields';
 
@@ -35,11 +35,7 @@ export const NewSkillDialog: React.FC<NewSkillDialogProps> = ({onCreated, onClos
     } catch (error) {
       // What the server says about the request - a taken name, a text too
       // long, a classification the user is not cleared for - is shown here.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to create the skill', error);
-      }
+      reportUnlessRefused('Failed to create the skill', error, setProblem);
     } finally {
       setIsCreating(false);
     }

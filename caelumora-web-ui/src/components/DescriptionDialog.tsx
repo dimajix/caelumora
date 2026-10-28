@@ -7,7 +7,7 @@
 import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import type {Description} from '../types';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 import {MarkdownMessage} from './MarkdownMessage';
 
 interface DescriptionDialogProps {
@@ -45,11 +45,7 @@ export const DescriptionDialog: React.FC<DescriptionDialogProps> = ({title, plac
     } catch (error) {
       // What the server says about the request - too long, say - is shown
       // here; anything else as usual.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to change the description', error);
-      }
+      reportUnlessRefused('Failed to change the description', error, setProblem);
     } finally {
       setIsSaving(false);
     }

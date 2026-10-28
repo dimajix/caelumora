@@ -1,6 +1,6 @@
 # 473 — Every dialog of the web UI repeats which errors it shows itself
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -28,6 +28,15 @@ of it - another status, a code to tell apart - is made in some of them and forgo
 
 Recommendation: A, and B only where it makes the dialogs shorter.
 
+## Decision
+
+Not the condition alone (A): what stood eighteen times is the whole branch of the `catch` - show
+the server's message in the dialog, or report the error -, and a `refusalOf` would leave it at
+every dialog. `reportUnlessRefused(action, error, show)` in `errors.ts`, beside `reportError` and
+taking its arguments in the same order, holds the condition and both outcomes; every dialog's
+`catch` is one call of it. No hook (B): it would only take the `useState` and the `setProblem(null)`
+off the dialogs, at the price of a concept with three parts.
+
 ## Done when
 
 - The condition stands in one place, and every dialog asks it there.
@@ -35,3 +44,5 @@ Recommendation: A, and B only where it makes the dialogs shorter.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of step 4b of issue 467.
+- **2026-10-28** — The maintainer decided for a function that holds the whole branch of the
+  `catch`. Done: `reportUnlessRefused` in `errors.ts`; the eighteen dialogs call it.

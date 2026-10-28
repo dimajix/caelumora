@@ -73,3 +73,16 @@ export function reportError(action: string, error: unknown) {
   const requestId = error instanceof ApiRequestError ? error.requestId : undefined;
   reporter?.({ id: nextId++, message, requestId });
 }
+
+/**
+ * Shows through `show` what the server refused of the request - the request's
+ * fault, any status below 500 but a `401` -, so that a dialog shows it where it
+ * can be corrected; reports anything else as `reportError` does.
+ */
+export function reportUnlessRefused(action: string, error: unknown, show: (refusal: string) => void) {
+  if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
+    show(error.message);
+  } else {
+    reportError(action, error);
+  }
+}

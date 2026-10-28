@@ -7,7 +7,7 @@
 import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import type {SessionSnapshot, WorkspaceResponse} from '../types';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 import {scopeLabel} from '../scope';
 import {ShareSelect, type Share} from './ShareSelect';
 
@@ -34,11 +34,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
       await onSubmit(workspaceId, share);
       onClose();
     } catch (error) {
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError(workspaceId === null ? 'Failed to detach the workspace' : 'Failed to attach the workspace', error);
-      }
+      reportUnlessRefused(workspaceId === null ? 'Failed to detach the workspace' : 'Failed to attach the workspace', error, setProblem);
     } finally {
       setIsSaving(false);
     }

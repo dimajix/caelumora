@@ -12,7 +12,7 @@ import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
 import type {ProjectResponse, SessionResponse, SessionTemplate, SessionWorkspaceRequest, StorageResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
-import {ApiRequestError, reportError} from '../errors';
+import {reportError, reportUnlessRefused} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {storageLabel} from '../workspace';
@@ -125,11 +125,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
     } catch (error) {
       // What the server says about the request - a workspace not the user's, a classification
       // they are not cleared for - is shown here.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to create session', error);
-      }
+      reportUnlessRefused('Failed to create session', error, setProblem);
     } finally {
       setIsCreating(false);
     }

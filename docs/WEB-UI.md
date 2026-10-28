@@ -43,7 +43,9 @@ The UI shows what the server says and repeats no rule of its own:
     place.
 *   **What the server refuses is shown where it can be corrected.** A dialog shows the server's
     refusal - a name taken, a classification the user is not cleared for - next to the field; it
-    does not check beforehand what the server decides.
+    does not check beforehand what the server decides. A refusal is an error the request is at
+    fault for, any status below 500 but a `401`; `reportUnlessRefused` in `errors.ts` tells it
+    apart, and reports anything else.
 
 ## Structure
 

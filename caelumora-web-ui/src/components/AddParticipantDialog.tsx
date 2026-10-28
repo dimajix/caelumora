@@ -10,7 +10,7 @@ import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
 import type {ActorId, Candidate, CandidateRefusal, ChannelResponse, CreateAgentRequest, HistoryAccess, PersonalityResponse, SessionParticipant} from '../types';
 import {api} from '../api';
-import {ApiRequestError, reportError} from '../errors';
+import {reportError, reportUnlessRefused} from '../errors';
 import {actorKey, agentActor} from '../actor';
 
 type HistoryKind = HistoryAccess['kind'];
@@ -160,11 +160,7 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
     } catch (error) {
       // What the server says about the request is shown here, next to what
       // can be corrected; anything else as usual.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to add the participant', error);
-      }
+      reportUnlessRefused('Failed to add the participant', error, setProblem);
     } finally {
       setIsAdding(false);
     }

@@ -13,7 +13,7 @@ import {
   releases,
   sameClassification,
 } from '../confidentiality';
-import {ApiRequestError, reportError} from '../errors';
+import {reportUnlessRefused} from '../errors';
 
 interface ClassificationDialogProps {
   title: string;
@@ -56,11 +56,7 @@ export const ClassificationDialog: React.FC<ClassificationDialogProps> = ({title
     } catch (error) {
       // What the server says about the request - a refusal, say - is shown
       // here; anything else as usual.
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to change the classification', error);
-      }
+      reportUnlessRefused('Failed to change the classification', error, setProblem);
     } finally {
       setIsSaving(false);
     }

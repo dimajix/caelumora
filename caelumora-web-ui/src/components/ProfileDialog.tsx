@@ -9,7 +9,7 @@ import {Trash2, X} from 'lucide-react';
 import {api} from '../api';
 import type {ApprovalRule, Reach, SessionSnapshot} from '../types';
 import {describeMatcher, describeReach, isActive} from '../approvalRules';
-import {ApiRequestError, reportError} from '../errors';
+import {reportError, reportUnlessRefused} from '../errors';
 import {LanguageField} from './LanguageField';
 
 interface ProfileDialogProps {
@@ -74,11 +74,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, sessions,
       await api.updateProfile({introduction: introduction.trim() || null, preferred_language: language.trim() || null});
       onClose();
     } catch (error) {
-      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
-        setProblem(error.message);
-      } else {
-        reportError('Failed to save the profile', error);
-      }
+      reportUnlessRefused('Failed to save the profile', error, setProblem);
     } finally {
       setIsSaving(false);
     }
