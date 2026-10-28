@@ -82,7 +82,8 @@ impl AgentManager {
     /// would not; a `StoreError` - `PermissionDenied` if they may not make
     /// it or not read the personality, `NotFound` if there is no such
     /// session, channel or personality they may read, `NameTaken` if an
-    /// agent of `name` lies in its scope already (issue 250).
+    /// agent of `name` lies in its scope already (issue 250), `Validation`
+    /// for a scope no agent lies in - a project's.
     pub async fn create(&self, context: &SecurityContext, name: &str, scope: Scope, personality_id: PersonalityId) -> AgentResult<Agent> {
         let agent = Agent::new(ScopedName::new(name, scope)?, personality_id, context.principal_id);
         self.access_policy
@@ -99,8 +100,8 @@ impl AgentManager {
     }
 
     /// Whether `context` may put something into `scope`: read the session
-    /// or the channel it is; any other scope is only where its name is
-    /// found.
+    /// or the channel it is; any other scope asks nothing of the caller -
+    /// whether an agent may lie there is the store's to say.
     ///
     /// # Errors
     /// `StoreError::NotFound` for a session or channel they may not read,
@@ -117,7 +118,8 @@ impl AgentManager {
                     return Err(StoreError::NotFound { entity: Channel::KIND.name(), id: channel_id.to_string() }.into());
                 }
             }
-            Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => {}
+            // An agent lies in no project's scope: the store refuses it (`Agent::validate`).
+            Scope::ProjectScope { .. } | Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => {}
         }
         Ok(())
     }

@@ -425,8 +425,6 @@ pub enum ProjectError {
     /// Made, lifted into or deleted where a project cannot be: a session's own on its own, a
     /// scope it cannot lie in.
     InvalidScope,
-    /// Lifted under a name a session's own project cannot keep (`OWN`).
-    NeedsName,
     UnknownMember(UserId),
     ScopeNotEmpty(#[from] ScopeNotEmpty),
     Invalid(#[from] ValueError),
@@ -474,8 +472,9 @@ impl ProjectController {
     pub async fn share(&self, ctx, subject: Subject, grant: Grant) -> ProjectResult<()>;
     pub async fn unshare(&self, ctx, subject: Subject) -> ProjectResult<()>;
     /// Lifts it into `scope` - the user's own or the global one - under `name`
-    /// (`Lifted(ScopedName)`): a session's own becomes a shared project with all that lies in
-    /// it, the session included; `NeedsName` for `OWN`, `NameTaken` where the name is taken.
+    /// (`Lifted { name, scope }`): a session's own becomes a shared project with all that lies
+    /// in it, the session included; the store refuses it under `OWN` (`Validation`), and
+    /// `NameTaken` where the name is taken.
     pub async fn lift(&self, ctx, name: &str, scope: Scope) -> ProjectResult<()>;
 }
 ```
@@ -562,8 +561,8 @@ better fix: a finding to assess); `not_found` knows `ProjectError`; a helper `Wo
 - `a_session_is_made_with_a_project_of_its_own_read_by_its_participants`;
 - `a_session_is_put_into_a_project_by_who_may_change_it_and_read_the_project` (the share
   comes and goes; a session's own refused as the target; nothing moves);
-- `lifting_a_sessions_own_project_makes_it_shared_with_the_session_in_it` (`NameTaken`;
-  `NeedsName`);
+- `lifting_a_sessions_own_project_makes_it_shared_with_the_session_in_it` (`NameTaken`; under
+  `OWN`, `Validation`);
 - `deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_the_deleter_may`
   (`ScopeNotEmpty` with `(Session::KIND, 1)` for another's session; restore; purge);
 - `deleting_a_session_deletes_its_own_project_with_what_lies_in_it`;
@@ -713,3 +712,29 @@ none lies in a project's scope.
   and an interface speaks of coordinates and properties, as the maintainer put it. In step 3 the
   caller builds the `ScopedName` in the project's scope, so that `publish` takes where it lies and
   where it is published as two coordinates.
+- **2026-10-28** — Step 1 done: `Project`, `ProjectId` and `ProjectUpdateEvent`
+  (`caelumora-model/src/project.rs`), `Scope::ProjectScope`, the members of a project as a third
+  kind of group (`GroupId::of_project`, `Group::of_project`, named `members`),
+  `EntityStores::projects` and the store suite. A session template, an agent, a skill, a workspace
+  and an artifact are refused in a project's scope by their own validation, which nothing is used
+  from yet. `own` is a session's own project's name alone, refused anywhere else by the model, so
+  that a lifted project is named anew without an error of its own (`NeedsName` dropped from step
+  2). `Group::is_participants` became `Group::is_team`, and `GroupError::Participants` became
+  `NotATeam` (REST `409 not_a_team`, was `group_of_participants`): the members of a project are
+  kept by what they belong to as the participants are.
+
+  Where step 1 ends: it holds what the model is and checks - the kind, its scope, its group, its
+  validation and how its changes are applied. What has its first caller in the runtime comes with
+  step 2: `Session::project` and what goes with it (`SessionUpdateEvent::ProjectChanged`,
+  `Filter::in_project`) - in step 1 every session would have named a project that does not exist -,
+  `ProjectSnapshot`, and `may_read_project`/`may_change_project`. The constructors and the update
+  event of step 1 are the model's rules, tested in it, and used from step 2 on.
+
+  Different from the plan besides: a project's fields are those of what lies in a scope
+  (`ScopeField`), as a workspace's, since nothing asks for its members by a list yet;
+  `MembersChanged` carries the members, since whoever reads a project may read them, unlike a
+  team's; `Lifted` carries the name as a text and the scope, as every update event carries what the
+  model validates as it applies it; `validate_users_own` refuses a project's scope with its message
+  of where a user's own thing lies. The doc comments of `event.rs` and `security/action.rs` on what
+  reading a project covers, and `STORAGE.md` on where a project lies, come with step 5, where what
+  a project is read for is settled.

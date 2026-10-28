@@ -157,6 +157,7 @@ impl fmt::Display for ScopedName {
 mod tests {
     use super::*;
     use crate::session::SessionId;
+    use crate::project::ProjectId;
     use crate::user::UserId;
     use std::collections::HashSet;
 
@@ -166,7 +167,10 @@ mod tests {
     fn two_scoped_names_have_one_key_exactly_if_they_are_equal() {
         let (session, user) = (SessionId::new(), UserId::new());
         let names = ["Zoë", "zoe", "Dr.  Who", "dr. who", "Other"];
-        let scopes = [Scope::GlobalScope, Scope::SessionScope { session_id: session }, Scope::UserScope { user_id: user }];
+        // A project's id equal to the session's, so that the kind of scope alone tells their
+        // keys apart.
+        let project = ProjectId(session.0);
+        let scopes = [Scope::GlobalScope, Scope::SessionScope { session_id: session }, Scope::ProjectScope { project_id: project }, Scope::UserScope { user_id: user }];
         let all: Vec<ScopedName> = scopes.iter().flat_map(|scope| names.iter().map(|name| ScopedName::new(name, scope.clone()).unwrap())).collect();
         for left in &all {
             for right in &all {

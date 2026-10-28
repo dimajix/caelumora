@@ -332,7 +332,7 @@ impl From<GroupError> for ApiError {
         let detail = error.to_string();
         match error {
             GroupError::NotFound(_) | GroupError::Store(StoreError::NotFound { .. }) => Self::not_found("group_not_found", detail),
-            GroupError::Participants(_) => Self::conflict("group_of_participants", detail),
+            GroupError::NotATeam(_) => Self::conflict("not_a_team", detail),
             GroupError::UnknownMember(_) => Self::bad_request("unknown_member", detail),
             GroupError::Invalid(e) => e.into(),
             GroupError::Store(StoreError::Validation(_)) => Self::bad_request("invalid_scope", detail),

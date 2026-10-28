@@ -32,6 +32,7 @@ use crate::value::ValueError;
 use chrono::{DateTime, Utc};
 use crate::workspace::Workspace;
 use crate::group::Group;
+use crate::project::Project;
 use crate::intern::intern;
 use crate::store::history::HistoryStore;
 use crate::store::transcript::TranscriptStore;
@@ -395,6 +396,7 @@ pub trait EntityStoreFactory {
 pub struct EntityStores {
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
     pub groups: Arc<dyn EntityStore<Group>>,
+    pub projects: Arc<dyn EntityStore<Project>>,
     pub session_templates: Arc<dyn EntityStore<SessionTemplate>>,
     pub user_profiles: Arc<dyn EntityStore<UserProfile>>,
     pub personalities: Arc<dyn EntityStore<Personality>>,
@@ -414,6 +416,7 @@ impl EntityStores {
         Ok(Self {
             workspaces: factory.entity_store()?,
             groups: factory.entity_store()?,
+            projects: factory.entity_store()?,
             session_templates: factory.entity_store()?,
             user_profiles: factory.entity_store()?,
             personalities: factory.entity_store()?,

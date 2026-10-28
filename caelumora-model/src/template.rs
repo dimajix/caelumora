@@ -295,6 +295,8 @@ impl Stored for SessionTemplate {
         match self.name.scope {
             Scope::SessionScope { .. } | Scope::ChannelScope { .. } =>
                 Err(format!("the session template '{}' cannot lie in a session's or a channel's scope", self.name)),
+            // Nothing of a project's scope is used yet (`Scope::admits`, issue 467).
+            Scope::ProjectScope { .. } => Err(format!("the session template '{}' cannot lie in a project's scope yet", self.name)),
             Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => Ok(()),
         }
     }

@@ -53,7 +53,7 @@ use tracing::{info, warn};
 #[derive(Debug, thiserror::Error)]
 #[error("The {} is not deleted: {} of what lies in its scope may not be deleted by you", shown_holder(.holder), shown_left(.left))]
 pub struct ScopeNotEmpty {
-    /// The scope of what was to be deleted: a session's or a channel's.
+    /// The scope of what was to be deleted: a session's, a channel's or a project's.
     pub holder: Scope,
     /// How many of each kind are left.
     pub left: Vec<(EntityKind, usize)>,
@@ -74,6 +74,7 @@ fn shown_holder(holder: &Scope) -> String {
     match holder {
         Scope::SessionScope { session_id } => format!("session {session_id}"),
         Scope::ChannelScope { session_id, channel_id } => format!("channel {channel_id} of session {session_id}"),
+        Scope::ProjectScope { project_id } => format!("project {project_id}"),
         // Nothing else holds a scope that is deleted with it.
         _ => "holder of the scope".to_string(),
     }

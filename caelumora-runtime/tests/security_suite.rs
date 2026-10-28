@@ -1734,7 +1734,7 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
     let group = world.runtime.entity_stores().groups.get(&World::system(), GroupId::of_channel(main.id())).await.unwrap();
     assert!(!group.has_member(ActorId::User(world.bob)), "the group followed");
     let refused = world.runtime.group_manager().set_members(&World::as_user(world.alice), group.id, vec![world.bob]).await;
-    assert!(matches!(refused, Err(GroupError::Participants(_))), "nor is it changed by hand, not even by its owner: {refused:?}");
+    assert!(matches!(refused, Err(GroupError::NotATeam(_))), "nor is it changed by hand, not even by its owner: {refused:?}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

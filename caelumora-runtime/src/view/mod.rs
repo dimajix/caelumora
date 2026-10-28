@@ -551,13 +551,14 @@ impl Views {
     }
 
     /// How `group` is called: a team by its name, the participants of a
-    /// session or a channel by the session's or channel's, read in the
-    /// runtime's name.
+    /// session or a channel by the session's or channel's, the members of a
+    /// project by the project's, read in the runtime's name.
     async fn group_name(&self, group: &Group) -> Option<String> {
         let system = SecurityContext::system();
         match group.name.scope {
             Scope::SessionScope { session_id } => self.stores.sessions.get(&system, session_id).await.optional().ok().flatten().map(|s| s.name.to_string()),
             Scope::ChannelScope { channel_id, .. } => self.stores.channels.get(&system, channel_id).await.optional().ok().flatten().map(|c| c.name.to_string()),
+            Scope::ProjectScope { project_id } => self.stores.projects.get(&system, project_id).await.optional().ok().flatten().map(|p| p.name.to_string()),
             _ => Some(group.name.to_string()),
         }
     }

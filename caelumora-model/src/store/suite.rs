@@ -39,6 +39,7 @@ use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
 use crate::message::MessageId;
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::group::{Group, GroupId};
+use crate::project::{Project, ProjectId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -189,26 +190,40 @@ fn workspace(owner: UserId) -> Workspace {
 }
 
 fn group(owner: UserId) -> Group {
-    group_named(ScopedName::new("project", Scope::UserScope { user_id: owner }).unwrap())
+    group_named(ScopedName::new("staff", Scope::UserScope { user_id: owner }).unwrap())
+}
+
+fn project(owner: UserId) -> Project {
+    project_named(ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap())
+}
+
+/// A shared project of `name`, owned by the user whose scope it lies in,
+/// else by another.
+fn project_named(name: ScopedName) -> Project {
+    let owner = owner_where(&name.scope);
+    Project::new(name, owner)
+}
+
+/// The user whose scope `scope` is, else another: who owns what is made
+/// there.
+fn owner_where(scope: &Scope) -> UserId {
+    match scope {
+        Scope::UserScope { user_id } => *user_id,
+        _ => UserId::new(),
+    }
 }
 
 /// A team of `name`, owned by the user whose scope it lies in, else by
 /// another.
 fn group_named(name: ScopedName) -> Group {
-    let owner = match name.scope {
-        Scope::UserScope { user_id } => user_id,
-        _ => UserId::new(),
-    };
+    let owner = owner_where(&name.scope);
     Group::team(name, owner)
 }
 
 /// A workspace of `name`, owned by the user whose scope it lies in, else by
 /// another.
 fn workspace_named(name: ScopedName) -> Workspace {
-    let owner = match name.scope {
-        Scope::UserScope { user_id } => user_id,
-        _ => UserId::new(),
-    };
+    let owner = owner_where(&name.scope);
     Workspace::new(name, "main", Classification::CHANNEL_DEFAULT, owner)
 }
 
@@ -464,6 +479,8 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         create, get, update, delete, list);
     lifecycle!(stores.groups.as_ref(), group(UserId::new()), |v: &Group| v.id, name.name, "group",
         create, get, update, delete, list);
+    lifecycle!(stores.projects.as_ref(), project(UserId::new()), |v: &Project| v.id, name.name, "project",
+        create, get, update, delete, list);
     lifecycle!(stores.component_bundles.as_ref(), bundle(), |v: &ComponentBundle| v.id, name.name, "component_bundle",
         create, get, update, delete, list);
 
@@ -506,6 +523,23 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         create, delete, find_by_name);
     let stray = stores.groups.create(&ctx, &Group { name: ScopedName::new("participants", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), ..group(UserId::new()) }).await;
     assert!(matches!(stray, Err(StoreError::Validation(_))), "group: one in a session's scope that is not its participants is not stored, got {stray:?}");
+
+    found_by_name!(stores.projects.as_ref(), project_named, "project",
+        create, delete, find_by_name);
+    let session_id = SessionId::new();
+    let own = Project::own_of(session_id, UserId::new());
+    stores.projects.create(&ctx, &own).await.expect("project: a session's own");
+    let found = stores.projects.find_by_name(&ctx, &own.scoped_name()).await.expect("project: a session's own, found by its name there");
+    assert_eq!(found.id, own.id);
+    let refused = [
+        Project { name: ScopedName::new("report", Scope::SessionScope { session_id }).unwrap(), ..project(UserId::new()) },
+        Project { members: vec![UserId::new()], ..Project::own_of(SessionId::new(), UserId::new()) },
+        Project { security_attributes: Default::default(), ..project(UserId::new()) },
+    ];
+    for project in refused {
+        let stored = stores.projects.create(&ctx, &project).await;
+        assert!(matches!(stored, Err(StoreError::Validation(_))), "project: not stored - {:?}, got {stored:?}", project.name);
+    }
 }
 
 /// Of one kind, a name is unique in its name space (issue 250): creating,
@@ -572,6 +606,10 @@ pub async fn names_are_unique(stores: &EntityStores) {
     unique_by_name!(stores.groups.as_ref(), |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
         elsewhere: |name| Group { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: GroupId::new(), ..group(bob) },
         rename: |value: Group, name| Group { name: in_scope(name, &value.name.scope), ..value }, "group",
+        create, update, delete, restore);
+    unique_by_name!(stores.projects.as_ref(), |name| Project { name: in_scope(name, &global), id: ProjectId::new(), ..project(alice) },
+        elsewhere: |name| Project { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ProjectId::new(), ..project(bob) },
+        rename: |value: Project, name| Project { name: in_scope(name, &value.name.scope), ..value }, "project",
         create, update, delete, restore);
     unique_by_name!(stores.component_bundles.as_ref(), |name| ComponentBundle { name: in_scope(name, &global), id: ComponentBundleId::new(), ..bundle() },
         elsewhere: |name| ComponentBundle { name: in_scope(name, &users), id: ComponentBundleId::new(), ..bundle() },

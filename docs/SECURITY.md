@@ -323,7 +323,8 @@ lose theirs.
 
 A group (`caelumora_model::group::Group`) is a list of actors that access lists name as one subject,
 so that what is shared with a team or with a session's participants follows who belongs to it,
-without a copy of the members in every list. There are two kinds, told apart by where a group lies:
+without a copy of the members in every list. There are three kinds, told apart by where a group
+lies:
 
 *   **A team** is made by a user and lies in the global scope or its owner's; it holds users only
     (an agent is reached through its owner). Its one writer is the `GroupManager`, which leaves
@@ -334,6 +335,9 @@ without a copy of the members in every list. There are two kinds, told apart by 
     participants, writing in the runtime's name after the change it follows, which is the act that
     was permitted. The group is derived anew from the participants each time, so that a write that
     failed is corrected by the next. The `GroupManager` refuses to change it.
+*   **The members of a project** lie in its scope and have its id, as the participants of a
+    session do. They hold users alone and change with the project's members alone; the
+    `GroupManager` refuses to change them, as it refuses every group that is no team.
 
 The group of the participants of a session or channel goes and comes back with it (issue 348): the
 session's or channel's own list names it, and its members reach it only while the group is there, so

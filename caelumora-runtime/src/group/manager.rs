@@ -88,15 +88,15 @@ impl GroupManager {
     /// who may not change it learns nothing of who exists.
     ///
     /// # Errors
-    /// `NotFound` if there is none the caller may read, `Participants` for
-    /// the participants of a session or channel, `Invalid` if a name does
+    /// `NotFound` if there is none the caller may read, `NotATeam` for a
+    /// group that is no team, `Invalid` if a name does
     /// not fit, `UnknownMember` for a user that does not exist, or whatever
     /// the store reports.
     async fn update(&self, ctx: &SecurityContext, id: GroupId, event: GroupUpdateEvent, members: Option<Vec<UserId>>) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
         let mut group = self.groups.get(ctx, id).await.map_err(store_error(id))?;
-        if group.is_participants() {
-            return Err(GroupError::Participants(id));
+        if !group.is_team() {
+            return Err(GroupError::NotATeam(id));
         }
         let before = group.security_attributes.clone();
         let mut told: Vec<ActorId> = group.members.clone();
@@ -133,13 +133,13 @@ impl GroupManager {
     /// caller could see.
     ///
     /// # Errors
-    /// `Participants` for the participants of a session or channel, or
-    /// whatever the store reports, `PermissionDenied` included.
+    /// `NotATeam` for a group that is no team, or whatever the store
+    /// reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(group) = self.groups.get(ctx, id).await.optional()? else { return Ok(false) };
-        if group.is_participants() {
-            return Err(GroupError::Participants(id));
+        if !group.is_team() {
+            return Err(GroupError::NotATeam(id));
         }
         if !self.groups.delete(ctx, id).await? {
             return Ok(false);
@@ -154,14 +154,14 @@ impl GroupManager {
     ///
     /// # Errors
     /// `NotFound` if it is not deleted or not the caller's to restore,
-    /// `Participants` for the participants of a session or channel, which
-    /// come back with it, or whatever else the store reports - `NameTaken`
+    /// `NotATeam` for a group that is no team, which comes back with what
+    /// it belongs to, or whatever else the store reports - `NameTaken`
     /// among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
         let deleted = self.groups.get_deleted(ctx, id).await.map_err(store_error(id))?;
-        if deleted.is_participants() {
-            return Err(GroupError::Participants(id));
+        if !deleted.is_team() {
+            return Err(GroupError::NotATeam(id));
         }
         let group = self.groups.restore(ctx, id).await.map_err(store_error(id))?;
         self.events.publish(GlobalEvent::restored::<Group>(&id), group.security_attributes.clone());
@@ -174,13 +174,13 @@ impl GroupManager {
     /// deleted the caller could see.
     ///
     /// # Errors
-    /// `Participants` for the participants of a session or channel, which
-    /// go with it, `PermissionDenied`, or whatever the store reports.
+    /// `NotATeam` for a group that is no team, which goes with what it
+    /// belongs to, `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(deleted) = self.groups.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
-        if deleted.is_participants() {
-            return Err(GroupError::Participants(id));
+        if !deleted.is_team() {
+            return Err(GroupError::NotATeam(id));
         }
         let purged = self.groups.purge(ctx, id).await?;
         info!(group = %id, by = %ctx.caller_id, "Group purged");

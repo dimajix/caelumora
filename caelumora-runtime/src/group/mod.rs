@@ -1,5 +1,6 @@
-//! Groups in the runtime (issues 286, 304): the groups of the participants
-//! of sessions and channels, which those keep, and the teams users make.
+//! Groups in the runtime (issues 286, 304): the teams users make, and the
+//! groups that sessions, channels and projects keep of who belongs to
+//! them.
 //!
 //! The participants of a session or a channel are a group an access list
 //! names - the session's and the channel's own, a workspace attached to the
@@ -49,10 +50,11 @@ pub enum GroupError {
     NotFound(GroupId),
     #[error("a team belongs to a user")]
     OwnerNotAUser,
-    /// The participants of a session or a channel change by taking part in
-    /// it, not by hand.
-    #[error("group {0} is the participants of a session or channel and changes with them")]
-    Participants(GroupId),
+    /// A group that is no team - the participants of a session or a channel,
+    /// the members of a project - changes with what it belongs to, not by
+    /// hand.
+    #[error("group {0} is no team: it changes with the session, channel or project it belongs to")]
+    NotATeam(GroupId),
     #[error("there is no user {0}")]
     UnknownMember(UserId),
     #[error(transparent)]
