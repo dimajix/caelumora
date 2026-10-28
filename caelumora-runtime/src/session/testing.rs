@@ -221,6 +221,18 @@ pub async fn persist(manager: &SessionManager, ctx: &SecurityContext, session: S
     session
 }
 
+/// What tests of other crates read of a session manager past what its users may (issue 486):
+/// behind the feature `test-support` alone, under a name of its own - the manager's API is not
+/// widened by it.
+impl SessionManager {
+    /// The access policy of the runtime it starts its sessions in
+    /// (`RuntimeManager::access_policy`): what a test builds a component with, as the runtime gives
+    /// a component its policy.
+    pub fn runtime_access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        self.runtime_manager.access_policy()
+    }
+}
+
 /// Drain every event currently buffered on the receiver.
 pub fn drain(rx: &mut EventSubscription) -> Vec<GlobalEvent> {
     let mut out = Vec::new();

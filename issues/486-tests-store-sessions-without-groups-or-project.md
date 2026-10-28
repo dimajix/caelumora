@@ -1,6 +1,6 @@
 # 486 — Tests of other modules store sessions without their groups or own project
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -90,3 +90,11 @@ Recommendation: A and B.
   had no other user and is gone. The component of the tests asks an ownership policy of its own,
   as it did in two of them already: the runtime's, which it is given in a channel, cannot be had
   from the session manager outside the runtime's crate.
+- **2026-10-28** — Step 4, done: `SessionController`'s tests, the template tests' `resolve` and the
+  external agents' `external_channel` say where they store a session's document alone why they need
+  no more of it; `SessionController`'s tests start from `session::testing::bare_session`, as the
+  others do, instead of a copy of it. `SessionLoop::new` is `pub(crate)`: no other crate starts a
+  session but by its manager. With it, from the finding of step 3: the memory tests build their
+  component on the access policy of the runtime their sessions run in, as the runtime does, which
+  `session::testing` gives them as `SessionManager::runtime_access_policy`. CODING-GUIDELINES.md
+  says how a test makes a session ("Sessions in tests").

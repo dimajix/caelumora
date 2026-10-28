@@ -287,7 +287,7 @@ impl SessionLoop {
     /// Whatever building a channel reports otherwise - a store that failed
     /// among it -, and whatever making the session's commands or reading its
     /// workspace reports.
-    pub async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Arc<Self>> {
+    pub(crate) async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Arc<Self>> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
         let workspace = held_workspace(runtime_manager.controller_manager(), id, session.workspace).await?;

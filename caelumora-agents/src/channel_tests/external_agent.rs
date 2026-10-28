@@ -132,7 +132,9 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     if let Some(mut stored) = stored(agent_id) {
         runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
     }
-    // Stored too, so that a test can change it (issue 424).
+    // Stored too, so that a test can change it (issue 424): the document alone, of a session
+    // that does not run - the channel runs outside one (`ChannelRuntime::outside_a_session`), and
+    // what its tests read of the session is its time zone (issue 486).
     let session = bare_session(channel.session_id);
     runtime.entity_stores().sessions.create(&SecurityContext::system(), &session).await.unwrap();
     let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, session, channel)).await?;
