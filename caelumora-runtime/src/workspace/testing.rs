@@ -5,7 +5,8 @@
 
 use crate::testing::TestRuntime;
 use crate::runtime::RuntimeManager;
-use crate::session::SessionLoop;
+use crate::session::{SessionLoop, SessionManager};
+use crate::session::testing::user;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
@@ -18,7 +19,6 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::project::ProjectId;
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::Persistence;
-use caelumora_model::user::UserId;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::workspace::Workspace;
 use std::sync::Arc;
@@ -50,6 +50,9 @@ impl WithWorkspace {
     }
 }
 
+/// A session of a stored user with the channel "main" of the user and an agent, the workspace
+/// "docs" of the user attached, made as the runtime makes a session (`SessionManager::create`,
+/// issue 486) and running.
 pub async fn session_with_workspace() -> WithWorkspace {
     let store = Persistence::in_memory();
     let files = tempfile::tempdir().unwrap();
@@ -59,7 +62,9 @@ pub async fn session_with_workspace() -> WithWorkspace {
     let runtime = TestRuntime { store: store.clone(), config: AppConfig { workspaces, ..Default::default() }, ..Default::default() }.build();
     let system = SecurityContext::system();
 
-    let owner = UserId::new();
+    let owner = user("owner");
+    store.entity_stores().unwrap().users.create(&system, &owner).await.unwrap();
+    let owner = owner.id;
     let as_owner = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
     let workspace = runtime.workspace_manager().create(&as_owner, "docs", Scope::UserScope { user_id: owner }, "dev", Some("Drafts"), internal.clone()).await.unwrap();
 
@@ -80,14 +85,14 @@ pub async fn session_with_workspace() -> WithWorkspace {
         summary: None, briefing: None, language: None, time_zone: None,
         approval_rules: Vec::new(),
         workspace: Some(workspace.id),
+        // Replaced by its own, which `create` makes with it.
         project: ProjectId::new(),
         id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
-        commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
+        commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now,
+        security_attributes: Session::attributes_of(session_id, owner, &[]),
         deleted: None,
     };
-    store.entity_stores().unwrap().sessions.create(&system, &session).await.unwrap();
-    store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
-    let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
+    let session = SessionManager::new(Arc::clone(&runtime)).create(&as_owner, session, vec![channel]).await.unwrap();
     let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner), ActorId::User(owner));
     WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }
 }

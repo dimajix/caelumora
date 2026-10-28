@@ -1,6 +1,6 @@
 # 486 — Tests of other modules store sessions without their groups or own project
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -56,3 +56,16 @@ Recommendation: A and B.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the findings of issue 471.
+- **2026-10-28** — Decided with the maintainer: A and B, in three steps. The agents' memory tests
+  (`agent_memory.rs`) belong to the first kind, not the second: they run the sessions they store,
+  change a session's privacy by storing its document again and making a new loop of it, and work
+  in channels `session::testing::running_channel` runs without storing them. Step 1: the workspace
+  fixture and the prompt parts' tests; step 2: the memory tests, `running_channel` going with them;
+  step 3: the second kind says why, and `SessionLoop::new` becomes `pub(crate)`, since no other
+  crate starts a session by hand any more.
+- **2026-10-28** — Step 1: `workspace::testing::session_with_workspace` and the tests of the
+  channel's briefing, language and participants make their sessions with `SessionManager::create`,
+  owned by a stored user (`Session::attributes_of`), the channel's participants its founders. The
+  workspace's owner was never stored, which founding refuses as a participant that no longer
+  exists; the agent "Gone" of the participants' test, never stored either, now founds the channel
+  and is deleted after (`AgentManager::delete`), as a participant that no longer exists is.

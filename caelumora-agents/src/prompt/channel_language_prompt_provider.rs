@@ -128,8 +128,8 @@ mod tests {
     use crate::turn::Turn;
     use crate::testing::{self, TestAgents};
     use caelumora_runtime::testing::TestRuntime;
-    use caelumora_runtime::session::SessionLoop;
-    use caelumora_runtime::session::testing::actor_runtime_in;
+    use caelumora_runtime::session::{SessionLoop, SessionManager};
+    use caelumora_runtime::session::testing::{actor_runtime_in, user};
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
@@ -187,22 +187,25 @@ mod tests {
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
+        let owner = user("owner");
+        store.entity_stores().unwrap().users.create(&system, &owner).await.unwrap();
+        let as_owner = SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
         let session_id = SessionId::new();
-        let mut channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, language("de"));
+        let mut channel = Channel::build(session_id, ActorId::User(owner.id), Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, language("de"));
         channel.participants = vec![Participant::Agent(agent.id)];
         let now = Utc::now();
         let session = Session {
             summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
+            // Replaced by its own, which `create` makes with it.
             project: ProjectId::new(),
             id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
-            commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
+            commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now,
+            security_attributes: Session::attributes_of(session_id, owner.id, &[]),
             deleted: None,
         };
-        store.entity_stores().unwrap().sessions.create(&system, &session).await.unwrap();
-        store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
-        let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
+        let session_loop = SessionManager::new(Arc::clone(&runtime)).create(&as_owner, session.clone(), vec![channel.clone()]).await.unwrap();
 
         let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
