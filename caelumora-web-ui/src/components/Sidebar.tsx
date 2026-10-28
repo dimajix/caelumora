@@ -33,6 +33,7 @@ import {ActionMenu} from './ActionMenu';
 import {ResizeHandle} from './ResizeHandle';
 import {usePanelWidth} from '../panelWidth';
 import {DeletedList} from './DeletedList';
+import {EditInPlace} from './EditInPlace';
 import {NewChannelDialog} from './NewChannelDialog';
 import {PrivacyDialog} from './PrivacyDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
@@ -192,8 +193,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
   const [showProfile, setShowProfile] = useState(false);
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [editingName, setEditingName] = useState<string>('');
+  // The session whose name is being edited (issue 483).
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   // The session a new channel is being created in (issue 09).
   const [newChannelIn, setNewChannelIn] = useState<SessionSnapshot | null>(null);
   // The session whose privacy is shown (issue 134), by id, so that the
@@ -343,29 +344,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleRenameSession = (sessionId: string, currentName: string) => {
-    setEditingSessionId(sessionId);
-    setEditingName(currentName);
-  };
-
-  const handleNameSave = async (sessionId: string) => {
-    if (editingName.trim() && editingName !== sessions.find(s => s.id === sessionId)?.name) {
-      try {
-        const updatedSession = await api.renameSession(sessionId, editingName.trim());
-        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name: updatedSession.name } : s));
-      } catch (error) {
-        reportError('Failed to rename session', error);
-      }
-    }
-    setEditingSessionId(null);
-  };
-
-  const handleNameKeyDown = (e: React.KeyboardEvent, sessionId: string) => {
-    if (e.key === 'Enter') {
-      handleNameSave(sessionId);
-    } else if (e.key === 'Escape') {
-      setEditingSessionId(null);
-    }
+  const handleRenameSession = async (sessionId: string, name: string) => {
+    if (!name) return;
+    const renamed = await api.renameSession(sessionId, name);
+    setSessions(prev => prev.map(s => s.id === sessionId ? {...s, name: renamed.name} : s));
   };
 
   const handleShowPrivacy = (sessionId: string) => {
@@ -430,115 +412,113 @@ export const Sidebar: React.FC<SidebarProps> = ({
       
       <div className="flex-1 overflow-y-auto p-2">
         <div className="space-y-1">
-          {sessions.map(session => (
-            <div key={session.id} className="space-y-1 relative group">
-              <div className={cn(
-                "flex items-center rounded-md hover:bg-gray-800 transition-colors text-sm",
-                selectedSessionId === session.id && "bg-gray-800 font-medium"
-              )}>
-                <button
-                  onClick={() => toggleSession(session.id)}
-                  className="flex-1 flex items-center p-2 truncate"
-                  title={session.summary}
-                >
-                  {expandedSessions[session.id] ? (
-                    <ChevronDown size={16} className="mr-2 shrink-0" />
-                  ) : (
-                    <ChevronRight size={16} className="mr-2 shrink-0" />
-                  )}
-                  {editingSessionId === session.id ? (
-                    <input
-                      autoFocus
-                      className="flex-1 bg-gray-700 text-white px-1 rounded-sm outline-hidden border border-blue-500 min-w-0"
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      onBlur={() => handleNameSave(session.id)}
-                      onKeyDown={(e) => handleNameKeyDown(e, session.id)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  ) : (
-                    <span className="truncate mr-2">{sessionName(session)}</span>
-                  )}
-                  {!expandedSessions[session.id] && <UnreadBadge unread={unreadIn(session)} />}
-                  {session.privacy && session.privacy !== 'private' && (
-                    <span className="ml-1 shrink-0 text-gray-500" title={`${privacyInfo(session.privacy).label}: ${privacyInfo(session.privacy).description}`}>
-                      <Users size={12} aria-label={privacyInfo(session.privacy).label} />
-                    </span>
-                  )}
-                </button>
-                
-                <ActionMenu
-                  label={`Options of ${sessionName(session)}`}
-                  size={16}
-                  className="p-2 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
-                  actions={[
-                    {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
-                    // Fetched first: the list holds no briefing, and saving without it would remove
-                    // it.
-                    {label: 'Description', icon: FileText, onSelect: () => void refreshSession(session.id).then(() => setDescriptionOf(session.id))},
-                    ...(session.can_change ? [
-                      {label: 'Language', icon: Languages, onSelect: () => setLanguageOf(session.id)},
-                      {label: 'Time zone', icon: Clock, onSelect: () => setTimeZoneOf(session.id)},
-                    ] : []),
-                    {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
-                    {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
-                    {label: 'Workspace', icon: HardDrive, onSelect: () => setWorkspaceOf(session.id)},
-                    {label: 'Project', icon: FolderKanban, onSelect: () => setProjectOf(session.id)},
-                    {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete session?', onSelect: () => void handleDeleteSession(session.id)},
-                  ]}
-                />
-              </div>
-              
-              {expandedSessions[session.id] && (
-                <div className="ml-4 space-y-1">
-                  {session.channels.map(channel => {
-                    return (
-                      <div
-                        key={channel.id}
-                        className={cn(
-                          "relative group/channel flex items-center rounded-md hover:bg-gray-700 transition-colors text-sm text-gray-400",
-                          selectedChannelId === channel.id && "bg-gray-700 text-white font-medium"
-                        )}
-                      >
-                        <button
-                          onClick={() => onSelectChannel(session.id, channel.id)}
-                          className="flex-1 min-w-0 flex items-center p-2"
-                          title={channel.summary}
-                        >
-                          <MessageSquare size={14} className="mr-2 shrink-0" />
-                          <span className={cn("truncate mr-2", (channel.unread?.messages ?? 0) > 0 && "text-white font-medium")}>{channelName(channel)}</span>
-                          <UnreadBadge unread={channel.unread} />
-                        </button>
-                        <ActionMenu
-                          label={`Options of ${channelName(channel)}`}
-                          className="p-2 opacity-0 group-hover/channel:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
-                          actions={[
-                            {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete channel?', onSelect: () => void handleDeleteChannel(session.id, channel.id)},
-                          ]}
-                        />
+          {sessions.map(session => {
+            const Chevron = expandedSessions[session.id] ? ChevronDown : ChevronRight;
+            return (
+              <div key={session.id} className="space-y-1 relative group">
+                <div className={cn(
+                  "flex items-center rounded-md hover:bg-gray-800 transition-colors text-sm",
+                  selectedSessionId === session.id && "bg-gray-800 font-medium"
+                )}>
+                  {renamingSessionId === session.id ? (
+                    // In place of the button, not inside it: a field inside a button is not valid
+                    // HTML, and the row grows by the line of a refusal.
+                    <div className="flex-1 min-w-0 flex items-start p-2">
+                      <Chevron size={16} className="mr-2 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <EditInPlace initial={session.name} save={(name) => handleRenameSession(session.id, name)} action="Failed to rename the session" onDone={() => setRenamingSessionId(null)} on="sidebar" />
                       </div>
-                    );
-                  })}
-                  {session.channels.length === 0 && (
-                    <div className="p-2 text-xs text-gray-500 italic">No channels</div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => toggleSession(session.id)}
+                      className="flex-1 flex items-center p-2 truncate"
+                      title={session.summary}
+                    >
+                      <Chevron size={16} className="mr-2 shrink-0" />
+                      <span className="truncate mr-2">{sessionName(session)}</span>
+                      {!expandedSessions[session.id] && <UnreadBadge unread={unreadIn(session)} />}
+                      {session.privacy && session.privacy !== 'private' && (
+                        <span className="ml-1 shrink-0 text-gray-500" title={`${privacyInfo(session.privacy).label}: ${privacyInfo(session.privacy).description}`}>
+                          <Users size={12} aria-label={privacyInfo(session.privacy).label} />
+                        </span>
+                      )}
+                    </button>
                   )}
-                  <button
-                    onClick={() => setNewChannelIn(session)}
-                    className="w-full flex items-center p-2 rounded-md hover:bg-gray-700 transition-colors text-xs text-gray-500"
-                  >
-                    <Plus size={14} className="mr-2" />
-                    New channel
-                  </button>
-                  <DeletedList
-                    title="Deleted channels"
-                    load={() => api.getDeletedChannels(session.id)}
-                    version={deletedVersion}
-                    onRestore={(channelId) => handleRestoreChannel(session.id, channelId)}
+                  
+                  <ActionMenu
+                    label={`Options of ${sessionName(session)}`}
+                    size={16}
+                    className="p-2 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
+                    actions={[
+                      {label: 'Rename', icon: Edit2, onSelect: () => setRenamingSessionId(session.id)},
+                      // Fetched first: the list holds no briefing, and saving without it would
+                      // remove it.
+                      {label: 'Description', icon: FileText, onSelect: () => void refreshSession(session.id).then(() => setDescriptionOf(session.id))},
+                      ...(session.can_change ? [
+                        {label: 'Language', icon: Languages, onSelect: () => setLanguageOf(session.id)},
+                        {label: 'Time zone', icon: Clock, onSelect: () => setTimeZoneOf(session.id)},
+                      ] : []),
+                      {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
+                      {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
+                      {label: 'Workspace', icon: HardDrive, onSelect: () => setWorkspaceOf(session.id)},
+                      {label: 'Project', icon: FolderKanban, onSelect: () => setProjectOf(session.id)},
+                      {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete session?', onSelect: () => void handleDeleteSession(session.id)},
+                    ]}
                   />
                 </div>
-              )}
-            </div>
-          ))}
+                
+                {expandedSessions[session.id] && (
+                  <div className="ml-4 space-y-1">
+                    {session.channels.map(channel => {
+                      return (
+                        <div
+                          key={channel.id}
+                          className={cn(
+                            "relative group/channel flex items-center rounded-md hover:bg-gray-700 transition-colors text-sm text-gray-400",
+                            selectedChannelId === channel.id && "bg-gray-700 text-white font-medium"
+                          )}
+                        >
+                          <button
+                            onClick={() => onSelectChannel(session.id, channel.id)}
+                            className="flex-1 min-w-0 flex items-center p-2"
+                            title={channel.summary}
+                          >
+                            <MessageSquare size={14} className="mr-2 shrink-0" />
+                            <span className={cn("truncate mr-2", (channel.unread?.messages ?? 0) > 0 && "text-white font-medium")}>{channelName(channel)}</span>
+                            <UnreadBadge unread={channel.unread} />
+                          </button>
+                          <ActionMenu
+                            label={`Options of ${channelName(channel)}`}
+                            className="p-2 opacity-0 group-hover/channel:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
+                            actions={[
+                              {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete channel?', onSelect: () => void handleDeleteChannel(session.id, channel.id)},
+                            ]}
+                          />
+                        </div>
+                      );
+                    })}
+                    {session.channels.length === 0 && (
+                      <div className="p-2 text-xs text-gray-500 italic">No channels</div>
+                    )}
+                    <button
+                      onClick={() => setNewChannelIn(session)}
+                      className="w-full flex items-center p-2 rounded-md hover:bg-gray-700 transition-colors text-xs text-gray-500"
+                    >
+                      <Plus size={14} className="mr-2" />
+                      New channel
+                    </button>
+                    <DeletedList
+                      title="Deleted channels"
+                      load={() => api.getDeletedChannels(session.id)}
+                      version={deletedVersion}
+                      onRestore={(channelId) => handleRestoreChannel(session.id, channelId)}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {sessions.length === 0 && (
             <div className="p-4 text-center text-gray-500 text-sm">
               No sessions found

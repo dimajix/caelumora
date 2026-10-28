@@ -45,9 +45,8 @@ The UI shows what the server says and repeats no rule of its own:
     place, shows the server's refusal - a name taken, a classification the user is not cleared
     for - next to the field; it does not check beforehand what the server decides. A refusal is an
     error the request is at fault for, any status below 500 but a `401`; `reportUnlessRefused` in
-    `errors.ts` tells it apart, and reports anything else. `Refusal` draws it, for a dialog or a
-    page. The one exception is a session's name in the sidebar: its field stands in a row of the
-    list, inside a button, with no room below it, so that a refusal of it goes to the banner.
+    `errors.ts` tells it apart, and reports anything else. `Refusal` draws it, for a dialog, a page
+    or the sidebar.
 
 ## Structure
 
@@ -115,14 +114,14 @@ place, since the message entered nothing.
 
 ### Common elements
 
-*   **Dialogs are dark** whatever the theme, while a page follows the system's (a media query, so
-    a component cannot tell where it stands). What dialogs share is drawn for them: their fields
-    (`LanguageField`, `ClassificationFields`, ...), and a refusal (`Refusal`, which draws one on a
-    page too).
-*   **Texts edited in place.** The name or description a page shows is edited where it stands
-    (`EditInPlace`): saved on Enter or on leaving the field, given up with Escape. The field stays
-    open until the server answered; a refusal stays under it with the text, to be corrected or given
-    up.
+*   **Dialogs are dark** whatever the theme, as is the sidebar, while a page follows the system's
+    (a media query, so a component cannot tell where it stands). What dialogs share is drawn for
+    them: their fields (`LanguageField`, `ClassificationFields`, ...), and a refusal (`Refusal`,
+    which draws one on a page or in the sidebar too).
+*   **Texts edited in place.** The name or description a page shows, and a session's name in the
+    sidebar, are edited where they stand (`EditInPlace`): saved on Enter or on leaving the field,
+    given up with Escape. The field stays open until the server answered; a refusal stays under it
+    with the text, to be corrected or given up.
 *   **Menus.** What can be done with something in a list is in a menu behind three dots
     (`ActionMenu`). It lists only what may be done, and there is no menu where nothing may; it is
     reached with the keyboard too. An entry that cannot be undone asks once more in its place.

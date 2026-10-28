@@ -1,6 +1,6 @@
 # 483 — The sidebar edits a session's name in place by hand
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -30,6 +30,17 @@ not made in the other.
   shows it under its field, the sidebar hands it to the banner.
 - **B. Align the sidebar by hand** - an Escape that saves nothing, a trimmed comparison -, keeping
   the two copies.
+- **C. The field takes the place of the row's button**, instead of standing inside it, and is an
+  `EditInPlace`. There is no room for a refusal inside a button, but a row of the list may grow
+  by a line; an input inside a button is not valid HTML either, and needs its clicks kept from
+  the button. `EditInPlace` gets `on: 'page' | 'sidebar'`, as `Refusal` has `on`, since the
+  sidebar is dark whatever the theme.
+
+## Decision
+
+C: one way of editing a text in place, without a hook beside the component, and the sidebar's
+exception in WEB-UI.md goes. It takes back the decision of issue 479 to leave the sidebar's refusal
+in the banner, whose reason was the button.
 
 ## Done when
 
@@ -39,3 +50,6 @@ not made in the other.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of step 3 of issue 479.
+- **2026-10-28** — Done (C): the sidebar shows an `EditInPlace` in place of the session's button
+  while its name is edited, and a refusal under it; `EditInPlace` and `Refusal` are drawn for the
+  sidebar too, and WEB-UI.md drops the sidebar's exception.

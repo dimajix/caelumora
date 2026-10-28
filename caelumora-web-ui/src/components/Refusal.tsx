@@ -1,11 +1,12 @@
-// How a refusal is shown (issue 481), as `reportUnlessRefused` hands it over: drawn for a dialog,
-// which is dark whatever the theme, or for a page, which follows it (issue 479).
+// How a refusal is shown (issue 481), as `reportUnlessRefused` hands it over: drawn for a dialog or
+// the sidebar, which are dark whatever the theme, or for a page, which follows it (issue 479).
 
 import React from 'react';
 
 const LOOKS = {
   dialog: 'text-xs text-red-400',
   page: 'text-xs text-red-600 dark:text-red-400',
+  sidebar: 'text-xs text-red-400',
 };
 
 interface RefusalProps {
