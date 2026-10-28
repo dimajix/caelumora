@@ -41,6 +41,7 @@ use caelumora_runtime::backend::StorageGone;
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::event::{EventBus, EventSubscription};
 use caelumora_runtime::runtime::RuntimeManager;
+use caelumora_runtime::scoped::ScopeNotEmpty;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
 use caelumora_agents::testing::{self as agent_testing, asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_scripted, TestAgents, ONCE_MODEL_KIND};
@@ -536,7 +537,7 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
 
     let (refused, asked) = world.asked(world.manager.delete(&alice, session_id)).await;
     let refused = refused.expect_err("bob's artifact is left");
-    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(Artifact::KIND, 1)]), "{refused}");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { left, .. })) if *left == [(Artifact::KIND, 1)]), "{refused}");
     assert!(refused.to_string().contains("1 artifact") && !refused.to_string().contains("his.csv"), "what is left, by kind, not by name: {refused}");
     let (session_checks, artifact_checks) = asked.split_at(4.min(asked.len()));
     assert_eq!(session_checks, checks(&[

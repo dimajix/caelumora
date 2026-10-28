@@ -19,6 +19,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::session::ChannelId;
 use caelumora_model::group::Group;
 use crate::group::keep_participants;
+use crate::scoped::ScopeNotEmpty;
 use std::sync::Arc;
 use super::{ChannelEntry, ChannelRun, Listed, SessionError, SessionLoop, purge_channel_document, require_classification};
 use futures::future;
@@ -402,7 +403,8 @@ impl SessionLoop {
         // with its group.
         let deleted = async {
             self.stores.channels.delete(context, channel_id).await?;
-            self.scoped.delete_lying_in(context, &scope).await?;
+            let left = self.scoped.delete_lying_in(context, &scope).await?;
+            ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
             self.groups.delete_participants(&scope).await?;
             Ok::<_, Error>(())
         }.await;

@@ -698,3 +698,10 @@ none lies in a project's scope.
   a `ProjectController` as the one writer of a project, proposed by the maintainer since its
   description will be read live; a session's own project found by the name `own`; no group's
   scope yet; nothing used from a project's scope yet. In progress from here, step by step.
+- **2026-10-28** — Step 0a done: `ScopeNotEmpty` is an error of `scoped`, raised by what holds
+  the scope from what `ScopedEntities::delete_lying_in` answers is left; `SessionError` wraps
+  it, its message unchanged. Beyond the plan, at the reviewer's finding and the maintainer's
+  word: it answers for itself wherever it travels - `user_message` and the REST API know it, and
+  `SessionError`'s answer delegates to it -, so that a holder that forgets to wrap it is not
+  answered as a server error, and the second holder, a project, adds no second mapping. Deleting
+  a channel with another's agent in its scope is tested now, as deleting a session was.

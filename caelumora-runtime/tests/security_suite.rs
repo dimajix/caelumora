@@ -31,7 +31,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::Detail;
-use caelumora_model::store::{StoreError, Stored};
+use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::user::{UserId, UserProfile, User};
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
@@ -39,6 +39,7 @@ use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KI
 use caelumora_runtime::moderator::ResponderPolicy;
 use caelumora_runtime::moderator::broadcast_policy::BroadcastPolicy;
 use caelumora_runtime::testing::{attributes, checks, denied, file, not_found, quiet, read, shown, workspace, World, STAFF};
+use caelumora_runtime::scoped::ScopeNotEmpty;
 use caelumora_runtime::session::{ChannelSpec, SessionError};
 use caelumora_runtime::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
@@ -840,7 +841,7 @@ async fn deleting_a_session_needs_owning_it() {
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: DeleteSession(alice's) no"]));
     let (refused, asked) = world.asked(world.manager.delete(&alice, session.id())).await;
     let refused = refused.expect_err("bob's agent is left");
-    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(Agent::KIND, 1)]), "{refused}");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { left, .. })) if *left == [(Agent::KIND, 1)]), "{refused}");
     assert_eq!(asked, checks(&[
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
@@ -856,6 +857,29 @@ async fn deleting_a_session_needs_owning_it() {
     assert!(deleted.unwrap(), "nothing of anybody else's is left");
     world.manager.restore(&alice, session.id()).await.unwrap();
     assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
+}
+
+/// Deleting a channel is refused as deleting its session is (issue 320):
+/// an agent of somebody else's in its scope, which she may not delete,
+/// keeps the channel, running, and she is told what is left of which
+/// channel.
+#[tokio::test]
+async fn a_channel_is_kept_with_what_of_its_scope_is_not_the_deleters() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.unwrap().id();
+    let holder = Scope::ChannelScope { session_id: session.id(), channel_id: side };
+    let personality = world.personality("plain", None, &[]).await;
+    let bobs = Agent::new(ScopedName::new("helper", holder.clone()).unwrap(), personality.id, ActorId::User(world.bob));
+    world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
+
+    let refused = session.delete_channel(&alice, side).await.expect_err("bob's agent is left");
+    let left_in = |scope: &Scope, left: &[(EntityKind, usize)]| *scope == holder && left == [(Agent::KIND, 1)];
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { holder, left })) if left_in(holder, left)), "{refused}");
+    assert!(refused.to_string().contains(&format!("channel {side} of session {}", session.id())), "names the channel: {refused}");
+    assert!(session.channel(side).is_some(), "the channel is kept and runs on");
+    assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
 }
 
 /// Issue 320: what went with a session comes back with it in the name of

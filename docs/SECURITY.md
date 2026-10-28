@@ -216,8 +216,9 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     whoever deletes or restores it (issue 320); only finding it is done in the runtime's name.
     Whoever deletes a session deletes what of its scope they may; if something is left - an artifact
     another participant published there, a contributor's agent -, the session is kept, and they are
-    told what is left, by kind and count (`SessionError::ScopeNotEmpty`). What they may is deleted
-    all the same, so that what is left to do is plain: its owners keep it elsewhere or delete it.
+    told what is left, by kind and count (`ScopeNotEmpty`, raised by what holds the scope). What
+    they may is deleted all the same, so that what is left to do is plain: its owners keep it
+    elsewhere or delete it.
     Whoever restores a session restores it and what of its scope they may; the rest stays deleted
     for its owner to restore. Purging is the system's anyway and done in the runtime's name.
 *   The groups of the participants of a session and its channels are not among it: they go and come

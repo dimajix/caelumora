@@ -26,14 +26,13 @@
 //! and marks it as deleted by the caller. What may lie in a session's scope
 //! is not always its owner's - an artifact another participant published
 //! there, a contributor's agent -, so deleting deletes what the caller may
-//! and fails with `SessionError::ScopeNotEmpty` if anything is left: the
-//! holder is kept, and what is left is plain to see until its owners take
-//! it elsewhere or delete it. Restoring restores what the caller may and
-//! leaves the rest deleted, for its owners to restore: the holder comes
-//! back all the same. Purging, the system's or an administrator's, is done
-//! in the runtime's name.
+//! and answers what is left; the holder refuses its deletion if anything is
+//! (`ScopeNotEmpty`): it is kept, and what is left is plain to see until
+//! its owners take it elsewhere or delete it. Restoring restores what the
+//! caller may and leaves the rest deleted, for its owners to restore: the
+//! holder comes back all the same. Purging, the system's or an
+//! administrator's, is done in the runtime's name.
 
-use crate::session::SessionError;
 use async_trait::async_trait;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
@@ -43,7 +42,47 @@ use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
-use anyhow::Result;
+
+/// What is left in the scope of something being deleted, which the caller
+/// may not delete (issue 320): what they may was deleted, the holder is
+/// kept. `left` says how many of each kind are left - not which, since they
+/// need not be the caller's to read. The message is meant for users, and it
+/// answers for itself wherever it travels - alone or in the error of what
+/// holds the scope (`error::user_message`, the REST API's `409
+/// scope_not_empty`).
+#[derive(Debug, thiserror::Error)]
+#[error("The {} is not deleted: {} of what lies in its scope may not be deleted by you", shown_holder(.holder), shown_left(.left))]
+pub struct ScopeNotEmpty {
+    /// The scope of what was to be deleted: a session's or a channel's.
+    pub holder: Scope,
+    /// How many of each kind are left.
+    pub left: Vec<(EntityKind, usize)>,
+}
+
+impl ScopeNotEmpty {
+    /// Refuses the deletion of what holds `holder` if anything is `left`.
+    pub(crate) fn require_empty(holder: &Scope, left: Vec<(EntityKind, usize)>) -> Result<(), Self> {
+        if left.is_empty() {
+            return Ok(());
+        }
+        Err(Self { holder: holder.clone(), left })
+    }
+}
+
+/// What holds the scope `holder`, as an error names it.
+fn shown_holder(holder: &Scope) -> String {
+    match holder {
+        Scope::SessionScope { session_id } => format!("session {session_id}"),
+        Scope::ChannelScope { session_id, channel_id } => format!("channel {channel_id} of session {session_id}"),
+        // Nothing else holds a scope that is deleted with it.
+        _ => "holder of the scope".to_string(),
+    }
+}
+
+/// How many of each kind are left, as an error says it: "1 agent, 2 workspace".
+fn shown_left(left: &[(EntityKind, usize)]) -> String {
+    left.iter().map(|(kind, count)| format!("{count} {kind}")).collect::<Vec<_>>().join(", ")
+}
 
 /// A kind that may lie in a scope and goes with what holds it (issue 178):
 /// deleted, restored and purged with the session or channel whose scope it
@@ -104,7 +143,8 @@ impl ScopedEntities {
 
     /// Deletes what lies in `holder` or within it on behalf of `ctx`, as
     /// far as they may delete it, and announces it as its owner announces a
-    /// deletion.
+    /// deletion. Answers what is left, by kind - empty if nothing is -,
+    /// which the holder refuses its deletion for (`ScopeNotEmpty`).
     ///
     /// Called once the holder is marked deleted, so that what goes is
     /// deleted with it, not before it, and comes back with it
@@ -112,10 +152,8 @@ impl ScopedEntities {
     /// mark away again.
     ///
     /// # Errors
-    /// `SessionError::ScopeNotEmpty` if something is left that `ctx` may
-    /// not delete - what they may is deleted all the same -, or whatever
-    /// the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> Result<()> {
+    /// Whatever the store reports; what was deleted before stays deleted.
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<Vec<(EntityKind, usize)>> {
         let mut left = Vec::new();
         for member in &self.members {
             let count = member.delete_lying_in(ctx, holder).await?;
@@ -123,10 +161,7 @@ impl ScopedEntities {
                 left.push((member.kind(), count));
             }
         }
-        if !left.is_empty() {
-            return Err(SessionError::ScopeNotEmpty { holder: holder.clone(), left }.into());
-        }
-        Ok(())
+        Ok(left)
     }
 
     /// Restores what lies in `holder` or within it and was deleted with it -

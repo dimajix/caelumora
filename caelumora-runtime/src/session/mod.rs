@@ -4,7 +4,7 @@ use caelumora_model::value::name::Name;
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
-use crate::scoped::ScopedEntities;
+use crate::scoped::{ScopeNotEmpty, ScopedEntities};
 use crate::event::{EventBus, SubscriptionTopic};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
@@ -14,7 +14,7 @@ use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::template::SessionTemplateId;
@@ -90,29 +90,13 @@ pub enum SessionError {
     WorkspaceOutOfScope(WorkspaceId),
     /// What lies in the scope of a session or channel being deleted is not
     /// all the caller's to delete (issue 320): what was is deleted, the
-    /// session or channel is kept. `left` says how many of each kind are
-    /// left - not which, since they need not be the caller's to read.
-    #[error("The {} is not deleted: {} of what lies in its scope may not be deleted by you", shown_holder(.holder), shown_left(.left))]
-    ScopeNotEmpty { holder: Scope, left: Vec<(EntityKind, usize)> },
+    /// session or channel is kept.
+    #[error(transparent)]
+    ScopeNotEmpty(#[from] ScopeNotEmpty),
     /// The sessions are shut down as the process ends (issue 297): none is
     /// started any more.
     #[error("Caelumora is shutting down: no session is started")]
     ShuttingDown,
-}
-
-/// The session or channel whose scope `holder` is, as an error names it.
-fn shown_holder(holder: &Scope) -> String {
-    match holder {
-        Scope::SessionScope { session_id } => format!("session {session_id}"),
-        Scope::ChannelScope { session_id, channel_id } => format!("channel {channel_id} of session {session_id}"),
-        // Nothing else holds a scope that is deleted with it.
-        _ => "holder of the scope".to_string(),
-    }
-}
-
-/// How many of each kind are left, as an error says it: "1 agent, 2 workspace".
-fn shown_left(left: &[(EntityKind, usize)]) -> String {
-    left.iter().map(|(kind, count)| format!("{count} {kind}")).collect::<Vec<_>>().join(", ")
 }
 
 /// Nothing if a channel may be given `classification` at all - it names

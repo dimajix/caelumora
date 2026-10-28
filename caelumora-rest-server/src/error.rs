@@ -32,6 +32,7 @@ use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::error::{refusal, user_message};
 use caelumora_runtime::group::GroupError;
+use caelumora_runtime::scoped::ScopeNotEmpty;
 use caelumora_runtime::session::SessionError;
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{AgentContextError, ViewError};
@@ -384,13 +385,21 @@ impl From<SessionError> for ApiError {
             }
             SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
             SessionError::WorkspaceOutOfScope(_) => Self::bad_request("workspace_out_of_scope", detail),
-            SessionError::ScopeNotEmpty { .. } => Self::conflict("scope_not_empty", detail),
+            SessionError::ScopeNotEmpty(e) => e.into(),
             SessionError::ShuttingDown => Self::unavailable("shutting_down", detail),
             SessionError::AlreadyParticipant { .. } => Self::conflict("already_participant", detail),
             SessionError::CannotTakeIn(_) => Self::bad_request("invalid_participant", detail),
             // A caller that is no user: not the client's request.
             SessionError::OwnerNotAUser(_) => Self::internal("internal_error", "the request", &error.into()),
         }
+    }
+}
+
+/// What is left in a scope, which the caller may not delete (issue 320): the others' to take away,
+/// whatever holds the scope.
+impl From<ScopeNotEmpty> for ApiError {
+    fn from(error: ScopeNotEmpty) -> Self {
+        Self::conflict("scope_not_empty", error.to_string())
     }
 }
 
@@ -453,7 +462,7 @@ impl From<Error> for ApiError {
                 };
             )*};
         }
-        answer_as!(error, AgentContextError, ViewError, WorkspaceError, AttachmentError, AgentError, GroupError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
+        answer_as!(error, AgentContextError, ViewError, WorkspaceError, AttachmentError, AgentError, GroupError, TerminalError, SessionError, ScopeNotEmpty, ChannelError, CommandError, TemplateError);
         if error.chain().any(|e| matches!(e.downcast_ref(), Some(StoreError::NameTaken { .. }))) {
             return Self::conflict("name_taken", user_message(&error).unwrap_or_else(|| error.to_string()));
         }
@@ -704,8 +713,9 @@ mod tests {
         assert_eq!(answer(SessionError::AlreadyParticipant { session, participant: ActorId::User(UserId::new()) }), (409, "already_participant".to_string()));
         assert_eq!(answer(SessionError::CannotTakeIn(ActorId::System)), (400, "invalid_participant".to_string()));
         assert_eq!(answer(SessionError::ShuttingDown), (503, "shutting_down".to_string()), "for now, not for good (issue 297)");
-        let left = vec![(Agent::KIND, 1)];
-        assert_eq!(answer(SessionError::ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left }), (409, "scope_not_empty".to_string()), "what is left is the others' to take away (issue 320)");
+        let left = || ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left: vec![(Agent::KIND, 1)] };
+        assert_eq!(answer(SessionError::ScopeNotEmpty(left())), (409, "scope_not_empty".to_string()), "what is left is the others' to take away (issue 320)");
+        assert_eq!(answer(Error::new(left())), (409, "scope_not_empty".to_string()), "whatever holds the scope, and however it travels");
     }
 
     #[test]

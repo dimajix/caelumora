@@ -25,7 +25,7 @@ use caelumora_model::group::{Group, GroupId};
 use crate::group::{GroupManager, keep_participants, purge_participants};
 use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::WorkspaceChoice;
-use crate::scoped::ScopedEntities;
+use crate::scoped::{ScopeNotEmpty, ScopedEntities};
 use crate::workspace::reaper::CommandReaper;
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
@@ -634,7 +634,8 @@ impl SessionManager {
         // is told why.
         let scope = Scope::SessionScope { session_id: id };
         let deleted = async {
-            self.scoped.delete_lying_in(context, &scope).await?;
+            let left = self.scoped.delete_lying_in(context, &scope).await?;
+            ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
             self.groups.delete_participants(&scope).await?;
             Ok::<_, Error>(())
         }.await;
