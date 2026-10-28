@@ -119,8 +119,8 @@ moves information asks both, its own permission first.
 ## Ownership
 
 Every stored entity - session, channel, agent, personality, session template, component bundle,
-workspace, skill, artifact, group - carries `SecurityAttributes`: an owner and an access list.
-This is the one place ownership and access are recorded; see [Access lists](#access-lists).
+workspace, project, skill, artifact, group - carries `SecurityAttributes`: an owner and an access
+list. This is the one place ownership and access are recorded; see [Access lists](#access-lists).
 
 *   A session and its channels are owned by the user they were created for, and read by their
     members: an entry naming the group of their participants (see [Groups](#groups)), which follows

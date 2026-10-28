@@ -320,5 +320,5 @@ The participants of the channel download the version published there, wherever t
 owner shares the artifact with read the versions there are as they share it; its owner reads every
 version and shares it. An artifact lives as long as its project: with the session where the project
 is the session's own, beyond it where it is shared - kept by lifting the session's own project,
-never by moving an artifact (see [CHANNELS.md](CHANNELS.md#sessions), [STORAGE.md](STORAGE.md) and
+never by moving an artifact (see [PROJECTS.md](PROJECTS.md), [STORAGE.md](STORAGE.md) and
 [SECURITY.md](SECURITY.md#ownership)).

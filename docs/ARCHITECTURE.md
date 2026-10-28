@@ -183,11 +183,11 @@ copy of a file, in a version of an artifact that belongs to a user, its content 
 of content beyond the workspace and downloaded where it was published. Details:
 [WORKSPACE.md](WORKSPACE.md), [TOOLS.md](TOOLS.md#artifacts).
 
-Every session has a **project**, which its results go to: one of its own, made with it and gone
-with it, or a shared one it lies in, which outlives its sessions. An artifact lies in its session's
-project. Keeping a session's results is lifting its own project into its owner's scope or the
-global one; a session is put into a shared project, or taken out, without anything moving. Details:
-[PROJECTS.md](PROJECTS.md).
+Every session has a **project**, which its results go to: one of its own, made with it and gone with
+it, or a shared one it lies in, which outlives its sessions. An artifact is published into its
+session's project. Keeping a session's results is lifting its own project into its owner's scope or
+the global one; a session is put into a shared project, or taken out, without anything moving.
+Details: [PROJECTS.md](PROJECTS.md).
 
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies. The records live in the `EntityStore`; a channel
@@ -356,8 +356,8 @@ What changes an entity is split by what it changes:
     lies in its scope: the `SessionManager`'s for sessions, the `AgentManager`'s, `GroupManager`'s
     and `WorkspaceManager`'s for their kinds, the `ProjectManager`'s for shared projects - made by
     the program beside the `SessionManager`, which it holds -, and those of the plugins
-    (`SkillManager`, `ArtifactManager`). A channel's is its session's (`SessionLoop`), and so is a
-    session's own project's.
+    (`SkillManager`, `ArtifactManager`). A channel's is its session's (`SessionLoop`); a session's
+    own project is made, deleted, restored and purged with the session by the `SessionManager`.
 *   **What it is - its attributes - is its controller's**, where it has one: a name, a description,
     rules, participants. Sessions, channels, agents, users, workspaces and projects have one, as
     running sessions hold them live; the controller stores a change and announces it, so that the
@@ -375,14 +375,14 @@ the channel's history (issue 282).
 
 Two questions are kept apart:
 
-*   **Who may do what** is decided by one `AccessPolicy` per process, asked with an `ActionType`
-    and the `SecurityAttributes` (owner and access list) of the entity concerned. The default policy
-    is ownership: owners do everything, whom the access list grants it read and use - a user, a
-    role, or a group: a team users make, or the participants of a session or channel, which follow
-    who belongs to it. What a client may see, it reads through the runtime's **views** (see [Reading
-    what is there](#reading-what-is-there)), which ask the policy at every step for that viewer;
-    frontends never ask the policy themselves. Users come from a chain of user providers, and the
-    REST server authenticates them with a short-lived signed token.
+*   **Who may do what** is decided by one `AccessPolicy` per process, asked with an `ActionType` and
+    the `SecurityAttributes` (owner and access list) of the entity concerned. The default policy is
+    ownership: owners do everything, whom the access list grants it read and use - a user, a role,
+    or a group: a team users make, the participants of a session or channel, or the members of a
+    project, which follow who belongs to it. What a client may see, it reads through the runtime's
+    **views** (see [Reading what is there](#reading-what-is-there)), which ask the policy at every
+    step for that viewer; frontends never ask the policy themselves. Users come from a chain of user
+    providers, and the REST server authenticates them with a short-lived signed token.
 *   **What may flow where** is decided by classifications, not by who takes part. Every channel has
     a classification - a level from `public` to `strictly_confidential` and an audience of
     compartments, which the administrator configures - and one flow rule decides whether a channel

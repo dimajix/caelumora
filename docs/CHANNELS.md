@@ -43,7 +43,7 @@ announced as a team. Deleting deletes them last, once nothing else of the scope 
 session kept keeps its members; if they cannot go, the mark is taken away again, and they stay.
 Restoring restores them first, with the mark; if they cannot come back, the session or channel is
 deleted again and the restoring fails. So a session or channel that is there always has the group of
-its participants there, too. Purging purges them with it (`purge_participants`).
+its participants there, too. Purging purges them with it (`scoped::purge_for_good`).
 
 That holds because what lies in a session's or a channel's scope is used only within it
 (`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel,
@@ -52,26 +52,14 @@ used wherever the permissions allow: that scope only says where its name is foun
 template lies only in a user's scope or everywhere; one of a session's or a channel's would make
 sessions it can never lie in, and is not stored.
 
-A session is made with a **project** of its own (issue 467), which its results go to
-(`Session::project`): named `own` in the session's scope, owned by the session's owner, read by its
-participants, with the group of its members, empty. A session is a user's, so that its project has
-an owner. The session keeps its own project as it keeps the group of its participants
-(`SessionManager`): made with it, in the runtime's name; deleted and restored with its mark, the
-project after the groups, all of them or none, each announced; and purged with it. What lies in the
-project's scope goes with the session as what lies in the session's does, in the name of whoever
-deletes or restores it, and what is left of it they may not delete keeps the session as well -
-counted with what is left of the session's scope (`ScopeNotEmpty`).
-
-Whoever may change a session and read a shared project puts the session into it
-(`SessionLoop::update_project`), or takes it out into its own again - the one in its scope, or a new
-one if that was lifted. Nothing moves: what went to a project stays there, what comes now goes to
-the other. The project a session lies in is shared with its participants for reading, so that every
-one of them publishes into it; the one it leaves is no longer. A session in a shared project goes
-with it: the `ProjectManager` deletes, restores and purges the sessions that lie in a project with
-it, through the `SessionManager`, and a session is not restored alone while its project is deleted
-(`SessionError::ProjectDeleted`). The owner of a session's own project keeps it by lifting it into
-their scope or the global one, under a name of its own (`ProjectController::lift`): it is then a
-shared project, the session in it, and goes with the session no longer.
+Every session has a **project** its results go to (`Session::project`, issue 467): one of its own,
+made with it in its scope, or a shared one it lies in, which it goes with. The session keeps its own
+project as it keeps the group of its participants (`SessionManager`): made with it, in the runtime's
+name; deleted and restored with its mark, the project after the groups, all of them or none; and
+purged with it. What lies in the project's scope goes with the session as what lies in the
+session's does, and what is left of it keeps the session as well (`ScopeNotEmpty`). A session is a
+user's, so that its project has an owner. How a session is put into a project, and how its own is
+kept, is in [PROJECTS.md](PROJECTS.md).
 
 Every session has a privacy policy: whom it lets read what was said in it from other sessions. It is
 taken over from its template (private unless the template says otherwise), changed only by the

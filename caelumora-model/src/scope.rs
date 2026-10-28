@@ -20,8 +20,9 @@ use std::cmp::Reverse;
 use crate::store::query::{Field, FieldValue, Filter};
 
 /// Where something lies that is found by name (issue 177): the name space of
-/// a personality, a session template, an agent, a workspace, a skill, a
-/// project or an artifact, each stored with its scope. A channel's name space
+/// a personality, a session template, a component bundle, an agent, a
+/// workspace, a skill, a group, a project or an artifact, each stored with
+/// its scope. A channel's name space
 /// is its session's scope, a user's the global one (issue 250); neither
 /// stores a scope of its own. A project lies in a scope and holds one, where
 /// its artifacts lie (issue 467).

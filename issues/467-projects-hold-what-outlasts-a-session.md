@@ -930,3 +930,13 @@ none lies in a project's scope.
 
   Stored data to delete: every session, since each names its project, and every artifact, since
   none lies in a project's scope - with its content.
+
+  After the review of step 5, in a commit of its own: what still did not hold is corrected -
+  PERMISSION-CHECKS.md (the `ProjectManager` and `ProjectController` among the managers, the rows of
+  making, restoring and purging, the refusals of `update_project` and `update_members`), CHANNELS.md
+  (`purge_for_good`, and the session's project told briefly, the rest left to PROJECTS.md, so that
+  two descriptions do not drift apart), SECURITY.md and ARCHITECTURE.md (a project among what
+  carries attributes, its members among the groups, an artifact published into its session's
+  project, who keeps a session's own project), STORAGE.md (what lies in a project's scope), TOOLS.md
+  (the link to PROJECTS.md), and the doc comments of `Scope` (every kind stored with its scope) and
+  `GlobalEvent` (who hears of a project).

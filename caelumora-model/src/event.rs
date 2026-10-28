@@ -22,6 +22,8 @@ use std::slice;
 /// - a workspace's (issue 253), a skill's (issue 22) and a group's (issue 286): its owner and whom
 ///   its access list grants reading, a group's participants; the participants of a session or
 ///   channel are announced as they join and leave, not as a group;
+/// - a project's (issue 467): its owner and whom its list grants reading - its members, the
+///   participants of the sessions in it -; a change of its members to who left as well;
 /// - an artifact's (issue 271): its owner and whom its list grants reading - the members of its
 ///   project among them (issue 467) -, and for a version published the readers of that version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
