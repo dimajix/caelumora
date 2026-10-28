@@ -11,6 +11,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::project::{Project, ProjectId};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use caelumora_model::session::Session;
@@ -94,9 +95,10 @@ impl ProjectManager {
     /// Deletes project `id` on behalf of `ctx` (`DeleteProject`): marked first, then the sessions
     /// that lie in it - each through the `SessionManager`, in `ctx`'s name, with what lies in its
     /// scope -, then what lies in its scope (`ScopedEntities`), as far as `ctx` may delete it, then
-    /// the group of its members in the runtime's name. If a session or something of its scope is
-    /// left that `ctx` may not delete, the project is kept, its mark taken away again, and what
-    /// they could delete stays deleted. `false` if there was none the caller could see.
+    /// the group of its members in the runtime's name - all of it with the project's mark, by
+    /// `ctx`'s caller (issue 469). If a session or something of its scope is left that `ctx` may
+    /// not delete, the project is kept, its mark taken away again, and what they could delete stays
+    /// deleted. `false` if there was none the caller could see.
     ///
     /// # Errors
     /// `InvalidScope` for a session's own, which goes with the session; `ScopeNotEmpty` with how
@@ -108,20 +110,22 @@ impl ProjectManager {
         if project.is_own() {
             return Err(ProjectError::InvalidScope);
         }
-        if !self.stores.projects.delete(ctx, id).await? {
+        // One mark for all that goes with it (issue 469).
+        let removal = Removal::now(ctx.caller_id);
+        if !self.stores.projects.delete(ctx, id, &removal).await? {
             return Ok(false);
         }
         let holder = project.holds();
         let deleted = async {
             let mut left = Vec::new();
             let sessions = self.sessions_in(id).await?;
-            let kept = self.delete_sessions(ctx, &sessions).await?;
+            let kept = self.delete_sessions(ctx, &sessions, &removal).await?;
             if kept > 0 {
                 left.push((Session::KIND, kept));
             }
-            left.extend(self.scoped.delete_lying_in(ctx, slice::from_ref(&holder)).await?);
+            left.extend(self.scoped.delete_lying_in(ctx, slice::from_ref(&holder), &removal).await?);
             ScopeNotEmpty::require_empty(&holder, left)?;
-            self.groups.delete_participants(slice::from_ref(&holder)).await?;
+            self.groups.delete_participants(slice::from_ref(&holder), &removal).await?;
             Ok::<_, ProjectError>(())
         }.await;
         if let Err(error) = deleted {
@@ -153,7 +157,7 @@ impl ProjectManager {
         let holder = project.holds();
         if let Some(since) = deleted.deleted.map(|removal| removal.at) {
             if let Err(error) = self.groups.restore_participants(slice::from_ref(&holder), since).await {
-                if let Err(undo) = self.stores.projects.delete(&SecurityContext::system(), id).await {
+                if let Err(undo) = self.stores.projects.delete(&SecurityContext::system(), id, &Removal::now(ActorId::System)).await {
                     warn!(project = %id, "A project could not be restored and not be marked deleted again: {undo}");
                 }
                 return Err(error.into());
@@ -210,15 +214,15 @@ impl ProjectManager {
     }
 
     /// Deletes `sessions` on behalf of `ctx` through the `SessionManager`, as a project they lie
-    /// in is deleted; answers how many are left - not the caller's to read or delete, or with
-    /// something in their scope that is not.
+    /// in is deleted, marked with `removal`, its mark; answers how many are left - not the caller's
+    /// to read or delete, or with something in their scope that is not.
     ///
     /// # Errors
     /// `Session` if deleting one failed otherwise; what was deleted before stays deleted.
-    async fn delete_sessions(&self, ctx: &SecurityContext, sessions: &[Session]) -> ProjectResult<usize> {
+    async fn delete_sessions(&self, ctx: &SecurityContext, sessions: &[Session], removal: &Removal) -> ProjectResult<usize> {
         let mut kept = 0;
         for session in sessions {
-            match self.sessions.delete(ctx, session.id).await {
+            match self.sessions.delete_with(ctx, session.id, removal).await {
                 Ok(_) => {}
                 Err(e) if is_forbidden(&e) || matches!(e.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_) | SessionError::ScopeNotEmpty(_))) => kept += 1,
                 Err(e) => return Err(ProjectError::Session(e)),

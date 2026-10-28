@@ -67,6 +67,7 @@ impl Memberships for StoreMemberships {
 mod tests {
     use super::*;
     use crate::actor::ActorId;
+    use crate::removal::Removal;
     use crate::store::Persistence;
     use crate::user::UserId;
     use crate::value::name::ScopedName;
@@ -84,7 +85,7 @@ mod tests {
         let kept = memberships.group(team.id).await.expect("the group");
         assert_eq!((kept.members, kept.deleted), (vec![bob], None));
         assert!(memberships.group(GroupId::new()).await.is_none(), "none that does not exist");
-        store.delete(&SecurityContext::system(), team.id).await.unwrap();
+        store.delete(&SecurityContext::system(), team.id, &Removal::now(ActorId::System)).await.unwrap();
         let deleted = memberships.group(team.id).await.expect("the deleted group");
         assert_eq!(deleted.members, [bob], "who belonged to what was deleted still did");
         assert!(deleted.deleted.is_some(), "and that it was deleted is said");

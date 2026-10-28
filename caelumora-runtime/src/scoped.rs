@@ -18,15 +18,18 @@
 //! What lies in the scope is listed in the runtime's name, so that all of it is found, whatever the
 //! caller may read; nothing of the list reaches the caller. It is deleted and restored in the
 //! caller's name (issue 320): the store asks each as it asks of anything deleted or restored alone,
-//! and marks it as deleted by the caller. What may lie in a scope is not always its holder's
-//! owner's - a contributor's agent in a session's, an artifact another participant published into a
-//! project's -, so deleting deletes what the caller may and answers what is left; the holder
-//! refuses its deletion if anything is (`ScopeNotEmpty`): it is kept, and what is left is plain to
-//! see until its owners delete it. Restoring restores what the caller may and leaves the rest
-//! deleted, for its owners to restore: the holder comes back all the same. Purging, the system's or
-//! an administrator's, is done in the runtime's name.
+//! and marks it with the holder's mark - the one `Removal` of the deletion, by the caller (issue
+//! 469). What may lie in a scope is not always its holder's owner's - a contributor's agent in a
+//! session's, an artifact another participant published into a project's -, so deleting deletes
+//! what the caller may and answers what is left; the holder refuses its deletion if anything is
+//! (`ScopeNotEmpty`): it is kept, and what is left is plain to see until its owners delete it.
+//! Restoring restores what the caller may and leaves the rest deleted, for its owners to restore:
+//! the holder comes back all the same. Purging, the system's or an administrator's, is done in the
+//! runtime's name.
 
 use async_trait::async_trait;
+use caelumora_model::actor::ActorId;
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
@@ -88,13 +91,13 @@ pub trait ScopeMember: Send + Sync {
     /// The kind this member deletes, restores and purges.
     fn kind(&self) -> EntityKind;
 
-    /// Deletes what of its kind lies in `holder` or within it on behalf of
-    /// `ctx`, as far as they may; answers how many are left.
+    /// Deletes what of its kind lies in `holder` or within it on behalf of `ctx`, as far as they
+    /// may, marked with `removal`, the holder's mark (issue 469); answers how many are left.
     ///
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize>;
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize>;
 
     /// Restores what of its kind lies in `holder` or within it and was
     /// deleted at `since` or later on behalf of `ctx`. One whose name was
@@ -137,22 +140,23 @@ impl ScopedEntities {
 
     /// Deletes what lies in `holders` or within them - the scopes of what is deleted: a session's
     /// and its own project's (issue 467), or a channel's - on behalf of `ctx`, as far as they may
-    /// delete it, and announces it as its owner announces a deletion. Answers what is left, by
-    /// kind, counted over all of them - empty if nothing is -, which the holder refuses its
-    /// deletion for (`ScopeNotEmpty`).
+    /// delete it, marked with `removal`, the mark of what holds them (issue 469), and announces it
+    /// as its owner announces a deletion. Answers what is left, by kind, counted over all of them -
+    /// empty if nothing is -, which the holder refuses its deletion for (`ScopeNotEmpty`).
     ///
-    /// Called once the holder is marked deleted, so that what goes is deleted with it, not before
-    /// it, and comes back with it (`restore_lying_in`); if something is left, the caller takes the
-    /// mark away again.
+    /// Called once the holder is marked deleted, so that nothing goes unless the holder's deletion
+    /// was granted, and nothing reaches the holder while its scope goes; what goes carries its mark
+    /// and comes back with it (`restore_lying_in`). If something is left, the caller takes the mark
+    /// away again.
     ///
     /// # Errors
     /// Whatever the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holders: &[Scope]) -> StoreResult<Vec<(EntityKind, usize)>> {
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holders: &[Scope], removal: &Removal) -> StoreResult<Vec<(EntityKind, usize)>> {
         let mut left = Vec::new();
         for member in &self.members {
             let mut count = 0;
             for holder in holders {
-                count += member.delete_lying_in(ctx, holder).await?;
+                count += member.delete_lying_in(ctx, holder, removal).await?;
             }
             if count > 0 {
                 left.push((member.kind(), count));
@@ -209,10 +213,10 @@ where
         T::KIND
     }
 
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
         let mut left = 0;
         for entity in self.0.list(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder))).await?.items {
-            left += usize::from(!deleted_unless_refused(self.0.delete(ctx, entity.id()).await)?);
+            left += usize::from(!deleted_unless_refused(self.0.delete(ctx, entity.id(), removal).await)?);
         }
         Ok(left)
     }
@@ -268,7 +272,7 @@ pub fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: 
 /// Whatever else the store reports.
 pub(crate) async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T::Id) -> StoreResult<bool> {
     let system = SecurityContext::system();
-    if store.delete(&system, id.clone()).await.optional()?.is_none() {
+    if store.delete(&system, id.clone(), &Removal::now(ActorId::System)).await.optional()?.is_none() {
         return Ok(false);
     }
     store.purge(&system, id).await

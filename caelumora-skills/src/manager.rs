@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
@@ -204,7 +205,7 @@ impl SkillManager {
     pub async fn delete(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(skill) = self.skills.get(ctx, id).await.optional()? else { return Ok(false) };
-        if !self.skills.delete(ctx, id).await? {
+        if !self.skills.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
         self.events.announce(GlobalEvent::deleted::<Skill>(&id), &skill);
@@ -246,19 +247,19 @@ impl ScopeMember for SkillManager {
         Skill::KIND
     }
 
-    /// Deletes the skills that lie in `holder` or within it on behalf of
-    /// `ctx` (`scoped`), as far as they may, and announces them as `delete`
-    /// does; answers how many are left.
+    /// Deletes the skills that lie in `holder` or within it on behalf of `ctx` (`scoped`), as far
+    /// as they may, marked with `removal`, and announces them as `delete` does; answers how many
+    /// are left.
     ///
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
         for skill in self.skills.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if deleted_unless_refused(self.skills.delete(ctx, skill.id).await)? {
+            if deleted_unless_refused(self.skills.delete(ctx, skill.id, removal).await)? {
                 self.events.announce(GlobalEvent::deleted::<Skill>(&skill.id), &skill);
             } else {
                 left += 1;

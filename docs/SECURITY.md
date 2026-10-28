@@ -348,8 +348,9 @@ a session or channel that is there has its group there, too. It is deleted and r
 mark, in the runtime's name like every other write of it - not in the name of whoever deletes or
 restores the session, as what lies in its scope is (issue 320): it is derived from the participants,
 nobody's to keep or leave behind. All of the groups go or none, and if they cannot go, the session
-or channel is kept; if they cannot come back, it stays deleted. The record of the deletion
-(`Removal::by`) names the system; the session's or channel's names whoever deleted it.
+or channel is kept; if they cannot come back, it stays deleted. Its mark is the session's or
+channel's (issue 469): the record of the deletion (`Removal::by`) names whoever deleted that, as for
+everything that goes with it.
 
 A project (issue 467) is its owner's: only the owner changes it (`UpdateProject`), sets its
 members, lifts a session's own, or deletes it. Changing its members is asked before it is asked

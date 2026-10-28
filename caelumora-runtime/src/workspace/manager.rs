@@ -12,6 +12,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
@@ -107,7 +108,7 @@ impl WorkspaceManager {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
             let system = SecurityContext::system();
             if let Err(cleanup) = async {
-                self.workspaces.delete(&system, workspace.id).await?;
+                self.workspaces.delete(&system, workspace.id, &Removal::now(ActorId::System)).await?;
                 self.workspaces.purge(&system, workspace.id).await
             }.await {
                 warn!(workspace = %workspace.id, "A workspace whose place could not be made is left deleted: {cleanup}");
@@ -132,7 +133,7 @@ impl WorkspaceManager {
             Err(WorkspaceError::NotFound(_)) => return Ok(false),
             Err(e) => return Err(e),
         };
-        if !self.workspaces.delete(ctx, id).await? {
+        if !self.workspaces.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
         self.events.announce(GlobalEvent::deleted::<Workspace>(&id), &workspace);
@@ -202,19 +203,19 @@ impl ScopeMember for WorkspaceManager {
         Workspace::KIND
     }
 
-    /// Deletes the workspaces that lie in `holder` or within it, their
-    /// places kept, on behalf of `ctx` (`scoped`), as far as they may, and
-    /// announces them as `delete` does; answers how many are left.
+    /// Deletes the workspaces that lie in `holder` or within it, their places kept, on behalf of
+    /// `ctx` (`scoped`), as far as they may, marked with `removal`, and announces them as `delete`
+    /// does; answers how many are left.
     ///
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
         for workspace in self.workspaces.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if deleted_unless_refused(self.workspaces.delete(ctx, workspace.id).await)? {
+            if deleted_unless_refused(self.workspaces.delete(ctx, workspace.id, removal).await)? {
                 self.events.announce(GlobalEvent::deleted::<Workspace>(&workspace.id), &workspace);
             } else {
                 left += 1;

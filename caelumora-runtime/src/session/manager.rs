@@ -24,6 +24,7 @@ use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::{Group, GroupId};
 use crate::group::{GroupManager, keep_participants};
 use caelumora_model::project::Project;
+use caelumora_model::removal::Removal;
 use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::WorkspaceChoice;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
@@ -596,7 +597,8 @@ impl SessionManager {
     /// channels and their state, hidden until it is restored (`restore`) or purged (`purge`). What
     /// lies in its scope and in its own project's is deleted with it, in `context`'s name (issue
     /// 320), and then the groups of its participants and its channels', and its own project with
-    /// the group of its members, in the runtime's (issues 348, 467).
+    /// the group of its members, in the runtime's (issues 348, 467) - all of it with the session's
+    /// mark, by `context`'s caller (issue 469).
     ///
     /// Asked about before anything happens - a refused deletion must not stop the session on the
     /// way (issue 11).
@@ -609,6 +611,15 @@ impl SessionManager {
     /// reports, the groups of its participants or its own project failing to go among it, which
     /// keeps the session too, with its groups and its project.
     pub async fn delete(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
+        self.delete_with(context, id, &Removal::now(context.caller_id)).await
+    }
+
+    /// Deletes session `id` on behalf of `context` as `delete` does, marked with `removal`, the
+    /// mark of a deletion it goes with: of the project it lies in (issue 469).
+    ///
+    /// # Errors
+    /// As `delete`.
+    pub(crate) async fn delete_with(&self, context: &SecurityContext, id: SessionId, removal: &Removal) -> Result<bool> {
         // Held until the session is gone from the store, so that no request
         // starts it again from there in the meantime (issue 62).
         let start = self.start_lock(id);
@@ -622,12 +633,12 @@ impl SessionManager {
         let channels = self.load_channels(&session).await?;
         let own = load_own(&self.stores, id).await?;
 
-        // Marked, not removed (issue 164): its channels and their state stay
-        // as they are, hidden with it - a channel is reached only through
-        // its session - until it is purged. Marked before what lies in its
-        // scope, so that all of that is deleted with it, not before it: it
-        // comes back with it (`restore`, issue 178).
-        if !self.stores.sessions.delete(context, id).await? {
+        // Marked, not removed (issue 164): its channels and their state stay as they are, hidden
+        // with it - a channel is reached only through its session - until it is purged. Marked
+        // before what lies in its scope, so that nothing of it goes unless the session's deletion
+        // was granted; all of it carries the session's mark and comes back with it (`restore`,
+        // issues 178, 469).
+        if !self.stores.sessions.delete(context, id, removal).await? {
             return Ok(false);
         }
         // What lies in its scope and in its channels' goes as far as `context` may delete it (issue
@@ -642,9 +653,9 @@ impl SessionManager {
         let scope = Scope::SessionScope { session_id: id };
         let holders = held_by(id, own.as_ref());
         let deleted = async {
-            let left = self.scoped.delete_lying_in(context, &holders).await?;
+            let left = self.scoped.delete_lying_in(context, &holders, removal).await?;
             ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
-            self.delete_kept(&holders, own.as_ref()).await
+            self.delete_kept(&holders, own.as_ref(), removal).await
         }.await;
         if let Err(error) = deleted {
             if let Err(undo) = self.stores.sessions.restore(&SecurityContext::system(), id).await {
@@ -707,7 +718,7 @@ impl SessionManager {
             // again, in the runtime's name, as its restoring was permitted.
             let holders = held_by(id, own.as_ref());
             if let Err(error) = self.restore_kept(&holders, own.as_ref(), since).await {
-                if let Err(undo) = self.stores.sessions.delete(&SecurityContext::system(), id).await {
+                if let Err(undo) = self.stores.sessions.delete(&SecurityContext::system(), id, &Removal::now(ActorId::System)).await {
                     warn!("Session {} could not be restored and not be marked deleted again: {}", id, undo);
                 }
                 return Err(error);
@@ -721,20 +732,19 @@ impl SessionManager {
         Ok(session)
     }
 
-    /// Deletes what a session keeps with it, in the runtime's name, as it is deleted: the groups
-    /// that lie in `holders` - the scopes it holds (`held_by`) -, of its participants, its
-    /// channels' and its own project's members, then `own`, its own project - all of them or, if
-    /// one cannot go, none (issues 348, 467). The project's deletion is announced once all are
-    /// deleted.
+    /// Deletes what a session keeps with it, in the runtime's name, as it is deleted, marked with
+    /// `removal`, its mark (issue 469): the groups that lie in `holders` - the scopes it holds
+    /// (`held_by`) -, of its participants, its channels' and its own project's members, then `own`,
+    /// its own project - all of them or, if one cannot go, none (issues 348, 467). The project's
+    /// deletion is announced once all are deleted.
     ///
     /// # Errors
     /// Whatever the store reports.
-    async fn delete_kept(&self, holders: &[Scope], own: Option<&Project>) -> Result<()> {
-        let since = Utc::now();
-        self.groups.delete_participants(holders).await?;
+    async fn delete_kept(&self, holders: &[Scope], own: Option<&Project>, removal: &Removal) -> Result<()> {
+        self.groups.delete_participants(holders, removal).await?;
         let Some(own) = own else { return Ok(()) };
-        if let Err(error) = self.stores.projects.delete(&SecurityContext::system(), own.id).await {
-            if let Err(undo) = self.groups.restore_participants(holders, since).await {
+        if let Err(error) = self.stores.projects.delete(&SecurityContext::system(), own.id, removal).await {
+            if let Err(undo) = self.groups.restore_participants(holders, removal.at).await {
                 warn!(project = %own.id, "The groups of a session whose project could not be deleted could not be restored again: {undo}");
             }
             return Err(error.into());
@@ -756,7 +766,7 @@ impl SessionManager {
         match self.stores.projects.restore(&SecurityContext::system(), own.id).await {
             Ok(restored) => self.events.announce(GlobalEvent::restored::<Project>(&own.id), &restored),
             Err(error) => {
-                if let Err(undo) = self.groups.delete_participants(holders).await {
+                if let Err(undo) = self.groups.delete_participants(holders, &Removal::now(ActorId::System)).await {
                     warn!(project = %own.id, "The groups of a session whose project could not be restored could not be deleted again: {undo}");
                 }
                 return Err(error.into());
@@ -864,6 +874,8 @@ fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use caelumora_model::group::GroupId;
+    use caelumora_model::removal::Removal;
     use caelumora_model::value::name::Name;
     use crate::testing::TestRuntime;
     use caelumora_model::actor::ActorId;
@@ -1191,7 +1203,7 @@ mod tests {
         // Deleted with nothing announced, as if the session lost the event.
         assert!(talk.participant_ids().contains(&actor));
         let mut rx = runtime.event_bus().subscribe_all();
-        runtime.entity_stores().agents.delete(&system, helper.id).await.unwrap();
+        runtime.entity_stores().agents.delete(&system, helper.id, &Removal::now(system.caller_id)).await.unwrap();
         session.follow_agents(None).await;
         assert!(!talk.participant_ids().contains(&actor), "looking again, it stops the actor");
         let announced = drain(&mut rx);
@@ -1329,7 +1341,6 @@ mod tests {
     #[tokio::test]
     async fn a_session_s_own_project_goes_and_comes_back_with_it() {
         use caelumora_model::component::ComponentBundle;
-        use caelumora_model::group::GroupId;
         use caelumora_model::security::AclEntry;
 
         let runtime = test_runtime();
@@ -1441,7 +1452,6 @@ mod tests {
     /// groups.
     #[tokio::test]
     async fn a_session_keeps_its_groups_and_its_project_all_or_none() {
-        use caelumora_model::group::GroupId;
 
         let passing = Arc::new(AtomicUsize::new(usize::MAX));
         let entities = Arc::new(Failing { inner: MemoryStore::new(), kind: Project::KIND, passing: Arc::clone(&passing) });
@@ -1478,7 +1488,6 @@ mod tests {
     #[tokio::test]
     async fn a_session_that_cannot_be_put_into_a_project_leaves_it_unshared() {
         use crate::project::ProjectManager;
-        use caelumora_model::group::GroupId;
 
         let passing = Arc::new(AtomicUsize::new(usize::MAX));
         let entities = Arc::new(Failing { inner: MemoryStore::new(), kind: Session::KIND, passing: Arc::clone(&passing) });
@@ -1530,6 +1539,7 @@ mod tests {
         let personalities = Arc::clone(&runtime.entity_stores().personalities);
         let bundles = Arc::clone(&runtime.entity_stores().component_bundles);
         let agents = Arc::clone(&runtime.entity_stores().agents);
+        let stores = runtime.entity_stores().clone();
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", ActorId::User(UserId::new()));
@@ -1553,7 +1563,7 @@ mod tests {
         for agent in [&sessions, &sides, &users, &earlier] {
             agents.create(&system, agent).await.unwrap();
         }
-        agents.delete(&system, earlier.id).await.unwrap();
+        agents.delete(&system, earlier.id, &Removal::now(system.caller_id)).await.unwrap();
         let present = |agent: &Agent| {
             let (agents, id) = (Arc::clone(&agents), agent.id);
             async move { agents.get(&SecurityContext::system(), id).await.is_ok() }
@@ -1561,6 +1571,9 @@ mod tests {
 
         running.delete_channel(&ctx, side).await.unwrap();
         assert!(!present(&sides).await, "the channel's agent goes with it");
+        let mark = stores.channels.get_deleted(&system, side).await.unwrap().deleted;
+        let group = stores.groups.get_deleted(&system, GroupId::of_channel(side)).await.unwrap().deleted;
+        assert_eq!((&agents.get_deleted(&system, sides.id).await.unwrap().deleted, &group), (&mark, &mark), "with its mark (issue 469)");
         assert!(present(&sessions).await && present(&users).await, "the session's and the user's stay");
         running.restore_channel(&ctx, side).await.unwrap();
         assert!(present(&sides).await, "and comes back with it");
@@ -1570,6 +1583,18 @@ mod tests {
         assert!(personalities.get(&system, personality.id).await.is_err(), "so do its personalities");
         assert!(bundles.get(&system, bundle.id).await.is_err(), "and its component bundles");
         assert!(present(&users).await, "the user's stays");
+        // One mark for all of it (issue 469): the session's, by whoever deleted it.
+        let mark = stores.sessions.get_deleted(&system, id).await.unwrap().deleted;
+        assert_eq!(mark.as_ref().map(|removal| removal.by), Some(ctx.caller_id));
+        let own = stores.sessions.get_deleted(&system, id).await.unwrap().project;
+        let marks = [
+            agents.get_deleted(&system, sessions.id).await.unwrap().deleted,
+            agents.get_deleted(&system, sides.id).await.unwrap().deleted,
+            personalities.get_deleted(&system, personality.id).await.unwrap().deleted,
+            stores.groups.get_deleted(&system, GroupId::of_session(id)).await.unwrap().deleted,
+            stores.projects.get_deleted(&system, own).await.unwrap().deleted,
+        ];
+        assert!(marks.iter().all(|marked| *marked == mark), "all with the session's mark: {marks:?}");
 
         manager.restore(&ctx, id).await.unwrap();
         assert!(present(&sessions).await && present(&sides).await, "back with it");

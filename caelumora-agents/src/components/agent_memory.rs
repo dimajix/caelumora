@@ -246,6 +246,7 @@ mod tests {
     use super::*;
     use caelumora_model::project::ProjectId;
     use caelumora_model::confidentiality::{ConfidentialityRules, Compartments, Reading, Place};
+    use caelumora_model::removal::Removal;
     use caelumora_runtime::transport::Discard;
     use crate::testing::{self, TestAgents};
     use caelumora_runtime::testing::TestRuntime;
@@ -363,7 +364,7 @@ mod tests {
                     self.loops.insert(id, SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&self.runtime)).await.unwrap());
                 }
                 None => {
-                    sessions.delete(&SecurityContext::system(), id).await.unwrap();
+                    sessions.delete(&SecurityContext::system(), id, &Removal::now(ActorId::System)).await.unwrap();
                     sessions.purge(&SecurityContext::system(), id).await.unwrap();
                     self.loops.remove(&id);
                 }

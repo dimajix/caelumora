@@ -550,6 +550,7 @@ impl ComponentRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::removal::Removal;
     use crate::component::testing::*;
     use crate::component::ComponentContainer;
     use caelumora_model::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
@@ -694,7 +695,7 @@ mod tests {
             async fn update(&self, _: &SecurityContext, _: &ComponentBundle) -> StoreResult<()> {
                 Self::failed()
             }
-            async fn delete(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<bool> {
+            async fn delete(&self, _: &SecurityContext, _: ComponentBundleId, _: &Removal) -> StoreResult<bool> {
                 Self::failed()
             }
             async fn list(&self, _: &SecurityContext, _: &Query<ScopeField>) -> StoreResult<Page<ComponentBundle>> {

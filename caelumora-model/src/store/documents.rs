@@ -236,14 +236,14 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
         CheckedStore::update(self, ctx, value).await
     }
 
-    /// Marks the entity deleted, by the caller and now (issue 164).
-    async fn delete(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
+    /// Marks the entity deleted with `removal` (issues 164, 469).
+    async fn delete(&self, ctx: &SecurityContext, id: T::Id, removal: &Removal) -> StoreResult<bool> {
         let stored = self.stored(&id).await?;
-        if !self.access(ctx).delete(stored.as_ref()).await? {
+        if !self.access(ctx).delete(stored.as_ref(), removal).await? {
             return Ok(false);
         }
         let Some(mut marked) = stored else { return Ok(false) };
-        marked.set_deleted(Some(Removal::now(ctx.caller_id)));
+        marked.set_deleted(Some(removal.clone()));
         self.storage.replace(Document::of(&marked)?).await?;
         Ok(true)
     }

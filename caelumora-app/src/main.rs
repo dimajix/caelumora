@@ -234,6 +234,7 @@ mod tests {
     use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::actor::ActorId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::removal::Removal;
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::store::Persistence;
@@ -352,10 +353,10 @@ mod tests {
         let personality = seed.personalities[0].personality.id;
         let template = seed.session_templates[0].id;
         let skill = skills.list(&system, &Query::all()).await.unwrap().items[0].id;
-        assert!(stores.component_bundles.delete(&system, bundle).await.unwrap());
-        assert!(stores.personalities.delete(&system, personality).await.unwrap());
-        assert!(stores.session_templates.delete(&system, template).await.unwrap());
-        assert!(skills.delete(&system, skill).await.unwrap());
+        assert!(stores.component_bundles.delete(&system, bundle, &Removal::now(system.caller_id)).await.unwrap());
+        assert!(stores.personalities.delete(&system, personality, &Removal::now(system.caller_id)).await.unwrap());
+        assert!(stores.session_templates.delete(&system, template, &Removal::now(system.caller_id)).await.unwrap());
+        assert!(skills.delete(&system, skill, &Removal::now(system.caller_id)).await.unwrap());
 
         runtime.seed(&[example("seed.yaml")]).await.expect("a taken id is no failure");
         assert!(stores.component_bundles.get(&system, bundle).await.is_err() && stores.component_bundles.get_deleted(&system, bundle).await.is_ok(), "the bundle stays deleted");

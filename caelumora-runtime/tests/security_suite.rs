@@ -10,6 +10,7 @@
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
 
+use caelumora_model::removal::Removal;
 use caelumora_model::store::query::Query;
 use std::sync::Arc;
 use std::time::Duration;
@@ -97,7 +98,7 @@ async fn a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with
     assert!(world.runtime.entity_stores().personalities.get(&alice, shared.id).await.is_ok(), "shared with her");
     let changed = Personality { description: Some(Description::new("hers now").unwrap()), ..shared.clone() };
     assert!(world.runtime.entity_stores().personalities.update(&alice, &changed).await.is_err(), "but not hers to change");
-    assert!(world.runtime.entity_stores().personalities.delete(&alice, shared.id).await.is_err(), "nor to delete");
+    assert!(world.runtime.entity_stores().personalities.delete(&alice, shared.id, &Removal::now(alice.caller_id)).await.is_err(), "nor to delete");
     assert!(matches!(world.runtime.entity_stores().personalities.get(&carol, shared.id).await, Err(StoreError::NotFound { .. })), "not there for a stranger");
     assert!(world.runtime.entity_stores().personalities.list(&carol, &Query::all()).await.map(|page| page.items).unwrap().iter().all(|p| p.id != shared.id), "nor listed");
     world.runtime.entity_stores().personalities.update(&bob, &changed).await.expect("its owner changes it");
@@ -889,7 +890,7 @@ async fn a_session_s_own_project_is_read_by_its_participants_and_goes_with_it() 
     assert!(stores.projects.get(&alice, project).await.is_ok(), "the project is kept");
     assert!(stores.groups.get(&World::system(), GroupId::of_project(project)).await.is_ok(), "with its group");
 
-    stores.component_bundles.delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
+    stores.component_bundles.delete(&World::as_user(world.bob), bobs.id, &Removal::now(ActorId::User(world.bob))).await.expect("his to delete");
     assert!(world.manager.delete(&alice, session.id()).await.unwrap(), "nothing of anybody else's is left");
     assert!(stores.projects.get(&World::system(), project).await.is_err(), "the project goes with it");
 }
@@ -1097,7 +1098,7 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
     assert!(stores.sessions.get(&World::system(), session.id()).await.is_err(), "what she could delete stays deleted");
     world.manager.restore(&alice, session.id()).await.expect("restored by hand");
 
-    stores.component_bundles.delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
+    stores.component_bundles.delete(&World::as_user(world.bob), bobs.id, &Removal::now(ActorId::User(world.bob))).await.expect("his to delete");
     let bob = World::as_user(world.bob);
     world.runtime.controller_manager().project_controller(project.id).await.unwrap().update_members(&alice, vec![world.bob]).await.unwrap();
     let his = create(&world.manager, &bob, make_session("his", ActorId::User(world.bob))).await.expect("bob's session");
@@ -1108,6 +1109,10 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
     his.update_project(&bob, None).await.expect("bob takes his out");
     assert!(world.projects.delete(&alice, project.id).await.unwrap(), "nothing of anybody else's is left");
     assert!(stores.sessions.get(&World::system(), session.id()).await.is_err(), "its session goes with it");
+    let mark = stores.projects.get_deleted(&World::system(), project.id).await.unwrap().deleted;
+    let session_mark = stores.sessions.get_deleted(&World::system(), session.id()).await.unwrap().deleted;
+    let own_mark = stores.projects.get_deleted(&World::system(), own).await.unwrap().deleted;
+    assert_eq!((&session_mark, &own_mark), (&mark, &mark), "with the project's mark, as what goes with the session (issue 469)");
     let refused = world.manager.restore(&alice, session.id()).await.expect_err("not alone");
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ProjectDeleted(_))), "it comes back with its project: {refused}");
     assert!(stores.projects.get(&World::system(), own).await.is_err(), "with the session's own project");
@@ -1507,10 +1512,10 @@ async fn deleting_an_agent_needs_owning_it() {
     let world = World::new().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &shared).await;
-    let (deleted, asked) = world.asked(world.runtime.entity_stores().agents.delete(&World::as_user(world.bob), helper)).await;
+    let (deleted, asked) = world.asked(world.runtime.entity_stores().agents.delete(&World::as_user(world.bob), helper, &Removal::now(ActorId::User(world.bob)))).await;
     assert!(!deleted.unwrap(), "not there for bob, though the personality is his");
     assert_eq!(asked, checks(&["bob: GetAgent(alice's) no"]));
-    let (deleted, asked) = world.asked(world.runtime.entity_stores().agents.delete(&World::as_user(world.alice), helper)).await;
+    let (deleted, asked) = world.asked(world.runtime.entity_stores().agents.delete(&World::as_user(world.alice), helper, &Removal::now(ActorId::User(world.alice)))).await;
     assert!(deleted.unwrap());
     assert_eq!(asked, checks(&["alice: GetAgent(alice's) yes", "alice: DeleteAgent(alice's) yes"]));
 }

@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
@@ -142,7 +143,7 @@ impl AgentManager {
         let Some(agent) = self.agents.get(context, id).await.optional()? else { return Ok(false) };
         self.access_policy
             .require(context, ActionType::delete(Agent::KIND, &agent.security_attributes), StoreError::PermissionDenied).await?;
-        if !self.agents.delete(context, id).await? {
+        if !self.agents.delete(context, id, &Removal::now(context.caller_id)).await? {
             return Ok(false);
         }
         self.events.publish(GlobalEvent::deleted::<Agent>(&id), agent.security_attributes);
@@ -194,19 +195,18 @@ impl ScopeMember for AgentManager {
         Agent::KIND
     }
 
-    /// Deletes the agents that lie in `holder` or within it on behalf of
-    /// `ctx` (`scoped`), as far as they may, and announces them as `delete`
-    /// does; answers how many are left. They leave no channel: they take
-    /// part only within `holder` (`Scope::admits`).
+    /// Deletes the agents that lie in `holder` or within it on behalf of `ctx` (`scoped`), as far
+    /// as they may, marked with `removal`, and announces them as `delete` does; answers how many
+    /// are left. They leave no channel: they take part only within `holder` (`Scope::admits`).
     ///
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let mut left = 0;
         for agent in self.agents.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if deleted_unless_refused(self.agents.delete(ctx, agent.id).await)? {
+            if deleted_unless_refused(self.agents.delete(ctx, agent.id, removal).await)? {
                 self.events.publish(GlobalEvent::deleted::<Agent>(&agent.id), agent.security_attributes);
             } else {
                 left += 1;
