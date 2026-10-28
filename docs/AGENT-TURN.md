@@ -31,7 +31,8 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
     issue 408) is recorded into the transcript (`AgentChannelState::note_announced`), where it
     happened among what was heard - also what
     happened while the agent was not there, as its inbox reads it from the history. It begins no
-    turn: the next one is told of it.
+    turn: the next one is told of it. One who left while a turn waits for a person is the exception
+    (issue 482, `WaitingForUser` below).
 *   **Begin.** The last request to respond among what was taken in begins one turn; the earlier
     ones are dropped. The one turn answers the conversation as it stands, having heard every
     message, and acts in the contexts of the last request - with the authority of the last who
@@ -76,8 +77,12 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
     cancel or stop interrupts the call under way, which is answered as interrupted, and starts no
     further one.
 *   **`WaitingForUser`** waits for an approval decided or timed out, or questions answered or
-    declined, and returns to `ExecutingTools`. Other events stay queued: what may be heard during
-    a turn until the next call of the model, the rest until the turn is over.
+    declined, and returns to `ExecutingTools`. It also takes whoever leaves (issue 482): no longer
+    asked, and a call whose questions nobody asked is left to answer goes unanswered (see
+    [APPROVALS.md](APPROVALS.md#questions)). Their leave is noted at once, ahead of what is queued
+    before it and whatever the turn hears, after the step's results like what is given (below).
+    Other events stay queued: what may be heard during a turn until the next call of the model, the
+    rest until the turn is over.
 *   **`Reflecting`** takes the turn over, stores the state and announces its end. The agent then
     lands in the state a tool requested (`Sleeping` after `stop` or `bye`) or in `Idle`.
 *   **`Cancelling`** takes the turn over like `Reflecting` and returns to `Idle`. Calls of the step
@@ -113,9 +118,10 @@ with `from: none` an agent hears what was said when the turn has ended, as betwe
     behind it (`EventReceiver::try_recv_if`), for the turn's end: a message the personality does
     not hear; one above the classification the turn began with, which it would write below its
     level; a request to respond in another's authority; a change to a message, a request to answer
-    again, a command. So the order every rule of taking in relies on holds. The one exception is
+    again, a command. So the order every rule of taking in relies on holds. The exceptions are
     `others: when_asked`, below: what is left behind what it took is only ever another's request,
-    and requests are not in the transcript.
+    and requests are not in the transcript; and one who leaves while the turn waits for a person
+    (`WaitingForUser`, above), whose leave settles what nobody else asked is left to answer.
 *   **In whose authority.** A turn acts in the authority of whoever began the chain it answers
     (`EventContext::initiator_id`). With `others: wait`, it hears only what is said in that
     authority - by them, or an agent working for them -, so that nobody steers what it does in an
@@ -257,8 +263,8 @@ knowledge it is, if it is knowledge - of an entity, `KnowledgeSource::Entity { k
 agent did not produce it. It is not published, the turn has seen it, and its digest is that of the
 message, since the model is given the same. A tool gives what it gives while it runs, but nothing
 may stand between the calls of a step and their results, which the models refuse: while the calls
-run, what is given is put aside with the turn (`TurnState::given_after_step`) and written right
-after the step's tool message.
+run, what is given is put aside with the turn (`TurnState::after_step`) and written right after
+the step's tool message - and so is a leave noted while the turn waits for a person.
 
 ### A command turn
 

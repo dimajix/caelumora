@@ -369,6 +369,10 @@ results:
   declined: >-
     The user declined to answer the questions of this tool call; it was not executed. Read what they
     wrote instead, if anything, and go on without the answers or ask differently.
+  # Nobody asked took part any more (issue 482).
+  unanswered: >-
+    Nobody asked the questions of this tool call takes part in the channel any more, so they went
+    unanswered; it was not executed. Go on without the answers, or ask someone who is here.
   not_executed: >-
     This tool call was not executed: the session was stopped or the server restarted before it ran.
     Decide again whether to call it; if its effect matters, check first.

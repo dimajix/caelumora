@@ -322,6 +322,12 @@ pub(crate) fn declined_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::Declined, result_text(prompts, "declined", ()))
 }
 
+/// The result for a call whose questions nobody asked is left to answer
+/// (issue 482): those asked left the channel, and it was not executed.
+pub(crate) fn unanswered_result(prompts: &PromptTexts) -> String {
+    unsuccessful_result(ToolResultStatus::NotExecuted, result_text(prompts, "unanswered", ()))
+}
+
 /// The result for a call that was approved but has no result when its
 /// agent is loaded again (issue 75): the server or the session stopped
 /// before the call ran (issue 377), or before its result was stored. The

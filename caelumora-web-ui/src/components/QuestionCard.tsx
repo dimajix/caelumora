@@ -30,7 +30,7 @@ interface QuestionCardProps {
   request: QuestionRequest;
   /** Whether the questions are put to this user: only then are there controls. */
   asked: boolean;
-  /** Who they are put to, by name. */
+  /** Who they are put to and still take part, by name: one who left answers nothing (issue 482). */
   askedNames: string[];
   /** Whether this user's answer is on its way, until the agent closes the questions. */
   answered: boolean;

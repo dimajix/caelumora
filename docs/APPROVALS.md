@@ -230,7 +230,11 @@ the record of the answers, nothing raw.
 4.  **Declining.** A user may decline, and a message of theirs written while questions put to them
     are open declines them all: the declines are sent before the message, so that the turn goes on
     and the message is heard after it. A declined call is answered `declined` without running.
-5.  **Closing.** Once questions are no longer open, the agent tells those they were shown to, and
+5.  **Leaving.** One asked who leaves the channel is no longer asked, and has neither answered nor
+    declined. While others asked are left, the questions stay open for them; once nobody asked is
+    left, they go unanswered: the call is answered as not executed, without running and without a
+    record of answers - also a call still waiting for its approval, whose request is withdrawn.
+6.  **Closing.** Once questions are no longer open, the agent tells those they were shown to, and
     every frontend closes its form. A cancel or a stop ends the waiting as for an approval.
 
 The turn is the record of what it waits for: a turn resumed after a restart asks again, with the

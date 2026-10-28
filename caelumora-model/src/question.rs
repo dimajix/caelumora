@@ -244,6 +244,13 @@ impl Questions {
         self.ask.contains(&Addressee::Actor(actor))
     }
 
+    /// No longer puts them to `actor`, who left the channel (issue 482):
+    /// whether anyone is still asked.
+    pub fn remove_asked(&mut self, actor: ActorId) -> bool {
+        self.ask.retain(|a| *a != Addressee::Actor(actor));
+        !self.ask.is_empty()
+    }
+
     /// The questions of a call made in `context` as put to the users of a
     /// channel: every addressee found among them - a handle in
     /// `participants`, as a model writes it, with or without `@`; the owner
@@ -367,6 +374,7 @@ fn has_duplicates(labels: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::user::UserId;
 
     fn choice(label: &str) -> Choice {
         Choice { label: label.to_string(), description: None, recommended: false }
@@ -457,7 +465,6 @@ mod tests {
 
     #[test]
     fn addressees_are_found_among_the_users_of_the_channel() {
-        use crate::user::UserId;
         let (alice, bob, helper) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
         let participants = MentionDirectory::new([(alice, "Alice"), (bob, "Bob"), (helper, "Helper")]);
         let users = [alice, bob];
@@ -485,5 +492,18 @@ mod tests {
         let unasked = SecurityContext::new(helper, Default::default(), Default::default()).next(helper, alice, alice);
         assert_eq!(asking(vec![Addressee::Initiator]).resolve(&participants, &users, &unasked), Err(QuestionError::InitiatorAbsent), "an agent acting on its own answers nothing");
         assert_eq!(asking(vec![Addressee::Actor(helper)]).resolve(&participants, &users, &context), Err(QuestionError::NotInChannel));
+    }
+
+    #[test]
+    fn whoever_left_is_no_longer_asked() {
+        let alice = ActorId::User(UserId::new());
+        let bob = ActorId::User(UserId::new());
+        let mut put = Questions { ask: vec![Addressee::Actor(alice), Addressee::Actor(bob)], ..questions(vec![question(&[], false)]) };
+
+        assert!(put.remove_asked(alice), "bob is still asked");
+        assert_eq!(put.asked(), [bob]);
+        assert!(put.remove_asked(alice), "one not asked changes nothing");
+        assert!(!put.remove_asked(bob), "nobody is asked any more");
+        assert!(put.asked().is_empty());
     }
 }

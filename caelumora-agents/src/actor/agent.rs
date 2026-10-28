@@ -31,7 +31,7 @@ use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::{ToolCall, ToolCallState, ToolCallStatus, ToolSet};
+use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
@@ -382,17 +382,20 @@ impl AgentActor {
         (!flows).then_some(channel)
     }
 
-    /// Waits for a person while in `WaitingForUser`, and records what one
-    /// event of theirs settles: a decision on an approval, or the answers to
-    /// questions, or that they were declined (issue 165). What the decision
-    /// leads to - questions an approved call now asks, the closing of
-    /// questions answered - is sent at once; the run loop runs what may run
-    /// via `ExecutingTools`. Answers that do not count - from someone not
-    /// asked, to questions no longer open, not of the kind asked - are left
-    /// out, logged without what they say, and the turn waits on.
+    /// Waits for a person while in `WaitingForUser` in the turn under way in
+    /// `state`, and records what one event settles: a decision on an
+    /// approval, or the answers to questions, or that they were declined
+    /// (issue 165) - or that someone left the channel, noted as between
+    /// turns, which leaves the questions nobody asked is left to answer
+    /// unanswered (issue 482). What the event leads to - questions an approved call now
+    /// asks, the closing of questions answered, an approval withdrawn - is
+    /// sent at once; the run loop runs what may run via `ExecutingTools`.
+    /// Answers that do not count - from someone not asked, to questions no
+    /// longer open, not of the kind asked - are left out, logged without
+    /// what they say, and the turn waits on.
     async fn handle_waiting_for_user(
         &self,
-        turn: &mut Turn<'_>,
+        state: &mut AgentChannelState,
         rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
@@ -404,6 +407,7 @@ impl AgentActor {
                     | ActorEvent::ApprovalTimedOut(_)
                     | ActorEvent::QuestionAnswered { .. }
                     | ActorEvent::QuestionDeclined { .. }
+                    | ActorEvent::ParticipantLeft { .. }
             )
         };
 
@@ -416,11 +420,20 @@ impl AgentActor {
         };
         // Channel is closed
         let Some(envelope) = received else { return Ok(None) };
+        // Who left is noted as between turns - after the step's results,
+        // where it may stand (`AgentChannelState::note_announced`) -, with
+        // where the agent stands, before it is taken off the questions
+        // (issue 482).
+        if matches!(envelope.event, ActorEvent::ParticipantLeft { .. }) {
+            self.body.take_in_said(state, envelope.clone()).await;
+            state.heard = rx.heard();
+        }
+        let mut turn = self.turn_under_way(state)?;
         let sender = envelope.context.sender_id;
         let settled = match envelope.event {
-            ActorEvent::ApprovalGranted(r) => self.decided(turn, r, ApprovalStatus::Approved),
-            ActorEvent::ApprovalDenied(r) => self.decided(turn, r, ApprovalStatus::Denied),
-            ActorEvent::ApprovalTimedOut(r) => self.decided(turn, r, ApprovalStatus::Timeout),
+            ActorEvent::ApprovalGranted(r) => self.decided(&mut turn, r, ApprovalStatus::Approved),
+            ActorEvent::ApprovalDenied(r) => self.decided(&mut turn, r, ApprovalStatus::Denied),
+            ActorEvent::ApprovalTimedOut(r) => self.decided(&mut turn, r, ApprovalStatus::Timeout),
             ActorEvent::QuestionAnswered { id, responses, .. } => turn.tool_calls().answer(id, sender, envelope.context.sender_name.clone(), responses)
                 .map(|closed| vec![closed])
                 .inspect_err(|e| info!("Agent {} leaves out an answer of {} to questions {}: {}", self.id(), sender, id, e))
@@ -429,6 +442,7 @@ impl AgentActor {
                 .map(|closed| vec![closed])
                 .inspect_err(|e| info!("Agent {} leaves out that {} declined questions {}: {}", self.id(), sender, id, e))
                 .ok(),
+            ActorEvent::ParticipantLeft { participant, .. } => Some(turn.tool_calls().left(participant)).filter(|settled| !settled.is_empty()),
             _ => None,
         };
         let Some(events) = settled else { return Ok(Some(ActorState::WaitingForUser)) };
@@ -440,12 +454,14 @@ impl AgentActor {
 
     /// Records the approver's `decision` on the approval `response` names,
     /// with whose answers made it (issue 419), and returns the requests it
-    /// leads to; `None` if no call waits for it.
+    /// leads to; `None` if no call waits for it - one answered while the
+    /// approver decided, whose request it withdrew (issue 482), is left out
+    /// as an answer no longer open is.
     fn decided(&self, turn: &mut Turn<'_>, response: ApprovalResponse, decision: ApprovalStatus) -> Option<Vec<ActorEvent>> {
         let id = response.id;
         let events = turn.tool_calls().decide(id, decision, response.decisions);
         if events.is_none() {
-            warn!("Received approval for unknown approval id {}", id);
+            info!("Agent {} leaves out a decision on approval {}: no call waits for it", self.id(), id);
         }
         events
     }
@@ -733,11 +749,7 @@ const HEARD_WHILE_WORKING: &str = "agents.heard_while_working";
 /// shown to (issue 165).
 async fn withdraw_requests(answering: &Answering, abandoned: &[ToolCallState], output: &dyn EventSender) -> Result<()> {
     for call in abandoned {
-        let withdrawn = match &call.status {
-            ToolCallStatus::WaitingApproval { id, .. } => ActorEvent::ApprovalRequestWithdrawn { id: *id },
-            ToolCallStatus::WaitingUser { id, questions } => ActorEvent::QuestionClosed { id: *id, shown_to: questions.shown_to() },
-            _ => continue,
-        };
+        let Some(withdrawn) = call.withdrawal() else { continue };
         answering.send(withdrawn, output).await?;
     }
     Ok(())
@@ -909,7 +921,7 @@ impl Actor for AgentActor {
                 // within it; found here, it was cut short.
                 ActorState::Idle | ActorState::Sleeping | ActorState::CarryingOutCommand => self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output).await?,
                 ActorState::WaitingForUser => {
-                    let next = self.handle_waiting_for_user(&mut self.turn_under_way(&mut state)?, &mut rx, &*output).await?;
+                    let next = self.handle_waiting_for_user(&mut state, &mut rx, &*output).await?;
                     // What it took ahead is stored with the turn it settled
                     // (issue 223).
                     state.heard = rx.heard();
