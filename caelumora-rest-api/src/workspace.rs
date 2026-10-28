@@ -2,11 +2,10 @@
 //! of their shell (issue 294).
 
 use crate::access::AccessEntry;
-use crate::scope::ScopeKind;
+use crate::scope::{ScopeKind, ScopeResponse};
 use caelumora_model::snapshot;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::Grant;
-use caelumora_model::session::SessionId;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use chrono::{DateTime, Utc};
@@ -20,9 +19,8 @@ pub struct WorkspaceResponse {
     pub name: String,
     /// Where it lies: `session` - made for one session and used in it
     /// alone, which `session_id` names -, `user` or `global`.
-    pub scope: ScopeKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
+    #[serde(flatten)]
+    pub scope: ScopeResponse,
     /// The storage its files lie in, by its configured name.
     pub storage: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,10 +41,9 @@ pub struct WorkspaceResponse {
 
 impl From<snapshot::WorkspaceSnapshot> for WorkspaceResponse {
     fn from(view: snapshot::WorkspaceSnapshot) -> Self {
-        let (scope, session_id) = ScopeKind::of(&view.scope);
         let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
         Self {
-            id: view.id, name: view.name, scope, session_id, storage: view.storage, description: view.description, classification: view.classification,
+            id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), storage: view.storage, description: view.description, classification: view.classification,
             has_shell: view.has_shell, can_change: view.can_change, can_write: view.can_write, access,
         }
     }

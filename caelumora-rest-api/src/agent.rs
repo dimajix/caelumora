@@ -1,7 +1,7 @@
 //! Agents on their own, not as participants of a channel (issues 164, 227), and
 //! the personalities they are made of.
 
-use crate::scope::ScopeKind;
+use crate::scope::{ScopeKind, ScopeResponse};
 use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentId, PersonalityId, PersonalityKind};
@@ -18,11 +18,8 @@ pub struct AgentResponse {
     /// Where it lies: `user` or `global` for an agent of its own, `session`
     /// for one that takes part only in the session `session_id` names - or
     /// in its channel `channel_id`.
-    pub scope: ScopeKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel_id: Option<ChannelId>,
+    #[serde(flatten)]
+    pub scope: ScopeResponse,
     /// Whose it is: whose rights it acts with.
     pub owner: ActorId,
     /// What it is made of.
@@ -51,9 +48,8 @@ pub struct AgentChannelResponse {
 
 impl From<snapshot::AgentSnapshot> for AgentResponse {
     fn from(view: snapshot::AgentSnapshot) -> Self {
-        let (scope, session_id, channel_id) = ScopeKind::placed(&view.scope);
         Self {
-            id: view.id, name: view.name, scope, session_id, channel_id, owner: view.owner, personality_id: view.personality_id,
+            id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), owner: view.owner, personality_id: view.personality_id,
             personality: view.personality, can_change: view.can_change, can_delete: view.can_delete, channels: None,
         }
     }
@@ -88,11 +84,8 @@ pub struct PersonalityResponse {
     pub name: String,
     /// Where it lies, as an agent's (`AgentResponse::scope`): an agent made
     /// of it lies there or within it.
-    pub scope: ScopeKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel_id: Option<ChannelId>,
+    #[serde(flatten)]
+    pub scope: ScopeResponse,
     pub kind: PersonalityKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Description>,
@@ -100,7 +93,6 @@ pub struct PersonalityResponse {
 
 impl From<snapshot::PersonalitySnapshot> for PersonalityResponse {
     fn from(view: snapshot::PersonalitySnapshot) -> Self {
-        let (scope, session_id, channel_id) = ScopeKind::placed(&view.scope);
-        Self { id: view.id, name: view.name, scope, session_id, channel_id, kind: view.kind, description: view.description }
+        Self { id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), kind: view.kind, description: view.description }
     }
 }
