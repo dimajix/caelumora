@@ -9,9 +9,9 @@ server-sent event streams through which clients follow these events are part of
 ## The form of an event
 
 Every event is about an entity - a session, a channel, an agent, a user, a user's profile, a
-workspace, a skill, an artifact, a group, or a kind of a plugin - and has one form, `GlobalEvent {
-kind, id, within, change }` (issues 323, 345). `kind` is the `EntityKind`, `id` the entity's id as
-text, `within` the id of the entity it lies in, and `change` an `EntityChange`:
+workspace, a project, a skill, an artifact, a group, or a kind of a plugin - and has one form,
+`GlobalEvent { kind, id, within, change }` (issues 323, 345). `kind` is the `EntityKind`, `id` the
+entity's id as text, `within` the id of the entity it lies in, and `change` an `EntityChange`:
 
 *   `Created`, `Deleted`, `Restored` - the same for every kind;
 *   `Updated(value)` - what changed, in the form of the kind's update event (`SkillUpdateEvent`,

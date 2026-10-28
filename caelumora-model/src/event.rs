@@ -11,9 +11,9 @@ use std::slice;
 
 /// What happened, announced on the event bus - and, once there are several instances, between them
 /// (issue 122): it is read back as it is written. Every event is about an entity (issue 323), of
-/// whatever kind: a session, a channel, an agent, a user, a user's profile, a workspace, a skill,
-/// an artifact, a group, or a kind of a plugin. Published with the entity's attributes, so that
-/// whoever may read it receives it:
+/// whatever kind: a session, a channel, an agent, a user, a user's profile, a workspace, a project,
+/// a skill, an artifact, a group, or a kind of a plugin. Published with the entity's attributes, so
+/// that whoever may read it receives it:
 ///
 /// - a session's and an agent's: an agent of user or global scope belongs to no session and takes
 ///   part in several (issue 121); a restored one takes part in no channel until it is added again;

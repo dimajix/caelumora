@@ -22,6 +22,9 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
 *   **Workspaces**: a tree of files a user owns and attaches to sessions (see
     [WORKSPACE.md](WORKSPACE.md)). The document names the storage its files lie in; the files are
     no part of it.
+*   **Projects**: what holds the results of sessions, each a user's (see
+    [PROJECTS.md](PROJECTS.md)): a session's own lies in the session's scope, a shared one in the
+    global scope or its owner's; each holds a scope of its own, where its artifacts lie.
 *   **Skills**: procedures written down for agents, a kind of the plugin `caelumora-skills` (see
     [SKILLS.md](SKILLS.md)).
 *   **Artifacts**: results an agent published, each a user's, with its versions, a kind of the
@@ -190,11 +193,12 @@ of what holds it.
 
 Every entity has a name, and the fields that mean something for it:
 
-*   **What is a scope** - a session, a channel, a user - has a name only.
+*   **What is a scope** - a session, a channel, a user - has a name only; a project is a scope and
+    lies in one.
 *   **What lies in a scope** - a personality, a session template, a component bundle, an agent, a
-    workspace, a skill, an artifact - has a name and a `Scope`: where it is found by name. The store
-    finds one in exactly its scope; from a place, `scope::find_by_name` finds the innermost of a
-    name - in the place's scope, in those around it or in the user's own.
+    workspace, a project, a skill, an artifact - has a name and a `Scope`: where it is found by
+    name. The store finds one in exactly its scope; from a place, `scope::find_by_name` finds the
+    innermost of a name - in the place's scope, in those around it or in the user's own.
 *   **What is offered for choosing** - a personality, a session template - has a `description`, a
     catalogue line.
 
@@ -297,8 +301,8 @@ at the caller.
 ### Deleted entities
 
 What a user deletes is kept, marked, and removed for good only by a purge - an administrator's act
-or a retention policy's. Every kind is marked so - sessions, channels, agents, users, user
-profiles, personalities, session templates, component bundles, workspaces, groups and the kinds of
+or a retention policy's. Every kind is marked so - sessions, channels, agents, users, user profiles,
+personalities, session templates, component bundles, workspaces, projects, groups and the kinds of
 the plugins -, and carries who deleted it and when: `Stored::deleted` reads the mark,
 `Stored::set_deleted` sets it, and a kind that is `Stored` implements both.
 
@@ -626,12 +630,13 @@ controller changes and what its entity's manager does is in
 A `SessionController` and its `ChannelController`s are made with the running session and live as
 long as it does: a session runs once, so there is never a second. An agent or a user takes part in
 any number of sessions, and a workspace may be attached to several and is used directly too, so the
-`ControllerManager` keeps **one controller per agent, per personality, per user and per workspace
-in the instance**: loaded when the first one needs it, shared by all that use it, and held only as
-long as one of them holds it. An agent thus has one writer per instance. A personality's controller
-is held beside its agent's, not by it - an agent's personality is fixed with the agent, and another
-one could make it another kind of agent, which only a new actor can be. The manager also answers
-what an actor is called - an entity's current name, or the fixed name of an actor that is none.
+`ControllerManager` keeps **one controller per agent, per personality, per user, per workspace and
+per project in the instance**: loaded when the first one needs it, shared by all that use it, and
+held only as long as one of them holds it. An agent thus has one writer per instance. A
+personality's controller is held beside its agent's, not by it - an agent's personality is fixed
+with the agent, and another one could make it another kind of agent, which only a new actor can be.
+The manager also answers what an actor is called - an entity's current name, or the fixed name of an
+actor that is none.
 
 A missing record is `StoreError::NotFound`, which a lookup that expects it may be gone turns into
 `None`; a channel then leaves that participant out (see [CHANNELS.md](CHANNELS.md)).
@@ -641,11 +646,11 @@ A missing record is `StoreError::NotFound`, which a lookup that expects it may b
 Neither the actors nor the sessions subscribe to changes of themselves - a running session follows
 only whether its agents are deleted or restored, which decides which actors run in its channels (see
 [CHANNELS.md](CHANNELS.md)). The `ControllerManager` takes every announced change to an agent, a
-user or a workspace into its live controller, once per instance - the place where changes made in
-other instances will arrive (see [Several instances](#several-instances)). An event carries the
-resulting value, so taking over an instance's own change again changes nothing; a workspace is read
-again as stored instead, since the announcement of a new access list does not carry it. A text in it
-that does not fit the model's value is left out and logged.
+user, a workspace or a project into its live controller, once per instance - the place where changes
+made in other instances will arrive (see [Several instances](#several-instances)). An event carries
+the resulting value, so taking over an instance's own change again changes nothing; a workspace and
+a project are read again as stored instead, since the announcement of a new access list does not
+carry it. A text in it that does not fit the model's value is left out and logged.
 
 No change of a personality is announced. Its controller takes in the personality as stored whenever
 it is asked for - as an agent of it is resolved to take part, and by the `CommandReaper` - and from

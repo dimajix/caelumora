@@ -1,6 +1,6 @@
 # 338 — An artifact is published into its session's scope and goes with the session
 
-**Status:** open
+**Status:** rejected
 **Type:** feature
 **Priority:** high
 **Area:** Context and knowledge
@@ -102,3 +102,9 @@ As it stood when the issue was deferred (2026-10-13); not decided.
   above, under *Proposal*. Whether teams should own things - which would make adding to another's
   artifact rarer and give an artifact of a team a place of its own - went into the memo
   [340](340-teams-as-owners.md).
+- **2026-10-28** — Rejected in favour of issue [467](467-projects-hold-what-outlasts-a-session.md),
+  which the maintainer opened while taking this one up: an artifact lies in the project its
+  session's results go to, and goes with the session only where that project is the session's own.
+  The proposal above - an artifact in its owner's scope, a version added by id - is not done;
+  keeping an artifact by itself is gone, and lifting the session's own project takes its place. The
+  bug of this issue is a rule now.

@@ -10,7 +10,7 @@ that holds the details; the list at the end names them all.
 The project is a Rust workspace, with a web UI next to it:
 
 *   **`caelumora-model`** - the domain: entities (`Session`, `Channel`, `Agent`, `Personality`,
-    `User`, `SessionTemplate`, `Workspace`, `Group`), the values with rules
+    `User`, `SessionTemplate`, `Workspace`, `Group`, `Project`), the values with rules
     their fields hold (`value`: `Name`, `Language`, free text such as `Summary`), messages and
     events, the traits of the stores, the security and confidentiality model, and the configuration
     (`AppConfig`). It holds data and rules, but runs nothing.
@@ -183,6 +183,12 @@ copy of a file, in a version of an artifact that belongs to a user, its content 
 of content beyond the workspace and downloaded where it was published. Details:
 [WORKSPACE.md](WORKSPACE.md), [TOOLS.md](TOOLS.md#artifacts).
 
+Every session has a **project**, which its results go to: one of its own, made with it and gone
+with it, or a shared one it lies in, which outlives its sessions. An artifact lies in its session's
+project. Keeping a session's results is lifting its own project into its owner's scope or the
+global one; a session is put into a shared project, or taken out, without anything moving. Details:
+[PROJECTS.md](PROJECTS.md).
+
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies. The records live in the `EntityStore`; a channel
 leaves out a participant whose record no longer exists, and runs without it. A deleted agent rests
@@ -348,12 +354,14 @@ What changes an entity is split by what it changes:
 
 *   **Its lifecycle is its manager's** - making it, deleting, restoring and purging it, with what
     lies in its scope: the `SessionManager`'s for sessions, the `AgentManager`'s, `GroupManager`'s
-    and `WorkspaceManager`'s for their kinds, and those of the plugins (`SkillManager`,
-    `ArtifactManager`). A channel's is its session's (`SessionLoop`).
+    and `WorkspaceManager`'s for their kinds, the `ProjectManager`'s for shared projects - made by
+    the program beside the `SessionManager`, which it holds -, and those of the plugins
+    (`SkillManager`, `ArtifactManager`). A channel's is its session's (`SessionLoop`), and so is a
+    session's own project's.
 *   **What it is - its attributes - is its controller's**, where it has one: a name, a description,
-    rules, participants. Sessions, channels, agents, users and workspaces have one, as running
-    sessions hold them live; the controller stores a change and announces it, so that the live copy
-    and the store do not disagree.
+    rules, participants. Sessions, channels, agents, users, workspaces and projects have one, as
+    running sessions hold them live; the controller stores a change and announces it, so that the
+    live copy and the store do not disagree.
 *   **An entity without a controller** - a group, a skill, an artifact - is held live by nobody,
     and its manager changes its attributes too. A controller is made for a kind once
     something holds it live, not for the sake of this split.
@@ -416,6 +424,7 @@ The design repeats a few decisions; new code follows them.
 *   [SKILLS.md](SKILLS.md) - skills: what they are, who may use and write them, how they reach the
     model.
 *   [CHANNELS.md](CHANNELS.md) - sessions, channels, actors, participants, moderators and mentions.
+*   [PROJECTS.md](PROJECTS.md) - projects: what outlasts a session, where artifacts lie.
 *   [EVENTS.md](EVENTS.md) - the event bus.
 *   [REST-SERVER.md](REST-SERVER.md) - the REST API, authentication, errors and the server-sent
     event streams.

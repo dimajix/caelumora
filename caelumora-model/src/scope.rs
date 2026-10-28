@@ -19,10 +19,12 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use crate::store::query::{Field, FieldValue, Filter};
 
-/// Where a personality, a session template or an agent lies: the name
-/// space it is found in by name (issue 177). A channel's name space is its
-/// session's scope, a user's the global one (issue 250), a workspace's its
-/// owner's (issue 253); none of them stores a scope of its own.
+/// Where something lies that is found by name (issue 177): the name space of
+/// a personality, a session template, an agent, a workspace, a skill, a
+/// project or an artifact, each stored with its scope. A channel's name space
+/// is its session's scope, a user's the global one (issue 250); neither
+/// stores a scope of its own. A project lies in a scope and holds one, where
+/// its artifacts lie (issue 467).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Scope {
     /// A channel, by id: a renamed channel keeps what lies in it (issue

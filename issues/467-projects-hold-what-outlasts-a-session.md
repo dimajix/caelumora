@@ -1,6 +1,6 @@
 # 467 — Results have no place of their own: a project holds what outlasts a session
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** Sessions and channels
@@ -918,3 +918,15 @@ none lies in a project's scope.
   no longer fetches every session and filters them; and the entries of a project's access list the
   runtime keeps - its members, the participants of its sessions - are shown fixed
   (`AccessList.kept`), so that the owner cannot take a session's share away by hand.
+- **2026-10-28** — Step 5 done, and with it the issue: `docs/PROJECTS.md` describes what a
+  project is, a session's project, who reads what, the lifecycle and what is not done yet, with its
+  line in the table of AGENTS.md; ARCHITECTURE.md names projects among the domain, the managers and
+  the controllers; PERMISSION-CHECKS.md has the rows of projects, of putting a session into one and
+  of the session's own project in deleting, restoring and purging a session; STORAGE.md and
+  EVENTS.md name the kind; the doc comments of `Scope`, `ActionType::Entity` and `GlobalEvent`
+  name projects. Most of what the plan listed for this step - CHANNELS.md, SECURITY.md, TOOLS.md,
+  REST-SERVER.md, WEB-UI.md, PLUGINS.md - was written with the steps that changed it. Issue 338 is
+  rejected in favour of this one; 453 was done with step 0b.
+
+  Stored data to delete: every session, since each names its project, and every artifact, since
+  none lies in a project's scope - with its content.

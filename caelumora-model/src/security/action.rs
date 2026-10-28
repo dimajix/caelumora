@@ -39,7 +39,12 @@ pub enum ActionType<'a> {
     ///   HDFS needs its directory. Adding a version is `WRITE`.
     /// - a group (issue 286): who belongs to it, granted to its owner and,
     ///   by its own access list, to its participants. The participants of a
-    ///   session or channel are changed only by the runtime.
+    ///   session or channel, and the members of a project, are changed only
+    ///   by the runtime.
+    /// - a project (issue 467): what it is - its name, description, members
+    ///   and where it lies -, which its members, whom its list names and the
+    ///   participants of the sessions in it read; who reads it publishes into
+    ///   it. Changing it is its owner's alone.
     /// - a user: receiving the events about them; a stored user belongs to
     ///   the system (issue 94). A profile belongs to its user (issue 176).
     Entity { kind: EntityKind, verb: Verb, attributes: &'a SecurityAttributes },
