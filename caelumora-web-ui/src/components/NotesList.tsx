@@ -4,6 +4,7 @@
 import React from 'react';
 import type {PublishedNotes} from '../types';
 import {MessageTime} from './MessageView';
+import {actorKey} from '../actor';
 
 export const NotesList: React.FC<{notes: PublishedNotes[]}> = ({notes}) => {
   const groups = notes
@@ -15,7 +16,7 @@ export const NotesList: React.FC<{notes: PublishedNotes[]}> = ({notes}) => {
   return (
     <div className="space-y-4">
       {groups.map(group => (
-        <div key={JSON.stringify(group.agent_id)} className="space-y-2">
+        <div key={actorKey(group.agent_id)} className="space-y-2">
           <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{group.name}</div>
           {group.notes.map(note => (
             <div key={note.id} className="rounded-md border border-gray-200 dark:border-gray-700 p-2 text-sm text-gray-800 dark:text-gray-200">

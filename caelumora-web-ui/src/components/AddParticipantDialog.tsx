@@ -11,7 +11,7 @@ import {X} from 'lucide-react';
 import type {ActorId, Candidate, CandidateRefusal, ChannelResponse, CreateAgentRequest, HistoryAccess, PersonalityResponse, SessionParticipant} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {actorKey} from '../mention';
+import {actorKey, agentActor} from '../actor';
 
 type HistoryKind = HistoryAccess['kind'];
 
@@ -139,7 +139,7 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
   const makeAndTakeIn = async (made: PersonalityResponse): Promise<ChannelResponse> => {
     const agent = await api.createAgent({name: agentName.trim(), personality_id: made.id, ...placeOf(made, onlyHere, sessionId)});
     try {
-      return await takeIn({Agent: agent.id});
+      return await takeIn(agentActor(agent.id));
     } catch (error) {
       await api.deleteAgent(agent.id).catch(cleanup => reportError('Failed to delete the agent that could not be added', cleanup));
       throw error;

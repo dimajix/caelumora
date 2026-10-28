@@ -6,22 +6,14 @@
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
-import type {ActorId, ChannelResponse, Compartment, SessionSnapshot, UserResponse} from '../types';
+import type {ChannelResponse, Compartment, SessionSnapshot, UserResponse} from '../types';
+import {actorKey, userIdOf} from '../actor';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {DEFAULT_RESPONDER_POLICY, RESPONDER_POLICY_KINDS, responderPolicyInfo} from '../moderator';
 import {CONFIDENTIALITY_LEVELS, DEFAULT_CLASSIFICATION, confidentialityInfo, type ConfidentialityLevel} from '../confidentiality';
 import {LanguageField} from './LanguageField';
 import {languageLabel} from '../language';
-
-/** The key an `ActorId` is told apart by. */
-function actorKey(id: ActorId): string {
-  return typeof id === 'string' ? id : JSON.stringify(id);
-}
-
-function isUser(id: ActorId, user: UserResponse): boolean {
-  return typeof id !== 'string' && 'User' in id && id.User === user.id;
-}
 
 interface NewChannelDialogProps {
   session: SessionSnapshot;
@@ -33,7 +25,7 @@ interface NewChannelDialogProps {
 export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user, onCreated, onClose}) => {
   // Everyone but the user, who takes part anyway.
   const candidates = (session.participants ?? [])
-    .filter(p => !isUser(p.id, user))
+    .filter(p => userIdOf(p.id) !== user.id)
     .sort((l, r) => l.name.localeCompare(r.name));
   const [name, setName] = useState('');
   const [responderPolicy, setResponderPolicy] = useState(DEFAULT_RESPONDER_POLICY);

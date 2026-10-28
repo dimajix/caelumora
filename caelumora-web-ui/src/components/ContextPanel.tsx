@@ -13,7 +13,7 @@ import type {ActorId, ChannelParticipant, KnowledgeRef, Message, MessageContextR
 import {type Classification, classificationDescription, classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
 import {api, type ChannelAttachments} from '../api';
-import {actorUuid} from '../mention';
+import {actorUuid} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {ToolSetList} from './ToolSetList';
 import {MessageView} from './MessageView';

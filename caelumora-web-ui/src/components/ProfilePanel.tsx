@@ -7,7 +7,7 @@ import React, {useEffect, useState} from 'react';
 import {IdCard, X} from 'lucide-react';
 import type {ChannelParticipant} from '../types';
 import {api} from '../api';
-import {actorUuid} from '../mention';
+import {actorUuid} from '../actor';
 import {reportError} from '../errors';
 
 interface ProfilePanelProps {

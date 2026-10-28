@@ -38,7 +38,9 @@ The UI shows what the server says and repeats no rule of its own:
     `any-ascii` in the version the server's `any_ascii` crate has - both are pinned, so that their
     tables agree. What a command means and whom a mention addresses is decided by the server.
 *   **The types mirror the server.** `src/types` holds the request and response types of
-    the crate `caelumora-rest-api`; a change to the REST API changes them too.
+    the crate `caelumora-rest-api`; a change to the REST API changes them too. The form serde
+    gives an `ActorId` is read and made only in `actor.ts`, so that a change of it is met in one
+    place.
 *   **What the server refuses is shown where it can be corrected.** A dialog shows the server's
     refusal - a name taken, a classification the user is not cleared for - next to the field; it
     does not check beforehand what the server decides.
@@ -55,6 +57,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/stream.ts` | `openEventStream`, for both event streams |
 | `src/globalEvents.ts` | What the session list does with a global event |
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
+| `src/actor.ts` | Who an `ActorId` names, and the `ActorId` of a user or an agent |
 | `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel, and the lists in the sidebar it is opened from |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
 | `src/components/` | One component per file, named after what it shows |

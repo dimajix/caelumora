@@ -103,7 +103,8 @@ import {AddParticipantDialog} from './AddParticipantDialog';
 import {ApprovalRuleOffer} from './ApprovalRuleOffer';
 import {QuestionCard} from './QuestionCard';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
-import {actorKey, actorUuid, GROUP_HANDLES, handleOf, mentionQueryAt} from '../mention';
+import {actorKey, actorUuid, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
+import {GROUP_HANDLES, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
@@ -245,7 +246,7 @@ function withCall(usage: TokenUsage | undefined, message: Message): TokenUsage |
  */
 function nameIn(channel: ChannelResponse | null): (actor: ActorId) => string | undefined {
   return actor => [...(channel?.participants ?? []), ...(channel?.former_participants ?? [])]
-    .find(m => actorKey(m.id) === actorKey(actor))?.name;
+    .find(m => sameActor(m.id, actor))?.name;
 }
 
 function withAnswer(answers: Answer[], sender: string, name: string | null, change: (answer: Answer) => Answer): Answer[] {
@@ -267,7 +268,7 @@ interface ChatViewProps {
 
 export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, onSelectPage }) => {
   // The user's actor, whose messages are their own (issue 407).
-  const me = useMemo<ActorId>(() => ({User: user.id}), [user.id]);
+  const me = useMemo(() => userActor(user.id), [user.id]);
   // The messages as they came, and as the chat shows them: each tool result
   // with the call it answers.
   const [messages, setMessages] = useState<Message[]>([]);
@@ -454,7 +455,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // the channel is known. Joining or leaving changes it (the participants follow
   // the global stream), and the view follows.
   const takesPart = channel?.id === channelId
-    ? channel.participants.some(m => typeof m.id !== 'string' && 'User' in m.id && m.id.User === user.id)
+    ? channel.participants.some(m => userIdOf(m.id) === user.id)
     : undefined;
 
   // The compartments a message may be released to; none if they cannot be
@@ -720,7 +721,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     if (!uuid) return;
     try {
       await api.removeParticipant(sessionId, channelId, uuid);
-      setChannel(prev => prev && {...prev, participants: prev.participants.filter(m => actorKey(m.id) !== actorKey(participant.id))});
+      setChannel(prev => prev && {...prev, participants: prev.participants.filter(m => !sameActor(m.id, participant.id))});
     } catch (error) {
       reportError(`Failed to remove ${participant.name}`, error);
     }
@@ -759,8 +760,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         // What the sender's calls used, as the server sums them once its
         // turn ended - also those whose messages were not published.
         const readUsage = () => {
-          const agent = envelope.context.sender_id;
-          const uuid = typeof agent === 'object' && 'Agent' in agent ? actorUuid(agent) : null;
+          const uuid = agentIdOf(envelope.context.sender_id);
           if (!uuid) return;
           api.getParticipant(sessionId, channelId, uuid)
             .then(participant => { if (participant.usage) setUsage(prev => ({...prev, [answerer]: participant.usage!})); })
@@ -873,11 +873,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // This user's own answer, as their actor shows it: given by a rule
           // of theirs (issue 13).
           const byRule = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied)?.decisions?.[0]?.by_rule;
-          if (byRule && typeof sender === 'object' && 'User' in sender && sender.User === user.id) {
+          if (byRule && userIdOf(sender) === user.id) {
             setAnsweredApprovals(prev => prev.includes(ended) ? prev : [...prev, ended]);
             setAnsweredByRule(prev => ({...prev, [ended]: byRule}));
           }
-          if (typeof sender === 'object' && 'Approver' in sender) {
+          if (isApprover(sender)) {
             setPendingApprovals(prev => prev.filter(req => req.id !== ended));
             setAnsweredApprovals(prev => prev.filter(id => id !== ended));
           }
@@ -968,7 +968,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           setMessages(prev => {
             // Its calls without a result as the chat shows them.
             const unanswered = new Set(mergeToolResults(prev)
-              .filter(m => m.sender_id && actorKey(m.sender_id) === left && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id)))
+              .filter(m => m.sender_id && sameActor(m.sender_id, participant) && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id)))
               .map(m => m.id));
             const ended = prev.map(m => m.id && unanswered.has(m.id) ? {...m, abandoned: true} : m);
             return ended.some(m => m.id === notice.id) ? ended : [...ended, notice];
@@ -1206,7 +1206,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   /** What a chain cut off at its limit says (issue 200), naming the agents mentioned as they are known now. */
   const chainCutOffText = ({maxAgentHops, notAsked}: {maxAgentHops: number; notAsked: ActorId[]}): string => {
     const names = notAsked.map(id => {
-      const participant = participants.find(m => actorKey(m.id) === actorKey(id));
+      const participant = participants.find(m => sameActor(m.id, id));
       return participant?.handle ? `@${participant.handle}` : (participant?.name ?? 'an agent');
     });
     const whom = names.length > 0 ? `${names.join(', ')} ${names.length === 1 ? 'was' : 'were'} not asked` : 'no agent was asked';
@@ -1216,8 +1216,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   /** Whether the user may see the context of `msg`: a stored message of an agent they may read (issue 41). */
   const mayShowContext = (msg: Message): boolean => {
     if (!msg.id || !msg.sender_id) return false;
-    const sender = actorKey(msg.sender_id);
-    return participants.some(m => actorKey(m.id) === sender && m.can_read_context);
+    const sender = msg.sender_id;
+    return participants.some(m => sameActor(m.id, sender) && m.can_read_context);
   };
 
   const handleStopGeneration = async () => {
@@ -1252,8 +1252,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    */
   const mayInterruptCallsOf = (msg: Message) => {
     if (!msg.turn_id || !msg.sender_id) return false;
-    const sender = actorKey(msg.sender_id);
-    return participants.some(m => actorKey(m.id) === sender && m.can_cancel && m.state === 'ExecutingTools');
+    const sender = msg.sender_id;
+    return participants.some(m => sameActor(m.id, sender) && m.can_cancel && m.state === 'ExecutingTools');
   };
 
   /** Interrupts the call `call` of `msg` alone; the agent's turn goes on (issue 276). */
@@ -1311,7 +1311,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // Only those questions are put to answer them (issue 165); everybody else
   // they reach sees what the agent waits for.
   const askedOf = (request: QuestionRequest) =>
-    request.questions.ask.flatMap(a => typeof a === 'object' && 'actor' in a ? [actorKey(a.actor)] : []);
+    request.questions.ask.flatMap(a => typeof a === 'object' && 'actor' in a ? [a.actor] : []);
   const answerQuestions = async (request: QuestionRequest, responses: QuestionResponse[] | null) => {
     try {
       await api.answerQuestions(sessionId, channelId, request.id, responses);
@@ -1324,7 +1324,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // Only who may approve the agent's calls is asked (issue 14); everybody
   // else sees what it waits for.
   const mayApprove = (approval: ApprovalRequest) =>
-    participants.some(m => actorKey(m.id) === actorKey({Agent: approval.agent_id}) && m.can_approve);
+    participants.some(m => agentIdOf(m.id) === approval.agent_id && m.can_approve);
 
   // The answer first - the person decides this call now - then the rule
   // they chose to derive from it (issue 13); if the rule fails, the answer
@@ -1809,8 +1809,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               <QuestionCard
                 key={request.id}
                 request={request}
-                asked={askedOf(request).includes(actorKey(me))}
-                askedNames={askedOf(request).map(key => participants.find(m => actorKey(m.id) === key)?.name ?? key)}
+                asked={askedOf(request).some(id => sameActor(id, me))}
+                askedNames={askedOf(request).map(id => participants.find(m => sameActor(m.id, id))?.name ?? actorKey(id))}
                 answered={answeredQuestions.includes(request.id)}
                 onAnswer={responses => answerQuestions(request, responses)}
               />

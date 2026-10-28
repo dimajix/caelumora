@@ -22,12 +22,13 @@ import {
   Users,
   UsersRound
 } from 'lucide-react';
-import type {ActorId, AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, Message, ProjectResponse, SessionSnapshot, SkillResponse, Unread, UserResponse, WorkspaceResponse} from '../types';
+import type {AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, Message, ProjectResponse, SessionSnapshot, SkillResponse, Unread, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange} from '../globalEvents';
 import {askForNotifications, countedIn, isOthers, mayAskForNotifications, mentions, notifyMention, onChannelRead, unreadLabel} from '../unread';
 import {openEventStream} from '../stream';
+import {userActor} from '../actor';
 import {ActionMenu} from './ActionMenu';
 import {ResizeHandle} from './ResizeHandle';
 import {usePanelWidth} from '../panelWidth';
@@ -209,7 +210,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const deletedChanged = () => setDeletedVersion(v => v + 1);
   // Whether the browser may still be asked to show notifications (issue 404).
   const [mayAsk, setMayAsk] = useState(mayAskForNotifications);
-  const me: ActorId = {User: user.id};
+  const me = userActor(user.id);
 
   /** Drops a session from the list - deleted here or elsewhere. */
   const removeSession = (sessionId: string) => {

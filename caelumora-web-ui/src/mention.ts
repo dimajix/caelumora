@@ -4,7 +4,8 @@
 // derive handles for completion.
 
 import anyAscii from 'any-ascii';
-import type {ActorId, ChannelParticipant, Message} from './types';
+import {actorKey} from './actor';
+import type {ChannelParticipant, Message} from './types';
 
 const HANDLE_CHAR = /[\p{L}\p{N}_-]/u;
 
@@ -53,19 +54,6 @@ export function mentionSpans(text: string): MentionSpan[] {
     spans.push({start, end: start + 1 + raw.length, handle: handleOf(raw)});
   }
   return spans;
-}
-
-/** A stable string key for an `ActorId`, which serializes as e.g. `{"Agent": "<uuid>"}`. */
-export function actorKey(id: ActorId): string {
-  if (typeof id === 'string') return id;
-  const [kind, value] = Object.entries(id)[0] ?? ['', ''];
-  return `${kind}:${value}`;
-}
-
-/** The part of an `ActorId` the REST API addresses an actor by. */
-export function actorUuid(id: ActorId | undefined): string | null {
-  if (!id || typeof id === 'string') return null;
-  return Object.values(id)[0] ?? null;
 }
 
 /**

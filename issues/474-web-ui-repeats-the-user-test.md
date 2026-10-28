@@ -1,6 +1,6 @@
 # 474 — The web UI tells whether an actor is a user, and which, in several ways
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -49,3 +49,9 @@ only two variants are asked about.
 - **2026-10-28** — The maintainer decided for option A, with making an `ActorId` included and the
   type made exact as a step before. Step 1 done: `ActorId` is the union of the server's variants;
   the four tests for a user that read `.User` narrow it with `'User' in`.
+- **2026-10-28** — Step 2 done: `actor.ts` holds `userActor`, `agentActor`, `userIdOf`,
+  `isApprover`, `isSystem`, `actorKey` and `actorUuid`, and `agentIdOf` beside `userIdOf`, for
+  `ChatView`, which read whether a sender is an agent itself. `NewChannelDialog` lost its own
+  `actorKey`; no component and no other module reads or makes the form of an `ActorId`. At the
+  maintainer's request from the review, `sameActor` names what was written out as
+  `actorKey(a) === actorKey(b)`; `actorKey` is left for keys that are kept.

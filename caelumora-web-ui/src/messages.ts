@@ -2,11 +2,12 @@
 
 import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, Rejection, RetryRefused, TokenUsage, ToolResult, ToolVisibility} from './types';
 import {classificationLabel} from './confidentiality';
-import {actorKey, handleOf} from './mention';
+import {actorKey, isSystem, sameActor} from './actor';
+import {handleOf} from './mention';
 
 /** Whether `message` was said by `me` (issue 407); one without a sender is no one's own. */
 export function isOwn(message: Message, me: ActorId): boolean {
-  return message.sender_id !== undefined && actorKey(message.sender_id) === actorKey(me);
+  return message.sender_id !== undefined && sameActor(message.sender_id, me);
 }
 
 export function formatArguments(args: unknown): string {
@@ -293,9 +294,9 @@ function named(name: string): string {
 export function participantNotice(change: 'joined' | 'left', participant: ActorId, name: string, by: ActorId, byName: string, at: string): Message {
   const who = named(name);
   const joined = change === 'joined';
-  const content = actorKey(by) === actorKey(participant)
+  const content = sameActor(by, participant)
     ? `${who} has ${change} the channel`
-    : actorKey(by) === 'System'
+    : isSystem(by)
       ? `${who} was ${joined ? 'added to' : 'removed from'} the channel`
       : `${named(byName)} has ${joined ? 'added' : 'removed'} ${who} ${joined ? 'to' : 'from'} the channel`;
   return {

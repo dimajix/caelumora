@@ -9,7 +9,7 @@ import React, {useEffect, useState} from 'react';
 import {Lock, X} from 'lucide-react';
 import type {ChannelParticipant, PrivateNotes} from '../types';
 import {api} from '../api';
-import {actorUuid} from '../mention';
+import {actorUuid} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {changedAgentState, onGlobalEvent} from '../globalEvents';
 import {classificationDescription, classificationLabel} from '../confidentiality';

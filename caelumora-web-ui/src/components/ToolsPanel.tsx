@@ -9,7 +9,7 @@ import React, {useEffect, useState} from 'react';
 import {Wrench, X} from 'lucide-react';
 import type {ChannelParticipant, ToolSet} from '../types';
 import {api} from '../api';
-import {actorUuid} from '../mention';
+import {actorUuid} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {ToolSetList} from './ToolSetList';
 

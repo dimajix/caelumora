@@ -15,7 +15,7 @@ import type {ActorId, ChannelParticipant, GivenUpReason, HistoryItem, HistoryMes
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
 import {api, type ChannelAttachments} from '../api';
-import {actorKey, actorUuid} from '../mention';
+import {actorUuid, sameActor} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
 import {formatTimestamp, givenUpText, mergeToolResultsAmong, participantNotice} from '../messages';
@@ -198,7 +198,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
   // A command the agent carried out (issue 269): which, on whose word, when.
   const commandView = (row: Extract<Row, {kind: 'command'}>, key: React.Key) => {
     const time = formatTimestamp(row.at);
-    const issuer = participants.find(m => actorKey(m.id) === actorKey(row.issuer))?.name ?? 'someone';
+    const issuer = participants.find(m => sameActor(m.id, row.issuer))?.name ?? 'someone';
     return (
       <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-xs text-gray-700 dark:text-gray-300">
         <ChevronRight size={14} className="mt-0.5 shrink-0" />

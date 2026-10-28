@@ -12,6 +12,7 @@ import {ActionMenu} from './ActionMenu';
 import {ClassificationDialog} from './ClassificationDialog';
 import {MarkdownMessage} from './MarkdownMessage';
 import {scopeLabel} from '../scope';
+import {isSystem} from '../actor';
 
 interface SkillPageProps {
   skillId: string;
@@ -103,7 +104,7 @@ export const SkillPage: React.FC<SkillPageProps> = ({skillId, onDeleted}) => {
             {editing === 'description' ? field : <p className="text-sm text-gray-600 dark:text-gray-400">{skill.description}</p>}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
               <span>Name space: {scopeLabel(skill)}</span>
-              {skill.owner === 'System' && <span>A skill of the system</span>}
+              {isSystem(skill.owner) && <span>A skill of the system</span>}
               <span className="flex items-center gap-1" title={classificationDescription(skill.classification)}>
                 <Shield size={12} /> {classificationLabel(skill.classification)}
               </span>

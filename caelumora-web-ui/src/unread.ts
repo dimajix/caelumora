@@ -9,7 +9,7 @@
 // on the next listing.
 
 import {api} from './api';
-import {actorKey} from './mention';
+import {sameActor} from './actor';
 import {isOwn} from './messages';
 import type {ActorId, Message, Unread} from './types';
 
@@ -28,7 +28,7 @@ export function isOthers(message: Message, me: ActorId): boolean {
 
 /** Whether `message` mentions `me` - by name or as one of everyone. */
 export function mentions(message: Message, me: ActorId): boolean {
-  return (message.mentions ?? []).some(mentioned => actorKey(mentioned) === actorKey(me));
+  return (message.mentions ?? []).some(mentioned => sameActor(mentioned, me));
 }
 
 /** `unread` with `message` of someone else counted: one more, and mentioned if it mentions `me`. */
