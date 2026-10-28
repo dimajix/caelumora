@@ -47,7 +47,7 @@ use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::group::GroupError;
 use caelumora_runtime::project::ProjectError;
-use caelumora_model::project::{Project, ProjectUpdateEvent};
+use caelumora_model::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_runtime::event::EventSubscription;
 use caelumora_runtime::actor::Shown;
@@ -948,6 +948,39 @@ async fn a_project_is_its_owners_and_read_by_its_members() {
     assert!(matches!(refused, Err(ProjectError::NotFound(_))), "deleted, it is hers alone to restore: {refused:?}");
     assert!(!world.projects.purge(&carol, project.id).await.unwrap(), "or to purge");
     world.projects.restore(&alice, project.id).await.expect("she restores it");
+}
+
+/// The views show a project to who reads it (issue 467): the shared ones in the list of
+/// projects, a session's own with the session. Its members are named; its access list only its
+/// owner sees, the group of an own project's members named by its session, as every own is
+/// called alike.
+#[tokio::test]
+async fn a_project_is_seen_by_who_reads_it() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
+    let project = world.projects.create(&alice, "report", Scope::UserScope { user_id: world.alice }, None).await.unwrap();
+    world.runtime.controller_manager().project_controller(project.id).await.unwrap().update_members(&alice, vec![world.bob]).await.unwrap();
+
+    let listed: Vec<ProjectId> = views(&bob).projects().await.unwrap().iter().map(|p| p.id()).collect();
+    assert_eq!(listed, [project.id], "the shared ones he works on, not the own of a session he reads");
+    let his = views(&bob).project(project.id).await.unwrap().snapshot().await;
+    assert_eq!((his.members, his.can_change, his.access.len()), (vec![(world.bob, Some("bob".to_string()))], false, 0), "its members named, its list not his to see");
+    let hers = views(&alice).project(project.id).await.unwrap().snapshot().await;
+    assert!(hers.can_change && hers.access.iter().any(|e| e.name.as_deref() == Some("report")), "she sees its list, its members by its name: {:?}", hers.access);
+    assert!(matches!(views(&carol).project(project.id).await, Err(ViewError::ProjectNotFound(_))), "a stranger does not find it");
+
+    let shown = views(&bob).session(session.id()).await.unwrap().snapshot(Detail::empty()).await.project.expect("a participant sees the session's project");
+    assert_eq!(shown.id, session.session().project);
+    let own = views(&alice).project(shown.id).await.unwrap().snapshot().await;
+    let names: Vec<Option<&str>> = own.access.iter().map(|e| e.name.as_deref()).collect();
+    assert_eq!(names, [Some("shared"), Some("shared")], "its members and its participants, both called by the session");
+
+    world.projects.delete(&alice, project.id).await.unwrap();
+    world.manager.delete(&alice, session.id()).await.unwrap();
+    let deleted: Vec<ProjectId> = views(&alice).deleted_projects().await.unwrap().iter().map(|d| d.id).collect();
+    assert_eq!(deleted, [project.id], "hers to restore; a session's own comes back with its session");
 }
 
 /// A session is put into a shared project by who may change the session and read the project

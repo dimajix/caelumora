@@ -805,3 +805,21 @@ none lies in a project's scope.
   Decided with the maintainer: a session that lies in a deleted shared project is not restored
   alone (`SessionError::ProjectDeleted`, REST `409 project_deleted`); it comes back with the
   project.
+- **2026-10-28** — Step 2c done, after 2b was accepted: the views. `ProjectView` (`id`,
+  `may_change`, `snapshot`), `Views::projects` - the shared ones the store lists for the viewer; a
+  session's own is reached through its session -, `Views::project`, `Views::deleted_projects`,
+  `ViewError::ProjectNotFound` (REST `404 project_not_found`); `ProjectSnapshot`, and
+  `SessionSnapshot::project`, the project its results go to, where the viewer reads it, as its
+  workspace; `AccessQuestions::may_change_project`; the group of an own project's members named by
+  its session.
+
+  Different from the plan: `ProjectView` has no getters of name, scope, description, members and
+  whether it is a session's own, and `AccessQuestions` no `may_read_project`, since nothing asks for
+  them yet; `SessionView::project` is not there for the same reason - the snapshot reads the
+  session's field. The session's snapshot carries the project's snapshot, as it carries its
+  workspace's, not only its id.
+  After the review: the views list the shared projects by a condition of the query
+  (`Filter::shared_projects`), as teams are listed, and name members as every view names a user
+  (`Views::name_of`).
+  How a session's own project is named to a client - `own`, as stored, or by its session, as the
+  group of its members is - is decided in step 4, with the REST API.

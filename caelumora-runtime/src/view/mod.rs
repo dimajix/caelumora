@@ -31,6 +31,7 @@ mod context;
 mod group;
 mod participant;
 mod session;
+mod project;
 mod workspace;
 
 pub use agent::AgentView;
@@ -38,6 +39,7 @@ pub use channel::{ChannelView, ParticipantView};
 pub use context::{AgentContextView, AgentContextError};
 pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
+pub use project::ProjectView;
 pub use workspace::WorkspaceView;
 
 use crate::attachment::{AttachmentError, AttachmentManager};
@@ -65,6 +67,7 @@ use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnap
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultExt, Stored};
 use caelumora_model::workspace::Workspace;
+use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::workspace::WorkspaceId;
 use std::sync::Arc;
 use anyhow::Error;
@@ -120,6 +123,8 @@ pub enum ViewError {
     ChannelNotFound { session: SessionId, channel: ChannelId },
     #[error("There is no workspace {0}")]
     WorkspaceNotFound(WorkspaceId),
+    #[error("There is no project {0}")]
+    ProjectNotFound(ProjectId),
     #[error("There is no group {0}")]
     GroupNotFound(GroupId),
     #[error("There is no agent {0}")]
@@ -509,6 +514,31 @@ impl Views {
         }
     }
 
+    /// The shared projects the store lists for the viewer (issue 467) - their own, those they
+    /// work on and those shared with them -, in the order it lists them. A session's own is
+    /// reached through its session, not listed here.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn projects(&self) -> ViewResult<Vec<ProjectView>> {
+        let projects = self.stores.projects.list(self.viewer.context(), &Query::filtered(Filter::shared_projects())).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the projects"))?;
+        Ok(projects.into_iter().map(|project| ProjectView::of(self.clone(), project)).collect())
+    }
+
+    /// Project `id`, if the store lets the viewer read it (`GetProject`): a shared one, or the
+    /// own of a session they read.
+    ///
+    /// # Errors
+    /// `ProjectNotFound` if there is none they may read.
+    pub async fn project(&self, id: ProjectId) -> ViewResult<ProjectView> {
+        match self.stores.projects.get(self.viewer.context(), id).await.optional() {
+            Ok(Some(project)) => Ok(ProjectView::of(self.clone(), project)),
+            Ok(None) => Err(ViewError::ProjectNotFound(id)),
+            Err(e) => Err(ViewError::failed(e, "reading a project")),
+        }
+    }
+
     /// Whom an entry of an access list may name the viewer by (issues 293,
     /// 308, 221): themselves, everyone if they are a user, the roles they
     /// hold and the teams they belong to - not those they only own -, as the
@@ -529,9 +559,8 @@ impl Views {
 
     /// The entries `acl` with whom each names called by name (issue 23),
     /// read in the runtime's name: shown to the owner of what they are of,
-    /// who may name a session or user they cannot read themselves. A group
-    /// is called by its name - the group of the participants of a session or
-    /// channel by the session's or channel's -, and says where it lies.
+    /// who may name a session or user they cannot read themselves. A group is called as
+    /// `group_name` calls it, and says where it lies.
     pub async fn access_snapshots(&self, acl: &[AclEntry]) -> Vec<AccessSnapshot> {
         let system = SecurityContext::system();
         let mut access = Vec::with_capacity(acl.len());
@@ -550,15 +579,22 @@ impl Views {
         access
     }
 
-    /// How `group` is called: a team by its name, the participants of a
-    /// session or a channel by the session's or channel's, the members of a
-    /// project by the project's, read in the runtime's name.
+    /// How `group` is called: a team by its name, the participants of a session or a channel by
+    /// the session's or channel's, the members of a project by the project's - of a session's own
+    /// by the session's, since every own is called alike (issue 467) -, read in the runtime's name.
     async fn group_name(&self, group: &Group) -> Option<String> {
         let system = SecurityContext::system();
+        let session_name = async |id| self.stores.sessions.get(&system, id).await.optional().ok().flatten().map(|s| s.name.to_string());
         match group.name.scope {
-            Scope::SessionScope { session_id } => self.stores.sessions.get(&system, session_id).await.optional().ok().flatten().map(|s| s.name.to_string()),
+            Scope::SessionScope { session_id } => session_name(session_id).await,
             Scope::ChannelScope { channel_id, .. } => self.stores.channels.get(&system, channel_id).await.optional().ok().flatten().map(|c| c.name.to_string()),
-            Scope::ProjectScope { project_id } => self.stores.projects.get(&system, project_id).await.optional().ok().flatten().map(|p| p.name.to_string()),
+            Scope::ProjectScope { project_id } => {
+                let project = self.stores.projects.get(&system, project_id).await.optional().ok().flatten()?;
+                match project.name.scope {
+                    Scope::SessionScope { session_id } => session_name(session_id).await,
+                    _ => Some(project.name.to_string()),
+                }
+            }
             _ => Some(group.name.to_string()),
         }
     }
@@ -637,6 +673,30 @@ impl Views {
                 deleted: removal,
                 can_restore: access_policy.may_restore(self.viewer.context(), Workspace::KIND, attributes).await,
                 can_purge: access_policy.may_purge(self.viewer.context(), Workspace::KIND, attributes).await,
+            });
+        }
+        Ok(deleted)
+    }
+
+    /// The shared projects deleted that the viewer may read as such (issue 467); a session's own
+    /// comes back with its session.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn deleted_projects(&self) -> ViewResult<Vec<DeletedSnapshot<ProjectId>>> {
+        let projects = self.stores.projects.list_deleted(self.viewer.context(), &Query::filtered(Filter::shared_projects())).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the deleted projects"))?;
+        let access_policy = &self.access_policy;
+        let mut deleted = Vec::with_capacity(projects.len());
+        for project in projects {
+            let Some(removal) = project.deleted.clone() else { continue };
+            let attributes = &project.security_attributes;
+            deleted.push(DeletedSnapshot {
+                id: project.id,
+                name: project.name.to_string(),
+                deleted: removal,
+                can_restore: access_policy.may_restore(self.viewer.context(), Project::KIND, attributes).await,
+                can_purge: access_policy.may_purge(self.viewer.context(), Project::KIND, attributes).await,
             });
         }
         Ok(deleted)

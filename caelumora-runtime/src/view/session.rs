@@ -415,6 +415,11 @@ impl SessionView {
             },
             None => None,
         };
+        // Absent where it is gone or the viewer may not read it, as the workspace.
+        let project = match self.views.project(self.session.project).await {
+            Ok(project) => Some(project.snapshot().await),
+            Err(_) => None,
+        };
         SessionSnapshot {
             id: self.session.id,
             name: self.session.name.to_string(),
@@ -428,6 +433,7 @@ impl SessionView {
             participants,
             channels,
             workspace,
+            project,
         }
     }
 }

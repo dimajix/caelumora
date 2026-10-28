@@ -16,6 +16,7 @@ use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::SessionId;
+use crate::store::query::{FieldValue, Filter};
 use crate::store::{EntityKind, NoEntity, Stored, Updatable};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
@@ -170,6 +171,15 @@ impl Stored for Project {
     }
 }
 
+/// The conditions a list of projects is asked by.
+impl Filter<ScopeField> {
+    /// The shared projects: those that lie where a shared one lies - the global scope or a
+    /// user's -, not a session's own (`Project::is_own`).
+    pub fn shared_projects() -> Self {
+        Filter::is_in(ScopeField::Scope, [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")])
+    }
+}
+
 /// What a change of the project says is made into its values here. Whether
 /// it may lie where it is lifted is the store's to say as it is stored
 /// (`Stored::validate`); a new access list is never announced: whoever takes
@@ -213,6 +223,20 @@ mod tests {
 
     fn shared(scope: Scope, owner: UserId) -> Project {
         Project::new(ScopedName::new("report", scope).unwrap(), owner)
+    }
+
+    /// The condition of the shared projects meets exactly those that are no session's own.
+    #[test]
+    fn the_shared_projects_are_those_no_session_owns() {
+        let owner = UserId::new();
+        let projects = [
+            Project::new(ScopedName::new("report", Scope::GlobalScope).unwrap(), owner),
+            Project::new(ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(), owner),
+            Project::own_of(SessionId::new(), owner),
+        ];
+        for project in projects {
+            assert_eq!(Filter::shared_projects().matches(&serde_json::to_value(&project).unwrap()), !project.is_own(), "{:?}", project.name.scope);
+        }
     }
 
     #[test]
