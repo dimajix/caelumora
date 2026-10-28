@@ -1,5 +1,5 @@
 // The attachments of a message not yet sent (issue 282), as `useAttachmentDraft` keeps them: each
-// with its name, size, a preview of an image, whether it is still uploading or why it was refused,
+// with its name, size, a preview of an image, whether it is still uploading or why it failed,
 // and a remove.
 
 import React from 'react';

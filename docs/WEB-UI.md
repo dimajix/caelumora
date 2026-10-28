@@ -368,11 +368,11 @@ it is fetched anew as it starts.
 *   **Attachments.** The paper clip beside the field, files dropped onto the chat and files pasted
     into the field attach them to the message being written. Each is uploaded at once, classified as
     the release picked as it is attached - a release picked later changes the text's label alone -,
-    and shown before sending with its name, size, a preview of an image and a remove; one refused
-    says why and has to be removed. A message of attachments alone is sent; while one still uploads,
-    nothing is. A command leaves what is attached for the next message, and what is attached while a
-    message is sent stays for the next one. What is attached and not sent is not kept: another
-    channel or a reload lets go of it, and the server lets its upload expire.
+    and shown before sending with its name, size, a preview of an image and a remove; one that
+    failed says why and has to be removed. A message of attachments alone is sent; while one still
+    uploads, nothing is. A command leaves what is attached for the next message, and what is
+    attached while a message is sent stays for the next one. What is attached and not sent is not
+    kept: another channel or a reload lets go of it, and the server lets its upload expire.
 *   **What a message carries** is shown at it: an image as a preview linked to its full size, any
     other file with name, type, size and a download, each through the message (see
     [REST-SERVER.md](REST-SERVER.md#endpoints)); one classified otherwise than its message says how.

@@ -8,7 +8,7 @@ import type {ChannelAttachments} from './api';
 import type {Classification} from './confidentiality';
 import type {ContentRef} from './types';
 
-/** A file attached to a message not yet sent: uploading, uploaded, or refused with why. */
+/** A file attached to a message not yet sent: uploading, uploaded, or failed with why. */
 export interface DraftAttachment {
   /** Its own within the draft, as long as it is in it. */
   key: string;
@@ -29,7 +29,7 @@ export interface AttachmentDraft {
   paste: (event: React.ClipboardEvent, classification?: Classification) => void;
   /** Removes those of `keys`. */
   remove: (...keys: string[]) => void;
-  /** The ids to send, once nothing is uploading any more; `null` while something still is, or was refused and is not removed. */
+  /** The ids to send, once nothing is uploading any more; `null` while something still is, or failed and is not removed. */
   ids: () => string[] | null;
 }
 

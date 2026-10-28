@@ -27,7 +27,7 @@ const SHOWN_AT_FIRST = 10;
 const cache = new Map<string, MessageContextResponse>();
 
 /** Why a context is not shown, if the server answered that it cannot be. */
-function refusal(error: unknown): string | null {
+function whyNotShown(error: unknown): string | null {
   if (!(error instanceof ApiRequestError)) return null;
   switch (error.code) {
     case 'context_forbidden':
@@ -207,7 +207,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         if (current) setContext(result);
       })
       .catch(error => {
-        const why = refusal(error);
+        const why = whyNotShown(error);
         if (why) {
           if (current) setNotice(why);
         } else {

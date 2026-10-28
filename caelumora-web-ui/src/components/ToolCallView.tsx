@@ -577,7 +577,7 @@ function useOfferedState(files: WorkspaceFiles | undefined, path: string | null,
         const sameTime = (entry?.modified ? Date.parse(entry.modified) : null) === (modified ? Date.parse(modified) : null);
         setState(!entry ? 'gone' : entry.size === size && sameTime ? 'current' : 'changed');
       })
-      // The directory gone is the file gone; no workspace to use here, or any other refusal, is the workspace not being this user's to use.
+      // The directory gone is the file gone; no workspace to use here, or any other error, is the workspace not being this user's to use.
       .catch(error => {
         if (!current) return;
         const missing = error instanceof ApiRequestError && error.status === 404 && error.code !== 'workspace_not_found';

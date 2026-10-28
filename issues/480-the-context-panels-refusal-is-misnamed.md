@@ -1,6 +1,6 @@
 # 480 — The context panel calls its own texts a refusal
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -31,3 +31,7 @@ and a change of either reads as a change of both.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of issue 473.
+- **2026-10-28** — Done by option A: the function is `whyNotShown`. From the review, the comments
+  that called any failure a refusal - of an attachment's upload (`attachmentDraft.ts`,
+  `AttachmentDraftView.tsx`, WEB-UI.md) and of a file's download (`ToolCallView.tsx`) - say
+  "failed" or "error" instead.
