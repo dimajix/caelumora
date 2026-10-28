@@ -128,7 +128,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [441](441-nobody-is-told-when-no-responder-was-chosen.md) | done | When the decision model of `decision_policy` does not choose - a timeout, an error, an answer naming no option - and nobody is asked, a person's message that mentions nobody stays unanswered without anyone telling them why. |
 | [458](458-deleted-while-it-runs.md) | open | Deleting a session or a channel marks it, deletes what lies in its scope and the groups of its participants while it still runs, and stops it only afterwards, so what its agents write into its scope meanwhile is left behind, and what it announces as it stops reaches its owner alone. |
 | [463](463-unavailable-channel-components-keep-the-session-closed.md) | done | A channel whose own components name a bundle that is gone or no longer its owner's to read fails to be built, and with it the session it belongs to, all its other channels included - though a third party must not keep someone's channel from starting. |
-| [467](467-projects-hold-what-outlasts-a-session.md) | open | An artifact lies in the scope of the session it was published in and goes with it, because nothing above a session holds what is meant to outlast one piece of work. |
+| [467](467-projects-hold-what-outlasts-a-session.md) | in progress | An artifact lies in the scope of the session it was published in and goes with it, because nothing above a session holds what is meant to outlast one piece of work. |
 
 ## Identity and access management
 
