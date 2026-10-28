@@ -14,6 +14,7 @@ import {ActionMenu} from './ActionMenu';
 import {ClassificationDialog} from './ClassificationDialog';
 import {FileBrowser} from './FileBrowser';
 import {scopeLabel} from '../scope';
+import {EditInPlace} from './EditInPlace';
 
 interface WorkspacePageProps {
   workspaceId: string;
@@ -24,7 +25,6 @@ interface WorkspacePageProps {
 export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDeleted}) => {
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null);
   const [editing, setEditing] = useState<'name' | 'description' | null>(null);
-  const [text, setText] = useState('');
   const [isReclassifying, setIsReclassifying] = useState(false);
   const [compartments, setCompartments] = useState<Compartment[]>([]);
   const files = useMemo(() => api.workspaceFiles(workspaceId), [workspaceId]);
@@ -42,30 +42,17 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
 
   if (!workspace) return null;
 
-  const changed = (updated: WorkspaceResponse) => setWorkspace(updated);
-
-  const edit = (field: 'name' | 'description') => {
-    setText(field === 'name' ? workspace.name : (workspace.description ?? ''));
-    setEditing(field);
+  const rename = async (name: string) => {
+    if (name) setWorkspace(await api.renameWorkspace(workspace.id, name));
   };
 
-  const save = async () => {
-    const field = editing;
-    setEditing(null);
-    try {
-      if (field === 'name' && text.trim() && text.trim() !== workspace.name) {
-        changed(await api.renameWorkspace(workspace.id, text.trim()));
-      } else if (field === 'description' && text.trim() !== (workspace.description ?? '')) {
-        changed(await api.describeWorkspace(workspace.id, text.trim() || null));
-      }
-    } catch (error) {
-      reportError(field === 'name' ? 'Failed to rename the workspace' : 'Failed to describe the workspace', error);
-    }
+  const describe = async (description: string) => {
+    setWorkspace(await api.describeWorkspace(workspace.id, description || null));
   };
 
   const share = async (access: AccessEntry[]) => {
     try {
-      changed(await api.setWorkspaceAccess(workspace.id, access));
+      setWorkspace(await api.setWorkspaceAccess(workspace.id, access));
     } catch (error) {
       reportError('Failed to share the workspace', error);
     }
@@ -80,28 +67,14 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
     }
   };
 
-  const field = (
-    <input
-      autoFocus
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => void save()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') void save();
-        if (e.key === 'Escape') setEditing(null);
-      }}
-      className="w-full rounded-md border border-blue-500 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
-    />
-  );
-
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-3xl mx-auto p-6 space-y-6">
         <div className="flex items-start gap-3">
           <HardDrive size={22} className="mt-1 shrink-0 text-gray-400" />
           <div className="flex-1 min-w-0 space-y-1">
-            {editing === 'name' ? field : <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{workspace.name}</h2>}
-            {editing === 'description' ? field : (
+            {editing === 'name' ? <EditInPlace initial={workspace.name} save={rename} action="Failed to rename the workspace" onDone={() => setEditing(null)} /> : <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{workspace.name}</h2>}
+            {editing === 'description' ? <EditInPlace initial={workspace.description ?? ''} save={describe} action="Failed to describe the workspace" onDone={() => setEditing(null)} /> : (
               <p className="text-sm text-gray-600 dark:text-gray-400">{workspace.description || <span className="italic">No description</span>}</p>
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
@@ -118,8 +91,8 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
               size={16}
               className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
               actions={[
-                {label: 'Rename', icon: Edit2, onSelect: () => edit('name')},
-                {label: 'Description', icon: FileText, onSelect: () => edit('description')},
+                {label: 'Rename', icon: Edit2, onSelect: () => setEditing('name')},
+                {label: 'Description', icon: FileText, onSelect: () => setEditing('description')},
                 {label: 'Classification', icon: Shield, onSelect: () => setIsReclassifying(true)},
                 {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete workspace?', onSelect: () => void remove()},
               ]}
@@ -146,7 +119,7 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
           levels={CONFIDENTIALITY_LEVELS}
           compartments={compartments}
           releaseWarning="Every file in it is released to a wider circle. Which channels may use it follows."
-          onSubmit={async (classification) => changed(await api.reclassifyWorkspace(workspace.id, classification))}
+          onSubmit={async (classification) => setWorkspace(await api.reclassifyWorkspace(workspace.id, classification))}
           onClose={() => setIsReclassifying(false)}
         />
       )}

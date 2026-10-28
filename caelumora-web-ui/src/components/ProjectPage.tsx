@@ -14,6 +14,7 @@ import type {Page} from '../page';
 import {AccessList} from './AccessList';
 import {ActionMenu} from './ActionMenu';
 import {AddUser} from './AddUser';
+import {EditInPlace} from './EditInPlace';
 
 interface ProjectPageProps {
   projectId: string;
@@ -30,7 +31,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({projectId, onDeleted, o
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactResponse[]>([]);
   const [editing, setEditing] = useState<'name' | 'description' | null>(null);
-  const [text, setText] = useState('');
   const [isLifting, setIsLifting] = useState(false);
   const [label, setLabel] = useState('');
 
@@ -68,23 +68,12 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({projectId, onDeleted, o
     void labelOf(updated).then(setLabel);
   };
 
-  const edit = (field: 'name' | 'description') => {
-    setText(field === 'name' ? project.name : (project.description ?? ''));
-    setEditing(field);
+  const rename = async (name: string) => {
+    if (name) changed(await api.renameProject(project.id, name));
   };
 
-  const save = async () => {
-    const field = editing;
-    setEditing(null);
-    try {
-      if (field === 'name' && text.trim() && text.trim() !== project.name) {
-        changed(await api.renameProject(project.id, text.trim()));
-      } else if (field === 'description' && text.trim() !== (project.description ?? '')) {
-        changed(await api.describeProject(project.id, text.trim() || null));
-      }
-    } catch (error) {
-      reportError(field === 'name' ? 'Failed to rename the project' : 'Failed to describe the project', error);
-    }
+  const describe = async (description: string) => {
+    changed(await api.describeProject(project.id, description || null));
   };
 
   const setMembers = async (userIds: string[]) => {
@@ -112,28 +101,14 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({projectId, onDeleted, o
     }
   };
 
-  const field = (
-    <input
-      autoFocus
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => void save()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') void save();
-        if (e.key === 'Escape') setEditing(null);
-      }}
-      className="w-full rounded-md border border-blue-500 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
-    />
-  );
-
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-3xl mx-auto p-6 space-y-6">
         <div className="flex items-start gap-3">
           <FolderKanban size={22} className="mt-1 shrink-0 text-gray-400" />
           <div className="flex-1 min-w-0 space-y-1">
-            {editing === 'name' ? field : <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{label}</h2>}
-            {editing === 'description' ? field : (
+            {editing === 'name' ? <EditInPlace initial={project.name} save={rename} action="Failed to rename the project" onDone={() => setEditing(null)} /> : <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{label}</h2>}
+            {editing === 'description' ? <EditInPlace initial={project.description ?? ''} save={describe} action="Failed to describe the project" onDone={() => setEditing(null)} /> : (
               <p className="text-sm text-gray-600 dark:text-gray-400">{project.description || <span className="italic">No description</span>}</p>
             )}
             {place && (
@@ -148,11 +123,11 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({projectId, onDeleted, o
               size={16}
               className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
               actions={own ? [
-                {label: 'Description', icon: FileText, onSelect: () => edit('description')},
+                {label: 'Description', icon: FileText, onSelect: () => setEditing('description')},
                 ...(keepable ? [{label: 'Keep', icon: FolderUp, onSelect: () => setIsLifting(true)}] : []),
               ] : [
-                {label: 'Rename', icon: Edit2, onSelect: () => edit('name')},
-                {label: 'Description', icon: FileText, onSelect: () => edit('description')},
+                {label: 'Rename', icon: Edit2, onSelect: () => setEditing('name')},
+                {label: 'Description', icon: FileText, onSelect: () => setEditing('description')},
                 {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete the project, with its sessions?', onSelect: () => void remove()},
               ]}
             />

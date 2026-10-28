@@ -116,6 +116,8 @@ place, since the message entered nothing.
 *   **Dialogs are dark** whatever the theme, while a page follows the system's (a media query, so
     a component cannot tell where it stands). What dialogs share is drawn for them: their fields
     (`LanguageField`, `ClassificationFields`, ...) and a refusal (`Refusal`).
+*   **Texts edited in place.** The name or description a page shows is edited where it stands
+    (`EditInPlace`): saved on Enter or on leaving the field, given up with Escape.
 *   **Menus.** What can be done with something in a list is in a menu behind three dots
     (`ActionMenu`). It lists only what may be done, and there is no menu where nothing may; it is
     reached with the keyboard too. An entry that cannot be undone asks once more in its place.

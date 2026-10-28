@@ -17,6 +17,7 @@ import {useProject} from '../project';
 import type {Page} from '../page';
 import {AccessList} from './AccessList';
 import {ActionMenu} from './ActionMenu';
+import {EditInPlace} from './EditInPlace';
 
 interface ArtifactPageProps {
   artifactId: string;
@@ -32,7 +33,6 @@ export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted
   const [artifact, setArtifact] = useState<ArtifactResponse | null>(null);
   const project = useProject(artifact?.project_id);
   const [isDescribing, setIsDescribing] = useState(false);
-  const [text, setText] = useState('');
 
   useEffect(() => {
     let current = true;
@@ -44,19 +44,8 @@ export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted
 
   if (!artifact) return null;
 
-  const describe = () => {
-    setText(artifact.description ?? '');
-    setIsDescribing(true);
-  };
-
-  const save = async () => {
-    setIsDescribing(false);
-    if (text.trim() === (artifact.description ?? '')) return;
-    try {
-      setArtifact(await api.describeArtifact(artifact.id, text.trim() || null));
-    } catch (error) {
-      reportError('Failed to describe the artifact', error);
-    }
+  const describe = async (description: string) => {
+    setArtifact(await api.describeArtifact(artifact.id, description || null));
   };
 
   const share = async (access: AccessEntry[]) => {
@@ -84,17 +73,7 @@ export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted
           <div className="flex-1 min-w-0 space-y-1">
             <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{artifact.name}</h2>
             {isDescribing ? (
-              <input
-                autoFocus
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onBlur={() => void save()}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void save();
-                  if (e.key === 'Escape') setIsDescribing(false);
-                }}
-                className="w-full rounded-md border border-blue-500 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
-              />
+              <EditInPlace initial={artifact.description ?? ''} save={describe} action="Failed to describe the artifact" onDone={() => setIsDescribing(false)} />
             ) : (
               <p className="text-sm text-gray-600 dark:text-gray-400">{artifact.description || <span className="italic">No description</span>}</p>
             )}
@@ -120,7 +99,7 @@ export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted
               size={16}
               className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
               actions={[
-                {label: 'Description', icon: FileText, onSelect: describe},
+                {label: 'Description', icon: FileText, onSelect: () => setIsDescribing(true)},
                 {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete artifact?', onSelect: () => void remove()},
               ]}
             />

@@ -57,3 +57,6 @@ banner (B for it alone).
 - **2026-10-28** — Opened at the maintainer's request from the review of issue 473.
 - **2026-10-28** — Step 1 done: `line-length.sh` checks the comments of the web UI's TypeScript,
   and the 147 lines longer than 100 characters are rewrapped.
+- **2026-10-28** — Step 2 done: the nine fields of six pages are `EditInPlace`, which trims the
+  text, stores nothing unchanged and reports a failure; each page says only whether an empty text
+  is stored, and how.

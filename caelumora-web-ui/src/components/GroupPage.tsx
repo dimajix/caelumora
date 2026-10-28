@@ -13,6 +13,7 @@ import {actorKey, userIdOf} from '../actor';
 import {ActionMenu} from './ActionMenu';
 import {scopeLabel} from '../scope';
 import {AddUser} from './AddUser';
+import {EditInPlace} from './EditInPlace';
 
 interface GroupPageProps {
   groupId: string;
@@ -23,7 +24,6 @@ interface GroupPageProps {
 export const GroupPage: React.FC<GroupPageProps> = ({groupId, onDeleted}) => {
   const [group, setGroup] = useState<GroupResponse | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
-  const [name, setName] = useState('');
 
   useEffect(() => {
     let current = true;
@@ -41,14 +41,8 @@ export const GroupPage: React.FC<GroupPageProps> = ({groupId, onDeleted}) => {
     return userId ? [userId] : [];
   });
 
-  const rename = async () => {
-    setIsRenaming(false);
-    if (!name.trim() || name.trim() === group.name) return;
-    try {
-      setGroup(await api.renameGroup(group.id, name.trim()));
-    } catch (error) {
-      reportError('Failed to rename the team', error);
-    }
+  const rename = async (name: string) => {
+    if (name) setGroup(await api.renameGroup(group.id, name));
   };
 
   const setMembers = async (userIds: string[]) => {
@@ -75,17 +69,7 @@ export const GroupPage: React.FC<GroupPageProps> = ({groupId, onDeleted}) => {
           <UsersRound size={22} className="mt-1 shrink-0 text-gray-400" />
           <div className="flex-1 min-w-0 space-y-1">
             {isRenaming ? (
-              <input
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onBlur={() => void rename()}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void rename();
-                  if (e.key === 'Escape') setIsRenaming(false);
-                }}
-                className="w-full rounded-md border border-blue-500 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
-              />
+              <EditInPlace initial={group.name} save={rename} action="Failed to rename the team" onDone={() => setIsRenaming(false)} />
             ) : (
               <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{group.name}</h2>
             )}
@@ -99,7 +83,7 @@ export const GroupPage: React.FC<GroupPageProps> = ({groupId, onDeleted}) => {
               size={16}
               className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
               actions={[
-                {label: 'Rename', icon: Edit2, onSelect: () => { setName(group.name); setIsRenaming(true); }},
+                {label: 'Rename', icon: Edit2, onSelect: () => setIsRenaming(true)},
                 {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete team?', onSelect: () => void remove()},
               ]}
             />

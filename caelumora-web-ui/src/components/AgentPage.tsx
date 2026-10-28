@@ -11,6 +11,7 @@ import {reportError} from '../errors';
 import {ActionMenu} from './ActionMenu';
 import {scopeLabel} from '../scope';
 import {userIdOf} from '../actor';
+import {EditInPlace} from './EditInPlace';
 
 interface AgentPageProps {
   agentId: string;
@@ -25,7 +26,6 @@ interface AgentPageProps {
 export const AgentPage: React.FC<AgentPageProps> = ({agentId, userId, onDeleted, onSelectChannel}) => {
   const [agent, setAgent] = useState<AgentResponse | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
-  const [name, setName] = useState('');
 
   useEffect(() => {
     let current = true;
@@ -37,16 +37,11 @@ export const AgentPage: React.FC<AgentPageProps> = ({agentId, userId, onDeleted,
 
   if (!agent) return null;
 
-  const rename = async () => {
-    setIsRenaming(false);
-    if (!name.trim() || name.trim() === agent.name) return;
-    try {
-      // Answered without its channels, which a rename does not change.
-      const renamed = await api.renameAgent(agent.id, name.trim());
-      setAgent({...renamed, channels: agent.channels});
-    } catch (error) {
-      reportError('Failed to rename the agent', error);
-    }
+  const rename = async (name: string) => {
+    if (!name) return;
+    // Answered without its channels, which a rename does not change.
+    const renamed = await api.renameAgent(agent.id, name);
+    setAgent({...renamed, channels: agent.channels});
   };
 
   const remove = async () => {
@@ -60,7 +55,7 @@ export const AgentPage: React.FC<AgentPageProps> = ({agentId, userId, onDeleted,
 
   const owner = userIdOf(agent.owner) === userId ? 'you' : 'someone else';
   const actions = [
-    ...(agent.can_change ? [{label: 'Rename', icon: Edit2, onSelect: () => { setName(agent.name); setIsRenaming(true); }}] : []),
+    ...(agent.can_change ? [{label: 'Rename', icon: Edit2, onSelect: () => setIsRenaming(true)}] : []),
     ...(agent.can_delete ? [{label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete agent?', onSelect: () => void remove()}] : []),
   ];
   const channels = agent.channels ?? [];
@@ -72,17 +67,7 @@ export const AgentPage: React.FC<AgentPageProps> = ({agentId, userId, onDeleted,
           <Bot size={22} className="mt-1 shrink-0 text-gray-400" />
           <div className="flex-1 min-w-0 space-y-1">
             {isRenaming ? (
-              <input
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onBlur={() => void rename()}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void rename();
-                  if (e.key === 'Escape') setIsRenaming(false);
-                }}
-                className="w-full rounded-md border border-blue-500 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
-              />
+              <EditInPlace initial={agent.name} save={rename} action="Failed to rename the agent" onDone={() => setIsRenaming(false)} />
             ) : (
               <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{agent.name}</h2>
             )}
