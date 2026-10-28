@@ -508,6 +508,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [455](455-components-configuration-kept-as-entities.md) | done | The preconfigured components are copied once from the seed into a store of their own, read only to resolve a `ref` and written by nothing else, and theirs is the one kind whose id is not a UUID - so no store can key every kind by one. |
 | [461](461-scope-members-repeat-their-loops.md) | open | The managers of agents, workspaces, skills and artifacts, and `Unowned` for the kinds without one, each implement `ScopeMember` with the same three loops - list what lies in the scope, delete, restore or purge each, count or skip what was refused -, differing only in what they announce and what they remove besides. |
 | [468](468-attachment-manager-takes-a-view.md) | open | `AttachmentManager::create` and `copy` take a `ChannelView`, a layer of access, where an interface should speak of coordinates and properties, and so make every caller reach the channel through the views first. |
+| [470](470-personalities-and-bundles-in-a-project-scope.md) | open | A personality or a component bundle can be stored in a project's scope, though nothing is used from there yet, while session templates, agents, workspaces, skills and artifacts are each refused or placed by their own validation. |
 
 ## Integrations
 
