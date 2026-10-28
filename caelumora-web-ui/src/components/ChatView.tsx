@@ -1834,7 +1834,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 key={request.id}
                 request={request}
                 asked={askedOf(request).some(id => sameActor(id, me))}
-                askedNames={askedOf(request).map(id => participants.find(m => sameActor(m.id, id))?.name ?? actorKey(id))}
+                askedNames={askedOf(request).flatMap(id => participants.find(m => sameActor(m.id, id))?.name ?? [])}
                 answered={answeredQuestions.includes(request.id)}
                 onAnswer={responses => answerQuestions(request, responses)}
               />

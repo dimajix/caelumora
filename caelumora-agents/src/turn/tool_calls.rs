@@ -1,8 +1,7 @@
-//! The tool calls of a turn's current step (issue 83): registering them with
-//! the approvals and the answers they wait for, settling those a decision or
-//! an answer settles, recording the results of those that ran, and - once
-//! every call has its result - the tool message that gives them to the
-//! model.
+//! The tool calls of a turn's current step (issue 83): registering them with the approvals and the
+//! answers they wait for, settling those a decision, an answer or the leave of whom they asked
+//! settles, recording the results of those that ran, and - once every call has its result - the
+//! tool message that gives them to the model.
 //!
 //! The calls are part of the turn's working state (`TurnState::tool_calls`),
 //! stored with it so that a step resumes after a restart. [`ToolCalls`] is a
@@ -19,7 +18,7 @@ use caelumora_model::question::{Answers, QuestionError, QuestionId, Response};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus};
 use std::mem;
 use chrono::Utc;
-use crate::tool::{abandoned_result, declined_result, denied_result, skipped_result, timed_out_result, TurnEnd};
+use crate::tool::{abandoned_result, declined_result, denied_result, skipped_result, timed_out_result, unanswered_result, TurnEnd};
 
 /// The tool calls of the current step of a turn, of the agent the turn's
 /// context is sent by, called `agent_name` now; what the model is told of
@@ -129,6 +128,31 @@ impl<'t> ToolCalls<'t> {
         result.approval = call.approval.clone();
         call.status = ToolCallStatus::Finished(result);
         Ok(closed)
+    }
+
+    /// Takes `participant`, who left the channel, off the questions of the
+    /// step (issue 482): a call whose questions nobody asked is left to
+    /// answer is answered as not executed, without running it - unanswered,
+    /// not declined -, also one that still waits for its approval. Returns
+    /// the events that withdraw what those calls waited for: the questions
+    /// closed, the approval request withdrawn.
+    pub(crate) fn left(&mut self, participant: ActorId) -> Vec<ActorEvent> {
+        // A fixed text of the runtime's: as the turn (issue 168).
+        let label = self.turn.work.label();
+        let mut events = Vec::new();
+        for call in &mut self.turn.tool_calls {
+            let questions = match &mut call.status {
+                ToolCallStatus::WaitingUser { questions, .. } | ToolCallStatus::WaitingApproval { questions: Some(questions), .. } => questions,
+                _ => continue,
+            };
+            if !questions.is_asked(participant) || questions.remove_asked(participant) {
+                continue;
+            }
+            events.extend(call.withdrawal());
+            let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, unanswered_result(&self.prompts), label.clone());
+            finish(call, result);
+        }
+        events
     }
 
     /// The call that waits for the answers to `id`, if `by` was asked them.
@@ -363,5 +387,39 @@ mod tests {
         let [(index, run, Some(_))] = to_run.as_slice() else { panic!("it runs with them: {to_run:?}") };
         view(&mut turn).record(*index, ToolCallResult::of(run, ToolResultStatus::Ok, "ran".to_string(), Classification::CHANNEL_DEFAULT));
         assert!(turn.tool_calls.iter().all(|c| c.result().is_some_and(|r| r.answers.is_none())), "neither the answers nor who declined");
+    }
+
+    #[test]
+    fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_their_calls_never_run() {
+        let alice = ActorId::User(UserId::new());
+        let bob = ActorId::User(UserId::new());
+        let both = Questions { ask: vec![Addressee::Actor(alice), Addressee::Actor(bob)], ..questions_of(alice) };
+        let mut turn = a_turn();
+        let requests = view(&mut turn).register(vec![
+            ToolCallState::asking(call("both"), both),
+            ToolCallState::asking(call("alice"), questions_of(alice)),
+            ToolCallState::pending(call("approving"), String::new(), false, None, Some(questions_of(alice))),
+            ToolCallState::asking(call("bob"), questions_of(bob)),
+        ]);
+        let [ActorEvent::ApprovalRequested(approval), ActorEvent::QuestionRequested(_), ActorEvent::QuestionRequested(alone), ActorEvent::QuestionRequested(_)] = requests.as_slice() else { panic!("{requests:?}") };
+        let status = |turn: &TurnState, name: &str| turn.tool_calls.iter().find(|c| c.tool_call.function_name == name).map(|c| c.status.clone()).expect("a call of the step");
+
+        // Alice leaves: what she alone was asked goes unanswered, an approval
+        // still awaited is withdrawn.
+        let settled = view(&mut turn).left(alice);
+        let [ActorEvent::QuestionClosed { id, .. }, ActorEvent::ApprovalRequestWithdrawn { id: withdrawn }] = settled.as_slice() else { panic!("{settled:?}") };
+        assert_eq!((*id, *withdrawn), (alone.id, approval.id));
+        let ToolCallStatus::Finished(unanswered) = status(&turn, "alice") else { panic!("answered without running") };
+        assert_eq!(unanswered.status, ToolResultStatus::NotExecuted);
+        assert!(unanswered.answers.is_none(), "nobody answered or declined");
+        assert!(matches!(status(&turn, "approving"), ToolCallStatus::Finished(ToolCallResult { status: ToolResultStatus::NotExecuted, .. })), "never asked: nobody is left to answer");
+        let ToolCallStatus::WaitingUser { questions, .. } = status(&turn, "both") else { panic!("still open") };
+        assert_eq!(questions.asked(), [bob], "to bob alone");
+        assert!(matches!(status(&turn, "bob"), ToolCallStatus::WaitingUser { .. }), "not hers");
+        assert!(view(&mut turn).left(alice).is_empty(), "nothing is left of hers");
+
+        // Bob leaves too: nobody is left to answer.
+        assert_eq!(view(&mut turn).left(bob).len(), 2);
+        assert!(view(&mut turn).collect(false).is_some(), "every call has its result");
     }
 }

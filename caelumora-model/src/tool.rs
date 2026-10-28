@@ -2,6 +2,7 @@
 //! parameters, who sees its calls and how they are shown, the `ToolSet` of a provider, a `ToolCall`
 //! and how it ended (`ToolCallResult`), and where a call stands while its turn runs
 //! (`ToolCallState`).
+use crate::actor::ActorEvent;
 use crate::approval::{ApprovalDecision, ApprovalId, ToolMatcher};
 use crate::content::ContentRef;
 use crate::question::{Answers, QuestionId, Questions};
@@ -541,6 +542,17 @@ impl ToolCallState {
     pub fn question_id(&self) -> Option<QuestionId> {
         match &self.status {
             ToolCallStatus::WaitingUser { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// The event that withdraws the request it waits for, if it waits for a
+    /// person: its approval's, or its questions, closed for those they were
+    /// shown to.
+    pub fn withdrawal(&self) -> Option<ActorEvent> {
+        match &self.status {
+            ToolCallStatus::WaitingApproval { id, .. } => Some(ActorEvent::ApprovalRequestWithdrawn { id: *id }),
+            ToolCallStatus::WaitingUser { id, questions } => Some(ActorEvent::QuestionClosed { id: *id, shown_to: questions.shown_to() }),
             _ => None,
         }
     }

@@ -4,6 +4,7 @@ use super::*;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::question::{QuestionError, QuestionRequest};
 use caelumora_model::tool::{ToolCallResult, ToolResultStatus};
+use caelumora_model::transcript::TranscriptEntry;
 use crate::tool::ask_user_tool::ASK_USER_TOOL_KIND;
 use std::sync::Mutex;
 use tokio::time;
@@ -158,5 +159,32 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
     assert_eq!(unknown.status, ToolResultStatus::InvalidArguments);
     assert!(unknown.content.contains("@carol"), "the model is told whom it named: {}", unknown.content);
     assert!(answer.content.contains("Caelumora") && answer.content.contains("alice"), "{}", answer.content);
+    running.abort();
+}
+
+#[tokio::test]
+async fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_the_turn_goes_on() {
+    let (call, done, components) = a_call_asking(false);
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+    let asked = questions_requested(&mut events).await;
+    settled(&helper, ActorState::WaitingForUser).await;
+    let alice = ActorId::User(alice_of(&context));
+
+    channel.remove_participant(&context, alice).await.expect("she may leave her channel");
+    time::timeout(Duration::from_secs(5), async {
+        while !matches!(events.recv().await.expect("the channel is running").event, ActorEvent::QuestionClosed { id, .. } if id == asked.id) {}
+    }).await.expect("the questions are closed");
+    let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+    assert_eq!(said, ["Done."], "the turn goes on without the answers");
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call is answered");
+    assert_eq!(result.status, ToolResultStatus::NotExecuted);
+    assert!(result.answers.is_none(), "unanswered, not declined by anyone");
+    // Noted where it may stand: after the results, never between the call and them (issue 389).
+    let entries: Vec<_> = stored.transcript.entries().map(|node| node.entry.clone()).collect();
+    let results = entries.iter().position(|e| matches!(e, TranscriptEntry::Message(m) if !m.tool_results.is_empty())).expect("the results");
+    let left = entries.iter().position(|e| matches!(e, TranscriptEntry::ParticipantLeft { participant, .. } if *participant == alice)).expect("noted");
+    assert!(left > results, "{entries:?}");
     running.abort();
 }

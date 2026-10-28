@@ -17,9 +17,23 @@ use crate::confidentiality::Classification;
 use crate::content::ContentRef;
 use crate::context::KnowledgeRef;
 use crate::message::Message;
+use crate::transcript::TranscriptEntry;
 use crate::work::Work;
 use crate::prompt_catalogue::CORE;
 use serde::{Deserialize, Serialize};
+
+/// What came to a turn while the calls of its step ran, put aside to be
+/// written after the step's tool message (`TurnState::after_step`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AfterStep {
+    /// A message it was given to read, with the knowledge it is, if it is
+    /// knowledge (`AgentChannelState::given`, issue 389).
+    Given { message: Message, knowledge: Option<KnowledgeRef> },
+    /// Who joined or left, as the transcript notes it
+    /// (`AgentChannelState::note_announced`, issues 408, 482).
+    Announced { entry: TranscriptEntry },
+}
 
 /// Why a turn was given up.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,11 +126,11 @@ pub struct TurnState {
     pub private_notes: Vec<NoteChange>,
     /// The tool calls of the current step, with their approvals and results.
     pub tool_calls: Vec<ToolCallState>,
-    /// What the turn was given to read while the calls of its step ran
-    /// (issue 389), each with the knowledge it is, if it is knowledge:
+    /// What came to the turn while the calls of its step ran, in order:
     /// written after the step's tool message (`AgentChannelState::said`),
-    /// since nothing may stand between calls and their results.
-    pub given_after_step: Vec<(Message, Option<KnowledgeRef>)>,
+    /// since nothing may stand between calls and their results (issue 389).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_step: Vec<AfterStep>,
     /// What the turn said that is not a step of it, as it said it
     /// (`AgentChannelState::said`, issue 417): its answer, which its end
     /// carries - kept with the turn, since a compaction in the middle of it

@@ -169,17 +169,15 @@ impl AgentBody {
         taken
     }
 
-    /// Takes in `event` if it is something said, changed or noted - the
-    /// same between turns (`take_in`) and during one
-    /// (`take_in_during_turn`): what others said is perceived as it comes
-    /// (`perceive`), and so is a message modified or taken back since
-    /// (issue 234); a reclassification is recorded as it is (issue 239),
-    /// in the transcript where it holds the message on its active path, and
-    /// so is who joined or left (issue 408). A modification or revocation
-    /// the transcript did not take is handed over (`AgentBody::hand_over`,
-    /// issue 236), as the agent hears it. Returns any other event, for the
-    /// caller to handle.
-    async fn take_in_said(&self, state: &mut AgentChannelState, event: Envelope) -> Option<Envelope> {
+    /// Takes in `event` if it is something said, changed or noted - the same between turns
+    /// (`take_in`), during one (`take_in_during_turn`), and for who left while a turn waits for a
+    /// person (`AgentActor::handle_waiting_for_user`, issue 482): what others said is perceived as
+    /// it comes (`perceive`), and so is a message modified or taken back since (issue 234); a
+    /// reclassification is recorded as it is (issue 239), in the transcript where it holds the
+    /// message on its active path, and so is who joined or left (issue 408). A modification or
+    /// revocation the transcript did not take is handed over (`AgentBody::hand_over`, issue 236),
+    /// as the agent hears it. Returns any other event, for the caller to handle.
+    pub(super) async fn take_in_said(&self, state: &mut AgentChannelState, event: Envelope) -> Option<Envelope> {
         match event.event {
             ActorEvent::CompleteMessageGenerated(message) => {
                 trace!("Heard {:?}", message.content);

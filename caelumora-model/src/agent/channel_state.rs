@@ -22,7 +22,7 @@ use crate::store::Journaled;
 use crate::tool::{ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
-use crate::turn::{CommandRequest, TurnState};
+use crate::turn::{AfterStep, CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -239,11 +239,24 @@ impl AgentChannelState {
     /// same for both kinds of agent: into its transcript, where its model is
     /// told of it (`TranscriptEntry::of_announced`). A turn under way has
     /// seen it, as what is heard (`perceive`). Any other entry is not noted.
+    ///
+    /// While the calls of a step run, it is put aside and written after the
+    /// step's tool message, as what the turn is given (`given`, issue 482).
     pub fn note_announced(&mut self, entry: HistoryEntry) {
         let Some(told) = TranscriptEntry::of_announced(&entry) else {
             warn!("An entry of the history that is not announced was to be noted");
             return;
         };
+        if let Some(turn) = self.turn.as_mut().filter(|turn| !turn.tool_calls.is_empty()) {
+            turn.after_step.push(AfterStep::Announced { entry: told });
+            return;
+        }
+        self.note(told);
+    }
+
+    /// Records `told`, who joined or left, into the transcript, and moves
+    /// the turn under way, if any, on past it.
+    fn note(&mut self, told: TranscriptEntry) {
         self.transcript.record(told);
         if let Some(turn) = self.turn.as_mut() {
             turn.work.context.transcript = self.transcript.digest();
@@ -255,8 +268,10 @@ impl AgentChannelState {
     /// into the transcript, and into the turn's answer unless it is a step
     /// (`TurnState::answer`), and the context moved on past it. Kept as it
     /// is said, so that nothing of it waits for the turn's end. Once it ends
-    /// a step - its calls have their results -, what the turn was given
-    /// while they ran follows it (`given`, issue 389). Returns the message
+    /// a step - its calls have their results -, what came to the turn while
+    /// they ran follows it (`TurnState::after_step`): what it was given
+    /// (`given`, issue 389) and who joined or left (`note_announced`, issue
+    /// 482). Returns the message
     /// as the agent sends it: with what it was produced from - the turn's
     /// context as it stood, its frame kept once by digest (issue 426) - for
     /// its channel's history to hold (issue 417); its attachments numbered
@@ -282,8 +297,11 @@ impl AgentChannelState {
         }
         turn.work.context.transcript = self.transcript.digest();
         if turn.tool_calls.is_empty() {
-            for (given, knowledge) in mem::take(&mut turn.given_after_step) {
-                self.given(given, knowledge);
+            for put_aside in mem::take(&mut turn.after_step) {
+                match put_aside {
+                    AfterStep::Given { message, knowledge } => self.given(message, knowledge),
+                    AfterStep::Announced { entry } => self.note(entry),
+                }
             }
         }
         let frame = self.keep_frame(&context.frame);
@@ -303,12 +321,12 @@ impl AgentChannelState {
     /// given.
     ///
     /// While the calls of a step run, it is put aside and written after the
-    /// step's tool message (`TurnState::given_after_step`, issue 389): a
+    /// step's tool message (`TurnState::after_step`, issue 389): a
     /// tool gives what it gives at any time, and nothing stands between the
     /// calls and their results, which the models refuse.
     pub fn given(&mut self, mut message: Message, knowledge: Option<KnowledgeRef>) {
         if let Some(turn) = self.turn.as_mut().filter(|turn| !turn.tool_calls.is_empty()) {
-            turn.given_after_step.push((message, knowledge));
+            turn.after_step.push(AfterStep::Given { message, knowledge });
             return;
         }
         let source = knowledge.as_ref().map(|knowledge| knowledge.source);
@@ -355,7 +373,7 @@ impl AgentChannelState {
         let turn = self.turn.as_mut()?;
         // A compaction comes before a call of the model, never while the
         // calls of a step run: nothing is put aside to be given (issue 389).
-        debug_assert!(turn.given_after_step.is_empty());
+        debug_assert!(turn.after_step.is_empty());
         let from = self.transcript.digest()?;
         let given = replacement.iter().map(|(message, knowledge)| (message.clone(), knowledge.as_ref().map(|knowledge| knowledge.source))).collect();
         let moved = self.transcript.compact(given, keep_from)?;
@@ -731,7 +749,7 @@ mod tests {
     use crate::note::NoteId;
     use crate::prompt_catalogue::core;
     use crate::security::SecurityContext;
-    use crate::tool::{Tool, ToolParameters, ToolVisibility};
+    use crate::tool::{Tool, ToolCall, ToolCallState, ToolParameters, ToolVisibility};
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};
 
@@ -929,7 +947,6 @@ mod tests {
 
     #[test]
     fn what_is_given_while_the_calls_of_a_step_run_follows_their_results() {
-        use crate::tool::{ToolCall, ToolCallState};
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
         let call = ToolCall { id: Some("1".to_string()), function_name: "load_skill".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
@@ -951,10 +968,31 @@ mod tests {
         assert_eq!(order[2..], [results.id, skill.id, summary.id], "after the results, in the order given");
         let sources: Vec<_> = state.transcript.entries().skip(3).map(|n| matches!(&n.entry, TranscriptEntry::Given { source: Some(_), .. })).collect();
         assert_eq!(sources, [true, false], "each as it was given, knowledge or not");
-        assert!(state.turn.as_ref().unwrap().given_after_step.is_empty());
+        assert!(state.turn.as_ref().unwrap().after_step.is_empty());
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
         let told: Vec<_> = state.take_told().into_iter().filter_map(|event| match event { ActorEvent::MessageGiven { message } => Some(message.id), _ => None }).collect();
         assert_eq!(told, [skill.id, summary.id], "and its channel is to be told so");
+    }
+
+    #[test]
+    fn who_left_while_the_calls_of_a_step_run_is_noted_after_their_results() {
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let call = ToolCall { id: Some("1".to_string()), function_name: "ask_user".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+        state.said(Message { role: MessageRole::Assistant, tool_calls: vec![call.clone()], ..said("", Classification::PUBLIC) });
+        state.turn.as_mut().unwrap().tool_calls = vec![ToolCallState::approved(call.clone())];
+        let alice = ActorId::User(UserId::new());
+        let left = HistoryEntry::ParticipantLeft { participant: alice, name: "alice".to_string(), by: alice, by_name: "alice".to_string(), until: Position::new(1), at: Utc::now() };
+
+        state.note_announced(left);
+        assert!(!state.transcript.entries().any(|n| matches!(n.entry, TranscriptEntry::ParticipantLeft { .. })), "nothing between the calls and their results");
+
+        let result = ToolCallResult::of(&call, ToolResultStatus::NotExecuted, "unanswered".to_string(), Classification::PUBLIC);
+        state.turn.as_mut().unwrap().tool_calls.clear();
+        state.said(Message { role: MessageRole::Tool, tool_results: vec![result], ..said("", Classification::PUBLIC) });
+        assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::ParticipantLeft { participant, .. }) if *participant == alice), "after the results");
+        assert!(state.turn.as_ref().unwrap().after_step.is_empty());
+        assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
     }
 
     #[test]
