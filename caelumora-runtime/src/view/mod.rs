@@ -859,8 +859,7 @@ mod tests {
     /// read by its own participants.
     fn like(template: &Channel, name: &str) -> Channel {
         let id = ChannelId::new();
-        let security_attributes = SecurityAttributes::owned_by(template.security_attributes.owner_id).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read);
-        Channel { id, name: Name::new(name).unwrap(), security_attributes, ..template.clone() }
+        Channel { id, name: Name::new(name).unwrap(), security_attributes: Channel::attributes_of(id, template.security_attributes.owner_id), ..template.clone() }
     }
 
     async fn an_agent_of(store: &Persistence, owner: ActorId) -> Agent {
@@ -894,7 +893,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
         let remote = an_agent_of_kind(&store, ActorId::User(alice.id), PersonalityKind::External).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         session.participants.push(Participant::Agent(remote.id));
         let channel = main_channel(&session);
@@ -941,7 +940,7 @@ mod tests {
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
 
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let main = main_channel(&session);
@@ -1003,7 +1002,7 @@ mod tests {
         let (_, manager) = owned_runtime(Default::default());
         let alice = user("Alice Example");
         let gone = UserId::new();
-        let mut session = make_session("s", ActorId::User(alice.id));
+        let mut session = make_session("s", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         let mut channel = main_channel(&session);
         channel.participants.push(Participant::User(gone));
@@ -1021,7 +1020,7 @@ mod tests {
     async fn what_a_place_is_for_is_shown_its_briefing_only_where_asked_for() {
         let (_, manager) = owned_runtime(Default::default());
         let alice = user("alice");
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         (session.summary, session.briefing) = (Some(Summary::new("Release 2.0").unwrap()), Some(Briefing::new("Dates are in UTC.").unwrap()));
         let mut channel = main_channel(&session);
@@ -1049,7 +1048,7 @@ mod tests {
         let mut personality = store.entity_stores().unwrap().personalities.get(&system, remote.personality_id).await.unwrap();
         personality.introduction = Some(Introduction::new("Answers questions about the weather.").unwrap());
         store.entity_stores().unwrap().personalities.update(&system, &personality).await.unwrap();
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(remote.id));
         let channel = main_channel(&session);
@@ -1085,7 +1084,7 @@ mod tests {
 
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob, carol, dave) = (user("alice"), user("bob"), user("carol"), user("dave"));
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob, &carol, &dave]).await;
         let mut channel = main_channel(&session);
         channel.participants.retain(|participant| participant.actor_id() != ActorId::User(carol.id));
@@ -1156,7 +1155,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
@@ -1239,7 +1238,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
         let helper = an_agent_of(&store, ActorId::User(bob.id)).await;
-        let mut session = make_session("shared", ActorId::User(alice.id));
+        let mut session = make_session("shared", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
@@ -1285,7 +1284,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
@@ -1323,7 +1322,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
@@ -1356,7 +1355,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
@@ -1392,7 +1391,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
@@ -1449,7 +1448,7 @@ mod tests {
         let (store, manager) = owned_runtime(ConfidentialityRules::new(compartments));
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
@@ -1538,7 +1537,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         // The agent took part, said something, and was removed. Beside it, a
         // channel deleted later.
@@ -1585,7 +1584,7 @@ mod tests {
         let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let (store, manager) = owned_runtime(ConfidentialityRules::default().with_roles(roles));
         let alice = user("alice");
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         let main = Channel { classification: Classification::general(Confidentiality::Internal), ..main_channel(&session) };
         let internal = Channel { id: ChannelId::new(), name: Name::new("side").unwrap(), ..main.clone() };
@@ -1604,7 +1603,7 @@ mod tests {
     async fn what_was_deleted_is_shown_to_its_owner_with_what_they_may_do_about_it() {
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let channel = main_channel(&session);
         let side = like(&channel, "side");
@@ -1635,7 +1634,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         // Both took part and were removed by alice, neither said anything.
@@ -1677,7 +1676,7 @@ mod tests {
         let bob_id = ActorId::User(bob.id);
         // Her context carries her roles, as her controller gives it (issue 304).
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default()).with_roles(alice.roles.clone(), None);
-        let mut session = make_session("hers", alice_id);
+        let mut session = make_session("hers", alice.id);
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
@@ -1721,11 +1720,11 @@ mod tests {
         let (alice_id, carol_id) = (ActorId::User(alice.id), ActorId::User(carol.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
 
-        let mut hers = make_session("hers", alice_id);
+        let mut hers = make_session("hers", alice.id);
         hers.participants = record_users(&manager, &[&alice]).await;
         hers.privacy = PrivacyConfig::SameOwner;
         let hers = create(&manager, &alice_ctx, hers).await.unwrap();
-        let theirs = make_session("theirs", carol_id);
+        let theirs = make_session("theirs", carol.id);
         persist(&manager, &SecurityContext::new(carol_id, Default::default(), Default::default()), theirs.clone(), &[main_channel(&theirs)]).await;
 
         let channel = Arc::clone(&hers.channels()[0]);
@@ -1754,7 +1753,7 @@ mod tests {
         let alice = user("alice");
         let alice_id = ActorId::User(alice.id);
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
-        let mut session = make_session("hers", alice_id);
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
@@ -1811,7 +1810,7 @@ mod tests {
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let mut session = make_session("thinking", ActorId::User(UserId::new()));
+        let mut session = make_session("thinking", UserId::new());
         session.participants = participants;
         session.participants.push(SessionParticipant::Agent(thinker.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();

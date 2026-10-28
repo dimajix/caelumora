@@ -476,6 +476,16 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     it names. `session::testing::test_runtime()` and `owned_runtime(rules)` are the two runtimes
     most tests share; the program's own test (`caelumora-app`) builds the runtime as the program
     does.
+*   **Sessions in tests:** a test that needs a session makes it as the runtime does - running,
+    with `SessionManager::create` (`session::testing::create`, `World::session_of`); stored and
+    not started, with `session::testing::persist` -: the session with the groups of its
+    participants, a project of its own and its channels (issues 471, 486).
+    `session::testing::make_session` gives its document, and the test writes beside it only what
+    it differs in. Apart from the tests of the stores, whose subject the document is, a test that
+    stores a session's document alone - a controller's, a step of `create_from_template` - starts
+    from `session::testing::bare_session` and says why where it makes or stores it. Outside
+    `caelumora-runtime`, a session is started by its manager alone: `SessionLoop::new` is the
+    crate's.
 *   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the

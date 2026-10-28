@@ -211,7 +211,7 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::project::ProjectId;
+    use crate::session::testing::bare_session;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Persistence;
     use caelumora_model::confidentiality::Classification;
@@ -219,23 +219,12 @@ mod tests {
     use chrono::{Duration, Utc};
     use std::sync::Mutex;
 
+    /// A session's document alone, owned by nobody: what the controller
+    /// changes and stores. Its tests are about storing a change, not about a
+    /// session the runtime makes, with the groups of its participants and a
+    /// project of its own (issue 486).
     fn session() -> Session {
-        Session {
-            summary: None, briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            id: SessionId::new(),
-            name: Name::new("session").unwrap(),
-            participants: Vec::new(),
-            channels: Vec::new(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(),
-            deleted: None,
-        }
+        bare_session(SessionId::new())
     }
 
     #[derive(Debug, Default)]

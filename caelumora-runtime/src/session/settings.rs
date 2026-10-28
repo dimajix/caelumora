@@ -262,7 +262,7 @@ mod tests {
         let runtime = Arc::clone(manager.runtime());
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &as_user(alice.id), session).await.unwrap();

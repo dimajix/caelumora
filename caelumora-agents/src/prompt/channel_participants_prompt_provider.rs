@@ -146,15 +146,14 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::project::ProjectId;
     use crate::turn::Turn;
     use crate::testing::{self, TestAgents};
     use caelumora_runtime::view::ViewError;
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::SessionLoop;
-    use caelumora_runtime::session::testing::actor_runtime_in;
+    use caelumora_runtime::session::SessionManager;
+    use caelumora_runtime::session::testing::{actor_runtime_in, make_session};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::approval::{ApprovalStrategy, Approver};
@@ -162,10 +161,9 @@ mod tests {
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::session::{ChannelId, Session, SessionId};
+    use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::{User, UserId, UserProfile};
-    use chrono::Utc;
     use caelumora_model::work::Work;
     use std::slice;
 
@@ -259,32 +257,18 @@ mod tests {
         let plain = personality(&store, None).await;
         let jonathan = agent(&store, "Jonathan", &quiz_master).await;
         let sassy = agent(&store, "Sassy", &plain).await;
-        let gone = Agent::new(ScopedName::new("Gone", Scope::GlobalScope).unwrap(), plain.id, ActorId::None);
+        let gone = agent(&store, "Gone", &plain).await;
         let approver = InternalActor::Approver(Approver::new(ApprovalStrategy::Any));
 
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
-        let now = Utc::now();
-        let session = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            id: SessionId::new(), name: Name::new("s").unwrap(), participants: participants.clone(), channels: vec![ChannelId::new()],
-            commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
-            deleted: None,
-        };
-        let channel = Channel {
-            summary: None, briefing: None,
-            approval_rules: Vec::new(),
-            uses_workspace: true,
-            id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
-            classification: Classification::CHANNEL_DEFAULT, language: None, participants, internal_actors: vec![approver], security_attributes: Default::default(),
-            deleted: None,
-            former: Vec::new(),
-        };
-        store.entity_stores().unwrap().sessions.create(&system, &session).await.unwrap();
-        store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
-        let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
+        let session = make_session("s", kaya.id);
+        let mut channel = Channel::build(session.id, ActorId::User(kaya.id), Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
+        (channel.participants, channel.internal_actors) = (participants.clone(), vec![approver]);
+        let session = Session { participants, channels: vec![channel.id], ..session };
+        let as_owner = SecurityContext::new(ActorId::User(kaya.id), Default::default(), Default::default());
+        let session_loop = SessionManager::new(Arc::clone(&runtime)).create(&as_owner, session.clone(), vec![channel.clone()]).await.unwrap();
+        // One who no longer exists: deleted once it founded the channel with the others.
+        runtime.agent_manager().delete(&system, gone.id).await.unwrap();
 
         let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();

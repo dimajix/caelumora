@@ -815,7 +815,7 @@ mod tests {
         let me = api.clone().oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
         let me: Value = serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
         let alice = UserId(me["id"].as_str().unwrap().parse().unwrap());
-        let mut session = make_session("talk", ActorId::User(alice));
+        let mut session = make_session("talk", alice);
         session.participants = vec![Participant::User(alice)];
         let (session_id, channel_id) = (session.id, session.channels[0]);
         create(&state.session_manager, &SecurityContext::system(), session).await.unwrap();

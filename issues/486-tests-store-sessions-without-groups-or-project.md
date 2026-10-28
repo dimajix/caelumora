@@ -1,6 +1,6 @@
 # 486 — Tests of other modules store sessions without their groups or own project
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -56,3 +56,45 @@ Recommendation: A and B.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the findings of issue 471.
+- **2026-10-28** — Decided with the maintainer: A and B, in three steps. The agents' memory tests
+  (`agent_memory.rs`) belong to the first kind, not the second: they run the sessions they store,
+  change a session's privacy by storing its document again and making a new loop of it, and work
+  in channels `session::testing::running_channel` runs without storing them. Step 1: the workspace
+  fixture and the prompt parts' tests; step 2: the memory tests, `running_channel` going with them;
+  step 3: the second kind says why, and `SessionLoop::new` becomes `pub(crate)`, since no other
+  crate starts a session by hand any more.
+- **2026-10-28** — Step 1: `workspace::testing::session_with_workspace` and the tests of the
+  channel's briefing, language and participants make their sessions with `SessionManager::create`,
+  owned by a stored user (`Session::attributes_of`), the channel's participants its founders. The
+  workspace's owner was never stored, which founding refuses as a participant that no longer
+  exists; the agent "Gone" of the participants' test, never stored either, now founds the channel
+  and is deleted after (`AgentManager::delete`), as a participant that no longer exists is.
+- **2026-10-28** — Step 2, added by the maintainer from the review of step 1, a restructuring
+  without a change of behaviour: the session the tests write out whole - in the four places of
+  step 1 and in `World::session_of` - is `session::testing::make_session` with what they differ in.
+  `make_session` takes its owner as a `UserId` - every caller passed a user - and its attributes
+  are the model's (`Session::attributes_of`). The memory tests are now step 3, what was step 3 is
+  step 4. With it, from the review: the attributes of a new channel are `Channel::attributes_of`,
+  which `Channel::build` and the tests' `main_channel` and the views' `like` use instead of three
+  copies.
+- **2026-10-28** — Step 3: the memory tests' `Sessions` makes each session with
+  `SessionManager::create`, owned by a stored user who takes part in it, on the runtime of
+  `session::testing::owned_runtime`, whose ownership policy learns who belongs to a group from its
+  store; the channels a turn works in are created by the session's owner
+  (`SessionLoop::create_channel`), with everyone in the session. A session's privacy is changed by
+  its owner (`SessionLoop::update_privacy`); a session that is gone is deleted
+  (`SessionManager::delete`) instead of purged by hand, and is restored and opened again instead of
+  stored anew. In the test of the policy deciding what is recalled, the stranger the policy refuses
+  now takes part in the session: one who may not read the channel reads nothing of it, whatever
+  the policy says. `session::testing::running_channel`, which ran a channel that was never stored,
+  had no other user and is gone. The component of the tests asks an ownership policy of its own,
+  as it did in two of them already: the runtime's, which it is given in a channel, cannot be had
+  from the session manager outside the runtime's crate.
+- **2026-10-28** — Step 4, done: `SessionController`'s tests, the template tests' `resolve` and the
+  external agents' `external_channel` say where they store a session's document alone why they need
+  no more of it; `SessionController`'s tests start from `session::testing::bare_session`, as the
+  others do, instead of a copy of it. `SessionLoop::new` is `pub(crate)`: no other crate starts a
+  session but by its manager. With it, from the finding of step 3: the memory tests build their
+  component on the access policy of the runtime their sessions run in, as the runtime does, which
+  `session::testing` gives them as `SessionManager::runtime_access_policy`. CODING-GUIDELINES.md
+  says how a test makes a session ("Sessions in tests").

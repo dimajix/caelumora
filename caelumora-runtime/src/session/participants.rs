@@ -170,7 +170,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let runtime = Arc::clone(manager.runtime());
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &carol]).await;
         record_users(&manager, &[&bob]).await;
         let session = create(&manager, &as_user(&alice), session).await.unwrap();
@@ -205,7 +205,7 @@ mod tests {
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         let (bob_id, carol_id) = (ActorId::User(bob.id), ActorId::User(carol.id));
         let invited = |attributes: SecurityAttributes| attributes.granting(Subject::Actor(bob_id), Grant::Join);
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         record_users(&manager, &[&bob, &carol]).await;
         session.security_attributes = invited(session.security_attributes);

@@ -484,7 +484,7 @@ mod tests {
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
-        let mut session = make_session("hers", alice_id);
+        let mut session = make_session("hers", alice.id);
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
@@ -700,7 +700,7 @@ mod tests {
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         let (alice_id, bob_id, carol_id) = (ActorId::User(alice.id), ActorId::User(bob.id), ActorId::User(carol.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
-        let mut session = make_session("hers", alice_id);
+        let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob, &carol]).await;
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read).granting(Subject::Actor(carol_id), Grant::Read);
         let running = create(&manager, &as_user(alice_id), session).await.unwrap();

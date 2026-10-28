@@ -785,7 +785,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
-        let session = make_session("waiting", ActorId::User(UserId::new()));
+        let session = make_session("waiting", UserId::new());
         let channel_id = session.channels[0];
         let channels = [main_channel(&session)];
         let session = persist(&manager, &ctx, session, &channels).await;
@@ -813,7 +813,7 @@ mod tests {
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let (alice_ctx, bob_ctx) = (as_user(alice.id), as_user(bob.id));
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
@@ -835,7 +835,7 @@ mod tests {
         let (_, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
-        let mut session = make_session("hers", ActorId::User(alice.id));
+        let mut session = make_session("hers", alice.id);
         session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &as_user(alice.id), session).await.unwrap();
@@ -857,7 +857,7 @@ mod tests {
         let stores = runtime.entity_stores().clone();
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
-        let session = create(&manager, &ctx, make_session("restored", ActorId::User(UserId::new()))).await.unwrap();
+        let session = create(&manager, &ctx, make_session("restored", UserId::new())).await.unwrap();
         let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
         let scope = Scope::ChannelScope { session_id: session.id(), channel_id: side };
         let bundle = ComponentBundle::new(ScopedName::new("tools", scope).unwrap(), Default::default(), Default::default());

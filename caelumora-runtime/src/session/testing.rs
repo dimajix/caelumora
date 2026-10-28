@@ -25,15 +25,13 @@ use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use caelumora_model::actor::ActorId;
-use caelumora_model::group::GroupId;
 use caelumora_model::session::Participant;
 use caelumora_model::user::{User, UserId};
-use caelumora_model::security::{Grant, Subject};
 use anyhow::Result;
 use caelumora_model::channel::{Channel, ChannelState, moderation_components};
 use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::actor::{ActorEvent, Rejection};
@@ -141,10 +139,11 @@ pub fn bare_channel(session_id: SessionId) -> Channel {
     }
 }
 
-/// A session of `owner` named `name`, as a template builds one
-/// (`Template::build`): read by its members, the group of its participants
-/// (issue 23), whom the test sets. It lists one channel, `main_channel`.
-pub fn make_session(name: &str, owner: ActorId) -> Session {
+/// A session of `owner` named `name`, as a template builds one (`SessionTemplate::build`): read by
+/// its members (`Session::attributes_of`), the group of its participants (issue 23), whom the test
+/// sets. It lists one channel, `main_channel`. Its project is a stand-in: the runtime makes it one
+/// of its own when it stores it (issue 467).
+pub fn make_session(name: &str, owner: UserId) -> Session {
     let id = SessionId::new();
     let now = Utc::now();
     Session {
@@ -160,14 +159,11 @@ pub fn make_session(name: &str, owner: ActorId) -> Session {
         channels: vec![ChannelId::new()],
         created_at: now,
         updated_at: now,
-        security_attributes: SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_session(id)), Grant::Read),
+        security_attributes: Session::attributes_of(id, owner, &[]),
         deleted: None,
     }
 }
 
-/// The channel `session` lists, as a document of its own (issue 70) and as
-/// `Channel::build` makes one: "main", belonging to whom the session belongs
-/// to, read by its participants - the session's participants.
 /// The state of `channel` - a channel a test stores as it is, its
 /// participants written into its document - with their joins recorded in its
 /// history, in its owner's name, as if they had founded it (issue 420): so
@@ -184,6 +180,9 @@ pub fn founded(channel: &Channel) -> ChannelState {
     state
 }
 
+/// The channel `session` lists, as a document of its own (issue 70) and as
+/// `Channel::build` makes one: "main", belonging to whom the session belongs
+/// to, read by its participants - the session's participants.
 pub fn main_channel(session: &Session) -> Channel {
     let id = session.channels[0];
     Channel {
@@ -198,22 +197,10 @@ pub fn main_channel(session: &Session) -> Channel {
         language: None,
         participants: session.participants.clone(),
         internal_actors: Vec::new(),
-        security_attributes: SecurityAttributes::owned_by(session.security_attributes.owner_id).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read),
+        security_attributes: Channel::attributes_of(id, session.security_attributes.owner_id),
         deleted: None,
         former: Vec::new(),
     }
-}
-
-/// The channel `id` of the running `session`, classified as
-/// `classification`: the one it runs, or else one it is made to run as its
-/// main channel is, with that id and classification - for tests whose
-/// agents work in channels of their own.
-pub async fn running_channel(session: &Arc<SessionLoop>, id: ChannelId, classification: Classification) -> Arc<ChannelLoop> {
-    if let Some(running) = session.channel(id) {
-        return running;
-    }
-    let channel = Channel { id, classification, ..main_channel(&session.session()) };
-    session.add_channel_loop(&channel).await.unwrap()
 }
 
 /// Creates and starts `session` with its main channel.
@@ -234,6 +221,18 @@ pub async fn persist(manager: &SessionManager, ctx: &SecurityContext, session: S
     session
 }
 
+/// What tests of other crates read of a session manager past what its users may (issue 486):
+/// behind the feature `test-support` alone, under a name of its own - the manager's API is not
+/// widened by it.
+impl SessionManager {
+    /// The access policy of the runtime it starts its sessions in
+    /// (`RuntimeManager::access_policy`): what a test builds a component with, as the runtime gives
+    /// a component its policy.
+    pub fn runtime_access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        self.runtime_manager.access_policy()
+    }
+}
+
 /// Drain every event currently buffered on the receiver.
 pub fn drain(rx: &mut EventSubscription) -> Vec<GlobalEvent> {
     let mut out = Vec::new();
@@ -248,7 +247,7 @@ pub fn drain(rx: &mut EventSubscription) -> Vec<GlobalEvent> {
 pub async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<SessionLoop>, SecurityContext, ActorId) {
     let (owner, other) = (user("owner"), user("other"));
     let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
-    let mut session = make_session("with-users", owner_id);
+    let mut session = make_session("with-users", owner.id);
     session.participants = record_users(manager, &[&owner, &other]).await;
     let ctx = SecurityContext::new(owner_id, session.id, Default::default());
     let session_loop = create(manager, &ctx, session).await.expect("the session starts");

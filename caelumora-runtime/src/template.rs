@@ -248,6 +248,9 @@ mod tests {
         let agents = AgentManager::new(&store.entity_stores().unwrap(), store.state_store(), events, access_policy);
         let (mut participants, named) = resolve_participants(&store.entity_stores().unwrap(), context, template, session_id, owner).await?;
         let (system, sessions) = (SecurityContext::system(), store.entity_stores().unwrap().sessions);
+        // Of what `create_from_template` stores before it makes the agents - the session with its
+        // groups, its own project and its channels (`SessionManager::persist`) - only the
+        // document: making the agents reads no more of it (issue 486).
         if sessions.get(&system, session_id).await.is_err() {
             let session = Session { security_attributes: SecurityAttributes::owned_by(ActorId::User(owner)), ..bare_session(session_id) };
             sessions.create(&system, &session).await.unwrap();
