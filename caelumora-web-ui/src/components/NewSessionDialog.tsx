@@ -16,7 +16,7 @@ import {reportError, reportUnlessRefused} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {storageLabel} from '../workspace';
-import {scopeLabel} from '../scope';
+import {kindLabel, scopeLabel} from '../scope';
 import {optionLabel} from '../project';
 import {ClassificationFields} from './ClassificationFields';
 import {ShareSelect, type Share} from './ShareSelect';
@@ -36,11 +36,13 @@ interface NewSessionDialogProps {
   workspaces: WorkspaceResponse[];
   /** The shared projects the user reads, one of which it may lie in. */
   projects: ProjectResponse[];
+  /** The user making it: whether what is offered is theirs. */
+  userId: string;
   onCreated: (session: SessionResponse) => void;
   onClose: () => void;
 }
 
-export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, projects, onCreated, onClose}) => {
+export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, projects, userId, onCreated, onClose}) => {
   const [templates, setTemplates] = useState<SessionTemplate[] | null>(null);
   const [lastTemplateId] = useState<string | null>(() => loadLastTemplate());
   const [templateId, setTemplateId] = useState<string | null>(lastTemplateId);
@@ -217,7 +219,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
                 className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
               >
                 <option value="">Its own</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{optionLabel(p)}</option>)}
+                {projects.map(p => <option key={p.id} value={p.id}>{optionLabel(p, userId)}</option>)}
               </select>
               <span className="block text-xs text-gray-500">
                 {projectId ? 'What it publishes lies in the project and outlives the session.' : 'What it publishes goes with the session, unless you keep its project.'}
@@ -233,10 +235,10 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
               className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
             >
               {templateWorkspace && (
-                <option value={AS_TEMPLATE}>As the template says: {templateWorkspace.name} ({scopeLabel(templateWorkspace)})</option>
+                <option value={AS_TEMPLATE}>As the template says: {templateWorkspace.name} ({kindLabel(templateWorkspace.scope)})</option>
               )}
               <option value={NONE}>None</option>
-              {offered.map(w => <option key={w.id} value={w.id}>{w.name} ({scopeLabel(w)})</option>)}
+              {offered.map(w => <option key={w.id} value={w.id}>{w.name} ({scopeLabel(w, userId)})</option>)}
               <option value={NEW}>New, for this session alone</option>
             </select>
             <span className="block text-xs text-gray-500">

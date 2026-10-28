@@ -15,6 +15,8 @@ interface SessionProjectDialogProps {
   session: SessionSnapshot;
   /** The shared projects the user reads. */
   projects: ProjectResponse[];
+  /** The user choosing: whether what is offered is theirs. */
+  userId: string;
   /** Puts the session into the project `projectId`, or into its own with `null`. */
   onSubmit: (projectId: string | null) => Promise<void>;
   /** Opens the page of its project. */
@@ -22,7 +24,7 @@ interface SessionProjectDialogProps {
   onClose: () => void;
 }
 
-export const SessionProjectDialog: React.FC<SessionProjectDialogProps> = ({session, projects, onSubmit, onSelectPage, onClose}) => {
+export const SessionProjectDialog: React.FC<SessionProjectDialogProps> = ({session, projects, userId, onSubmit, onSelectPage, onClose}) => {
   const current = session.project;
   const offered = projects.filter(p => p.id !== current?.id);
   const [chosen, setChosen] = useState(offered[0]?.id ?? '');
@@ -88,7 +90,7 @@ export const SessionProjectDialog: React.FC<SessionProjectDialogProps> = ({sessi
                 onChange={(e) => setChosen(e.target.value)}
                 className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
               >
-                {offered.map(p => <option key={p.id} value={p.id}>{optionLabel(p)}</option>)}
+                {offered.map(p => <option key={p.id} value={p.id}>{optionLabel(p, userId)}</option>)}
               </select>
             </label>
           )}

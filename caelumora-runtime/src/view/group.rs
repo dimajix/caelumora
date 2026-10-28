@@ -57,7 +57,7 @@ impl GroupView {
         GroupSnapshot {
             id: self.group.id,
             name: self.group.name.name.to_string(),
-            scope: self.group.name.scope.clone(),
+            scope: self.views.scope_snapshot(&self.group.name.scope).await,
             owner: self.group.security_attributes.owner_id,
             members,
             can_change: self.may_change().await,

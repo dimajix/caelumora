@@ -4,6 +4,7 @@
 import {useEffect, useState} from 'react';
 import type {ProjectResponse} from './types';
 import {api} from './api';
+import {scopeLabel} from './scope';
 
 /** What `project` is called, its session named `sessionName` where it is a session's own. */
 export function projectLabel(project: ProjectResponse, sessionName: string | null): string {
@@ -18,16 +19,19 @@ export async function labelOf(project: ProjectResponse): Promise<string> {
 }
 
 /**
- * Where `project` lies, where that is worth saying: `global`. One of a user's scope is not called
- * "yours": the API names no owner, and a project one works on may be another's.
+ * Where `project` lies, as the user `userId` reads it, where that is worth saying: not for a
+ * session's own, which its label names.
  */
-export function placeOf(project: ProjectResponse): string | null {
-  return project.scope === 'global' ? 'global' : null;
+export function placeOf(project: ProjectResponse, userId: string): string | null {
+  return project.scope === 'session' ? null : scopeLabel(project, userId);
 }
 
-/** `project` as an option of a list: its name, and where it lies where that is worth saying. */
-export function optionLabel(project: ProjectResponse): string {
-  const place = placeOf(project);
+/**
+ * `project` as an option of a list for the user `userId`: its name, and where it lies where that
+ * is worth saying.
+ */
+export function optionLabel(project: ProjectResponse, userId: string): string {
+  const place = placeOf(project, userId);
   return place ? `${project.name} (${place})` : project.name;
 }
 

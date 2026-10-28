@@ -19,6 +19,8 @@ import {Refusal} from './Refusal';
 
 interface ProjectPageProps {
   projectId: string;
+  /** The user looking at it: whether it is theirs. */
+  userId: string;
   onDeleted: (projectId: string) => void;
   /** Opens an artifact of it. */
   onSelectPage: (page: Page) => void;
@@ -27,7 +29,7 @@ interface ProjectPageProps {
 }
 
 /** The sidebar learns of a change from the global stream. */
-export const ProjectPage: React.FC<ProjectPageProps> = ({projectId, onDeleted, onSelectPage, onSelectChannel}) => {
+export const ProjectPage: React.FC<ProjectPageProps> = ({projectId, userId, onDeleted, onSelectPage, onSelectChannel}) => {
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactResponse[]>([]);
@@ -61,7 +63,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({projectId, onDeleted, o
   // A session's own is kept while the session publishes into it: lifted then, the session lies in
   // it.
   const keepable = own && sessions.some(s => s.id === project.session_id);
-  const place = placeOf(project);
+  const place = placeOf(project, userId);
   const memberIds = project.members.map(m => m.id);
 
   const changed = (updated: ProjectResponse) => {

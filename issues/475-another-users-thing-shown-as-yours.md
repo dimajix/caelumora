@@ -1,6 +1,6 @@
 # 475 — The web UI calls another user's workspace, team or project "yours"
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** User interaction
@@ -50,3 +50,10 @@ again.
   (`Views::name_of`), SECURITY.md says that whoever reads something of another's scope learns
   their name, and the web UI says "yours" or whose it is - also in the lists, and on a project's
   page again -, its six response types sharing one interface for the place as the Rust ones do.
+- **2026-10-28** — Step 2: the snapshots carry where something lies as a `ScopeSnapshot` - its
+  scope and, for a user's, that user's name, read by `Views::scope_snapshot` -, and `ScopeResponse`
+  answers a user's scope with `user_id` and `user_name`. The web UI's six response types share one
+  `ScopeResponse` interface; the pages, lists and dialogs that say where something lies are given
+  the viewer's id (as `AgentPage` was), and `scopeLabel` says "yours", "of <name>" or "another
+  user's"; a template's workspace, whose `user` scope is that of whoever uses it, is labelled by its
+  kind alone (`kindLabel`). A project's page shows where it lies again.

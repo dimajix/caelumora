@@ -128,15 +128,15 @@ function Layout({ user, onLogout }: LayoutProps) {
       
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {page?.kind === 'workspace' ? (
-          <WorkspacePage key={page.id} workspaceId={page.id} onDeleted={(id) => handlePageGone('workspace', id)} />
+          <WorkspacePage key={page.id} workspaceId={page.id} userId={user.id} onDeleted={(id) => handlePageGone('workspace', id)} />
         ) : page?.kind === 'skill' ? (
-          <SkillPage key={page.id} skillId={page.id} onDeleted={(id) => handlePageGone('skill', id)} />
+          <SkillPage key={page.id} skillId={page.id} userId={user.id} onDeleted={(id) => handlePageGone('skill', id)} />
         ) : page?.kind === 'artifact' ? (
           <ArtifactPage key={page.id} artifactId={page.id} onDeleted={(id) => handlePageGone('artifact', id)} onSelectChannel={handleSelectChannel} onSelectPage={handleSelectPage} />
         ) : page?.kind === 'group' ? (
-          <GroupPage key={page.id} groupId={page.id} onDeleted={(id) => handlePageGone('group', id)} />
+          <GroupPage key={page.id} groupId={page.id} userId={user.id} onDeleted={(id) => handlePageGone('group', id)} />
         ) : page?.kind === 'project' ? (
-          <ProjectPage key={page.id} projectId={page.id} onDeleted={(id) => handlePageGone('project', id)} onSelectPage={handleSelectPage} onSelectChannel={handleSelectChannel} />
+          <ProjectPage key={page.id} projectId={page.id} userId={user.id} onDeleted={(id) => handlePageGone('project', id)} onSelectPage={handleSelectPage} onSelectChannel={handleSelectChannel} />
         ) : page?.kind === 'agent' ? (
           <AgentPage key={page.id} agentId={page.id} userId={user.id} onDeleted={(id) => handlePageGone('agent', id)} onSelectChannel={handleSelectChannel} />
         ) : selectedSessionId && selectedChannelId ? (

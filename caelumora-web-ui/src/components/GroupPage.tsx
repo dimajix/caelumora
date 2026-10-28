@@ -17,11 +17,13 @@ import {EditInPlace} from './EditInPlace';
 
 interface GroupPageProps {
   groupId: string;
+  /** The user looking at it: whether it is theirs. */
+  userId: string;
   onDeleted: (groupId: string) => void;
 }
 
 /** The sidebar learns of a change from the global stream. */
-export const GroupPage: React.FC<GroupPageProps> = ({groupId, onDeleted}) => {
+export const GroupPage: React.FC<GroupPageProps> = ({groupId, userId, onDeleted}) => {
   const [group, setGroup] = useState<GroupResponse | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
 
@@ -74,7 +76,7 @@ export const GroupPage: React.FC<GroupPageProps> = ({groupId, onDeleted}) => {
               <h2 className="text-xl font-semibold truncate text-gray-900 dark:text-gray-100">{group.name}</h2>
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-              <span>Name space: {scopeLabel(group)}</span>
+              <span>Name space: {scopeLabel(group, userId)}</span>
             </div>
           </div>
           {group.can_change && (

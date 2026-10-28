@@ -395,6 +395,27 @@ pub(crate) mod tests {
         assert_eq!((status, missing["code"].clone()), (StatusCode::NOT_FOUND, json!("project_not_found")));
     }
 
+    /// Issue 475: what lies in a user's scope names that user, whose it is, to whoever reads it -
+    /// a member reads another's project by its owner's name; a global one names nobody.
+    #[tokio::test]
+    async fn what_lies_in_a_user_s_scope_names_whose_it_is() {
+        let api = api_with(&[]);
+        let alice = login(&api, "alice").await;
+        let bob = login(&api, "bob").await;
+        let (_, alice_id) = send(&api, &alice, "GET", "/auth/me", Value::Null).await;
+        let (_, bob_id) = send(&api, &bob, "GET", "/auth/me", Value::Null).await;
+        assert!(alice_id["id"].is_string() && bob_id["id"].is_string(), "{alice_id} {bob_id}");
+        let (_, made) = send(&api, &alice, "POST", "/projects", json!({ "name": "report" })).await;
+        let id = made["id"].as_str().unwrap().to_string();
+        let (status, _) = send(&api, &alice, "PUT", &format!("/projects/{id}/members"), json!([bob_id["id"]])).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, read) = send(&api, &bob, "GET", &format!("/projects/{id}"), Value::Null).await;
+        assert_eq!((status, read["scope"].clone(), read["user_id"].clone(), read["user_name"].clone()), (StatusCode::OK, json!("user"), alice_id["id"].clone(), json!("alice")), "{read}");
+        let (_, global) = send(&api, &alice, "POST", "/projects", json!({ "name": "handbook", "scope": "global" })).await;
+        assert_eq!((global["scope"].clone(), global.get("user_id"), global.get("user_name")), (json!("global"), None, None), "{global}");
+    }
+
     /// Issue 467: a session asked for in a shared project is made in its own and put into that
     /// one; one that cannot be put there is not made.
     #[tokio::test]

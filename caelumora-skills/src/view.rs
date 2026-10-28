@@ -178,7 +178,7 @@ impl SkillView {
         SkillSnapshot {
             id: self.skill.id,
             name: self.name().to_string(),
-            scope: self.skill.name.scope.clone(),
+            scope: self.views.scope_snapshot(&self.skill.name.scope).await,
             description: self.skill.description.clone(),
             classification: self.skill.classification.clone(),
             owner: self.skill.security_attributes.owner_id,

@@ -555,6 +555,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <PageList
           list={workspaces}
+          userId={user.id}
           title="Workspaces"
           icon={HardDrive}
           page={page}
@@ -569,6 +570,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <PageList
           list={projects}
+          userId={user.id}
           title="Projects"
           icon={FolderKanban}
           page={page}
@@ -583,6 +585,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <PageList
           list={skills}
+          userId={user.id}
           title="Skills"
           icon={BookOpen}
           page={page}
@@ -597,6 +600,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <PageList
           list={artifacts}
+          userId={user.id}
           title="Artifacts"
           icon={Package}
           page={page}
@@ -609,6 +613,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <PageList
           list={groups}
+          userId={user.id}
           title="Teams"
           icon={UsersRound}
           page={page}
@@ -623,6 +628,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <PageList
           list={agents}
+          userId={user.id}
           title="Agents"
           icon={Bot}
           page={page}
@@ -706,6 +712,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {isCreatingSession && (
         <NewSessionDialog
+          userId={user.id}
           workspaces={workspaces.items}
           projects={projects.items}
           onCreated={(session) => void handleSessionCreated(session.id)}
@@ -770,6 +777,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {workspaceSession && (
         <SessionWorkspaceDialog
+          userId={user.id}
           session={workspaceSession}
           workspaces={workspaces.items}
           onSubmit={async (workspaceId, share) => {
@@ -782,6 +790,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {projectSession && (
         <SessionProjectDialog
+          userId={user.id}
           session={projectSession}
           projects={projects.items}
           onSubmit={async (projectId) => {

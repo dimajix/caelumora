@@ -16,11 +16,13 @@ interface SessionWorkspaceDialogProps {
   session: SessionSnapshot;
   /** The user's own workspaces. */
   workspaces: WorkspaceResponse[];
+  /** The user choosing: whether what is offered is theirs. */
+  userId: string;
   onSubmit: (workspaceId: string | null, share: Share) => Promise<void>;
   onClose: () => void;
 }
 
-export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({session, workspaces, onSubmit, onClose}) => {
+export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({session, workspaces, userId, onSubmit, onClose}) => {
   // Only one's own is attached; one made for another session is used there alone.
   const offered = workspaces.filter(w => w.can_change && (w.scope !== 'session' || w.session_id === session.id));
   const [chosen, setChosen] = useState(session.workspace?.id ?? offered[0]?.id ?? '');
@@ -69,7 +71,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
           <div>
             <span className="text-xs text-gray-400">Attached: </span>
             {session.workspace
-              ? <span>{session.workspace.name} <span className="text-xs text-gray-500">({scopeLabel(session.workspace)})</span></span>
+              ? <span>{session.workspace.name} <span className="text-xs text-gray-500">({scopeLabel(session.workspace, userId)})</span></span>
               : <span className="italic text-gray-500">none of yours</span>}
           </div>
 
@@ -81,7 +83,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
                 onChange={(e) => setChosen(e.target.value)}
                 className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
               >
-                {offered.map(w => <option key={w.id} value={w.id}>{w.name} ({scopeLabel(w)})</option>)}
+                {offered.map(w => <option key={w.id} value={w.id}>{w.name} ({scopeLabel(w, userId)})</option>)}
               </select>
             </label>
           )}

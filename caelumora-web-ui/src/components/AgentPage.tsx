@@ -73,7 +73,7 @@ export const AgentPage: React.FC<AgentPageProps> = ({agentId, userId, onDeleted,
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
               <span>Personality: {agent.personality ?? <span className="italic">gone</span>}</span>
-              <span>Name space: {scopeLabel(agent)}</span>
+              <span>Name space: {scopeLabel(agent, userId)}</span>
               <span>Owner: {owner}</span>
             </div>
           </div>

@@ -70,12 +70,13 @@ mod tests {
     use super::*;
     use caelumora_model::scope::Scope;
     use caelumora_model::session::SessionId;
+    use caelumora_model::snapshot::ScopeSnapshot;
 
     #[test]
     fn a_skill_is_answered_with_its_scope_and_its_body_only_alone() {
         let session_id = SessionId::new();
         let snapshot = SkillSnapshot {
-            id: SkillId::new(), name: "deploy".to_string(), scope: Scope::SessionScope { session_id },
+            id: SkillId::new(), name: "deploy".to_string(), scope: ScopeSnapshot { scope: Scope::SessionScope { session_id }, user_name: None },
             description: Description::new("How we deploy").unwrap(), classification: Classification::CHANNEL_DEFAULT,
             owner: ActorId::System, can_change: false,
         };
