@@ -49,9 +49,8 @@ To be reviewed, action by action (`ActionType` in `caelumora-model/src/security.
   should also require the reader to be cleared for the source, not only the flow rule.
 - **Whose roles** count when an agent acts: its owner's, its own, both (intersection), or the
   initiator's - the rule of issue 12, applied to roles.
-- **When roles are re-checked**: only at the door, or also when they change
-  - removing a participant whose clearance is gone, as reclassifying a channel refuses rather than
-    removes today.
+- **When roles are re-checked**: only at the door, or also when they change - removing a participant
+  whose clearance is gone, as reclassifying a channel refuses rather than removes today.
 - **Consistency**: `may_see_channel` asks `JoinChannel` in the name of the context's initiator;
   `roles_of` returns nothing for an approver or the system. Whether every caller asks with the roles
   of the right subject.

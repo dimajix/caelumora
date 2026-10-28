@@ -44,8 +44,8 @@ notes of all channels, its usage as a whole.
 - **What it has across channels** - its memory, its private notes everywhere, its usage - is a view
   of its own, close to the memory tiers ([19](19-memory-tiers.md)). Private notes and memory are its
   owner's to inspect (MEMORY.md); the views have the edges, a page does not.
-- **Who may do what** is the owner's alone today. Sharing an agent - letting others use or change it
-  - is [23](23-acls-in-security-attributes.md) and [142](142-roles.md); an administrator who sees
+- **Who may do what** is the owner's alone today. Sharing an agent - letting others use or change
+  it - is [23](23-acls-in-security-attributes.md) and [142](142-roles.md); an administrator who sees
   everyone's agents and their trash is [125](125-invisible-admin.md).
 - **Where in the web UI:** a page or panel of its own, beside the sessions, which personalities and
   templates can join once they are managed too.

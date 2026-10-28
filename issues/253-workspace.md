@@ -95,18 +95,18 @@ its plan is kept in one place so that the two are read together. In short:
   `ChannelUpdateEvent::UsesWorkspaceChanged`, `ChannelLoop::update_uses_workspace`. The section
   `workspaces` of `AppConfig` (`max_file_bytes`, `storage` with the provider `local`). In the
   runtime: `terminal` - `TerminalProvider`, `Terminal`, `WorkspacePath`, `TerminalError` and the
-  `local` provider, which follows a link only inside the workspace and writes through a part file
-  - and the `WorkspaceManager`, held by the `RuntimeManager` (`RuntimeManager::new` takes the
+  `local` provider, which follows a link only inside the workspace and writes through a part file -
+  and the `WorkspaceManager`, held by the `RuntimeManager` (`RuntimeManager::new` takes the
   section): create with its place, rename, describe, reclassify, delete, restore, purge with its
   place; `owned` and `usable_in`, the two ways of using one. `SessionLoop::set_workspace`. The
   views: `Views::workspaces`, `workspace`, `deleted_workspaces`, `ChannelView::workspace`,
   `WorkspaceView` with `terminal()`, which asks again of the session and the channel as they are
-  then - a first version asked of the documents as they were when reached, which the security
-  suite caught. The security suite: owner alone, attaching, use in a channel where both flow and
-  the switch is on, not by who is not in the channel. Documented in CONFIGURATION.md, CHANNELS.md,
+  then - a first version asked of the documents as they were when reached, which the security suite
+  caught. The security suite: owner alone, attaching, use in a channel where both flow and the
+  switch is on, not by who is not in the channel. Documented in CONFIGURATION.md, CHANNELS.md,
   CONFIDENTIALITY.md, SECURITY.md, STORAGE.md and ARCHITECTURE.md. `scoped.rs` needed nothing:
-  nothing deletes what lies in a user's scope yet. Stored data: none to delete - every new field
-  has a default.
+  nothing deletes what lies in a user's scope yet. Stored data: none to delete - every new field has
+  a default.
 - **2026-10-08** — Step 3b (251, *Decisions* 13 and 14): `Workspace::name` is a `ScopedName` again,
   in a session's scope, its owner's or the global one (`validate`: not a channel's or a group's,
   no other user's), so the deviation of step 2 is taken back. `SessionTemplate::workspace`, a

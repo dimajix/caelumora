@@ -113,8 +113,8 @@ Hence the narrower form below: a setting of the personality that is off unless n
   A. The benefit is the queue's, not the agent's - and [223](223-full-inbox-drops-events.md) solves
   the queue. Not now.
 - **C - interrupting a model call** when something is said, and calling again with it. Steers the
-  fastest, but throws away the call under way - every message in a busy channel would cost a call
-  - and makes the turn's progress depend on how much is said. Rejected; `cancel` remains for that.
+  fastest, but throws away the call under way - every message in a busy channel would cost a call -
+  and makes the turn's progress depend on how much is said. Rejected; `cancel` remains for that.
 
 ### Which events, and what is done with them
 

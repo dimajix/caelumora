@@ -2244,10 +2244,9 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// What an agent answers to a command privately (issue 269) is recorded
-/// with its answer, to the issuer alone (issue 417): bob reads his `/mark`
-/// and what it answered on his page, alice - the agent's owner, taking part
-/// - finds nothing of it on hers.
+/// What an agent answers to a command privately (issue 269) is recorded with its answer, to the
+/// issuer alone (issue 417): bob reads his `/mark` and what it answered on his page, alice - the
+/// agent's owner, taking part - finds nothing of it on hers.
 #[tokio::test]
 async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
     use caelumora_model::history::HistoryEntry;

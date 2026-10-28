@@ -344,9 +344,8 @@ impl OllamaChatRequest {
 const CONTROL_TOKEN_TYPE: i32 = 3;
 const USER_DEFINED_TOKEN_TYPE: i32 = 4;
 
-/// What is read of `/api/show`: what the model can take besides text (issue
-/// 282), and - asked `verbose` - its tokens and their types. The rest of the
-/// - large - answer is skipped.
+/// What is read of `/api/show`: what the model can take besides text (issue 282), and - asked
+/// `verbose` - its tokens and their types. The rest of the - large - answer is skipped.
 #[derive(Deserialize)]
 struct OllamaShowResponse {
     #[serde(default)]

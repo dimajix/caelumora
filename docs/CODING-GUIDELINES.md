@@ -48,8 +48,8 @@ against this list, rule by rule, before it is reported (the self-review of
     `caelumora_agents::testing`).
 *   A change to what is stored comes without compatibility code; the summary says which stored
     data has to be deleted ([Crates and interfaces](#crates-and-interfaces)).
-*   Comments and Markdown documents wrap prose at 100 characters; `scripts/line-length.sh` finds
-    the lines of a change that are longer
+*   Comments and Markdown documents wrap prose at 100 characters, and no line of it starts with a
+    dash; `scripts/wrapping.sh` finds the lines of a change that break either
     ([Comments and documentation](#comments-and-documentation)).
 *   A condition a kind offers for lists is a constructor of `Filter` beside its fields, never a
     function of the entity's type
@@ -77,15 +77,23 @@ against this list, rule by rule, before it is reported (the self-review of
 *   **Markdown documents** (`docs/`, `issues/`, `AGENTS.md`, `.claude/agents/`) wrap prose at 100
     characters. Headings, table rows, code blocks and links that would not fit stay on one line;
     field lines such as `**Status:**` keep a line of their own.
-*   **Line lengths are counted by `scripts/line-length.sh`**, in characters, not bytes, by the
-    exceptions above, in the files these rules cover; a link counts as one word, not broken even in
-    its text. Without arguments it checks the lines a change adds or changes, against `HEAD`, and
-    new files whole; given files, it checks them whole. The pre-commit hook gives it the Markdown,
-    Rust and TypeScript files a commit adds or changes. Lengths are not counted by hand or with
-    another tool, which counts bytes or knows no exceptions.
-*   **No line of prose starts with a dash.** In a doc comment, a line that begins with `- ` is a
-    list item to rustdoc, and the sentence it continues breaks apart (clippy:
-    `doc_lazy_continuation`). Wrap so that a dash ends the line before it instead.
+*   **No line of prose starts with a dash**, in comments - doc comments and plain ones, Rust's and
+    TypeScript's - as in Markdown documents. To rustdoc and to Markdown, a line that begins with
+    `- ` is a list item, and the sentence it goes on with breaks apart; in a plain comment the
+    reader takes it for one - also inside a list item. Wrap so that a dash ends the line before it
+    instead. A list is told apart by the line before it: it follows a blank line, a heading, or a
+    line that ends in `.`, `:`, `?`, `!` or a title in bold (`**…**`); a further item stands where
+    the item before has its marker, not where its prose begins.
+*   **Wrapping is checked by `scripts/wrapping.sh`**, in the files these rules cover. It counts
+    lengths in characters, not bytes, by the exceptions above; a link counts as one word, not broken
+    even in its text. It finds a line beginning with a dash where the prose of the line before
+    begins - after its marker, in a list item -, if that line belongs to the same comment, is no
+    heading or table row, and ends in none of the marks above. Without arguments it checks the lines
+    a change adds or changes, against `HEAD`, and new files whole; given files, it checks them
+    whole. The pre-commit hook gives it the Markdown, Rust and TypeScript files a commit adds or
+    changes. Neither is checked by hand or with another tool: other tools count bytes or know no
+    exceptions, and clippy's `doc_lazy_continuation` finds a dash in a doc comment only where a line
+    follows it in the same paragraph.
 *   **No clippy warnings.** `cargo clippy --workspace --all-targets` stays silent; the pre-commit
     hook in `.githooks` refuses a commit of Rust code otherwise, once a clone has it enabled
     (`git config core.hooksPath .githooks`). Where a lint is wrong for a case, say why with
@@ -257,10 +265,10 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
 *   **One name, one kind of thing.** `channel()` and `session()` return the entity's document as it
     is now; `channel_loop()` and `session_loop()` the running object above; loading any stored
     entity is `load_…` (`ActorRuntime::load_session`).
-*   **Found by id, by name, for someone.** What a running object holds is found by its id under
-    the plain name of what it is (`SessionLoop::channel(id)`, `ChannelLoop::actor(id)`), by its name
-    with `_named` (`SessionLoop::channel_named`, `ChannelLoop::agents_named`), and in someone's name
-    - who may reach it, asked - with `_for` (`SessionLoop::channel_for(context, id)`); never
+*   **Found by id, by name, for someone.** What a running object holds is found by its id under the
+    plain name of what it is (`SessionLoop::channel(id)`, `ChannelLoop::actor(id)`), by its name
+    with `_named` (`SessionLoop::channel_named`, `ChannelLoop::agents_named`), and in someone's
+    name - who may reach it, asked - with `_for` (`SessionLoop::channel_for(context, id)`); never
     `_by_id` or `_by_name` (issue 354).
 
 ### Services are held, not fetched

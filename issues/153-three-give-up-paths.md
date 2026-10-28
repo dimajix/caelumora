@@ -23,8 +23,8 @@ reason, ask how executed calls are carried (`carried_calls`), `Turn::give_up_tur
 
 ## Why it matters
 
-A fourth way to end a turn - a branch switch ([08](08-retry-and-edit-past-answers.md))
-- would be a fourth copy.
+A fourth way to end a turn - a branch switch ([08](08-retry-and-edit-past-answers.md)) - would be a
+fourth copy.
 
 ## Considerations
 

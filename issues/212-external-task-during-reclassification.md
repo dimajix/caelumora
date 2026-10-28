@@ -271,16 +271,16 @@ About 20 lines in the model (method, two fields, `Work` if decided), 120 in the 
   of a piece of work, its bound (`classification`) and its label (`seen`, with `label` and `see` as
   `TurnState` has them); `OpenTask::work` replaces the two context fields of 211, and
   `RemoteState::begin(task, work)` and `work_of` replace `begin(task, contexts)` and `contexts_of`.
-  An exchange begins its `Work` with the channel as it is, checks admission
-  (`may_answer_in`, shared with the actor's constructor) and sees what the remote agent brings in
-  - as declared, else the bound - and every message of the transcript; its pieces and answer are
-  classified by the label, and `speak` uses the task's. `classification_in` is gone. Changed with
-  it: a declared classification no longer lowers what the remote agent was given (a `public`
-  agent told what is `internal` answers `internal`); a request to an agent whose declared
-  classification no longer enters its lowered channel is answered with `TurnFailed`, in the name
-  of who asked, and the remote agent is not called. Open tasks stored with the two context fields
-  of 211 lose them and act as the agent itself. Tests: `Work` in the model, the label in
-  `channel.rs`, the refusal in the security suite.
+  An exchange begins its `Work` with the channel as it is, checks admission (`may_answer_in`, shared
+  with the actor's constructor) and sees what the remote agent brings in - as declared, else the
+  bound - and every message of the transcript; its pieces and answer are classified by the label,
+  and `speak` uses the task's. `classification_in` is gone. Changed with it: a declared
+  classification no longer lowers what the remote agent was given (a `public` agent told what is
+  `internal` answers `internal`); a request to an agent whose declared classification no longer
+  enters its lowered channel is answered with `TurnFailed`, in the name of who asked, and the remote
+  agent is not called. Open tasks stored with the two context fields of 211 lose them and act as the
+  agent itself. Tests: `Work` in the model, the label in `channel.rs`, the refusal in the security
+  suite.
 - **2026-10-03** — Step 3 done: work whose bound may no longer flow into its channel
   (`ExternalAgentActor::lowered`, `may_publish` in the work's name) is given up at the three places
   of the plan - an exchange cancelled by the lowering ends as `Ending::Lowered`, nothing of it

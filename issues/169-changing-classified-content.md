@@ -47,7 +47,7 @@ really raised is this one.
   its owner, as reclassifying a channel is today. The alternative - the classification rises to the
   join of everything written - lets one sentence make a whole document vanish from lower channels,
   and classifications creep upwards over time.
-- **The rule for writing**, as proposed: someone may change something if
+- **The rule for writing**, as proposed: someone may change something if:
   - their `SecurityAttributes` allow it - they own it or contribute to it,
   - they may read it - clearance and flow, as now; a blind overwrite makes no sense, and
   - their label flows into its classification - for an agent the label of its turn

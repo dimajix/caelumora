@@ -37,9 +37,9 @@ cover the handle, though: the error message of `/wakeup` lists the agents as `@h
 an agent should take it both as it is named and as it is mentioned.
 
 **Normalise the argument with `handle_of` and compare handles.** One step, and it accepts every
-spelling: `handle_of("Dr. Who")`, `handle_of("@Dr-Who")` and `handle_of("dr-who")` are all
-`dr-who`. But a handle is coarser than a name - "Dr. Who" and "Dr-Who" are two names with one handle
-- so it can be ambiguous, and `find` silently takes the first.
+spelling: `handle_of("Dr. Who")`, `handle_of("@Dr-Who")` and `handle_of("dr-who")` are all `dr-who`.
+But a handle is coarser than a name - "Dr. Who" and "Dr-Who" are two names with one handle - so it
+can be ambiguous, and `find` silently takes the first.
 
 **Recommendation:** one lookup, owned by the channel, that both commands use - e.g.
 `ChannelLoop::members_named(&str)` - which takes the text as a `Name` and, if no participant has

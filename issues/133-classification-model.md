@@ -13,9 +13,8 @@ stays) and one is ownership (`private`: an actor's own, which "is an actor's lev
 channel's", as `docs/CONFIDENTIALITY.md` has to explain). Only `public` is a classification.
 Consequences:
 
-- Information that belongs to a topic or a group - HR, a customer, a project
-  - cannot be told apart from information that merely belongs to a session
-    ([64](64-confidentiality-compartments.md)).
+- Information that belongs to a topic or a group - HR, a customer, a project - cannot be told apart
+  from information that merely belongs to a session ([64](64-confidentiality-compartments.md)).
 - Two channels may only be shielded from each other by their position in the tree; that neither of
   them may see the other's contents cannot be said of two channels of the same session except by
   isolating both completely (`channel`).
@@ -112,10 +111,10 @@ Every channel, every message, every note and every memory entry:
   lower level than its channel is deliberately readable from further away than the rest of the
   channel - this is what makes labels on messages worth more than the channel's classification
   alone.
-- **Tool results** are classified by the tool, per result, when it returns
-  - from its input, from what it read, from the source it drew on. This replaces the static
-    `content` label of `ToolConfidentiality`; the `call` label (whether the call itself is shown) is
-    ownership (below), not classification.
+- **Tool results** are classified by the tool, per result, when it returns - from its input, from
+  what it read, from the source it drew on. This replaces the static `content` label of
+  `ToolConfidentiality`; the `call` label (whether the call itself is shown) is ownership (below),
+  not classification.
 - **Derived knowledge** - private notes, agent memory, reasoning - carries the classification of the
   channel it arose in, as it does today. This is sound because of the enforcement rule: the agent
   never sees anything that may not flow into its channel, so everything it wrote may be read by the

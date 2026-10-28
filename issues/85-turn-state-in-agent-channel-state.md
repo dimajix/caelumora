@@ -83,7 +83,6 @@ serde module (`actor.rs:439-465`), which the actor clones (`agent.rs:116`).
   has so far, tool results included; `ExecutingTools` means the tools of that step were about to
   run, and calls without a result are answered as not executed (75); `Reflecting` takes the finished
   answer over. One consequence: a call approved and not yet run when the server stops is answered as
-  not executed after the restart, so the model decides again
-  - the approval is not replayed. Test: an agent whose model called a tool and then never answers
-    again is stored in `Planning`, with the tool's result in its turn (with the old order it was
-    stored in `ExecutingTools`).
+  not executed after the restart, so the model decides again - the approval is not replayed. Test:
+  an agent whose model called a tool and then never answers again is stored in `Planning`, with the
+  tool's result in its turn (with the old order it was stored in `ExecutingTools`).

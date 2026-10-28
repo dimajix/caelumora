@@ -37,10 +37,10 @@ other case: it is theirs, and only they decide who may use it.
   does: owned by the user, with an access list like every entity. The question asked of it is the
   one 310 introduces for the configured secrets - `Use` of the kind `secret` -, only its attributes
   are the secret's own instead of a provider's.
-- **It is found as a name is found** (`scope::find_by_name`, STORAGE.md): from the principal's place
-  - for an agent its owner's -, first in the user's own scope, then in the global one, which is the
-  configured chain as 310 filters it. A component that names `GITHUB_TOKEN` then reaches with the
-  owner's own token where they brought one, and with the configured one otherwise.
+- **It is found as a name is found** (`scope::find_by_name`, STORAGE.md): from the principal's
+  place - for an agent its owner's -, first in the user's own scope, then in the global one, which
+  is the configured chain as 310 filters it. A component that names `GITHUB_TOKEN` then reaches with
+  the owner's own token where they brought one, and with the configured one otherwise.
 - **Only the user's scope, not a session's.** A member of a session could otherwise put a secret
   into it that hides the one another member's agent means, so that the agent reaches with the
   attacker's token - pushing to the attacker's repository, writing into the attacker's account. In

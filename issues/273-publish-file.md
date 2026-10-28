@@ -74,10 +74,10 @@ file changed or is gone; tests, `TOOLS-AND-COMMANDS.md`, `COMPONENTS.md` and `WE
 - **2026-10-09** — Opened at the maintainer's request while deciding 271: a cheap `publish_file`
   first, a link to a file of the workspace; artifacts, with their own store and versions, come
   with 271 and take its place behind the same tool.
-- **2026-10-09** — Decided with the maintainer: the card reaches the channel's files through props
-  - `files` and `filesVersion`, handed by `ChatView` through `MessageView` and `ToolCallView` to
-  the presentation's handler -, no React context; and it tells a changed file by its size and when
-  it was changed, read from the listing of its directory, not by a new route giving the digest
+- **2026-10-09** — Decided with the maintainer: the card reaches the channel's files through props -
+  `files` and `filesVersion`, handed by `ChatView` through `MessageView` and `ToolCallView` to the
+  presentation's handler -, no React context; and it tells a changed file by its size and when it
+  was changed, read from the listing of its directory, not by a new route giving the digest
   (rewriting a file to the same size within the same second goes unnoticed). Done:
   - `publish_file` in `terminal_tool::files`, read-only: a file, not a directory; its name its file
     name unless given, at most 255 characters, no slashes; the digest of its content read in parts

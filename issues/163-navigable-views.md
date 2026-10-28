@@ -342,9 +342,9 @@ alike.
   `SessionReader`, and the decisions still open. To be taken up on 2026-10-01.
 - **2026-10-01** — The open decisions taken as proposed: one `Viewer`, the running loop as the
   source while a session runs (`Found`), the root on `SessionManager`, the snapshots renamed now and
-  decided on in step 3, and the agent's reading classification set by whoever builds its viewer
-  - which means the agent's views are built per turn, through the `Turn`, not once in the
-    `ComponentContext` (to be laid out in step 4).
+  decided on in step 3, and the agent's reading classification set by whoever builds its viewer -
+  which means the agent's views are built per turn, through the `Turn`, not once in the
+  `ComponentContext` (to be laid out in step 4).
 - **2026-10-01** — Step 1 done: `caelumora_runtime::view` with `Viewer`, `Views`, `SessionView`,
   `ChannelView`, `MemberView`, `ViewError`, and `SessionManager::views(viewer)` as the root;
   `caelumora_model::view` is `snapshot` (`SessionSnapshot`, `ChannelSnapshot`, `MemberSnapshot`,

@@ -22,8 +22,8 @@ files. Read every changed file around its changes as far as you need to judge th
 only be judged with the code around it.
 
 You change nothing: no edits, no commits, no `cargo fix`. Use Bash only to read - `git diff`, `git
-log`, `git show`, `git status` - and to count line lengths, with `scripts/line-length.sh` alone.
-Building and running the tests are the author's; you need not repeat them.
+log`, `git show`, `git status` - and to check how prose is wrapped, with `scripts/wrapping.sh`
+alone. Building and running the tests are the author's; you need not repeat them.
 
 ## What you read first
 

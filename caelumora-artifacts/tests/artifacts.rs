@@ -271,8 +271,7 @@ fn an_artifacts_errors_are_told_the_model_as_a_storages_are() {
 
 // --- The routes -----------------------------------------------------------
 
-/// The API of `world` with the plugin's routes, which lets anybody log in
-/// - as one of the staff.
+/// The API of `world` with the plugin's routes, which lets anybody log in - as one of the staff.
 fn api_of(world: &World) -> Router {
     let users = Arc::clone(&world.runtime.entity_stores().users);
     let provider = AcceptAnyUserProvider::with_roles(Arc::clone(&users), BTreeMap::new(), vec![*STAFF]);

@@ -30,13 +30,13 @@ among what - not reconstruct it from JSON.
 
 ## Considerations
 
-**Choices one below the other.** Each choice a row of the full width: a marker of how it is chosen
-- a circle where one is chosen, a box where several may be (`multi_select`) -, its label, its
-description below the label in the same row instead of in a list of its own, and "recommended" as
-a small badge. The whole row is the control (`role="radio"` / `role="checkbox"`, `aria-checked`),
-reachable by keyboard; a chosen row is marked by its border and background, not only by its
-marker. "Other" stays below the choices, as the last row of the question. A question without
-choices is unchanged.
+**Choices one below the other.** Each choice a row of the full width: a marker of how it is chosen -
+a circle where one is chosen, a box where several may be (`multi_select`) -, its label, its
+description below the label in the same row instead of in a list of its own, and "recommended" as a
+small badge. The whole row is the control (`role="radio"` / `role="checkbox"`, `aria-checked`),
+reachable by keyboard; a chosen row is marked by its border and background, not only by its marker.
+"Other" stays below the choices, as the last row of the question. A question without choices is
+unchanged.
 
 **The answered call.** Two ways to give it a presentation:
 

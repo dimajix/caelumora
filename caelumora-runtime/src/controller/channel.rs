@@ -17,9 +17,9 @@ use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
 
-/// The one writer of a channel's document (issue 70): changes are stored
-/// first - where the permission is checked, on the channel's own attributes
-/// - and only then taken over live and announced.
+/// The one writer of a channel's document (issue 70): changes are stored first - where the
+/// permission is checked, on the channel's own attributes - and only then taken over live and
+/// announced.
 #[derive(Debug)]
 pub struct ChannelController {
     channel: LiveDocument<Channel>,

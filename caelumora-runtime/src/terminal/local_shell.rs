@@ -87,8 +87,8 @@ pub(super) struct Command {
     running: Arc<Running>,
     /// Its process group, the command's own process id.
     group: Option<Pid>,
-    /// Waits for it and reads its output; aborted - and the process killed
-    /// - when the command is forgotten.
+    /// Waits for it and reads its output; aborted - and the process killed - when the command is
+    /// forgotten.
     _task: AbortOnDropHandle<()>,
 }
 

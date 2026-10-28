@@ -33,9 +33,9 @@ agent asks, and what it does to the turn is not visible in its signature.
 ### Using the turn's component for external agents too
 
 Considered and rejected: it joins the parts of a position into one text, places them in the
-transcript and gives them roles for a language model. An external agent needs each part on its own
-- one is given again only when it changed, and one a failed send did not give goes with the next -
-and has no positions, no placement and no roles. What the two would share is asking the providers,
+transcript and gives them roles for a language model. An external agent needs each part on its own -
+one is given again only when it changed, and one a failed send did not give goes with the next - and
+has no positions, no placement and no roles. What the two would share is asking the providers,
 nothing more.
 
 ### Two components, one facet

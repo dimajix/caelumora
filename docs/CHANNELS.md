@@ -787,11 +787,11 @@ An **actor** is anything that sends and receives events in a channel.
     reached through the personality's one `ExternalAgent` component. What builds the actor of each
     kind, and which facets its components are asked for, is registered with the runtime
     (`AgentKinds`, `RuntimeBuilder::agent_kinds`, issue 370) - both by the agents' plugin
-    (`AgentsPlugin`), an essential one. The channel
-    builds an agent's actor through them and names no actor of an agent itself, reading the
-    personality as the agent may read it; a kind the program registered nothing for is refused
-    (`ChannelError::UnknownAgentKind`). The agent is `ActorId::Agent` either way, and nothing else
-    - the participants, the REST API, the moderator - tells the two apart.
+    (`AgentsPlugin`), an essential one. The channel builds an agent's actor through them and names
+    no actor of an agent itself, reading the personality as the agent may read it; a kind the
+    program registered nothing for is refused (`ChannelError::UnknownAgentKind`). The agent is
+    `ActorId::Agent` either way, and nothing else - the participants, the REST API, the moderator -
+    tells the two apart.
 *   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent and in
     whose name it acts there, its `AgentChannelState`, how it takes in what it hears, its context
     provider, the commands it carries out itself, and its `RunControl` - where its actor stands and

@@ -49,11 +49,12 @@ and `/ask` as if the user were the one answering or asking something specific.
 The nudge is an envelope in the user's name to one agent, like the retry; so it belongs on the
 retry's path: a `UserActor` operation that checks the permission and sends the request, and the
 command `/nudge` as its frontend (the REST API and the web UI could offer it as an action on a
-member later). `ResponseRequested` itself carries no addressee - the moderator decides where it goes
-- so the user's request needs either an addressee in the event (e.g. `ResponseRequested { agent:
-Option<ActorId> }`, `None` as the moderator sends it now) or an event of its own that the moderator
-turns into the `ResponseRequested` to that agent. The latter keeps "only the moderator asks for a
-response" true and lets a moderator refuse or log it; the former is less code. To be decided.
+member later). `ResponseRequested` itself carries no addressee - the moderator decides where it
+goes - so the user's request needs either an addressee in the event (e.g. `ResponseRequested {
+agent: Option<ActorId> }`, `None` as the moderator sends it now) or an event of its own that the
+moderator turns into the `ResponseRequested` to that agent. The latter keeps "only the moderator
+asks for a response" true and lets a moderator refuse or log it; the former is less code. To be
+decided.
 
 **Permission.** A user who may write in the channel can already achieve it with a mention, so the
 nudge asks nothing beyond that - but a policy may want to tell them apart (a reader who may ask for

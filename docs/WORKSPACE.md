@@ -73,10 +73,10 @@ files. A path a caller writes is made a `WorkspacePath` - relative, without `..`
 provider sees it.
 
 The providers - `local`, `open_terminal_shared` (one Open Terminal instance started outside
-Caelumora) and `open_terminal_docker` (a volume and a container per workspace, started by Caelumora)
-- differ in what their backend does; how each meets the rules of this document is in their module
-docs (`caelumora-open-terminal/src/terminal.rs` for Open Terminal). A storage's key is resolved
-through the secret chain in the system's name, since the storage is the operator's.
+Caelumora) and `open_terminal_docker` (a volume and a container per workspace, started by
+Caelumora) - differ in what their backend does; how each meets the rules of this document is in
+their module docs (`caelumora-open-terminal/src/terminal.rs` for Open Terminal). A storage's key is
+resolved through the secret chain in the system's name, since the storage is the operator's.
 
 A storage is a backend (issue 324, see [ARCHITECTURE.md](ARCHITECTURE.md#backends)): its provider
 is made by the factory registered for its `type`, which reads and checks its parameters. The core

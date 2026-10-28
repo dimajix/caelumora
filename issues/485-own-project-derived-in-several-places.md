@@ -36,8 +36,8 @@ given, a `UserId`, and needs no derivation.
 
 ## Considerations
 
-- **A. A method of `Session` in the model**, e.g. `Session::own_project(&self) -> Option<Project>`
-  - `None` if its owner is no user -, which each caller turns into its own error; `create` and the
+- **A. A method of `Session` in the model**, e.g. `Session::own_project(&self) -> Option<Project>` -
+  `None` if its owner is no user -, which each caller turns into its own error; `create` and the
   fixture set the project themselves. Small, and the model keeps no error of the runtime's.
 - **B. A method that also makes it the session's**, e.g. `Session::take_own_project(&mut self)`,
   for the two callers that make a new session. Saves a line at each, but one of three callers

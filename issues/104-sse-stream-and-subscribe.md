@@ -33,8 +33,8 @@ bug goes; and the second stream builder will copy the first, bug included.
 - `ChannelLoop::subscribe_as(ctx) -> Result<broadcast::Receiver<Envelope>>` that does the read check
   and closes when the user leaves the channel (a sender per `UserActor`, dropped when its actor
   stops). Handler: `open_channel` → `subscribe_as` → `sse::stream(…)`, ~12 lines. This is not a
-  second broadcast of the leave - it is the natural end of a subscription
-  - but 73 should be continued with it.
+  second broadcast of the leave - it is the natural end of a subscription - but 73 should be
+  continued with it.
 
 ## Done when
 

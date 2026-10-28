@@ -378,10 +378,9 @@ impl ComponentRegistry {
         self.require_asked(&planned, &HashMap::new(), asked)
     }
 
-    /// The components of `config`, its `ref`s resolved in the name
-    /// `context` and those that build on a default resolved among
-    /// `own_defaults` and the registry's, with the facets their kinds provide
-    /// - checked, but not built.
+    /// The components of `config`, its `ref`s resolved in the name `context` and those that build
+    /// on a default resolved among `own_defaults` and the registry's, with the facets their kinds
+    /// provide - checked, but not built.
     ///
     /// # Errors
     /// `ComponentError::DuplicateId` if two entries of `config` share an id,

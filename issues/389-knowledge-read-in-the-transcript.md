@@ -92,12 +92,12 @@ their results are said afterwards, as one tool message (`handle_executing_tools`
 from within a call would stand between the assistant's message with the calls and their results,
 which the model APIs refuse.
 
-That nothing stands between calls and their results is a rule of the transcript, so the model
-keeps it, not every tool: while a step is under way - the head of the transcript is a message with
+That nothing stands between calls and their results is a rule of the transcript, so the model keeps
+it, not every tool: while a step is under way - the head of the transcript is a message with
 `tool_calls` whose results are not said - `AgentChannelState::given` puts what it is given aside in
 the `TurnState` (stored with it, so that a turn resumed in `ExecutingTools` loses nothing), and
-`said` writes it right after the step's tool message. Outside a step - `/skill`, in a command turn
-- it is written at once, as now. A tool calls `give` and cannot get the order wrong.
+`said` writes it right after the step's tool message. Outside a step - `/skill`, in a command turn -
+it is written at once, as now. A tool calls `give` and cannot get the order wrong.
 
 `create_plan` meets the same problem with a prompt part and an event and solves it in the actor,
 by comparing the plan's progress before and after the calls. It stays as it is: whether it works

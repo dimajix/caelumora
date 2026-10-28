@@ -7,9 +7,10 @@
 # - Clippy stays silent (docs/CODING-GUIDELINES.md): whenever Rust code or a Cargo manifest is part
 #   of a commit, `cargo clippy --workspace --all-targets -- -D warnings` must pass, or the commit
 #   is refused. It checks the working tree, so changes that are not staged count too.
-# - Prose is wrapped at 100 characters (docs/CODING-GUIDELINES.md): `scripts/line-length.sh` must
-#   find no line too long in the Markdown, Rust and TypeScript files a commit adds or changes, read
-#   whole from the working tree; files the commit leaves out are not checked.
+# - Prose is wrapped by the rules of docs/CODING-GUIDELINES.md: `scripts/wrapping.sh` must find no
+#   line too long, and none beginning with a dash, in the Markdown, Rust and TypeScript files a
+#   commit adds or changes, read whole from the working tree; files the commit leaves out are not
+#   checked.
 #
 # `git commit --no-verify` skips all three.
 set -eu
@@ -28,5 +29,5 @@ fi
 
 committed=$(git diff --cached --name-only --diff-filter=ACMR -- '*.md' '*.rs' '*.ts' '*.tsx')
 if [ -n "$committed" ]; then
-    scripts/line-length.sh $committed
+    scripts/wrapping.sh $committed
 fi

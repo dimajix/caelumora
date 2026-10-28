@@ -120,9 +120,9 @@ impl UserProvider for AcceptAnyUserProvider {
         Ok(Self::found(self.store.get(&Self::context(), id).await)?.map(|user| self.configured(user)))
     }
 
-    /// Whoever `username` is, without any credential: the user stored under
-    /// it, or a new one, with the roles the configuration gives them. Stored
-    /// - or changed - by the `UserManager` (issue 306), not here.
+    /// Whoever `username` is, without any credential: the user stored under it, or a new one, with
+    /// the roles the configuration gives them. Stored - or changed - by the `UserManager` (issue
+    /// 306), not here.
     async fn authenticate(&self, username: &str, _credential: &Credential<'_>) -> AuthResult<Option<User>> {
         let Ok(username) = Name::new(username.trim()) else {
             return Err(AuthError::InvalidCredentials);

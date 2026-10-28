@@ -336,10 +336,9 @@ impl ChannelLoop {
         envelope.context.span_depth += 1;
     }
 
-    /// The security context of `sender`, whose envelope with the initiator
-    /// `initiator` is read from the history (issue 223): its actor's as it
-    /// is now; one without rights if it takes no part any more, or is none
-    /// - the channel, the system. The initiator is the one recorded.
+    /// The security context of `sender`, whose envelope with the initiator `initiator` is read from
+    /// the history (issue 223): its actor's as it is now; one without rights if it takes no part
+    /// any more, or is none - the channel, the system. The initiator is the one recorded.
     fn security_context_of(&self, sender: ActorId, initiator: ActorId) -> SecurityContext {
         let now = match self.actor(sender) {
             Some(actor) => actor.security_context(),

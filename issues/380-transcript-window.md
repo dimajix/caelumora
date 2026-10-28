@@ -142,14 +142,14 @@ as for the history.
 - **A change told to an external agent's remote side.** `tell` reads the message as it was given
   from the store (`ActorRuntime::transcript_message`, the runtime holding the `TranscriptStore` as
   it holds the `HistoryStore`): it lies on a branch before the active one almost always. The hand
-  over stays a function pointer, now returning a future and given the runtime -
-  `for<'a> fn(&'a ActorRuntime, &'a mut AgentChannelState, TranscriptEntry) -> BoxFuture<'a, ()>`
-  - so that the body knows nothing of the kind of agent and a notice keeps its place among what was
-  heard. Whether a notice is pending is still read from the active branch, in memory; a store that
-  cannot be read is logged, and nothing is told. *Weighed and rejected:* a trait for the hand over
-  (one more type for two behaviours, one of them empty); the changes collected and told after the
-  batch (a notice would follow what was heard after it, against 236); `RemoteState` keeping what was
-  given (unbounded, what this issue removes).
+  over stays a function pointer, now returning a future and given the runtime - `for<'a> fn(&'a
+  ActorRuntime, &'a mut AgentChannelState, TranscriptEntry) -> BoxFuture<'a, ()>` - so that the body
+  knows nothing of the kind of agent and a notice keeps its place among what was heard. Whether a
+  notice is pending is still read from the active branch, in memory; a store that cannot be read is
+  logged, and nothing is told. *Weighed and rejected:* a trait for the hand over (one more type for
+  two behaviours, one of them empty); the changes collected and told after the batch (a notice would
+  follow what was heard after it, against 236); `RemoteState` keeping what was given (unbounded,
+  what this issue removes).
 
 ### 6. The window
 

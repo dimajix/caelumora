@@ -1054,8 +1054,8 @@ command may come later.
   a session only its owner works on it, and only its owner attaches it. B1 to B5, C3, E, F (YAML,
   not TOML: the configuration is YAML), G and I amended.
 - **2026-10-08** — Step 3 of the plan done: the terminal traits, the `local` provider without its
-  shell, the `WorkspaceManager`, attaching, the channel's switch, the views and the security suite
-  - see issue [253](253-workspace.md).
+  shell, the `WorkspaceManager`, attaching, the channel's switch, the views and the security suite -
+  see issue [253](253-workspace.md).
 - **2026-10-08** — Before step 4, on the maintainer's proposal: a workspace lies in a scope as an
   agent does, and a template may name one (*Decisions* 13 and 14). Done as step 3b - see issue
   [253](253-workspace.md).

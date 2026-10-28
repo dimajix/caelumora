@@ -101,8 +101,8 @@ impl OwnershipPolicy {
     /// may do everything.
     fn admission_for(context: &SecurityContext, verb: Verb) -> Admission {
         match verb {
-            // Reading: what the principal may read, or the caller itself
-            // - an agent what it takes part in (issue 264).
+            // Reading: what the principal may read, or the caller itself - an agent what it takes
+            // part in (issue 264).
             Verb::Get => Self::granting_as_caller(context, Grant::Read),
             // Told of a deletion: whom reading admitted until then, also by
             // the groups that went with it.

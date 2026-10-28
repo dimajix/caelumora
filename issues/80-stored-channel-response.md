@@ -46,14 +46,13 @@ version of them, and the next field is forgotten in one of them the way `can_cha
   for "may read" remains.
 - **In the runtime, as a view (chosen, see History).** The model gets a `ChannelView`: the `Channel`
   document as a given viewer sees it, with `can_change` and, per member, `can_read_context`. The
-  runtime builds it
-  - on the `SessionManager`/`SessionLoop`, not on `ChannelLoop`, so that the entity does not grow
-    the policy catalogue issue [71](71-access-helpers-on-entities.md) removed - for running and
-    stored channels alike, and only for channels the viewer may read: e.g. `channels_for(viewer,
-    session_id)` for lists and snapshots, `readable_channel(viewer, session_id, channel_id)` as the
-    counterpart of REST's `channel_of`. REST only maps views to responses (`From<ChannelView> for
-    ChannelResponse` in `models.rs`) and no longer knows the `SecurityManager`. A runtime component
-    that lists or offers channels uses the same views.
+  runtime builds it - on the `SessionManager`/`SessionLoop`, not on `ChannelLoop`, so that the
+  entity does not grow the policy catalogue issue [71](71-access-helpers-on-entities.md) removed -
+  for running and stored channels alike, and only for channels the viewer may read: e.g.
+  `channels_for(viewer, session_id)` for lists and snapshots, `readable_channel(viewer, session_id,
+  channel_id)` as the counterpart of REST's `channel_of`. REST only maps views to responses
+  (`From<ChannelView> for ChannelResponse` in `models.rs`) and no longer knows the
+  `SecurityManager`. A runtime component that lists or offers channels uses the same views.
   - Caveat: actor names follow the controller, participant copies do not - irrelevant until agents
     can be renamed.
   - A view is a snapshot. It serves listing and offering; an operation still checks its own

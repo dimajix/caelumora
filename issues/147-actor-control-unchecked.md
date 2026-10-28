@@ -14,10 +14,9 @@ actor.
 
 But `Actor` is a public trait, the three are public methods of it, and `ChannelLoop::actor_by_id` is
 public and hands out `Arc<dyn Actor>`. A frontend can call `channel.actor_by_id(agent)?.stop()` and
-stop an agent
-- give up its turn - without any permission. The REST server does not do it today; it uses
-  `actor_by_id` for `message_context` and `given_up_turns`, which check themselves. The rule of
-  AGENTS.md - "an operation checks its own permission" - holds here by discipline, not by structure.
+stop an agent - give up its turn - without any permission. The REST server does not do it today; it
+uses `actor_by_id` for `message_context` and `given_up_turns`, which check themselves. The rule of
+AGENTS.md - "an operation checks its own permission" - holds here by discipline, not by structure.
 
 ## Why it matters
 

@@ -7,8 +7,8 @@
 ## The problem
 
 A channel is not a document of its own: it lives in the session document (`Session.channels`), and
-only the `SessionController` - with its write lock
-- writes that document. A change to a channel therefore has to go through the session:
+only the `SessionController` - with its write lock - writes that document. A change to a channel
+therefore has to go through the session:
 
 - `ChannelController::update_name` changes only the in-memory copy of the channel: nothing is stored
   (after a restart the old name is back), no permission is checked, and the `SessionController` has

@@ -36,9 +36,9 @@ kept.
     (`turn_context_provider`) and the kinds of the module;
   - one file per component kind, named after its kind as everywhere: the eight above, moved from
     `component_impl/` (`git mv`).
-- **What stays in `component_impl/`:** the components that offer a prompt part beside other facets
-  - `agent_memory`, `notes`, `private_notes`, `create_plan_tool` - and `channel_history`; by the
-  rule of COMPONENTS.md, a component of several facets cannot be sorted by one.
+- **What stays in `component_impl/`:** the components that offer a prompt part beside other facets -
+  `agent_memory`, `notes`, `private_notes`, `create_plan_tool` - and `channel_history`; by the rule
+  of COMPONENTS.md, a component of several facets cannot be sorted by one.
 - **The name.** `prompt` for both facets, though the `ContextProvider` assembles the whole context:
   what it assembles are the prompt parts, and both facets are about what the model is prompted
   with. `context.rs` goes; no re-export under the old path is kept. The paths change from

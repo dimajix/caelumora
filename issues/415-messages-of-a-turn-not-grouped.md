@@ -45,8 +45,8 @@ form as the steps of a plan, and unambiguous even where turns interleave. Inside
 second line into the step's, which becomes restless; the step would have to give its line up and
 keep only its heading.
 
-**C. Folding what led to the answer.** The turn's last answer stays visible, everything before it
-- intermediate answers, tool calls and their results - is folded under "Helga ran 4 steps", as the
+**C. Folding what led to the answer.** The turn's last answer stays visible, everything before it -
+intermediate answers, tool calls and their results - is folded under "Helga ran 4 steps", as the
 steps of a plan are. The strongest change: it changes what is seen, not only how it is grouped, and
 hides tool calls that wait for nothing but may still matter to the reader.
 
