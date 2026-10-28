@@ -336,44 +336,17 @@ impl SessionManager {
 
     /// Establishes the brand-new `session` with its own project `own` and its `channels`, whose
     /// creation `context` was asked for (`CreateSession`) before anything was found or made for
-    /// it: persists them - the channels as documents of their own (issue 70), the project in the
-    /// runtime's name, as the groups of participants are (issue 467) -, announces their
-    /// existence, then starts the session. The classifications are validated first; the store
-    /// asks to create the session again and each channel as it stores them. The channels are
-    /// empty (issue 420): their founders join once the session runs, each admitted as they join
-    /// (`ChannelLoop::found`).
+    /// it: persists them (`persist`), announces their existence, then starts the session. The
+    /// channels are empty (issue 420): their founders join once the session runs, each admitted as
+    /// they join (`ChannelLoop::found`).
+    ///
+    /// # Errors
+    /// As `persist`; whatever starting the session reports (`spawn_session`).
     async fn establish(&self, context: &SecurityContext, session: Session, own: &Project, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-
-        for channel in &channels {
-            require_classification(&self.runtime_manager, &channel.classification)?;
-        }
-        self.stores.sessions.create(context, &session).await?;
-        // Each with the group of its participants (issue 286), which it is
-        // read by.
-        let made = async {
-            keep_participants(self.stores.groups.as_ref(), Group::of_session(&session)).await?;
-            make_own(&self.stores, own).await?;
-            for channel in &channels {
-                self.stores.channels.create(context, channel).await?;
-                keep_participants(self.stores.groups.as_ref(), Group::of_channel(channel)).await?;
-            }
-            Ok::<_, StoreError>(())
-        }.await;
-        if let Err(error) = made {
-            // Nothing half-made stays behind; the session's creation was
-            // permitted, so it is rolled back in the runtime's name - what
-            // was not made yet is not found, which is no matter.
-            for channel in &channels {
-                let _ = purge_channel_document(&self.stores, channel.id).await;
-            }
-            let _ = self.purge_own(own).await;
-            let _ = purge_for_good(self.stores.groups.as_ref(), GroupId::of_session(id)).await;
-            let _ = purge_for_good(self.stores.sessions.as_ref(), id).await;
-            return Err(error.into());
-        }
+        self.persist(context, &session, own, &channels).await?;
 
         let event_bus = &self.events;
         event_bus.publish(GlobalEvent::created::<Session>(&id), session.security_attributes.clone());
@@ -383,6 +356,45 @@ impl SessionManager {
         }
 
         self.spawn_session(session, channels).await
+    }
+
+    /// Stores the brand-new `session` with its own project `own` and its `channels`, whose
+    /// creation `context` was asked for (`CreateSession`): the channels as documents of their own
+    /// (issue 70), the session and each channel with the group of its participants (issue 286),
+    /// which it is read by, and the project in the runtime's name, as the groups are (issue 467).
+    /// The classifications are validated first; the store asks to create the session again and
+    /// each channel as it stores them. Nothing half-made stays behind: if a step fails once the
+    /// session is stored, what was stored is purged again, in the runtime's name.
+    ///
+    /// # Errors
+    /// `SessionError::ClassificationRefused` for a classification no channel may be given;
+    /// whatever the store reports.
+    async fn persist(&self, context: &SecurityContext, session: &Session, own: &Project, channels: &[Channel]) -> Result<()> {
+        for channel in channels {
+            require_classification(&self.runtime_manager, &channel.classification)?;
+        }
+        self.stores.sessions.create(context, session).await?;
+        let made = async {
+            keep_participants(self.stores.groups.as_ref(), Group::of_session(session)).await?;
+            make_own(&self.stores, own).await?;
+            for channel in channels {
+                self.stores.channels.create(context, channel).await?;
+                keep_participants(self.stores.groups.as_ref(), Group::of_channel(channel)).await?;
+            }
+            Ok::<_, StoreError>(())
+        }.await;
+        if let Err(error) = made {
+            // The session's creation was permitted, so it is rolled back in the runtime's name -
+            // what was not made yet is not found, which is no matter.
+            for channel in channels {
+                let _ = purge_channel_document(&self.stores, channel.id).await;
+            }
+            let _ = self.purge_own(own).await;
+            let _ = purge_for_good(self.stores.groups.as_ref(), GroupId::of_session(session.id)).await;
+            let _ = purge_for_good(self.stores.sessions.as_ref(), session.id).await;
+            return Err(error.into());
+        }
+        Ok(())
     }
 
     /// The channels `session` lists, loaded in the runtime's name: starting a

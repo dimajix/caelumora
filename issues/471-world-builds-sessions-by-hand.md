@@ -75,3 +75,5 @@ they test.
   as one that names no roles, was not cleared for the world's internal channel, and now names the
   role of the world's users. The tests of the views, which store their sessions by hand too, were
   added to the issue.
+- **2026-10-28** — Step 2, the restructuring for D, without a change of behaviour: storing a new
+  session is `SessionManager::persist`, which `establish` runs before announcing and starting it.
