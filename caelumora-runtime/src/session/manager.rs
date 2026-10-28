@@ -40,7 +40,7 @@ use std::time::Duration;
 use std::ops::AsyncFnOnce;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use super::{SessionError, SessionLoop, purge_channel_document, require_attachable, require_classification};
+use super::{SessionError, SessionLoop, load_own, make_own, purge_channel_document, require_attachable, require_classification};
 use caelumora_model::session;
 use crate::template::{resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants};
 use tokio::sync::Mutex;
@@ -355,7 +355,7 @@ impl SessionManager {
         // read by.
         let made = async {
             keep_participants(self.stores.groups.as_ref(), Group::of_session(&session)).await?;
-            self.make_own(own).await?;
+            make_own(&self.stores, own).await?;
             for channel in &channels {
                 self.stores.channels.create(context, channel).await?;
                 keep_participants(self.stores.groups.as_ref(), Group::of_channel(channel)).await?;
@@ -620,7 +620,7 @@ impl SessionManager {
         // The events carry the attributes as they were: once deleted, the
         // session is nowhere to look them up (issue 39).
         let channels = self.load_channels(&session).await?;
-        let own = self.load_own(id).await?;
+        let own = load_own(&self.stores, id).await?;
 
         // Marked, not removed (issue 164): its channels and their state stay
         // as they are, hidden with it - a channel is reached only through
@@ -672,13 +672,15 @@ impl SessionManager {
     /// with the channels it listed when it was deleted, the groups of its participants and theirs,
     /// and its own project with the group of its members, in the runtime's name (issues 348, 467);
     /// then what lay in its scope and its own project's, as far as `context` may restore it. It is
-    /// not started; opening it starts it, as any stored session.
+    /// not started; opening it starts it, as any stored session. A session that lies in a shared
+    /// project is not restored while the project is deleted: it comes back with the project.
     ///
     /// # Errors
     /// `SessionError::NotFound` if there is no such deleted session or `context` may not see it
-    /// (`ReadDeleted`, asked first, issue 304), `StoreError::PermissionDenied` if they may but not
-    /// restore it, or whatever the store reports as the groups of its participants or its own
-    /// project are restored - the session stays deleted then.
+    /// (`ReadDeleted`, asked first, issue 304), `SessionError::ProjectDeleted` if the shared
+    /// project it lies in is deleted, `StoreError::PermissionDenied` if they may but not restore
+    /// it, or whatever the store reports as the groups of its participants or its own project are
+    /// restored - the session stays deleted then.
     pub async fn restore(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
         // The lock of deleting and purging it: a purge never meets it half
         // restored.
@@ -687,10 +689,16 @@ impl SessionManager {
         // When it was deleted, read before the mark goes - as `context`, so
         // that whoever may not see it learns nothing more: what was deleted
         // with it comes back with it (issue 178).
-        let deleted_at = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?.deleted.map(|removal| removal.at);
+        let deleted = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
+        let deleted_at = deleted.deleted.map(|removal| removal.at);
         // Its own project, whenever it was deleted: it goes only with the session, which a
         // restoring that failed before marked anew, later (issue 467).
         let own = self.deleted_own(id).await?.into_iter().max_by_key(|own| own.deleted.as_ref().map(|removal| removal.at));
+        // A session in a shared project lies where its project is, and comes back with it.
+        let lies_in_own = own.as_ref().is_some_and(|own| own.id == deleted.project);
+        if !lies_in_own && self.stores.projects.get(&SecurityContext::system(), deleted.project).await.optional()?.is_none() {
+            return Err(SessionError::ProjectDeleted(deleted.project).into());
+        }
         let session = self.stores.sessions.restore(context, id).await.map_err(store_error(id))?;
         if let Some(since) = deleted_at {
             // The groups of its participants and its own project first, with it: whatever fails
@@ -757,15 +765,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// The own project of session `id`, if it is there: the one in its scope, found by its name
-    /// (`Project::own_name`) in the runtime's name - none once it was lifted (issue 467).
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    async fn load_own(&self, id: SessionId) -> StoreResult<Option<Project>> {
-        self.stores.projects.find_by_name(&SecurityContext::system(), &Project::own_name(id)).await.optional()
-    }
-
     /// The projects deleted that lie in the scope of session `id` - its own, deleted with it -,
     /// read in the runtime's name.
     ///
@@ -774,16 +773,6 @@ impl SessionManager {
     async fn deleted_own(&self, id: SessionId) -> StoreResult<Vec<Project>> {
         let query = Query::filtered(Filter::lying_within(&Scope::SessionScope { session_id: id }));
         Ok(self.stores.projects.list_deleted(&SecurityContext::system(), &query).await?.items)
-    }
-
-    /// Makes `own`, the own project of a session being made, with the group of its members, in the
-    /// runtime's name (issue 467); announcing it is the caller's, with the session.
-    ///
-    /// # Errors
-    /// Whatever the store reports; the caller rolls back what was made (`purge_own`).
-    pub(crate) async fn make_own(&self, own: &Project) -> StoreResult<()> {
-        self.stores.projects.create(&SecurityContext::system(), own).await?;
-        keep_participants(self.stores.groups.as_ref(), Group::of_project(own)).await
     }
 
     /// Removes `own`, the own project of a session purged or whose making failed, for good with
@@ -843,6 +832,12 @@ impl SessionManager {
     /// read, and from there their channels and participants, running or not.
     pub fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
         Views::new(&self.runtime_manager, Arc::<SessionManager>::clone(self), viewer)
+    }
+
+    /// The runtime it starts its sessions in - for what is made beside it, as the
+    /// `ProjectManager` is.
+    pub(crate) fn runtime(&self) -> &Arc<RuntimeManager> {
+        &self.runtime_manager
     }
 
     /// The loop of session `id`, if it runs.
@@ -1476,6 +1471,32 @@ mod tests {
         assert!(stores.sessions.get(&system, id).await.is_err(), "the session stays deleted");
         assert_eq!(groups_there().await, (false, false), "with its groups, restored before and deleted again");
         assert!(stores.projects.get(&system, project).await.is_err(), "and its project");
+    }
+
+    /// Issue 467: a session whose move into a project cannot be stored leaves the project as it
+    /// was - not shared with its participants -, and lies where it lay.
+    #[tokio::test]
+    async fn a_session_that_cannot_be_put_into_a_project_leaves_it_unshared() {
+        use crate::project::ProjectManager;
+        use caelumora_model::group::GroupId;
+
+        let passing = Arc::new(AtomicUsize::new(usize::MAX));
+        let entities = Arc::new(Failing { inner: MemoryStore::new(), kind: Session::KIND, passing: Arc::clone(&passing) });
+        let store = Persistence::new(entities, Arc::new(MemoryStore::new()), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
+        let runtime = TestRuntime { store: store.clone(), ..Default::default() }.build();
+        let stores = runtime.entity_stores().clone();
+        let manager = Arc::new(SessionManager::new(runtime));
+        let owner = UserId::new();
+        let ctx = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let session = create(&manager, &ctx, make_session("moving", ActorId::User(owner))).await.unwrap();
+        let own = session.session().project;
+        let project = ProjectManager::new(Arc::clone(&manager)).create(&ctx, "report", Scope::UserScope { user_id: owner }, None).await.unwrap();
+
+        passing.store(0, Ordering::SeqCst);
+        session.update_project(&ctx, Some(project.id)).await.expect_err("the session cannot be stored");
+        assert_eq!(session.session().project, own, "it lies where it lay");
+        let shared = stores.projects.get(&SecurityContext::system(), project.id).await.unwrap().security_attributes.acl;
+        assert!(!shared.iter().any(|entry| entry.subject == Subject::Group(GroupId::of_session(session.id()))), "the share is taken back: {shared:?}");
     }
 
     #[tokio::test]

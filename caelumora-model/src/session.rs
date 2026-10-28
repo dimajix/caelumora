@@ -1,3 +1,6 @@
+//! A session (issue 88): the container of one interaction - who takes part, its channels, how
+//! private it is, the workspace it is done in and the project its results go to - and its changes.
+
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::approval::ApprovalRule;
 use crate::component::ComponentConfig;
@@ -40,6 +43,9 @@ pub enum SessionUpdateEvent {
     /// A workspace was attached, or the one attached taken away (issue
     /// 253), as it now stands.
     WorkspaceChanged(Option<WorkspaceId>),
+    /// It was put into another project, or taken out into its own (issue
+    /// 467): the project its results go to from now on.
+    ProjectChanged(ProjectId),
     /// Someone was taken in after it was built (issue 221): by whoever may
     /// change it, or by themselves, where an entry let them join.
     ParticipantJoined(Participant),
@@ -143,6 +149,7 @@ impl Updatable for Session {
             SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
             SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
             SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
+            SessionUpdateEvent::ProjectChanged(project) => self.project = *project,
             SessionUpdateEvent::ParticipantJoined(participant) => self.take_in(participant.clone()),
         }
         Ok(())
@@ -209,6 +216,8 @@ pub enum SessionField {
     Participants,
     /// A participant, within `Participants`.
     Participant,
+    /// The project its results go to (issue 467).
+    Project,
 }
 
 impl Field for SessionField {
@@ -216,6 +225,7 @@ impl Field for SessionField {
         match self {
             SessionField::Participants => &["participants"],
             SessionField::Participant => &[],
+            SessionField::Project => &["project"],
         }
     }
 }
@@ -225,6 +235,11 @@ impl Filter<SessionField> {
     /// The sessions `actor` takes part in (`Session::takes_part`).
     pub fn with_participant(actor: ActorId) -> Self {
         Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, actor))
+    }
+
+    /// The sessions whose results go to `project` (issue 467): those that lie in it.
+    pub fn in_project(project: ProjectId) -> Self {
+        Filter::eq(SessionField::Project, project)
     }
 }
 
@@ -281,6 +296,23 @@ mod tests {
         for actor in [ActorId::User(alice), ActorId::Agent(agent), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new())] {
             assert_eq!(Filter::with_participant(actor).matches(&document), session.takes_part(actor), "{actor}");
         }
+    }
+
+    /// Issue 467: the condition of the sessions of a project meets those
+    /// whose results go to it, as it is changed.
+    #[test]
+    fn the_sessions_in_a_project_are_those_whose_results_go_to_it() {
+        let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
+        let mut session = Session {
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: Vec::new(), channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
+            security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
+        };
+        let shared = ProjectId::new();
+        assert!(!Filter::in_project(shared).matches(&serde_json::to_value(&session).unwrap()));
+        session.apply(&SessionUpdateEvent::ProjectChanged(shared)).unwrap();
+        assert_eq!(session.project, shared);
+        assert!(Filter::in_project(shared).matches(&serde_json::to_value(&session).unwrap()));
     }
 
     #[test]

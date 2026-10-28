@@ -150,7 +150,7 @@ impl ChannelController {
         let channel = writing.store(ctx, channel).await?;
         self.keep_participants(&channel).await;
         if let Some(event) = self.joined_or_left_event(participant, false) {
-            writing.announce_also_to(event, &channel, Subject::Actor(participant));
+            writing.announce_also_to(event, &channel, [Subject::Actor(participant)]);
         }
         Ok(removed)
     }

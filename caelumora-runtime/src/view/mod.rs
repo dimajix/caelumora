@@ -1693,7 +1693,7 @@ mod tests {
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
-        let runtime = Arc::clone(runtime_of(&manager));
+        let runtime = Arc::clone(manager.runtime());
 
         let (alice, bob) = (user("alice"), user("bob"));
         let alice_id = ActorId::User(alice.id);
@@ -1740,7 +1740,7 @@ mod tests {
         use caelumora_model::privacy::PrivacyConfig;
 
         let (_, manager) = owned_runtime(Default::default());
-        let runtime = Arc::clone(runtime_of(&manager));
+        let runtime = Arc::clone(manager.runtime());
         let (alice, carol) = (user("alice"), user("carol"));
         let (alice_id, carol_id) = (ActorId::User(alice.id), ActorId::User(carol.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());

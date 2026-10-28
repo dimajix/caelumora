@@ -164,7 +164,7 @@ mod tests {
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
-        let runtime = Arc::clone(runtime_of(&manager));
+        let runtime = Arc::clone(manager.runtime());
         let (alice, bob) = (user("alice"), user("bob"));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());

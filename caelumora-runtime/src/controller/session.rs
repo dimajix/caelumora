@@ -1,3 +1,5 @@
+//! `SessionController`: the one writer of a running session's document.
+
 use arc_swap::Guard;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::Participant;
@@ -8,6 +10,7 @@ use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::value::name::Name;
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_model::project::ProjectId;
 use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
 use std::sync::Arc;
 use tracing::error;
@@ -114,6 +117,16 @@ impl SessionController {
     /// See [`Self::update`].
     pub async fn update_workspace(&self, ctx: &SecurityContext, workspace: Option<WorkspaceId>) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::WorkspaceChanged(workspace)).await
+    }
+
+    /// Has the session's results go to `project` from now on (issue 467), on behalf of `ctx`
+    /// (`UpdateSession`), as [`Self::update`] does. Whether the session may lie in it is the
+    /// caller's to have asked.
+    ///
+    /// # Errors
+    /// See [`Self::update`].
+    pub async fn update_project(&self, ctx: &SecurityContext, project: ProjectId) -> StoreResult<()> {
+        self.update(ctx, SessionUpdateEvent::ProjectChanged(project)).await
     }
 
     /// Takes `participant` into the session on behalf of `ctx` (issue 221)

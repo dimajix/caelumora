@@ -1,3 +1,6 @@
+//! `LiveDocument`: the document a controller is the one writer of, as it stands (issue 358), and
+//! the `Writing` of a change of it.
+
 use arc_swap::{ArcSwap, Guard};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
@@ -204,10 +207,10 @@ where
     }
 
     /// Announces `event` about `document` as `announce` does, and to
-    /// `subject` besides, who may no longer read it: one who left learns so
-    /// (issue 23). The grant is never stored.
-    pub(super) fn announce_also_to(&self, event: GlobalEvent, document: &T, subject: Subject) {
-        let attributes = document.security_attributes().clone().granting(subject, Grant::Read);
+    /// `subjects` besides, who may no longer read it: one who left learns so
+    /// (issue 23). The grants are never stored.
+    pub(super) fn announce_also_to(&self, event: GlobalEvent, document: &T, subjects: impl IntoIterator<Item = Subject>) {
+        let attributes = subjects.into_iter().fold(document.security_attributes().clone(), |attributes, subject| attributes.granting(subject, Grant::Read));
         self.document.event_publisher.publish_classified(event, attributes, &self.classifications(document));
     }
 

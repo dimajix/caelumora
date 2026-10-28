@@ -12,6 +12,7 @@ use crate::attachment::AttachmentError;
 use crate::command::CommandError;
 use crate::content::ContentError;
 use crate::component::ComponentError;
+use crate::project::ProjectError;
 use crate::scoped::ScopeNotEmpty;
 use crate::session::SessionError;
 use crate::view::{AgentContextError, ViewError};
@@ -73,6 +74,13 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
         match e {
             WorkspaceError::Store(e) => store_message(e),
             WorkspaceError::StorageGone(_) => None,
+            _ => Some(e.to_string()),
+        }
+    } else if let Some(e) = e.downcast_ref::<ProjectError>() {
+        // As a workspace's; what a session of it reported is judged further along the chain.
+        match e {
+            ProjectError::Store(e) => store_message(e),
+            ProjectError::Session(_) => None,
             _ => Some(e.to_string()),
         }
     } else if let Some(e) = e.downcast_ref::<AgentError>() {

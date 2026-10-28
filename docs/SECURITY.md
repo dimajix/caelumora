@@ -336,7 +336,8 @@ lies:
     was permitted. The group is derived anew from the participants each time, so that a write that
     failed is corrected by the next. The `GroupManager` refuses to change it.
 *   **The members of a project** lie in its scope and have its id, as the participants of a
-    session do. They hold users alone and change with the project's members alone; the
+    session do. They hold users alone and change with the project's members alone, written by its
+    `ProjectController` after the change it follows, as a channel's participants are; the
     `GroupManager` refuses to change them, as it refuses every group that is no team.
 
 The group of the participants of a session or channel goes and comes back with it (issue 348): the
@@ -347,6 +348,16 @@ restores the session, as what lies in its scope is (issue 320): it is derived fr
 nobody's to keep or leave behind. All of the groups go or none, and if they cannot go, the session
 or channel is kept; if they cannot come back, it stays deleted. The record of the deletion
 (`Removal::by`) names the system; the session's or channel's names whoever deleted it.
+
+A project (issue 467) is its owner's: only the owner changes it (`UpdateProject`), sets its
+members, lifts a session's own, or deletes it. Changing its members is asked before it is asked
+whether each member exists, so that who may not change it learns nothing of who exists (issue 312).
+Its list names the group of its members for reading, and the participants of each session that lies
+in it: a session put into a project shares it with them in the runtime's name, since changing the
+session was asked (`UpdateSession`, and reading the project, `GetProject`), and the entry goes as
+the session leaves. Deleting a project deletes the sessions in it through the `SessionManager`, each
+in the deleter's name, as what lies in a scope is (issue 320); the group of its members goes and
+comes back with the project in the runtime's name, as the participants' groups do.
 
 The REST API names the participants of a session or channel by the session's or channel's id
 (`kind: session`, `kind: channel`), a team by its own (`kind: group`).

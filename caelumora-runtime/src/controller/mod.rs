@@ -18,8 +18,9 @@
 //! controllers. Agents and users do not belong to a session: one of them
 //! takes part in several, perhaps in several instances. Nor do workspaces:
 //! one may be attached to several sessions, and is used directly too
-//! (issue 344). The `ControllerManager` keeps one controller per agent, per
-//! user and per workspace of its instance, shared by all that use it, and
+//! (issue 344), nor projects, which several sessions lie in (issue 467). The
+//! `ControllerManager` keeps one controller per agent, per user, per
+//! workspace and per project of its instance, shared by all that use it, and
 //! takes the changes announced about them into those controllers (issue
 //! 121).
 //!
@@ -33,6 +34,7 @@ mod channel;
 mod document;
 mod manager;
 mod personality;
+mod project;
 mod session;
 mod user;
 mod workspace;
@@ -41,6 +43,7 @@ pub use agent::AgentController;
 pub use channel::ChannelController;
 pub use manager::ControllerManager;
 pub use personality::PersonalityController;
+pub use project::ProjectController;
 pub use session::SessionController;
 pub use user::UserController;
 pub use workspace::WorkspaceController;

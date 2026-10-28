@@ -385,6 +385,8 @@ impl From<SessionError> for ApiError {
             }
             SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
             SessionError::WorkspaceOutOfScope(_) => Self::bad_request("workspace_out_of_scope", detail),
+            SessionError::ProjectOutOfScope(_) => Self::bad_request("project_out_of_scope", detail),
+            SessionError::ProjectDeleted(_) => Self::conflict("project_deleted", detail),
             SessionError::ScopeNotEmpty(e) => e.into(),
             SessionError::ShuttingDown => Self::unavailable("shutting_down", detail),
             SessionError::AlreadyParticipant { .. } => Self::conflict("already_participant", detail),

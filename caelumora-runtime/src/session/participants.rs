@@ -168,7 +168,7 @@ mod tests {
     #[tokio::test]
     async fn whoever_may_change_the_session_takes_a_user_into_it_and_a_channel_at_once() {
         let (store, manager) = owned_runtime(Default::default());
-        let runtime = Arc::clone(runtime_of(&manager));
+        let runtime = Arc::clone(manager.runtime());
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&manager, &[&alice, &carol]).await;

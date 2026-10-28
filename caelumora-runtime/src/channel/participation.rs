@@ -296,7 +296,7 @@ mod tests {
         ]).unwrap();
         let ids = roles.clone();
         let (store, manager) = owned_runtime(ConfidentialityRules::new(compartments).with_roles(roles));
-        let runtime = Arc::clone(runtime_of(&manager));
+        let runtime = Arc::clone(manager.runtime());
         let system = SecurityContext::system();
         let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: ids.ids_of(roles).unwrap(), deleted: None };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));

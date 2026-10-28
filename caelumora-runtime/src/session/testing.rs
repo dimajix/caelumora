@@ -264,8 +264,3 @@ pub async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<Message> {
     }
     panic!("the channel's history never reached {count} messages");
 }
-
-/// The runtime `manager` works with, for tests that ask it directly.
-pub fn runtime_of(manager: &SessionManager) -> &Arc<RuntimeManager> {
-    &manager.runtime_manager
-}

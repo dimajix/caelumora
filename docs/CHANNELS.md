@@ -62,6 +62,17 @@ project's scope goes with the session as what lies in the session's does, in the
 deletes or restores it, and what is left of it they may not delete keeps the session as well -
 counted with what is left of the session's scope (`ScopeNotEmpty`).
 
+Whoever may change a session and read a shared project puts the session into it
+(`SessionLoop::update_project`), or takes it out into its own again - the one in its scope, or a new
+one if that was lifted. Nothing moves: what went to a project stays there, what comes now goes to
+the other. The project a session lies in is shared with its participants for reading, so that every
+one of them publishes into it; the one it leaves is no longer. A session in a shared project goes
+with it: the `ProjectManager` deletes, restores and purges the sessions that lie in a project with
+it, through the `SessionManager`, and a session is not restored alone while its project is deleted
+(`SessionError::ProjectDeleted`). The owner of a session's own project keeps it by lifting it into
+their scope or the global one, under a name of its own (`ProjectController::lift`): it is then a
+shared project, the session in it, and goes with the session no longer.
+
 Every session has a privacy policy: whom it lets read what was said in it from other sessions. It is
 taken over from its template (private unless the template says otherwise), changed only by the
 session's owner, and shown to everyone who takes part. What it decides is described in

@@ -21,6 +21,7 @@ pub mod content;
 pub mod attachment;
 pub mod workspace;
 pub mod group;
+pub mod project;
 mod template;
 pub mod scoped;
 #[cfg(any(test, feature = "test-support"))]

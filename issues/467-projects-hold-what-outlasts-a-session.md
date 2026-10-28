@@ -769,3 +769,39 @@ none lies in a project's scope.
   `SessionManager::create` stays a finding. Nothing reads `Session::project` yet but the tests: the
   views (`SessionView::project`, naming an own project's group by its session) come with 2b, the
   artifacts with step 3. Stored sessions are to be deleted: `project` has no default.
+- **2026-10-28** — Step 2b done, after 2a was accepted: shared projects and a session's place in
+  one. The model gains `SessionUpdateEvent::ProjectChanged`, `SessionField::Project` and
+  `Filter::in_project`. In the runtime: `ProjectError` (`caelumora-runtime/src/project`), judged by
+  `user_message`; the `ProjectManager` - `create`, `delete`, `restore`, `purge`, made from the
+  `SessionManager` (`SessionManager::runtime`, which replaces the test helper `runtime_of`); the
+  `ProjectController` - `update_name`, `update_description`, `update_members`, `update_access`,
+  `share`, `unshare`, `lift`, `process_global_event` -, one per project and instance in the
+  `ControllerManager` (`project_controller`); `SessionLoop::update_project`, with
+  `SessionController::update_project` and `SessionError::ProjectOutOfScope` (REST `400
+  project_out_of_scope`). `World::projects` and the security suite's tests of who makes, changes,
+  shares, lifts and deletes a project.
+
+  Different from the plan: step 2 has a third part, 2c, for the views - `ProjectView`,
+  `Views::projects`, `ProjectSnapshot`, `SessionView::project`, `may_read_project` and
+  `may_change_project`, naming an own project's group by its session. `create_from_template` takes
+  no project yet: with it it would take eight parameters; a session is made in its own project and
+  put into a shared one by `update_project`, which the REST API of step 4 calls, as it is then the
+  one caller - whether creating takes the project then is a question for step 4. The programs make
+  the `ProjectManager` once the REST API uses it, in step 4. `lift` lifts a session's own alone, and
+  into the global scope or its owner's (`InvalidScope` otherwise): it is the act of keeping, not a
+  move of shared projects. `update_members` asks `UpdateProject` before whether each member exists,
+  as the `GroupManager` asks for a team, and tells who left (`announce_also_to` takes several
+  subjects now). Deleting a project that something is left in keeps the project, and what the
+  deleter could delete - sessions among it - stays deleted, to be restored by hand, as what lies in
+  a session's scope does.
+
+  After the review: `update_project` changes one session's project at a time
+  (`SessionLoop::moving`), shares the project the session goes to - or makes its new own, both with
+  its group or neither (`make_own`) - before the session is stored there, and takes that back if
+  storing fails; the entry of the project it left goes last. `lift` reaches the project and refuses
+  it under the lock of its writing, so that who does not read it learns nothing and it is lifted
+  once. The controller reads its project as `load`, as the `WorkspaceController` does, not as the
+  plan's `project`. `SessionManager::runtime` is the crate's alone.
+  Decided with the maintainer: a session that lies in a deleted shared project is not restored
+  alone (`SessionError::ProjectDeleted`, REST `409 project_deleted`); it comes back with the
+  project.
