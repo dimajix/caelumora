@@ -318,6 +318,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [480](480-the-context-panels-refusal-is-misnamed.md) | done | `refusal(error)` in the context panel turns three error codes into texts of its own, under the name the web UI now gives to every error a request is at fault for. |
 | [481](481-every-dialog-draws-its-refusal-itself.md) | done | How a refusal is shown in a dialog - an alert line under the fields - is written out by hand in eighteen files, and one of them already draws it in another colour. |
 | [482](482-question-card-shows-an-actor-key.md) | open | When an actor a question is put to is no participant of the channel - one that has left, say -, the question card says it waits for `User:<uuid>` instead of a name. |
+| [483](483-the-sidebar-edits-a-session-name-by-hand.md) | open | The field in which the sidebar renames a session repeats what `EditInPlace` does, without what that has since learned: Escape is followed by a save, and a name that differs only by spaces is sent. |
 
 ## Context and knowledge
 
