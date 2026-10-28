@@ -308,6 +308,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [425](425-session-language.md) | done | Only a channel can be held in a language, so the language of a session is set again on each of its channels, a channel added later is held in none, and nothing that belongs to the session as a whole - the formatting of times by its time zone among it - has a language to go by. |
 | [443](443-errors-carry-only-an-english-text.md) | open | What an error tells a person - a problem detail of the REST API, what a failed turn or command tells its owner - is an English text written by the runtime, with nothing beside it from which a frontend could say the same in the person's language. |
 | [466](466-storage-errors-answered-differently.md) | done | A file too large, content that changed while it was kept, or a storage that broke is answered with another status and code by the artifacts than by attachments and workspaces, since each kind maps the storage's errors to its own and the REST layer maps each kind's on its own. |
+| [473](473-web-ui-repeats-the-refusal-check.md) | open | Whether a dialog shows what the server said or reports the error is decided by the same condition copied into eighteen files. |
 
 ## Context and knowledge
 
