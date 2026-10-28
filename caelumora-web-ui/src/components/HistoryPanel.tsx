@@ -23,7 +23,10 @@ import {formatTimestamp, givenUpText, mergeToolResultsAmong, participantNotice} 
 interface HistoryPanelProps {
   sessionId: string;
   channelId: string;
-  /** The attachments of the channel's messages, where what its messages carry is downloaded from (issue 282). */
+  /**
+   * The attachments of the channel's messages, where what its messages carry is downloaded from
+   * (issue 282).
+   */
   attachments: ChannelAttachments;
   /** The agent whose history is shown. */
   participant: ChannelParticipant;

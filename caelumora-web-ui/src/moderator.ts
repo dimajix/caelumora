@@ -16,7 +16,9 @@ const RESPONDER_POLICIES: Record<string, ResponderPolicyInfo> = {
   decision_policy: {label: 'By content', description: 'A decision model chooses, by what a message says and how each agent is introduced, which agent answers.'},
 };
 
-/** Policies only an operator configures (issue 403): explained, but not offered for a new channel. */
+/**
+ * Policies only an operator configures (issue 403): explained, but not offered for a new channel.
+ */
 const OPERATOR_ONLY_POLICIES = new Set(['decision_policy']);
 
 /** The policy kinds this UI knows and a new channel may be given (issue 09). */

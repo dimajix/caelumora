@@ -71,17 +71,18 @@ against this list, rule by rule, before it is reported (the self-review of
     is changed anyway. A mechanical change across many modules - a lint's fix, a rename - does not
     count, so that it stays one change of its own.
 *   **Consistency:** mirror the comment frequency and style of the module you are editing.
-*   **Comments wrap at 100 characters**, as the Markdown documents do. Older comments are wrapped
-    narrower; they are rewrapped when they are changed anyway, not on their own.
+*   **Comments wrap at 100 characters**, as the Markdown documents do - in Rust and in the
+    TypeScript of `caelumora-web-ui` alike. Older comments are wrapped narrower; they are rewrapped
+    when they are changed anyway, not on their own.
 *   **Markdown documents** (`docs/`, `issues/`, `AGENTS.md`, `.claude/agents/`) wrap prose at 100
     characters. Headings, table rows, code blocks and links that would not fit stay on one line;
     field lines such as `**Status:**` keep a line of their own.
 *   **Line lengths are counted by `scripts/line-length.sh`**, in characters, not bytes, by the
     exceptions above, in the files these rules cover; a link counts as one word, not broken even in
     its text. Without arguments it checks the lines a change adds or changes, against `HEAD`, and
-    new files whole; given files, it checks them whole. The pre-commit hook gives it the Markdown
-    and Rust files a commit adds or changes. Lengths are not counted by hand or with another tool,
-    which counts bytes or knows no exceptions.
+    new files whole; given files, it checks them whole. The pre-commit hook gives it the Markdown,
+    Rust and TypeScript files a commit adds or changes. Lengths are not counted by hand or with
+    another tool, which counts bytes or knows no exceptions.
 *   **No line of prose starts with a dash.** In a doc comment, a line that begins with `- ` is a
     list item to rustdoc, and the sentence it continues breaks apart (clippy:
     `doc_lazy_continuation`). Wrap so that a dash ends the line before it instead.

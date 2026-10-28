@@ -11,11 +11,17 @@ import {classificationDescription, classificationLabel} from '../confidentiality
 import {FileBrowser} from './FileBrowser';
 
 interface ChannelWorkspacePanelProps {
-  /** The session's workspace as the channel names it: `undefined` while it is fetched, `null` where there is none to use. */
+  /**
+   * The session's workspace as the channel names it: `undefined` while it is fetched, `null` where
+   * there is none to use.
+   */
   workspace: WorkspaceResponse | null | undefined;
   /** Its files as the user may use them. */
   files: WorkspaceFiles | null;
-  /** Changes whenever the workspace or its files may have changed - a tool call ended, the channel's switch. */
+  /**
+   * Changes whenever the workspace or its files may have changed - a tool call ended, the channel's
+   * switch.
+   */
   version: number;
 }
 

@@ -57,7 +57,8 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({projectId, onDeleted, o
   if (!project) return null;
 
   const own = project.scope === 'session';
-  // A session's own is kept while the session publishes into it: lifted then, the session lies in it.
+  // A session's own is kept while the session publishes into it: lifted then, the session lies in
+  // it.
   const keepable = own && sessions.some(s => s.id === project.session_id);
   const place = placeOf(project);
   const memberIds = project.members.map(m => m.id);
@@ -276,7 +277,10 @@ interface LiftProjectProps {
   onCancel: () => void;
 }
 
-/** Keeps a session's own project: lifted into the user's name space or the global one, under a name of its own. */
+/**
+ * Keeps a session's own project: lifted into the user's name space or the global one, under a name
+ * of its own.
+ */
 const LiftProject: React.FC<LiftProjectProps> = ({project, onLifted, onCancel}) => {
   const [name, setName] = useState('');
   const [scope, setScope] = useState<'user' | 'global'>('user');

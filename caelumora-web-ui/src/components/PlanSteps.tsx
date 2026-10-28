@@ -15,7 +15,9 @@ interface PlanStepsProps {
   count: number;
   /** Whether it is the step its turn is in now: open then, folded once the turn moved on. */
   underWay: boolean;
-  /** Whether an answer of the step streams in, shown after its messages - also before it has any. */
+  /**
+   * Whether an answer of the step streams in, shown after its messages - also before it has any.
+   */
   streaming: boolean;
   /** The messages, and the answer that streams in, as the chat renders them. */
   children: React.ReactNode;

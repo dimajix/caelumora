@@ -8,7 +8,9 @@ import {Circle, CircleDot, MessageCircleQuestion, Square, SquareCheck} from 'luc
 import type {Answers, Question, QuestionResponse} from '../types';
 import {cn} from '../classNames';
 
-/** A question's header and its text, its line breaks kept; phrasing content, to stand in a legend. */
+/**
+ * A question's header and its text, its line breaks kept; phrasing content, to stand in a legend.
+ */
 export const QuestionHeading: React.FC<{question: Question; compact?: boolean}> = ({question, compact}) => (
   <span className={cn('block', compact ? 'text-xs' : 'text-sm')}>
     <span className="text-[11px] uppercase tracking-wider text-gray-500 mr-2">{question.header}</span>

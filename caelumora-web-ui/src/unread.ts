@@ -43,7 +43,9 @@ export function countedIn(unread: Unread | undefined, message: Message, me: Acto
 type ReadListener = (channelId: string, messageId: string) => void;
 const readListeners = new Set<ReadListener>();
 
-/** Calls `listener` whenever a channel was marked read here, until the returned function is called. */
+/**
+ * Calls `listener` whenever a channel was marked read here, until the returned function is called.
+ */
 export function onChannelRead(listener: ReadListener): () => void {
   readListeners.add(listener);
   return () => {

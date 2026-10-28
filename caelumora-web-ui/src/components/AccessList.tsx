@@ -23,8 +23,8 @@ const KIND_LABELS: Record<AccessEntry['kind'], string> = {
 
 /**
  * What each grant lets whom an entry names do, as a reader is told; changing only where what is
- * shared has a change to grant - not a project (issue 467) -, joining (issue 221) only where it is a
- * session or channel. Elsewhere an entry that grants one is shown as it is.
+ * shared has a change to grant - not a project (issue 467) -, joining (issue 221) only where it is
+ * a session or channel. Elsewhere an entry that grants one is shown as it is.
  */
 export type GrantLabels = {read: string; write?: string; join?: string};
 

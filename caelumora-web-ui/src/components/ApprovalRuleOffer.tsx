@@ -99,7 +99,10 @@ interface ShellWordsChoiceProps {
   onChange: (words: string[]) => void;
 }
 
-/** How many of the words a command line was suggested with the rule keeps: the commands beginning with them. */
+/**
+ * How many of the words a command line was suggested with the rule keeps: the commands beginning
+ * with them.
+ */
 const ShellWordsChoice: React.FC<ShellWordsChoiceProps> = ({name, words, offered, field, onChange}) => {
   const all = offered !== undefined && typeof offered !== 'string' && 'shell' in offered ? offered.shell : words;
   return (

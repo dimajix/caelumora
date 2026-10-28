@@ -1,6 +1,6 @@
 # 479 — A rename the server refuses is reported in the banner, not where it is typed
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** low
 **Area:** User interaction
@@ -28,6 +28,26 @@ refusal in the banner is read away from the field, and the field has already clo
 - **B. The rule is narrowed to dialogs** in WEB-UI.md, with the reason why an edit in place reports
   instead.
 
+## Decision
+
+A, for every text edited in place, in three steps; the session's name in the sidebar keeps the
+banner (B for it alone).
+
+1.  **The width of comments is checked in TypeScript too.** Taken in at the maintainer's request:
+    `scripts/line-length.sh` checks the comments of `caelumora-web-ui/src`, the pre-commit hook
+    hands it those files, and the comments longer than 100 characters are rewrapped.
+2.  **`EditInPlace`**, without a change of behaviour: the issue names four places, but a text is
+    edited in place nine times on six pages - the names and descriptions of projects, workspaces and
+    skills, the names of teams and agents, the description of an artifact -, each field written out
+    by hand. One component takes their place.
+3.  **A refusal stays where it is typed.** `EditInPlace` stays open until the server answered, and
+    shows a refusal under the field through `reportUnlessRefused`, the text kept; Escape gives up,
+    and leaving the field saves again. `Refusal` gets `on: 'dialog' | 'page'`, `'dialog'` by
+    default, for a refusal on a page that follows the theme - `EditInPlace`'s, and that of the form
+    "keep the project", which loses its own line. The sidebar's field for a session's name stands
+    in a row of a list, inside a button, with no room for a line below; there a refusal stays in the
+    banner, and WEB-UI.md says why.
+
 ## Done when
 
 - A refused rename is shown where the name is typed, or the document says why it is not.
@@ -35,3 +55,5 @@ refusal in the banner is read away from the field, and the field has already clo
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of issue 473.
+- **2026-10-28** — Step 1 done: `line-length.sh` checks the comments of the web UI's TypeScript,
+  and the 147 lines longer than 100 characters are rewrapped.

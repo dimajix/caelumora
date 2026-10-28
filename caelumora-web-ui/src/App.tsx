@@ -73,7 +73,10 @@ interface LayoutProps {
   onLogout: () => void;
 }
 
-/** The sidebar, and beside it a channel or a page in its place - a workspace, a skill, an artifact, a team, an agent or a project. */
+/**
+ * The sidebar, and beside it a channel or a page in its place - a workspace, a skill, an artifact,
+ * a team, an agent or a project.
+ */
 function Layout({ user, onLogout }: LayoutProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);

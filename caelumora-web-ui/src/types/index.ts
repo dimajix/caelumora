@@ -23,9 +23,15 @@ export interface UserResponse {
 export interface ProfileResponse {
   introduction: string | null;
   max_introduction_chars: number;
-  /** The language you prefer, a BCP 47 tag such as `de` (issue 56); the web UI holds your new sessions in it (issues 331, 425). */
+  /**
+   * The language you prefer, a BCP 47 tag such as `de` (issue 56); the web UI holds your new
+   * sessions in it (issues 331, 425).
+   */
   preferred_language: string | null;
-  /** Your answers to tool calls given in advance (issue 13): rules that allow or deny, each within a reach. */
+  /**
+   * Your answers to tool calls given in advance (issue 13): rules that allow or deny, each within a
+   * reach.
+   */
   approval_rules: ApprovalRule[];
 }
 
@@ -40,13 +46,21 @@ export interface SessionResponse {
   name: string;
   /** What it is for, in a line (issue 245); absent if nobody said. */
   summary?: string;
-  /** The language its channels are held in where they hold none of their own, a BCP 47 tag (issue 425); `null` for none in particular. */
+  /**
+   * The language its channels are held in where they hold none of their own, a BCP 47 tag (issue
+   * 425); `null` for none in particular.
+   */
   language: string | null;
-  /** The time zone it is held in, an IANA name such as `Europe/Berlin` (issue 424); `null` for UTC. */
+  /**
+   * The time zone it is held in, an IANA name such as `Europe/Berlin` (issue 424); `null` for UTC.
+   */
   time_zone: string | null;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
-  /** The project its results go to (issue 467) - its own, or the shared one it lies in -, if you may read it. */
+  /**
+   * The project its results go to (issue 467) - its own, or the shared one it lies in -, if you may
+   * read it.
+   */
   project_id?: string;
 }
 
@@ -84,7 +98,10 @@ export interface TokenUsage {
   completion_tokens: number;
   /** Absent if not known. */
   context_size?: number;
-  /** How many tokens the context holds now (issue 284) - after a compaction no longer the last call's. */
+  /**
+   * How many tokens the context holds now (issue 284) - after a compaction no longer the last
+   * call's.
+   */
   context_tokens: number;
 }
 
@@ -98,7 +115,10 @@ export interface ChannelParticipant {
   can_read_context: boolean;
   /** Whether you may see which tools it has now - only ever an agent (issue 194). */
   can_read_tools: boolean;
-  /** Whether you may see which components it was built from - only ever an agent of yours (issue 270). */
+  /**
+   * Whether you may see which components it was built from - only ever an agent of yours (issue
+   * 270).
+   */
   can_read_components: boolean;
   /**
    * Whether you may approve its tool calls - only ever an agent taking part,
@@ -113,7 +133,9 @@ export interface ChannelParticipant {
    * the agent's to decide.
    */
   can_retry: boolean;
-  /** Whether you may end its answer under way - only ever an agent taking part (issues 235, 243). */
+  /**
+   * Whether you may end its answer under way - only ever an agent taking part (issues 235, 243).
+   */
   can_cancel: boolean;
   /**
    * Where it stands now (issue 243), kept up by `StateChanged`; absent for a
@@ -187,23 +209,40 @@ export interface ChannelResponse {
   briefing?: string;
   /** All participants, in no particular order. */
   participants: ChannelParticipant[];
-  /** The kind of the moderator, e.g. `policy_moderator`; `null` if it comes from a component bundle (issue 174). */
+  /**
+   * The kind of the moderator, e.g. `policy_moderator`; `null` if it comes from a component bundle
+   * (issue 174).
+   */
   moderator: string | null;
-  /** The kind of the policy in the moderator's slot - who answers - e.g. `round_robin_policy` or `mentions_only_policy` (issues 44, 174); `null` if it comes from a component bundle. */
+  /**
+   * The kind of the policy in the moderator's slot - who answers - e.g. `round_robin_policy` or
+   * `mentions_only_policy` (issues 44, 174); `null` if it comes from a component bundle.
+   */
   responder_policy: string | null;
   /** The classification of the channel's contents (issue 133). */
   classification: Classification;
-  /** The language of its own its conversation is held in, a BCP 47 tag (issue 56); `null` if it holds none of its own. */
+  /**
+   * The language of its own its conversation is held in, a BCP 47 tag (issue 56); `null` if it
+   * holds none of its own.
+   */
   language: string | null;
-  /** The language its conversation is held in (issue 425): its own, else its session's; `null` for none in particular. */
+  /**
+   * The language its conversation is held in (issue 425): its own, else its session's; `null` for
+   * none in particular.
+   */
   effective_language: string | null;
   /** What it restricts of the tool calls made in it (issue 13): rules that ask or deny. */
   approval_rules: ApprovalRule[];
-  /** Whether its participants work on the session's workspace here (issue 251), where the classifications let them. */
+  /**
+   * Whether its participants work on the session's workspace here (issue 251), where the
+   * classifications let them.
+   */
   uses_workspace: boolean;
   /** The session's workspace, if the channel uses it and you may read it (issue 23). */
   workspace_id?: string;
-  /** Whether you may rename it, add or remove participants (issue 46) and set its approval rules. */
+  /**
+   * Whether you may rename it, add or remove participants (issue 46) and set its approval rules.
+   */
   can_change: boolean;
   /**
    * Why the channel does not run though its session does (issue 463): its components cannot be
@@ -217,17 +256,24 @@ export interface ChannelResponse {
   unread?: Unread;
 }
 
-/** What is new in a channel to you (issue 404): the messages of others said since you last read it. */
+/**
+ * What is new in a channel to you (issue 404): the messages of others said since you last read it.
+ */
 export interface Unread {
   /** How many, counted up to 100: more than 99 are shown as such. */
   messages: number;
   /** Whether one of them mentions you, `@all` included. */
   mentioned: boolean;
-  /** The last message you read, after which the new ones begin; absent while you read nothing of the channel. */
+  /**
+   * The last message you read, after which the new ones begin; absent while you read nothing of the
+   * channel.
+   */
   read_up_to?: string;
 }
 
-/** Who sees a part of what an agent produces (issue 133): the channel, or only the agent's owner. */
+/**
+ * Who sees a part of what an agent produces (issue 133): the channel, or only the agent's owner.
+ */
 export type Visibility = 'channel' | 'owner';
 
 /**
@@ -284,9 +330,15 @@ export interface ToolResult {
    * Shown with the call even where its result is not.
    */
   approval?: ApprovalDecision[];
-  /** What the tool gave its model besides `content` (issue 282); absent where its result is not shown. */
+  /**
+   * What the tool gave its model besides `content` (issue 282); absent where its result is not
+   * shown.
+   */
   media?: ContentRef[];
-  /** The attachments the call showed its model again (issue 282); absent where its result is not shown. */
+  /**
+   * The attachments the call showed its model again (issue 282); absent where its result is not
+   * shown.
+   */
   shown?: ContentRef[];
   // UI only: the message that carries the result, where the chat put it with its call
   // (`mergeToolResults`) - what `shown` is downloaded through.
@@ -318,7 +370,10 @@ export interface ChannelSnapshot {
   earlier: number | null;
   /** The notes every agent of the channel published (issue 17). */
   notes: PublishedNotes[];
-  /** The approvals the channel's agents wait for (issue 172): the stream tells only of requests made while it listens. */
+  /**
+   * The approvals the channel's agents wait for (issue 172): the stream tells only of requests made
+   * while it listens.
+   */
   pending_approvals?: ApprovalRequest[];
   /** The questions the channel's agents wait for the answers to (issue 165), as for approvals. */
   pending_questions?: QuestionRequest[];
@@ -365,13 +420,21 @@ export interface SessionSnapshot {
    * absent if nobody wrote one.
    */
   briefing?: string;
-  /** The language its channels are held in where they hold none of their own, a BCP 47 tag (issue 425); `null` for none in particular. */
+  /**
+   * The language its channels are held in where they hold none of their own, a BCP 47 tag (issue
+   * 425); `null` for none in particular.
+   */
   language: string | null;
-  /** The time zone it is held in, an IANA name such as `Europe/Berlin` (issue 424); `null` for UTC. */
+  /**
+   * The time zone it is held in, an IANA name such as `Europe/Berlin` (issue 424); `null` for UTC.
+   */
   time_zone: string | null;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
-  /** What it restricts of the tool calls made in any of its channels (issue 13): rules that ask or deny. */
+  /**
+   * What it restricts of the tool calls made in any of its channels (issue 13): rules that ask or
+   * deny.
+   */
   approval_rules: ApprovalRule[];
   /** Whether you may change it - rename it, change its privacy, set its approval rules. */
   can_change: boolean;
@@ -391,7 +454,10 @@ export interface SessionSnapshot {
  */
 export type ScopeKind = 'session' | 'user' | 'global' | 'project';
 
-/** What an entry of an access list grants (issue 23): reading, changing the files too, or - for a session or channel - joining it (issue 221). */
+/**
+ * What an entry of an access list grants (issue 23): reading, changing the files too, or - for a
+ * session or channel - joining it (issue 221).
+ */
 export type Grant = 'read' | 'write' | 'join';
 
 /**
@@ -465,7 +531,10 @@ export interface CreateSkillRequest {
 export interface GroupResponse {
   id: string;
   name: string;
-  /** `user` or `global` for a team; `session` for the participants of the session `session_id` - or of its channel `channel_id`; `project` for the members of the project `project_id`. */
+  /**
+   * `user` or `global` for a team; `session` for the participants of the session `session_id` - or
+   * of its channel `channel_id`; `project` for the members of the project `project_id`.
+   */
   scope: ScopeKind;
   session_id?: string;
   channel_id?: string;
@@ -491,11 +560,17 @@ export interface CreateGroupRequest {
   scope?: 'user' | 'global';
 }
 
-/** An agent the user may read (issues 164, 227), on its own rather than as a participant of a channel. */
+/**
+ * An agent the user may read (issues 164, 227), on its own rather than as a participant of a
+ * channel.
+ */
 export interface AgentResponse {
   id: string;
   name: string;
-  /** `user` or `global` for an agent of its own; `session` for one that takes part only in the session `session_id` - or in its channel `channel_id`. */
+  /**
+   * `user` or `global` for an agent of its own; `session` for one that takes part only in the
+   * session `session_id` - or in its channel `channel_id`.
+   */
   scope: ScopeKind;
   session_id?: string;
   channel_id?: string;
@@ -519,7 +594,11 @@ export interface AgentChannelResponse {
   channel_name: string;
 }
 
-/** An agent to make of a personality (issue 227): yours, in your scope unless `global` - or in a session's, `session_id`, or one of its channels', `channel_id`, as far as the personality admits it. */
+/**
+ * An agent to make of a personality (issue 227): yours, in your scope unless `global` - or in a
+ * session's, `session_id`, or one of its channels', `channel_id`, as far as the personality admits
+ * it.
+ */
 export interface CreateAgentRequest {
   name: string;
   personality_id: string;
@@ -540,11 +619,17 @@ export interface PersonalityResponse {
   description?: string;
 }
 
-/** An artifact (issue 271), as whoever reads any of its versions sees it (issue 23): with those versions alone. */
+/**
+ * An artifact (issue 271), as whoever reads any of its versions sees it (issue 23): with those
+ * versions alone.
+ */
 export interface ArtifactResponse {
   id: string;
   name: string;
-  /** The project it lies in (issue 467), and lives as long as: with its session where that is the session's own. */
+  /**
+   * The project it lies in (issue 467), and lives as long as: with its session where that is the
+   * session's own.
+   */
   project_id?: string;
   /** What it is as a whole, as its owner describes it. */
   description?: string;
@@ -783,7 +868,10 @@ export interface ActorEvent {
   ApprovalRequestWithdrawn?: { id: string };
   /** An agent's call asks questions of users of the channel (issue 165). */
   QuestionRequested?: QuestionRequest;
-  /** The agent no longer waits for the answers to questions `id`: answered, declined, or its turn ended. */
+  /**
+   * The agent no longer waits for the answers to questions `id`: answered, declined, or its turn
+   * ended.
+   */
   QuestionClosed?: { id: string; shown_to?: ActorId[] | null };
   /**
    * The turn `turn_id` ended with its answer, `messages` (issue 258), each
@@ -796,7 +884,10 @@ export interface ActorEvent {
   PlanStepStarted?: PlanStepEvent;
   PlanStepFinished?: PlanStepEvent;
   /** An agent's turn was aborted by an error; the agent is idle again. */
-  /** An agent gave its turn up (issues 145, 258); one whose session merely stops keeps it and sends none (issue 377). */
+  /**
+   * An agent gave its turn up (issues 145, 258); one whose session merely stops keeps it and sends
+   * none (issue 377).
+   */
   TurnGivenUp?: { turn_id: string; reason: GivenUpReason };
   /**
    * A command was carried out (issues 28, 269): by the session, sent by the
@@ -944,11 +1035,19 @@ export interface SessionTemplate {
   id: string;
   name: string;
   description: string;
-  /** The language its sessions are held in unless another is asked for (issue 425); `null` for none in particular. */
+  /**
+   * The language its sessions are held in unless another is asked for (issue 425); `null` for none
+   * in particular.
+   */
   language: string | null;
-  /** The time zone its sessions are held in unless another is asked for (issue 424); `null` for none. */
+  /**
+   * The time zone its sessions are held in unless another is asked for (issue 424); `null` for
+   * none.
+   */
   time_zone: string | null;
-  /** The workspace its sessions have unless another is chosen (issue 266); absent if it names none. */
+  /**
+   * The workspace its sessions have unless another is chosen (issue 266); absent if it names none.
+   */
   workspace?: TemplateWorkspace;
 }
 
@@ -963,7 +1062,10 @@ export interface TemplateWorkspace {
 export interface CreateSessionRequest {
   template_id: string;
   name: string;
-  /** The language its channels are held in where they hold none of their own (issue 425); the template's if absent. */
+  /**
+   * The language its channels are held in where they hold none of their own (issue 425); the
+   * template's if absent.
+   */
   language?: string;
   /** The time zone it is held in, an IANA name (issue 424); the template's if absent, else UTC. */
   time_zone?: string;
@@ -980,13 +1082,18 @@ export interface CreateSessionRequest {
 export interface ProjectResponse {
   id: string;
   name: string;
-  /** `user` or `global` for a shared project; `session` for the own project of the session `session_id`. */
+  /**
+   * `user` or `global` for a shared project; `session` for the own project of the session
+   * `session_id`.
+   */
   scope: ScopeKind;
   session_id?: string;
   description?: string;
   /** Who works on it. */
   members: ProjectMemberResponse[];
-  /** Whether you may change it - rename, describe, name its members, share, lift, delete: its owner. */
+  /**
+   * Whether you may change it - rename, describe, name its members, share, lift, delete: its owner.
+   */
   can_change: boolean;
   /** Whom it is shared with - only for its owner. */
   access?: AccessEntry[];
@@ -1039,7 +1146,10 @@ export interface CreateChannelRequest {
 /** How an approver decides on a tool call (`ApprovalStrategy`). */
 export type ApprovalStrategy = 'Any' | 'Majority' | 'All' | 'DenyOnFirst';
 
-/** An internal actor of a channel to create (issue 420): an approver, deciding by `strategy` - `Any` if absent. */
+/**
+ * An internal actor of a channel to create (issue 420): an approver, deciding by `strategy` - `Any`
+ * if absent.
+ */
 export type InternalActorRequest = {Approver: {strategy?: ApprovalStrategy}};
 
 /**
@@ -1058,7 +1168,10 @@ export interface AddParticipantRequest {
   history: HistoryAccess;
 }
 
-/** Why someone cannot be taken into a session or channel (issue 221) - coarse, never which clearance is missing. */
+/**
+ * Why someone cannot be taken into a session or channel (issue 221) - coarse, never which clearance
+ * is missing.
+ */
 export type CandidateRefusal = 'not_cleared' | 'out_of_scope' | 'cannot_run';
 
 /** Someone found by name to take into a session (issue 221). */
@@ -1083,7 +1196,10 @@ export interface Choice {
   recommended?: boolean;
 }
 
-/** One question: answered with text without `choices`, else by choosing - several with `multi_select` - or writing another answer. */
+/**
+ * One question: answered with text without `choices`, else by choosing - several with
+ * `multi_select` - or writing another answer.
+ */
 export interface Question {
   /** A short label, at most 12 characters. */
   header: string;
@@ -1092,7 +1208,9 @@ export interface Question {
   multi_select?: boolean;
 }
 
-/** Whom questions are put to; as the server sends them, every one found among the users: `{actor}`. */
+/**
+ * Whom questions are put to; as the server sends them, every one found among the users: `{actor}`.
+ */
 export type Addressee = 'owner' | { handle: string } | { actor: ActorId };
 
 /** What a call asks (issue 165). */
@@ -1134,22 +1252,31 @@ export interface ApprovalRequest {
   agent_id: string;
   tool_call: ToolCall;
   description: string;
-  /** A rule of the session or channel asked for this very call to be decided by a person (issue 13); left out when not. */
+  /**
+   * A rule of the session or channel asked for this very call to be decided by a person (issue 13);
+   * left out when not.
+   */
   explicit?: boolean;
-  /** What other calls are like this one, as its tool says (issue 13): what a rule derived from it is offered with; left out where no rule can be (issue 400). */
+  /**
+   * What other calls are like this one, as its tool says (issue 13): what a rule derived from it is
+   * offered with; left out where no rule can be (issue 400).
+   */
   suggested?: ToolMatcher;
 }
 
-/** What calls a rule is about: the tool by name - `*` for every tool - and, per argument, how its value is compared. */
+/**
+ * What calls a rule is about: the tool by name - `*` for every tool - and, per argument, how its
+ * value is compared.
+ */
 export interface ToolMatcher {
   tool: string;
   arguments?: Record<string, ArgumentMatcher>;
 }
 
 /**
- * How the value of one argument is compared (issue 247): a pattern - a regular expression its whole value must
- * match -, for a bash command line the words each of its simple commands must begin with, or the whole value as it
- * is, for one too long for a pattern (issue 400).
+ * How the value of one argument is compared (issue 247): a pattern - a regular expression its whole
+ * value must match -, for a bash command line the words each of its simple commands must begin
+ * with, or the whole value as it is, for one too long for a pattern (issue 400).
  */
 export type ArgumentMatcher = string | ShellWords | ExactValue;
 
@@ -1163,13 +1290,19 @@ export interface ExactValue {
   equals: string;
 }
 
-/** What a rule decides of the calls it is about (issue 13). A session or channel only asks or denies. */
+/**
+ * What a rule decides of the calls it is about (issue 13). A session or channel only asks or
+ * denies.
+ */
 export type RuleDecision = 'allow' | 'ask' | 'deny';
 
 /** Where a rule applies within the place it is kept; `everywhere` when left out. */
 export type Reach = 'everywhere' | {session: string} | {channel: string};
 
-/** A standing decision on tool calls (issue 13): the calls its matcher is about, what it decides of them, where and how long. */
+/**
+ * A standing decision on tool calls (issue 13): the calls its matcher is about, what it decides of
+ * them, where and how long.
+ */
 export interface ApprovalRule {
   /** Made by the server when left out. */
   id?: string;
@@ -1191,7 +1324,10 @@ export interface ApprovalResponse {
   decisions?: ApprovalDecision[];
 }
 
-/** One person's part in an approval (issue 419): who, named as then, by which rule of theirs if one answered, and when. */
+/**
+ * One person's part in an approval (issue 419): who, named as then, by which rule of theirs if one
+ * answered, and when.
+ */
 export interface ApprovalDecision {
   by: ActorId;
   name: string;
@@ -1212,7 +1348,10 @@ export interface SeenPrompt {
   sets_label: boolean;
 }
 
-/** A message of a context, with whether it - or a tool result in it - set the label of the message (issue 170). */
+/**
+ * A message of a context, with whether it - or a tool result in it - set the label of the message
+ * (issue 170).
+ */
 export interface SeenMessage {
   kind: 'message';
   message: Message;
@@ -1278,7 +1417,10 @@ export type HistoryItemKind<M> =
   | {responder_undecided: {message: string; at: string}}
   /** What the reader sent was not let into the channel (issue 304). */
   | {message_rejected: {rejected: string; message: string | null; reason: Rejection; at: string}}
-  /** The reader was asked to respond, to what `by` said or nudged, for `reason` (issues 278, 417, 439). */
+  /**
+   * The reader was asked to respond, to what `by` said or nudged, for `reason` (issues 278, 417,
+   * 439).
+   */
   | {response_requested: {by: ActorId; reason: RequestReason; at: string}};
 
 /**
@@ -1321,8 +1463,8 @@ export interface ToolSet {
 }
 
 /**
- * A tool of an agent (issues 137, 194): what its model is told of it - name, description, parameters -
- * and what only the runtime acts on.
+ * A tool of an agent (issues 137, 194): what its model is told of it - name, description,
+ * parameters - and what only the runtime acts on.
  */
 export interface Tool {
   name: string;
@@ -1338,19 +1480,27 @@ export interface Tool {
   presentation?: ToolPresentation;
 }
 
-/** The tools an agent has now in a channel (issue 194); none where it has none here - no agent run here, left, or the channel does not run. */
+/**
+ * The tools an agent has now in a channel (issue 194); none where it has none here - no agent run
+ * here, left, or the channel does not run.
+ */
 export interface AgentToolsResponse {
   tool_sets: ToolSet[];
 }
 
 /** Knowledge a message was produced with (issue 17). */
 export interface KnowledgeRef {
-  /** The session of the channel: another one's, for what an agent recalled from its memory (issue 134). */
+  /**
+   * The session of the channel: another one's, for what an agent recalled from its memory (issue
+   * 134).
+   */
   session_id: string;
   channel_id: string;
   /** Null for a channel that is gone, or of another session. */
   channel_name: string | null;
-  /** Whether the channel was deleted (issue 164) - told only to whoever could read it were it there. */
+  /**
+   * Whether the channel was deleted (issue 164) - told only to whoever could read it were it there.
+   */
   channel_deleted: boolean;
   /**
    * What was read: `notes`, `private_notes`, `history`, `memory`, or an entity
@@ -1369,7 +1519,10 @@ export interface KnowledgeRef {
    * later with a limit (issues 72, 417); absent means all of it.
    */
   history_start?: number;
-  /** How what was read was classified when it was read; null if not known - it counts as the channel (issue 168). */
+  /**
+   * How what was read was classified when it was read; null if not known - it counts as the channel
+   * (issue 168).
+   */
   classification: Classification | null;
   /** Whether it set the label of the message (issue 170). */
   sets_label: boolean;

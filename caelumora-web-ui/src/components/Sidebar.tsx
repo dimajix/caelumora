@@ -97,12 +97,18 @@ const UnreadBadge: React.FC<{unread: Unread | undefined}> = ({unread}) => {
   );
 };
 
-/** Whether `event` may change what is among the deleted (issue 164): a deletion or restoring of whatever kind. */
+/**
+ * Whether `event` may change what is among the deleted (issue 164): a deletion or restoring of
+ * whatever kind.
+ */
 function deletedChangedBy(event: GlobalEvent): boolean {
   return event.change === 'Deleted' || event.change === 'Restored';
 }
 
-/** Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`, `agent`, `project`. */
+/**
+ * Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`,
+ * `agent`, `project`.
+ */
 function isAbout(event: GlobalEvent, kind: string): boolean {
   return event.kind === kind;
 }
@@ -138,7 +144,10 @@ interface SidebarProps {
   onSessionDeleted: (sessionId: string) => void;
   /** The selected channel no longer exists - deleted here or elsewhere. */
   onChannelDeleted: (channelId: string) => void;
-  /** What is shown in the place of a channel - a workspace (issue 253), a skill (issue 22), an artifact (issue 291), a team (issue 286) or an agent (issue 227). */
+  /**
+   * What is shown in the place of a channel - a workspace (issue 253), a skill (issue 22), an
+   * artifact (issue 291), a team (issue 286) or an agent (issue 227).
+   */
   page: Page | null;
   onSelectPage: (page: Page) => void;
   /** What the page shows no longer exists, or may no longer be read. */
@@ -464,7 +473,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   className="p-2 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
                   actions={[
                     {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
-                    // Fetched first: the list holds no briefing, and saving without it would remove it.
+                    // Fetched first: the list holds no briefing, and saving without it would remove
+                    // it.
                     {label: 'Description', icon: FileText, onSelect: () => void refreshSession(session.id).then(() => setDescriptionOf(session.id))},
                     ...(session.can_change ? [
                       {label: 'Language', icon: Languages, onSelect: () => setLanguageOf(session.id)},

@@ -14,7 +14,10 @@ interface AddUserProps {
   onAdd: (userId: string) => void;
 }
 
-/** The session chosen first, its participants loaded once it is, as `AccessList` picks the members of a session. */
+/**
+ * The session chosen first, its participants loaded once it is, as `AccessList` picks the members
+ * of a session.
+ */
 export const AddUser: React.FC<AddUserProps> = ({members, onAdd}) => {
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
   const [sessionId, setSessionId] = useState('');

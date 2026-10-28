@@ -21,7 +21,9 @@ export type SessionChange =
   | {kind: 'refresh'; sessionId: string}
   | {kind: 'ignore'};
 
-/** `value`, read from the global stream, as the event it is; `null` for anything that is no event. */
+/**
+ * `value`, read from the global stream, as the event it is; `null` for anything that is no event.
+ */
 export function asGlobalEvent(value: unknown): GlobalEvent | null {
   if (typeof value !== 'object' || value === null) return null;
   const event = value as Partial<GlobalEvent>;
@@ -143,7 +145,10 @@ export function changedAgentState(event: GlobalEvent): {sessionId: string; chann
   return {sessionId: channel.sessionId, channelId: channel.channelId, agentId};
 }
 
-/** The channel that was changed and what its update says, for a channel's update; `null` for any other event. */
+/**
+ * The channel that was changed and what its update says, for a channel's update; `null` for any
+ * other event.
+ */
 function channelUpdate(event: GlobalEvent): {channelId: string; update: object} | null {
   const channel = channelEvent(event);
   const update = channel && updateOf(channel.change);

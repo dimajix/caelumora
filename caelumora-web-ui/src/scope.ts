@@ -1,4 +1,5 @@
-// Where a workspace (issue 251), a skill (issue 22) or a project (issue 467) lies, as people read it.
+// Where a workspace (issue 251), a skill (issue 22) or a project (issue 467) lies, as people read
+// it.
 
 import type {ScopeKind} from './types';
 

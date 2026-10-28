@@ -141,13 +141,18 @@ interface MessageViewProps {
   /** Further icons for the footer, e.g. showing the message's context. */
   actions?: React.ReactNode;
   className?: string;
-  /** The files of the channel's workspace, where its calls may offer one for download (issue 273). */
+  /**
+   * The files of the channel's workspace, where its calls may offer one for download (issue 273).
+   */
   files?: WorkspaceFiles;
   /** Changes whenever those files may have changed. */
   filesVersion?: number;
   /** The artifacts of the channel, where its calls published one (issue 271). */
   artifacts?: ChannelArtifacts;
-  /** The attachments of the channel's messages, where they are downloaded (issue 282); named only without it. */
+  /**
+   * The attachments of the channel's messages, where they are downloaded (issue 282); named only
+   * without it.
+   */
   attachments?: ChannelAttachments;
   /** Opens a page in the place of the channel - a skill's, where its calls name one (issue 281). */
   onSelectPage?: (page: Page) => void;

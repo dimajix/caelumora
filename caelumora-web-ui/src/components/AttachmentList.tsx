@@ -15,9 +15,15 @@ interface AttachmentListProps {
   items: ContentRef[];
   /** The message that carries them; with `attachments`, where they are downloaded from. */
   messageId?: string;
-  /** The attachments of the channel's messages; without them, or without `messageId`, they are only named. */
+  /**
+   * The attachments of the channel's messages; without them, or without `messageId`, they are only
+   * named.
+   */
   attachments?: ChannelAttachments;
-  /** How what carries them is classified - a message, a tool's result -: one classified otherwise says how. */
+  /**
+   * How what carries them is classified - a message, a tool's result -: one classified otherwise
+   * says how.
+   */
   classification?: Classification;
   /** Removes one, by its id - of a message being edited; offered where given. */
   onRemove?: (id: string) => void;
@@ -47,7 +53,10 @@ export const AttachmentList: React.FC<AttachmentListProps> = ({items, messageId,
  */
 const REFETCH_AFTER_MS = [500, 1000, 2000];
 
-/** One attachment: its preview where it is an image that can be fetched, else its name, type and size. */
+/**
+ * One attachment: its preview where it is an image that can be fetched, else its name, type and
+ * size.
+ */
 const Attachment: React.FC<{attachment: ContentRef; url: string | null; label: string | null; onRemove?: () => void}> = ({attachment, url, label, onRemove}) => {
   // Which fetch of the image this is, and whether it failed. An image that cannot be shown after
   // the last - not found, not readable, one the server sends only as a download - is named as any

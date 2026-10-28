@@ -46,7 +46,10 @@ export function describeMatcher(matcher: ToolMatcher): string {
   return args.length === 0 ? tool : `${tool} (${args.join(', ')})`;
 }
 
-/** How an argument is compared, after its name: ` ~ pattern`, `: the words …` of a command line, or ` = "value"`. */
+/**
+ * How an argument is compared, after its name: ` ~ pattern`, `: the words …` of a command line, or
+ * ` = "value"`.
+ */
 function describeArgument(argument: ArgumentMatcher): string {
   if (typeof argument === 'string') return ` ~ ${argument}`;
   if ('shell' in argument) return `: ${argument.shell.join(' ')} …`;
@@ -74,7 +77,10 @@ export interface RuleChoice {
   minutes: number | null;
 }
 
-/** The choice a card starts with: the calls `suggested` matches - as the call's tool proposes -, in this channel, for no end. */
+/**
+ * The choice a card starts with: the calls `suggested` matches - as the call's tool proposes -, in
+ * this channel, for no end.
+ */
 export function initialChoice(suggested: ToolMatcher): RuleChoice {
   return {matcher: suggested, reach: 'channel', minutes: null};
 }

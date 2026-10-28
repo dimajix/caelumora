@@ -30,7 +30,10 @@ interface Draft {
   arguments: ArgumentDraft[];
 }
 
-/** An argument as it is edited: a pattern, the words of a command line separated by blanks, or a value. */
+/**
+ * An argument as it is edited: a pattern, the words of a command line separated by blanks, or a
+ * value.
+ */
 interface ArgumentDraft {
   name: string;
   kind: 'pattern' | 'shell' | 'equals';

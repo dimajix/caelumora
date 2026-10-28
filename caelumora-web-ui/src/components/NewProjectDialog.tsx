@@ -1,6 +1,6 @@
-// Making a shared project (issue 467): its name, where it lies - the user's scope or the global one -
-// and what it is for; a session's own is made with the session. Nobody works on it yet: its members
-// are chosen on its page.
+// Making a shared project (issue 467): its name, where it lies - the user's scope or the global
+// one - and what it is for; a session's own is made with the session. Nobody works on it yet: its
+// members are chosen on its page.
 
 import React, {useState} from 'react';
 import {X} from 'lucide-react';

@@ -61,7 +61,10 @@ function toolResultText(result: ToolResult): string {
   return result.content;
 }
 
-/** What a presentation's handler is given: the call, its result once it has one, and the files of the channel's workspace where it is shown in the chat. */
+/**
+ * What a presentation's handler is given: the call, its result once it has one, and the files of
+ * the channel's workspace where it is shown in the chat.
+ */
 export interface ToolCallContentProps {
   call: ToolCall;
   result?: ToolResult;
@@ -73,9 +76,14 @@ export interface ToolCallContentProps {
   artifacts?: ChannelArtifacts;
   /** Opens a page in the place of the channel - a skill's; absent outside the chat. */
   onSelectPage?: (page: Page) => void;
-  /** Ends a command a call handed back as running (issue 294); absent where the user may not change the workspace's files. */
+  /**
+   * Ends a command a call handed back as running (issue 294); absent where the user may not change
+   * the workspace's files.
+   */
   onKillCommand?: (commandId: string) => void;
-  /** The commands a result in the channel, or the user, ended: none is offered to be ended again. */
+  /**
+   * The commands a result in the channel, or the user, ended: none is offered to be ended again.
+   */
   endedCommands?: ReadonlySet<string>;
 }
 
@@ -105,7 +113,9 @@ const DefaultToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) 
   </>
 );
 
-/** A call's arguments as an object, whether they came as one or as its JSON text; `null` if neither. */
+/**
+ * A call's arguments as an object, whether they came as one or as its JSON text; `null` if neither.
+ */
 function argumentsObject(args: unknown): Record<string, unknown> | null {
   let value = args;
   if (typeof value === 'string') {
@@ -129,8 +139,8 @@ function commandStatus(command: CommandResult): string {
 }
 
 /**
- * A shell command (issue 251): the command as a line of code, what it printed as a terminal shows it,
- * and where it stands. A call that follows or ends a command started before names it by its id.
+ * A shell command (issue 251): the command as a line of code, what it printed as a terminal shows
+ * it, and where it stands. A call that follows or ends a command started before names it by its id.
  */
 const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onKillCommand, endedCommands}) => {
   const args = argumentsObject(call.arguments);
@@ -185,7 +195,9 @@ const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onK
   );
 };
 
-/** The steps of a plan's arguments, each its description, or `null` if they are no list of steps. */
+/**
+ * The steps of a plan's arguments, each its description, or `null` if they are no list of steps.
+ */
 function planSteps(steps: unknown): string[] | null {
   if (!Array.isArray(steps)) return null;
   const descriptions = steps.map(step => typeof step?.description === 'string' ? step.description as string : null);
@@ -562,7 +574,10 @@ const QuestionsToolCallContent: React.FC<ToolCallContentProps> = ({call, result}
 /** Where a file offered for download stands now (issue 273), as far as this user can tell. */
 type OfferedState = 'checking' | 'current' | 'changed' | 'gone' | 'unavailable';
 
-/** Whether the file at `path` is as it was offered - its size and when it was changed - or changed, or gone. */
+/**
+ * Whether the file at `path` is as it was offered - its size and when it was changed - or changed,
+ * or gone.
+ */
 function useOfferedState(files: WorkspaceFiles | undefined, path: string | null, size: number | null, modified: string | null, version: number | undefined): OfferedState {
   const [state, setState] = useState<OfferedState>('checking');
   useEffect(() => {
@@ -577,7 +592,8 @@ function useOfferedState(files: WorkspaceFiles | undefined, path: string | null,
         const sameTime = (entry?.modified ? Date.parse(entry.modified) : null) === (modified ? Date.parse(modified) : null);
         setState(!entry ? 'gone' : entry.size === size && sameTime ? 'current' : 'changed');
       })
-      // The directory gone is the file gone; no workspace to use here, or any other error, is the workspace not being this user's to use.
+      // The directory gone is the file gone; no workspace to use here, or any other error, is the
+      // workspace not being this user's to use.
       .catch(error => {
         if (!current) return;
         const missing = error instanceof ApiRequestError && error.status === 404 && error.code !== 'workspace_not_found';
@@ -591,7 +607,8 @@ function useOfferedState(files: WorkspaceFiles | undefined, path: string | null,
 /**
  * A file of the workspace offered for download (issue 273): a card with its name, size and what it
  * is, and a download of the file as it is now - saying so where it changed since it was offered, or
- * that it is gone. Whoever cannot use the workspace in the channel sees the card without the download.
+ * that it is gone. Whoever cannot use the workspace in the channel sees the card without the
+ * download.
  */
 const FilePublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, files, filesVersion}) => {
   const args = argumentsObject(call.arguments);
@@ -757,8 +774,8 @@ const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onS
 };
 
 /**
- * The skills an agent may load, listed (issue 301): how many, and each with its name - linked to its
- * page where the chat can open it - and what it is for, as `/skills` lists them.
+ * The skills an agent may load, listed (issue 301): how many, and each with its name - linked to
+ * its page where the chat can open it - and what it is for, as `/skills` lists them.
  */
 const SkillListToolCallContent: React.FC<ToolCallContentProps> = ({result, onSelectPage}) => {
   const skills = objectsOf(resultObject(result)?.skills);
@@ -895,7 +912,10 @@ const NoteListToolCallContent: React.FC<ToolCallContentProps> = ({call, result})
   );
 };
 
-/** The handler of each presentation; one the server knows and this client does not falls back to the default. */
+/**
+ * The handler of each presentation; one the server knows and this client does not falls back to the
+ * default.
+ */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
   shell: ShellToolCallContent,
@@ -919,7 +939,10 @@ interface ToolCallViewProps {
   call: ToolCall;
   /** Its result, once it has one. */
   result?: ToolResult;
-  /** The message holding the call - and its result, unless the result keeps the one that carries it (`ToolResult.message_id`). */
+  /**
+   * The message holding the call - and its result, unless the result keeps the one that carries it
+   * (`ToolResult.message_id`).
+   */
   messageId?: string;
   /** Its caller was removed from the channel before it ended. */
   abandoned?: boolean;
@@ -931,7 +954,9 @@ interface ToolCallViewProps {
   artifacts?: ChannelArtifacts;
   /** The attachments of the channel's messages, for what a result showed (issue 282). */
   attachments?: ChannelAttachments;
-  /** Opens a page in the place of the channel - a skill's, for a call that names one (issue 281). */
+  /**
+   * Opens a page in the place of the channel - a skill's, for a call that names one (issue 281).
+   */
   onSelectPage?: (page: Page) => void;
   /** Interrupts the call alone while it runs, for who may (issue 276); the turn goes on. */
   onInterrupt?: () => void;

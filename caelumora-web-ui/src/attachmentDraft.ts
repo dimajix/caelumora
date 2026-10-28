@@ -25,11 +25,17 @@ export interface AttachmentDraft {
   items: DraftAttachment[];
   /** Adds `files`, each uploaded at once, classified `classification` - the channel's if absent. */
   add: (files: File[], classification?: Classification) => void;
-  /** Adds the files pasted in `event` as `add` does, which then pastes nothing else; text is pasted as text. */
+  /**
+   * Adds the files pasted in `event` as `add` does, which then pastes nothing else; text is pasted
+   * as text.
+   */
   paste: (event: React.ClipboardEvent, classification?: Classification) => void;
   /** Removes those of `keys`. */
   remove: (...keys: string[]) => void;
-  /** The ids to send, once nothing is uploading any more; `null` while something still is, or failed and is not removed. */
+  /**
+   * The ids to send, once nothing is uploading any more; `null` while something still is, or failed
+   * and is not removed.
+   */
   ids: () => string[] | null;
 }
 
@@ -57,7 +63,10 @@ export function useAttachmentDraft(attachments: ChannelAttachments): AttachmentD
     };
   }, [attachments]);
 
-  /** Changes the items held for `of`, begun anew where the draft held another channel's; nothing if `of` is no longer the draft's. */
+  /**
+   * Changes the items held for `of`, begun anew where the draft held another channel's; nothing if
+   * `of` is no longer the draft's.
+   */
   const change = useCallback((of: ChannelAttachments, changed: (items: DraftAttachment[]) => DraftAttachment[]) => {
     setHeld(prev => prev.of === of ? {of, items: changed(prev.items)} : of === current.current ? {of, items: changed([])} : prev);
   }, []);

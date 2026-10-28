@@ -44,7 +44,10 @@ export function classificationLabel(classification: Classification): string {
   return compartments.length === 0 ? level : `${level} · ${compartments.join(', ')}`;
 }
 
-/** The label of `classification` where it differs from `of` - a message's from its channel's -, else `null`. */
+/**
+ * The label of `classification` where it differs from `of` - a message's from its channel's -, else
+ * `null`.
+ */
 export function labelOtherThan(classification: Classification, of: Classification): string | null {
   return sameClassification(classification, of) ? null : classificationLabel(classification);
 }

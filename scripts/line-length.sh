@@ -5,16 +5,18 @@
 #   line-length.sh [file...]
 #
 # It checks the files the rule covers - the Markdown documents in docs/, issues/ and
-# .claude/agents/, AGENTS.md, and the comments of Rust files -, and names on stderr a file it is
-# given that the rule does not cover. Without files, it checks what is changed against HEAD: the
-# lines added or changed, and untracked files whole. With files, it checks them whole.
+# .claude/agents/, AGENTS.md, and the comments of Rust files and of the web UI's TypeScript -, and
+# names on stderr a file it is given that the rule does not cover. Without files, it checks what is
+# changed against HEAD: the lines added or changed, and untracked files whole. With files, it checks
+# them whole.
 #
-# In a Markdown document every line counts; in a Rust file only comments (`//`, `///`, `//!`),
-# since rustfmt keeps the code. Characters are counted, not bytes. A line is not too long where it
-# may not be wrapped: a heading, a table row, a line in a code block, a field line such as
-# `**Summary:**`, and a line that has no space to break at within its first 100 characters outside
-# a link - a link is not broken, not even in its text. Every line too long is printed as
-# `file:line: length`, and the script fails if there is one.
+# In a Markdown document every line counts; in a Rust file only comments (`//`, `///`, `//!`), since
+# rustfmt keeps the code, and in TypeScript only comments too (`//`, and `/**`, `/*` and `*` of a
+# block). Characters are counted, not bytes. A line is not too long where it may not be wrapped: a
+# heading, a table row, a line in a code block, a field line such as `**Summary:**`, and a line that
+# has no space to break at within its first 100 characters outside a link - a link is not broken,
+# not even in its text. Every line too long is printed as `file:line: length`, and the script fails
+# if there is one.
 set -eu
 
 max=100
@@ -25,7 +27,8 @@ trap 'rm -f "$checked"' EXIT
 # Whether the rule covers `path`, relative to the top of the repository.
 is_covered() {
     case "$1" in
-        *.rs | docs/*.md | issues/*.md | .claude/agents/*.md | AGENTS.md) return 0 ;;
+        *.rs | caelumora-web-ui/src/*.ts | caelumora-web-ui/src/*.tsx) return 0 ;;
+        docs/*.md | issues/*.md | .claude/agents/*.md | AGENTS.md) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -40,7 +43,7 @@ covered_only() {
 # What is checked: `file:line` for one line, `file:*` for a whole file.
 if [ $# -eq 0 ]; then
     cd "$top"
-    git diff -U0 --no-color HEAD -- '*.md' '*.rs' | awk '
+    git diff -U0 --no-color HEAD -- '*.md' '*.rs' '*.ts' '*.tsx' | awk '
         /^\+\+\+ / { file = substr($0, 7); if ($2 == "/dev/null") file = ""; next }
         /^@@/ && file != "" {
             match($0, /\+[0-9]+(,[0-9]+)?/)
@@ -48,8 +51,8 @@ if [ $# -eq 0 ]; then
             count = n > 1 ? range[2] : 1
             for (i = 0; i < count; i++) print file ":" range[1] + i
         }' | covered_only >"$checked"
-    git ls-files --others --exclude-standard -- '*.md' '*.rs' | sed 's/$/:*/' | covered_only \
-        >>"$checked"
+    git ls-files --others --exclude-standard -- '*.md' '*.rs' '*.ts' '*.tsx' | sed 's/$/:*/' \
+        | covered_only >>"$checked"
 else
     for file in "$@"; do
         dir=$(cd "$(dirname "$file")" && pwd -P)
@@ -68,7 +71,7 @@ set -- $(sed 's/:[^:]*$//' "$checked" | sort -u)
 # anything is counted, so that lengths and positions are characters.
 LC_ALL=C awk -v max="$max" '
 FILENAME == ARGV[1] { checked[$0] = 1; next }
-FNR == 1 { fence = 0; rust = FILENAME ~ /\.rs$/ }
+FNR == 1 { fence = 0; rust = FILENAME ~ /\.rs$/; typescript = FILENAME ~ /\.tsx?$/ }
 {
     line = $0
     sub(/\r$/, "", line)
@@ -78,6 +81,8 @@ FNR == 1 { fence = 0; rust = FILENAME ~ /\.rs$/ }
     # marker.
     if (rust) {
         if (!match(line, /^[ \t]*\/\/[\/!]?[ \t]*/)) next
+    } else if (typescript) {
+        if (!match(line, /^[ \t]*(\/\/|\/\*\*?|\*)[ \t]*/)) next
     } else {
         match(line, /^[ \t]*/)
     }

@@ -16,10 +16,15 @@ interface MessageEditorProps {
   content: string;
   /** The attachments it carries now. */
   carried: ContentRef[];
-  /** The attachments of the channel's messages: where new ones are uploaded, classified `classification` - the message's. */
+  /**
+   * The attachments of the channel's messages: where new ones are uploaded, classified
+   * `classification` - the message's.
+   */
   attachments: ChannelAttachments;
   classification?: Classification;
-  /** Saves `content` and the attachments `attachments`, by their ids, as the message's new version. */
+  /**
+   * Saves `content` and the attachments `attachments`, by their ids, as the message's new version.
+   */
   onSave: (content: string, attachments: string[]) => Promise<void>;
   onCancel: () => void;
 }

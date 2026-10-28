@@ -1,12 +1,12 @@
-// Making a session (issues 40, 266): its template - the one used last in this browser preselected -,
-// its name, and its workspace: as its template says, none, one of the user's own, or a new one for
-// the session alone, in a storage the user chooses and classified as they say. Everything is preset,
-// so that opening the dialog and pressing Enter makes a session as the template has it. It is held
-// in the language its template names, else in the one the user prefers (issues 331, 425): the server
-// holds it in none unless asked, and its channels without a language of their own follow it. Its time
-// zone is the template's, else the browser's (issue 424); the server holds it in UTC unless asked.
-// Its results go to a project of its own, unless a shared project the user reads is chosen (issue
-// 467).
+// Making a session (issues 40, 266): its template - the one used last in this browser
+// preselected -, its name, and its workspace: as its template says, none, one of the user's own, or
+// a new one for the session alone, in a storage the user chooses and classified as they say.
+// Everything is preset, so that opening the dialog and pressing Enter makes a session as the
+// template has it. It is held in the language its template names, else in the one the user prefers
+// (issues 331, 425): the server holds it in none unless asked, and its channels without a language
+// of their own follow it. Its time zone is the template's, else the browser's (issue 424); the
+// server holds it in UTC unless asked. Its results go to a project of its own, unless a shared
+// project the user reads is chosen (issue 467).
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
@@ -91,7 +91,8 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
   const offered = workspaces.filter(w => w.can_change && w.scope !== 'session');
   const fallback = template?.workspace ? AS_TEMPLATE : NONE;
   const chosen = workspaceChoice === AS_TEMPLATE && !template?.workspace ? NONE : workspaceChoice ?? fallback;
-  // Where a new one is made: as chosen, else the template's storage where it names one, else the first.
+  // Where a new one is made: as chosen, else the template's storage where it names one, else the
+  // first.
   const storageName = storage
     ?? (storages?.some(s => s.name === template?.workspace?.storage) ? template?.workspace?.storage : storages?.[0]?.name)
     ?? '';
@@ -168,7 +169,8 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, p
                 <option
                   key={t.id}
                   value={t.id}
-                  // The one used last, in bold - where the browser styles options at all (not on macOS).
+                  // The one used last, in bold - where the browser styles options at all (not on
+                  // macOS).
                   style={{fontWeight: t.id === lastTemplateId ? 'bold' : 'normal'}}
                 >
                   {t.name}

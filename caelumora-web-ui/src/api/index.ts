@@ -81,16 +81,28 @@ export interface WorkspaceFiles {
  * about to write, and an attachment downloaded through the message that carries it.
  */
 export interface ChannelAttachments {
-  /** Uploads `file` for a message being written or modified, classified `classification` - the channel's if absent. */
+  /**
+   * Uploads `file` for a message being written or modified, classified `classification` - the
+   * channel's if absent.
+   */
   upload(file: File, classification?: Classification): Promise<ContentRef>;
-  /** Where attachment `attachment` of message `message` is downloaded - a plain link; the cookie goes with it. */
+  /**
+   * Where attachment `attachment` of message `message` is downloaded - a plain link; the cookie
+   * goes with it.
+   */
   url(message: string, attachment: string): string;
 }
 
-/** The artifacts of a channel (issue 271): those published there that the user may read, and where their versions are downloaded - by the artifact (issue 23). */
+/**
+ * The artifacts of a channel (issue 271): those published there that the user may read, and where
+ * their versions are downloaded - by the artifact (issue 23).
+ */
 export interface ChannelArtifacts {
   list(): Promise<ArtifactResponse[]>;
-  /** Where version `version` of artifact `artifact` is downloaded - a plain link; the cookie goes with it. */
+  /**
+   * Where version `version` of artifact `artifact` is downloaded - a plain link; the cookie goes
+   * with it.
+   */
   url(artifact: string, version: number): string;
 }
 
@@ -172,7 +184,10 @@ export const api = {
     return res.json();
   },
 
-  /** Adds a rule to the logged-in user's answers to tool calls given in advance (issue 13); answered with its id. */
+  /**
+   * Adds a rule to the logged-in user's answers to tool calls given in advance (issue 13); answered
+   * with its id.
+   */
   async addApprovalRule(rule: ApprovalRule): Promise<ApprovalRule> {
     const res = await request('/profile/approval-rules', {
       method: 'POST',
@@ -342,8 +357,14 @@ export const api = {
     return res.json();
   },
 
-  /** Has the channel held in `language` - in its session's if `null` (issues 56, 425); answers with the channel as it is now. */
-  /** Sets what the channel restricts of the tool calls made in it (issue 13): rules that ask or deny, replacing those it had. */
+  /**
+   * Has the channel held in `language` - in its session's if `null` (issues 56, 425); answers with
+   * the channel as it is now.
+   */
+  /**
+   * Sets what the channel restricts of the tool calls made in it (issue 13): rules that ask or
+   * deny, replacing those it had.
+   */
   async setChannelApprovalRules(sessionId: string, channelId: string, rules: ApprovalRule[]): Promise<ChannelResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/approval-rules`, {
       method: 'PUT',
@@ -416,7 +437,10 @@ export const api = {
     await ensureOk(res, 'Failed to edit the message');
   },
 
-  /** Takes the user's own message `messageId` back (issue 234); the stream shows it as `MessageRevoked`. */
+  /**
+   * Takes the user's own message `messageId` back (issue 234); the stream shows it as
+   * `MessageRevoked`.
+   */
   async revokeMessage(sessionId: string, channelId: string, messageId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}`, { method: 'DELETE' });
     await ensureOk(res, 'Failed to take the message back');
@@ -431,7 +455,10 @@ export const api = {
     await ensureOk(res, 'Failed to ask for another answer');
   },
 
-  /** Asks agent `actorUuid` to answer again instead of its answer under way, the turn `turnId` (issue 235). */
+  /**
+   * Asks agent `actorUuid` to answer again instead of its answer under way, the turn `turnId`
+   * (issue 235).
+   */
   async retryAnswer(sessionId: string, channelId: string, actorUuid: string, turnId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/retry`, {
       method: 'POST',
@@ -448,7 +475,10 @@ export const api = {
     return res.json();
   },
 
-  /** A page of all that was offered to actor `actorUuid` in the channel and what it said itself (issues 207, 218), as `getHistory`. */
+  /**
+   * A page of all that was offered to actor `actorUuid` in the channel and what it said itself
+   * (issues 207, 218), as `getHistory`.
+   */
   async getAgentHistory(sessionId: string, channelId: string, actorUuid: string, before?: number | null): Promise<HistoryPage<HistoryMessage>> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/history${pageQuery(before)}`);
     await ensureOk(res, 'Failed to fetch the history');
@@ -462,7 +492,10 @@ export const api = {
     return res.json();
   },
 
-  /** The private notes agent `agentUuid` wrote in the channels of the session the user may read, by channel name (issue 233). */
+  /**
+   * The private notes agent `agentUuid` wrote in the channels of the session the user may read, by
+   * channel name (issue 233).
+   */
   async getPrivateNotes(sessionId: string, agentUuid: string): Promise<PrivateNotes[]> {
     const res = await request(`/sessions/${sessionId}/actors/${agentUuid}/private_notes`);
     await ensureOk(res, 'Failed to fetch the private notes');
@@ -502,13 +535,19 @@ export const api = {
     await ensureOk(res, 'Failed to stop the answer');
   },
 
-  /** Ends the command `commandId` of the workspace's shell, started in the channel, with what it started (issue 294). */
+  /**
+   * Ends the command `commandId` of the workspace's shell, started in the channel, with what it
+   * started (issue 294).
+   */
   async killCommand(sessionId: string, channelId: string, commandId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/commands/${encodeURIComponent(commandId)}/kill`, {method: 'POST'});
     await ensureOk(res, 'Failed to end the command');
   },
 
-  /** Interrupts the tool call `callId` of agent `actorUuid` in its turn `turnId` alone; the turn goes on (issue 276). */
+  /**
+   * Interrupts the tool call `callId` of agent `actorUuid` in its turn `turnId` alone; the turn
+   * goes on (issue 276).
+   */
   async interruptToolCall(sessionId: string, channelId: string, actorUuid: string, turnId: string, callId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/tool-calls/${encodeURIComponent(callId)}/cancel`, {
       method: 'POST',
@@ -647,7 +686,10 @@ export const api = {
   },
 
   /** Changes whom the session lets read what was said in it (issue 134); only its owner may. */
-  /** Sets what the session restricts of tool calls in any of its channels (issue 13): rules that ask or deny, replacing those it had. */
+  /**
+   * Sets what the session restricts of tool calls in any of its channels (issue 13): rules that ask
+   * or deny, replacing those it had.
+   */
   /**
    * Has the channels of the session that hold no language of their own held in `language` - none in
    * particular if `null` (issue 425); answers with the session as it is now.
@@ -969,7 +1011,10 @@ export const api = {
     await ensureOk(res, 'Failed to delete the team for good');
   },
 
-  /** The shared projects the user reaches (issue 467): their own, those they work on, those shared with them. */
+  /**
+   * The shared projects the user reaches (issue 467): their own, those they work on, those shared
+   * with them.
+   */
   async getProjects(): Promise<ProjectResponse[]> {
     const res = await request('/projects');
     await ensureOk(res, 'Failed to fetch the projects');
@@ -1044,7 +1089,10 @@ export const api = {
     return res.json();
   },
 
-  /** Lifts a session's own project into the user's scope or the global one under `name`: kept beyond the session. */
+  /**
+   * Lifts a session's own project into the user's scope or the global one under `name`: kept beyond
+   * the session.
+   */
   async liftProject(projectId: string, name: string, scope: 'user' | 'global'): Promise<ProjectResponse> {
     const res = await request(`/projects/${projectId}/lift`, {
       method: 'POST',
@@ -1072,7 +1120,9 @@ export const api = {
     await ensureOk(res, 'Failed to delete the project for good');
   },
 
-  /** The sessions that lie in a project - whose results go to it - that the user reads (issue 467). */
+  /**
+   * The sessions that lie in a project - whose results go to it - that the user reads (issue 467).
+   */
   async getProjectSessions(projectId: string): Promise<SessionResponse[]> {
     const res = await request(`/projects/${projectId}/sessions`);
     await ensureOk(res, 'Failed to fetch the sessions of the project');
@@ -1086,7 +1136,10 @@ export const api = {
     return res.json();
   },
 
-  /** Puts the session into the shared project `projectId`, or with `null` takes it out into its own (issue 467). */
+  /**
+   * Puts the session into the shared project `projectId`, or with `null` takes it out into its own
+   * (issue 467).
+   */
   async setSessionProject(sessionId: string, projectId: string | null): Promise<SessionSnapshot> {
     const res = projectId === null
       ? await request(`/sessions/${sessionId}/project`, {method: 'DELETE'})
@@ -1146,7 +1199,10 @@ export const api = {
     };
   },
 
-  /** Where version `version` of artifact `artifactId` is downloaded - a plain link; the cookie goes with it. */
+  /**
+   * Where version `version` of artifact `artifactId` is downloaded - a plain link; the cookie goes
+   * with it.
+   */
   artifactVersionUrl(artifactId: string, version: number): string {
     return `${API_BASE}/artifacts/${artifactId}/versions/${version}/content`;
   },
@@ -1186,7 +1242,10 @@ export const api = {
     return res.json();
   },
 
-  /** Gives the user's artifact the access list `access` for the whole of it, replacing the one it had (issue 23). */
+  /**
+   * Gives the user's artifact the access list `access` for the whole of it, replacing the one it
+   * had (issue 23).
+   */
   async setArtifactAccess(artifactId: string, access: AccessEntry[]): Promise<ArtifactResponse> {
     const res = await request(`/artifacts/${artifactId}/access`, {
       method: 'PUT',
@@ -1250,7 +1309,10 @@ export const api = {
     return res.json();
   },
 
-  /** Answers the questions `questionId` of an agent's call (issue 165) - one response per question - or, with `null`, declines them. */
+  /**
+   * Answers the questions `questionId` of an agent's call (issue 165) - one response per question -
+   * or, with `null`, declines them.
+   */
   async answerQuestions(sessionId: string, channelId: string, questionId: string, responses: QuestionResponse[] | null): Promise<void> {
     const payload = responses === null ? { declined: true } : { responses };
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/questions/${questionId}`, {

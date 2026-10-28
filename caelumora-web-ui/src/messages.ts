@@ -92,7 +92,10 @@ export function commandResult(result: ToolResult): CommandResult | null {
   }
 }
 
-/** The commands that results among `messages` show ended (issue 294): those of a shell tool's result not `running`. */
+/**
+ * The commands that results among `messages` show ended (issue 294): those of a shell tool's result
+ * not `running`.
+ */
 export function endedCommands(messages: Message[]): Set<string> {
   const ended = new Set<string>();
   for (const msg of messages) {
@@ -249,7 +252,9 @@ export function retryRejectedNotice(reason: RetryRefused, agentName: string | un
   return {id: entryId(position), role: 'System', content: null, sender_name: agentName, retryRejected: reason, timestamp: at};
 }
 
-/** The notice that what you sent, of the kind `rejected`, was not let in, for `reason` (issue 304). */
+/**
+ * The notice that what you sent, of the kind `rejected`, was not let in, for `reason` (issue 304).
+ */
 export function messageRejectedNotice(rejected: string, reason: Rejection, at: string, position?: number): Message {
   return {id: entryId(position), role: 'System', content: null, messageRejected: {rejected, reason}, timestamp: at};
 }
@@ -423,7 +428,10 @@ export function joinsSteps(row: ChatRow | undefined, turnId: string | null): row
   return row?.kind === 'steps' && row.turnId === turnId;
 }
 
-/** The turn a row was said in, or `null` for what was said outside of any - a user's message, a notice of the channel. */
+/**
+ * The turn a row was said in, or `null` for what was said outside of any - a user's message, a
+ * notice of the channel.
+ */
 export function rowTurn(row: ChatRow): string | null {
   return row.kind === 'message' ? row.message.turn_id ?? null : row.turnId;
 }

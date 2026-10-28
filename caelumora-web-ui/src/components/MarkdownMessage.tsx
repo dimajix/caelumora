@@ -57,7 +57,10 @@ function remarkMentions(handles: Set<string>) {
 interface MarkdownMessageProps {
   content: string;
   className?: string;
-  /** Force light-on-dark ("inverted") prose styling, e.g. for messages on a solid colored background. */
+  /**
+   * Force light-on-dark ("inverted") prose styling, e.g. for messages on a solid colored
+   * background.
+   */
   invert?: boolean;
   /** Handles of the participants this message mentions; matching `@handle`s are highlighted. */
   mentions?: Set<string>;

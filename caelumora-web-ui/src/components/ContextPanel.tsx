@@ -181,7 +181,10 @@ const ToolList: React.FC<{sets: ToolSet[]}> = ({sets}) => (
 interface ContextPanelProps {
   sessionId: string;
   channelId: string;
-  /** The attachments of the channel's messages, where what its messages carry is downloaded from (issue 282). */
+  /**
+   * The attachments of the channel's messages, where what its messages carry is downloaded from
+   * (issue 282).
+   */
   attachments: ChannelAttachments;
   /** The agent's message whose context is shown. */
   message: Message;

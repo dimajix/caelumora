@@ -262,7 +262,9 @@ interface ChatViewProps {
   channelId: string;
   /** Who is logged in: only a participant follows the channel live. */
   user: UserResponse;
-  /** Opens a page in the place of the channel - a skill's, for a call that names one (issue 281). */
+  /**
+   * Opens a page in the place of the channel - a skill's, for a call that names one (issue 281).
+   */
   onSelectPage: (page: Page) => void;
 }
 
@@ -279,7 +281,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // Changes whenever the session's workspace or its files may have changed
   // here: a tool call ended, the channel's switch was set (issue 253).
   const [workspaceVersion, setWorkspaceVersion] = useState(0);
-  // The workspace's files as this user may read them (issue 23): what a call offers is downloaded from them (issue 273).
+  // The workspace's files as this user may read them (issue 23): what a call offers is downloaded
+  // from them (issue 273).
   const workspaceId = channel?.workspace_id;
   const workspaceFiles = useMemo(() => workspaceId ? api.workspaceFiles(workspaceId) : null, [workspaceId]);
   // The workspace itself, and for which: `null` where it could not be fetched.
@@ -288,7 +291,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const workspace = !workspaceId ? null : fetchedWorkspace?.id === workspaceId ? fetchedWorkspace.workspace : undefined;
   // The commands the user ended here (issue 294), until a result shows them ended.
   const [killedCommands, setKilledCommands] = useState<{channelId: string; ids: ReadonlySet<string>} | null>(null);
-  // The channel's artifacts as this user reaches them: what a call published is downloaded from them (issue 271).
+  // The channel's artifacts as this user reaches them: what a call published is downloaded from
+  // them (issue 271).
   const channelArtifacts = useMemo(() => api.channelArtifacts(sessionId, channelId), [sessionId, channelId]);
   // The attachments of the channel's messages (issue 282), and those of the message being written.
   const channelAttachments = useMemo(() => api.channelAttachments(sessionId, channelId), [sessionId, channelId]);
@@ -578,14 +582,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     });
   }, [sessionId, channelId]);
 
-  /** Whether the user may change the classification of `msg`: its author, or the channel's owner. */
+  /**
+   * Whether the user may change the classification of `msg`: its author, or the channel's owner.
+   */
   const mayReclassify = (msg: Message) =>
     !!msg.id && !!msg.classification && (!!channel?.can_change || isOwn(msg, me));
 
   /**
-   * Whether `msg` is the user's own to edit and take back (issue 234): a
-   * stored message of theirs not taken back, in a channel they take part in
-   * - only a participant has an actor to change it through.
+   * Whether `msg` is the user's own to edit and take back (issue 234): a stored message of theirs
+   * not taken back, in a channel they take part in - only a participant has an actor to change it
+   * through.
    */
   const mayChange = (msg: Message) =>
     !!takesPart && !!msg.id && !msg.revoked && isOwn(msg, me);
@@ -599,7 +605,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  /** Whether the user may ask `sender` to answer again: a participant whose `can_retry` allows it (issue 242). */
+  /**
+   * Whether the user may ask `sender` to answer again: a participant whose `can_retry` allows it
+   * (issue 242).
+   */
   const mayRetryOf = (sender: string) => participants.some(m => actorKey(m.id) === sender && m.can_retry);
 
   /**
@@ -667,7 +676,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  /** Deletes the agent `participant` (issues 164, 314): it leaves every channel, this one too, until it is restored. */
+  /**
+   * Deletes the agent `participant` (issues 164, 314): it leaves every channel, this one too, until
+   * it is restored.
+   */
   const deleteAgent = async (participant: ChannelParticipant) => {
     const uuid = actorUuid(participant.id);
     if (!uuid) return;
@@ -707,7 +719,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }] : []),
   ];
 
-  /** Reading what `participant` heard, said and kept to itself - for a former participant too - where it may be read. */
+  /**
+   * Reading what `participant` heard, said and kept to itself - for a former participant too -
+   * where it may be read.
+   */
   const contextActions = (participant: ChannelParticipant): MenuAction[] => participant.can_read_context ? [{
     label: 'Show history', icon: History, title: `Show what ${participant.name} heard and said`,
     onSelect: () => setHistoryOf({channelId, participant}),
@@ -1203,7 +1218,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  /** What a chain cut off at its limit says (issue 200), naming the agents mentioned as they are known now. */
+  /**
+   * What a chain cut off at its limit says (issue 200), naming the agents mentioned as they are
+   * known now.
+   */
   const chainCutOffText = ({maxAgentHops, notAsked}: {maxAgentHops: number; notAsked: ActorId[]}): string => {
     const names = notAsked.map(id => {
       const participant = participants.find(m => sameActor(m.id, id));
@@ -1213,7 +1231,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     return `The chain between agents reached its limit of ${maxAgentHops} ${maxAgentHops === 1 ? 'hop' : 'hops'}, so ${whom} to respond. A message from a user starts a new chain.`;
   };
 
-  /** Whether the user may see the context of `msg`: a stored message of an agent they may read (issue 41). */
+  /**
+   * Whether the user may see the context of `msg`: a stored message of an agent they may read
+   * (issue 41).
+   */
   const mayShowContext = (msg: Message): boolean => {
     if (!msg.id || !msg.sender_id) return false;
     const sender = msg.sender_id;
@@ -1231,7 +1252,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   /** The id the REST API addresses the participant `sender` (an `actorKey`) by. */
   const participantUuid = (sender: string) => actorUuid(participants.find(m => actorKey(m.id) === sender)?.id);
 
-  /** Whether the user may end the answer of `sender`: a participant whose `can_cancel` allows it (issues 235, 243). */
+  /**
+   * Whether the user may end the answer of `sender`: a participant whose `can_cancel` allows it
+   * (issues 235, 243).
+   */
   const mayCancelOf = (sender: string) => participants.some(m => actorKey(m.id) === sender && m.can_cancel);
 
   /** Stops the answer of the agent `sender` alone (issue 235); the others go on. */
