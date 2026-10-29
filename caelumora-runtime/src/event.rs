@@ -37,7 +37,7 @@ const SUBSCRIPTION_CAPACITY: usize = 128;
 /// receive the `GlobalEvent` alone.
 #[derive(Debug, Clone)]
 struct PublishedEvent {
-    event: GlobalEvent,
+    event: Arc<GlobalEvent>,
     attributes: SecurityAttributes,
     part: Option<SecurityAttributes>,
     classifications: Vec<Classification>,
@@ -93,7 +93,7 @@ impl PublishedEvent {
 #[derive(Debug)]
 struct Party {
     context: SecurityContext,
-    tx: broadcast::Sender<GlobalEvent>,
+    tx: broadcast::Sender<Arc<GlobalEvent>>,
 }
 
 #[derive(Debug)]
@@ -102,7 +102,7 @@ pub struct EventBus {
     // broadcast channel rather than an mpsc one: when a subscriber falls
     // behind, it is its receiver that learns so (`Lagged`), not only the log
     // (issue 38).
-    subscribers: DashMap<SubscriptionTopic, Vec<broadcast::Sender<GlobalEvent>>>,
+    subscribers: DashMap<SubscriptionTopic, Vec<broadcast::Sender<Arc<GlobalEvent>>>>,
     // The subscriptions made with `subscribe_as`, served by one dispatcher
     // task: the policy is asked asynchronously, and `publish` must not wait
     // for it. One task, so that every party receives the events in the
@@ -123,25 +123,27 @@ pub struct EventBus {
 /// subscription, which `EventBus::follow` extends by a topic, and answers
 /// `RecvError::Lagged` by reading anew what it keeps - a stream sends its
 /// client a fresh snapshot. Only tests, which read what they caused, skip a
-/// loss (`recv`, `try_recv`).
+/// loss (`recv`, `try_recv`). An event is made once and shared by every
+/// subscriber that receives it (issue 503), so a receiver holds it as an
+/// `Arc`.
 #[derive(Debug)]
 pub struct EventSubscription {
-    rx: broadcast::Receiver<GlobalEvent>,
+    rx: broadcast::Receiver<Arc<GlobalEvent>>,
     /// What the bus sends its events with under each of its topics; `None`
     /// for one made by `subscribe_as`, whose events the policy filters and
     /// which follows no topic.
-    tx: Option<broadcast::Sender<GlobalEvent>>,
+    tx: Option<broadcast::Sender<Arc<GlobalEvent>>>,
 }
 
 impl EventSubscription {
-    /// The next event, or `None` once the bus is gone. Lost events are
-    /// logged and skipped: for tests alone, since a subscriber of the
-    /// runtime makes up for them.
+    /// The next event, or `None` once the bus is gone, as a copy of its
+    /// own. Lost events are logged and skipped: for tests alone, since a
+    /// subscriber of the runtime makes up for them.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn recv(&mut self) -> Option<GlobalEvent> {
         loop {
             match self.rx.recv().await {
-                Ok(event) => return Some(event),
+                Ok(event) => return Some(Arc::unwrap_or_clone(event)),
                 Err(RecvError::Lagged(lost)) => {
                     warn!("An event bus subscriber fell behind and lost {} events", lost)
                 }
@@ -155,7 +157,7 @@ impl EventSubscription {
     pub fn try_recv(&mut self) -> Option<GlobalEvent> {
         loop {
             match self.rx.try_recv() {
-                Ok(event) => return Some(event),
+                Ok(event) => return Some(Arc::unwrap_or_clone(event)),
                 Err(TryRecvError::Lagged(lost)) => {
                     warn!("An event bus subscriber fell behind and lost {} events", lost)
                 }
@@ -166,13 +168,13 @@ impl EventSubscription {
 
     /// The underlying receiver, for a subscriber that handles lost events
     /// itself.
-    pub fn into_receiver(self) -> broadcast::Receiver<GlobalEvent> {
+    pub fn into_receiver(self) -> broadcast::Receiver<Arc<GlobalEvent>> {
         self.rx
     }
 
     /// The underlying receiver, lent to a subscriber that handles lost
     /// events itself and keeps the subscription to follow more topics.
-    pub fn receiver(&mut self) -> &mut broadcast::Receiver<GlobalEvent> {
+    pub fn receiver(&mut self) -> &mut broadcast::Receiver<Arc<GlobalEvent>> {
         &mut self.rx
     }
 }
@@ -246,7 +248,7 @@ impl EventBus {
                 let mut gone = Vec::new();
                 for (tx, receives) in senders.into_iter().zip(receiving) {
                     // A send fails only when the subscription is gone.
-                    if receives && tx.send(published.event.clone()).is_err() {
+                    if receives && tx.send(Arc::clone(&published.event)).is_err() {
                         gone.push(tx);
                     }
                 }
@@ -347,9 +349,11 @@ impl EventBus {
         part: Option<SecurityAttributes>,
         classifications: &[Classification],
     ) {
+        // One event, shared by every subscriber that receives it (issue 503).
+        let event = Arc::new(event);
         if let Some(dispatcher) = self.dispatcher.get() {
             let _ = dispatcher.send(PublishedEvent {
-                event: event.clone(),
+                event: Arc::clone(&event),
                 attributes,
                 part,
                 classifications: classifications.to_vec(),
@@ -382,7 +386,7 @@ impl EventBus {
                 // subscriber's oldest event and tells its receiver. A send
                 // fails only when the receiver is gone, and so does its
                 // subscription.
-                senders.retain(|tx| tx.send(event.clone()).is_ok());
+                senders.retain(|tx| tx.send(Arc::clone(&event)).is_ok());
             }
         }
 
@@ -876,5 +880,23 @@ mod tests {
             assert!(drain(stranger).await.is_empty(), "who is no member does not");
         }
         assert_eq!(counting.asked.load(Ordering::SeqCst), 1, "its group read once for six parties");
+    }
+
+    /// Issue 503: an event is made once and shared by every subscriber that
+    /// receives it - by topic or as someone -, not copied for each.
+    #[tokio::test]
+    async fn an_event_is_shared_by_its_subscribers_not_copied() {
+        let bus = bus();
+        let mut first = bus.subscribe_all().into_receiver();
+        let mut second = bus.subscribe_all().into_receiver();
+        let mut party = bus.subscribe_as(as_user(UserId::new())).into_receiver();
+
+        bus.publish(created(), SecurityAttributes::systems());
+
+        let one = first.recv().await.unwrap();
+        let other = second.recv().await.unwrap();
+        let reached = time::timeout(Duration::from_secs(2), party.recv()).await.unwrap().unwrap();
+        assert!(Arc::ptr_eq(&one, &other), "one event for the subscribers of a topic");
+        assert!(Arc::ptr_eq(&one, &reached), "and for whoever it reaches as someone");
     }
 }

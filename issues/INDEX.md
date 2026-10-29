@@ -199,7 +199,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [432](432-envelope-carries-whole-security-context.md) | done | An envelope carries the whole `SecurityContext` of its sender - owner, principal, roles, limiting roles - to every actor and every frontend it reaches, though a receiver needs only who began the chain, and the channel takes the roles in it on trust. |
 | [477](477-only-the-system-acts-as-the-system.md) | done | `OwnershipPolicy` allows everything to a context whose principal is the system, whoever its caller is, and `AgentManager::create` lets the system own an agent, which then acts with all the system's rights. |
 | [491](491-every-entity-has-an-owner.md) | done | `SecurityAttributes` defaults to the owner `ActorId::None`, which every seeded component bundle, personality and template without attributes gets, and which `unowned()` and the policies treat as the system's - though everything is to have an owner. |
-| [503](503-bus-asks-every-stream.md) | in progress | The event bus decides every event for every open stream of `GET /events` by a full policy check, reading a group from the store each time, so its cost grows with events times streams although an event reaches only a few of them. |
+| [503](503-bus-asks-every-stream.md) | done | The event bus decides every event for every open stream of `GET /events` by a full policy check, reading a group from the store each time, so its cost grows with events times streams although an event reaches only a few of them. |
 
 ## Audit
 

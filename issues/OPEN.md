@@ -29,7 +29,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [310](310-secrets-have-no-owner.md) | open | high | feature | Any secret can be named by whoever writes a component: secrets have no owner and no access list, and the policy allows every `ReadSecret`. |
 | [402](402-login-attempts-unlimited.md) | open | high | feature | `/auth/login` takes any number of attempts from anyone, so passwords can be guessed without limit, and every attempt costs the server an Argon2 verification that a flood of requests turns into exhausted memory and CPU. |
 | [27](27-ldap-user-backend.md) | open | medium | feature | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
-| [503](503-bus-asks-every-stream.md) | in progress | medium | feature | The event bus decides every event for every open stream of `GET /events` by a full policy check, reading a group from the store each time, so its cost grows with events times streams although an event reaches only a few of them. |
 
 ## Audit
 

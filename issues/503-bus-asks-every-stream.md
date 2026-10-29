@@ -1,6 +1,6 @@
 # 503 — The event bus asks the policy of every event for every stream
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Identity and access management
@@ -90,3 +90,11 @@ and every event behind it waits. Most events reach a handful of readers among al
   from asking context by context, both refusing rather than granting: a group changed during the
   question is answered for every context as first read, and a group whose reading failed
   (`StoreMemberships` answers `None`) admits nobody for the rest of the question.
+- **2026-10-29** — Step 2 done, on the same branch: an event is made into an `Arc<GlobalEvent>`
+  once as it is published and shared by every subscriber that receives it, by topic or as
+  someone; the receivers of a subscription hold it so. `EventSubscription::recv` and `try_recv`,
+  the tests' alone, hand out a copy of their own, so that no test changed. The REST server
+  serializes the shared event with serde's `rc`. A test shows the subscribers of a topic and a
+  party holding one event. Done, *Done when* met in the form the maintainer accepted with step
+  1: a group is read once per question, so twice for an event about a part. The index of the
+  parties and the unbounded queue of the dispatcher stay as they are, not asked for here.
