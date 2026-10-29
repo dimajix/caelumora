@@ -90,7 +90,9 @@ use tokio::time::{sleep, timeout};
 /// answered - so that a test says which permissions an action needs (issue
 /// 198). Recorded as `principal as caller, asked by initiator`, each part
 /// only where it differs from those before (issue 255): an agent acting on
-/// its own initiates itself (issue 341).
+/// its own initiates itself (issue 341). `check_each` stays the default, so
+/// that the question the event bus asks of every party is recorded for each
+/// by `check` (issue 503).
 #[derive(Debug)]
 pub struct Recorder {
     access_policy: OwnershipPolicy,

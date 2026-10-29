@@ -29,8 +29,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [310](310-secrets-have-no-owner.md) | open | high | feature | Any secret can be named by whoever writes a component: secrets have no owner and no access list, and the policy allows every `ReadSecret`. |
 | [402](402-login-attempts-unlimited.md) | open | high | feature | `/auth/login` takes any number of attempts from anyone, so passwords can be guessed without limit, and every attempt costs the server an Argon2 verification that a flood of requests turns into exhausted memory and CPU. |
 | [27](27-ldap-user-backend.md) | open | medium | feature | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
-| [287](287-memberships-cache.md) | open | medium | feature | Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber. |
-| [503](503-bus-asks-every-stream.md) | open | medium | feature | The event bus decides every event for every open stream of `GET /events` by a full policy check, reading a group from the store each time, so its cost grows with events times streams although an event reaches only a few of them. |
 
 ## Audit
 
@@ -92,6 +90,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [256](256-workspace-versions.md) | open | low | feature | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [272](272-artifacts-in-s3.md) | open | low | feature | Artifacts can be kept only on the server's own disk, not in S3 or another object storage. |
 | [283](283-show-agent-components.md) | open | low | feature | The web UI does not show what an agent was built from, so its owner cannot see which components it has or which came from an included list. |
+| [287](287-memberships-cache.md) | open | low | feature | Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber. |
 | [305](305-skill-versions.md) | open | low | feature | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
 | [307](307-load-and-performance-tests.md) | open | low | feature | Nothing measures how Caelumora behaves under load, so its bottlenecks are guessed at, and a real model would hide them behind its own latency. |
 | [339](339-default-access-of-new-versions.md) | open | low | feature | Whom a new version of an artifact reaches is fixed to the channel it is published in, and neither a default for new versions nor a version's own list can be changed. |

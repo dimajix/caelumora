@@ -268,7 +268,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Flags of a session, channel, member, agent, workspace, skill, group, artifact | `may_change_session`, `may_change_channel`, `may_read_agent_context`, `may_read_agent_tools`, `may_read_agent_components`, `may_approve`, `may_retry_message`, `may_cancel_channel`, `may_change_agent`, `may_delete_agent`, the member's commands, `may_change_workspace`, `may_write_workspace`, `may_change_skill` (`SkillAccess`), `may_change_group`, `may_change_artifact`, `may_write_artifact` (`ArtifactAccess`) | R5 | a flag false |
 | A participant's tools, components, context, private notes (`tool_sets`, `components`, `context`) | `ReadAgentTools`, `ReadAgentComponents`, `ReadAgentContext` (V,1), the context also only of a channel read whole | R4: reading them is the views' act | `Forbidden` |
 | What was deleted (every `deleted_*`, through `Views::deleted_of`) | store `ReadDeleted` per item; flags `may_restore` - false for one whose purge is begun (issue 492) -, `may_purge`; for a session's channels also `may_change_session`, once, without which none may be restored - `may_purge` is asked, and none is purged alone | R1 + R5 | - |
-| An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event and party `may_reach`, as the store asks it: the read question - `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's; `HearDeleted` instead for a deletion -, and for what is classified `cleared_for` the classification it has, or had as it is reclassified (issues 312, 322) | R5 + reach | not delivered |
+| An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event, of every party at once, `may_reach_each` - `may_reach` as the store asks it, by `check_each`, which reads a group once per question - for an event about a part, once for the whole and once for the part (issue 503): the read question - `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's; `HearDeleted` instead for a deletion -, and for what is classified `cleared_for` the classification it has, or had as it is reclassified (issues 312, 322) | R5 + reach | not delivered |
 
 ### Users
 
@@ -351,8 +351,8 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   reads one it is not cleared for as a whole entry by entry -, which a context does not carry; an
   artifact's on its versions' lists until issue
   [316](../issues/316-store-checks-artifact-without-versions.md).
-- **One question of reach.** The store's list filter and the event bus ask
-  `confidentiality::may_reach`, so that both reach alike.
+- **One question of reach.** The store's list filter asks `confidentiality::may_reach`, the event
+  bus `may_reach_each`, which answers each party as `may_reach` does, so that both reach alike.
 
 ### Decided in issue 321
 

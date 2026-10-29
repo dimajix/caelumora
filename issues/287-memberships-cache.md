@@ -2,7 +2,7 @@
 
 **Status:** open
 **Type:** feature
-**Priority:** medium
+**Priority:** low
 **Area:** Identity and access management
 **Summary:** Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber.
 
@@ -91,3 +91,7 @@ each is a file read.
     makes each question cheaper, not fewer. Recorded here as a finding, not yet an issue of its own.
   - **Who gains.** The memory store little, the JSON files and Postgres much - a file read or a
     round trip per question.
+- **2026-10-29** — Issue [503](503-bus-asks-every-stream.md), step 1: the event bus asks one
+  question of all parties at once, and the ownership policy reads a group the event names once for
+  all of them. The main cost this issue named is gone; what is left are the single reads of the
+  views and of the stores' lists, one group per question. Priority back to low.

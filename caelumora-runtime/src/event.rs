@@ -4,11 +4,9 @@
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Channel;
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::{may_reach, Classification, ConfidentialityPolicy};
+use caelumora_model::confidentiality::{may_reach_each, Classification, ConfidentialityPolicy};
 use caelumora_model::event::{EntityChange, EventPublisher, GlobalEvent};
-use caelumora_model::security::{
-    AccessPolicy, ActionType, Secured, SecurityAttributes, SecurityContext,
-};
+use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -39,16 +37,10 @@ const SUBSCRIPTION_CAPACITY: usize = 128;
 /// receive the `GlobalEvent` alone.
 #[derive(Debug, Clone)]
 struct PublishedEvent {
-    event: GlobalEvent,
+    event: Arc<GlobalEvent>,
     attributes: SecurityAttributes,
     part: Option<SecurityAttributes>,
     classifications: Vec<Classification>,
-}
-
-impl Secured for PublishedEvent {
-    fn security_attributes(&self) -> &SecurityAttributes {
-        &self.attributes
-    }
 }
 
 impl PublishedEvent {
@@ -70,18 +62,29 @@ impl PublishedEvent {
         }
     }
 
-    /// Whether `context` may receive the event of the part it is about,
-    /// besides the entity (issue 316): asked as for the entity, with the
-    /// part's attributes. Nothing to ask of an event about the whole.
-    async fn part_receivable(
+    /// Which of `contexts` may receive this event, in their order: who
+    /// reaches what it is about as the store reaches it - read, and cleared
+    /// for what it is, or was (issues 312, 322) -, and of an event about a
+    /// part, who reads the part as well (issue 316). Asked of all of them at
+    /// once, so that what the question needs of others is read once per
+    /// event (issue 503).
+    async fn receivable_by(
         &self,
         access_policy: &dyn AccessPolicy,
-        context: &SecurityContext,
-    ) -> bool {
-        match &self.part {
-            Some(part) => access_policy.check(context, self.action_on(part)).await,
-            None => true,
-        }
+        confidentiality: &dyn ConfidentialityPolicy,
+        contexts: &[SecurityContext],
+    ) -> Vec<bool> {
+        let reached = may_reach_each(
+            access_policy,
+            confidentiality,
+            contexts,
+            self.action_on(&self.attributes),
+            &self.classifications,
+        )
+        .await;
+        let Some(part) = &self.part else { return reached };
+        let part = access_policy.check_each(contexts, self.action_on(part)).await;
+        reached.into_iter().zip(part).map(|(whole, part)| whole && part).collect()
     }
 }
 
@@ -90,7 +93,7 @@ impl PublishedEvent {
 #[derive(Debug)]
 struct Party {
     context: SecurityContext,
-    tx: broadcast::Sender<GlobalEvent>,
+    tx: broadcast::Sender<Arc<GlobalEvent>>,
 }
 
 #[derive(Debug)]
@@ -99,7 +102,7 @@ pub struct EventBus {
     // broadcast channel rather than an mpsc one: when a subscriber falls
     // behind, it is its receiver that learns so (`Lagged`), not only the log
     // (issue 38).
-    subscribers: DashMap<SubscriptionTopic, Vec<broadcast::Sender<GlobalEvent>>>,
+    subscribers: DashMap<SubscriptionTopic, Vec<broadcast::Sender<Arc<GlobalEvent>>>>,
     // The subscriptions made with `subscribe_as`, served by one dispatcher
     // task: the policy is asked asynchronously, and `publish` must not wait
     // for it. One task, so that every party receives the events in the
@@ -120,25 +123,27 @@ pub struct EventBus {
 /// subscription, which `EventBus::follow` extends by a topic, and answers
 /// `RecvError::Lagged` by reading anew what it keeps - a stream sends its
 /// client a fresh snapshot. Only tests, which read what they caused, skip a
-/// loss (`recv`, `try_recv`).
+/// loss (`recv`, `try_recv`). An event is made once and shared by every
+/// subscriber that receives it (issue 503), so a receiver holds it as an
+/// `Arc`.
 #[derive(Debug)]
 pub struct EventSubscription {
-    rx: broadcast::Receiver<GlobalEvent>,
+    rx: broadcast::Receiver<Arc<GlobalEvent>>,
     /// What the bus sends its events with under each of its topics; `None`
     /// for one made by `subscribe_as`, whose events the policy filters and
     /// which follows no topic.
-    tx: Option<broadcast::Sender<GlobalEvent>>,
+    tx: Option<broadcast::Sender<Arc<GlobalEvent>>>,
 }
 
 impl EventSubscription {
-    /// The next event, or `None` once the bus is gone. Lost events are
-    /// logged and skipped: for tests alone, since a subscriber of the
-    /// runtime makes up for them.
+    /// The next event, or `None` once the bus is gone, as a copy of its
+    /// own. Lost events are logged and skipped: for tests alone, since a
+    /// subscriber of the runtime makes up for them.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn recv(&mut self) -> Option<GlobalEvent> {
         loop {
             match self.rx.recv().await {
-                Ok(event) => return Some(event),
+                Ok(event) => return Some(Arc::unwrap_or_clone(event)),
                 Err(RecvError::Lagged(lost)) => {
                     warn!("An event bus subscriber fell behind and lost {} events", lost)
                 }
@@ -152,7 +157,7 @@ impl EventSubscription {
     pub fn try_recv(&mut self) -> Option<GlobalEvent> {
         loop {
             match self.rx.try_recv() {
-                Ok(event) => return Some(event),
+                Ok(event) => return Some(Arc::unwrap_or_clone(event)),
                 Err(TryRecvError::Lagged(lost)) => {
                     warn!("An event bus subscriber fell behind and lost {} events", lost)
                 }
@@ -163,13 +168,13 @@ impl EventSubscription {
 
     /// The underlying receiver, for a subscriber that handles lost events
     /// itself.
-    pub fn into_receiver(self) -> broadcast::Receiver<GlobalEvent> {
+    pub fn into_receiver(self) -> broadcast::Receiver<Arc<GlobalEvent>> {
         self.rx
     }
 
     /// The underlying receiver, lent to a subscriber that handles lost
     /// events itself and keeps the subscription to follow more topics.
-    pub fn receiver(&mut self) -> &mut broadcast::Receiver<GlobalEvent> {
+    pub fn receiver(&mut self) -> &mut broadcast::Receiver<Arc<GlobalEvent>> {
         &mut self.rx
     }
 }
@@ -231,31 +236,19 @@ impl EventBus {
             while let Some(published) = rx.recv().await {
                 // The parties as they are now; the lock is not held while the
                 // policy is asked.
-                let current: Vec<(SecurityContext, broadcast::Sender<GlobalEvent>)> =
-                    match parties.lock() {
-                        Ok(parties) => {
-                            parties.iter().map(|p| (p.context.clone(), p.tx.clone())).collect()
-                        }
-                        Err(_) => continue,
-                    };
-                let mut gone = Vec::new();
-                for (context, tx) in current {
-                    // Reached as the store reaches it: read, and cleared for
-                    // what it is, or was (issues 312, 322).
-                    if !may_reach(
-                        access_policy.as_ref(),
-                        confidentiality.as_ref(),
-                        &context,
-                        published.action_on(published.security_attributes()),
-                        &published.classifications,
-                    )
-                    .await
-                        || !published.part_receivable(access_policy.as_ref(), &context).await
-                    {
-                        continue;
+                let (contexts, senders): (Vec<_>, Vec<_>) = match parties.lock() {
+                    Ok(parties) => {
+                        parties.iter().map(|p| (p.context.clone(), p.tx.clone())).unzip()
                     }
+                    Err(_) => continue,
+                };
+                let receiving = published
+                    .receivable_by(access_policy.as_ref(), confidentiality.as_ref(), &contexts)
+                    .await;
+                let mut gone = Vec::new();
+                for (tx, receives) in senders.into_iter().zip(receiving) {
                     // A send fails only when the subscription is gone.
-                    if tx.send(published.event.clone()).is_err() {
+                    if receives && tx.send(Arc::clone(&published.event)).is_err() {
                         gone.push(tx);
                     }
                 }
@@ -356,9 +349,11 @@ impl EventBus {
         part: Option<SecurityAttributes>,
         classifications: &[Classification],
     ) {
+        // One event, shared by every subscriber that receives it (issue 503).
+        let event = Arc::new(event);
         if let Some(dispatcher) = self.dispatcher.get() {
             let _ = dispatcher.send(PublishedEvent {
-                event: event.clone(),
+                event: Arc::clone(&event),
                 attributes,
                 part,
                 classifications: classifications.to_vec(),
@@ -391,7 +386,7 @@ impl EventBus {
                 // subscriber's oldest event and tells its receiver. A send
                 // fails only when the receiver is gone, and so does its
                 // subscription.
-                senders.retain(|tx| tx.send(event.clone()).is_ok());
+                senders.retain(|tx| tx.send(Arc::clone(&event)).is_ok());
             }
         }
 
@@ -416,17 +411,22 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use caelumora_model::actor::ActorId;
     use caelumora_model::channel::{self, ChannelUpdateEvent};
     use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::group::{Group, GroupId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{AclEntry, AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::security::{
+        AclEntry, AllowAllPolicy, Memberships, OwnershipPolicy, Secured,
+    };
     use caelumora_model::security::{Grant, Subject};
     use caelumora_model::store::Stored;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::value::text::Introduction;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
     use std::slice;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::time;
 
@@ -834,5 +834,69 @@ mod tests {
         );
         drain(&mut kept).await;
         assert_eq!(bus.parties.lock().unwrap().len(), 1);
+    }
+
+    /// Issue 503: an event is decided for every party at once, so a group
+    /// its attributes name is read once, however many streams are open.
+    #[tokio::test]
+    async fn a_group_an_event_names_is_read_once_for_every_party() {
+        /// Every group has `members`; counts how often one is asked for.
+        #[derive(Debug, Default)]
+        struct Counting {
+            members: Vec<ActorId>,
+            asked: AtomicUsize,
+        }
+        #[async_trait]
+        impl Memberships for Counting {
+            async fn group(&self, id: GroupId) -> Option<Group> {
+                self.asked.fetch_add(1, Ordering::SeqCst);
+                let name = ScopedName::new("place", Scope::GlobalScope).ok()?;
+                Some(Group {
+                    id,
+                    members: self.members.clone(),
+                    ..Group::team(name, UserId::new())
+                })
+            }
+        }
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let counting =
+            Arc::new(Counting { members: vec![ActorId::User(bob)], ..Default::default() });
+        let bus = EventBus::new(
+            Arc::new(OwnershipPolicy::with_memberships(Arc::<Counting>::clone(&counting))),
+            Arc::new(ConfidentialityRules::default()),
+        );
+        let mut bobs = bus.subscribe_as(as_user(bob));
+        let mut strangers: Vec<EventSubscription> =
+            (0..5).map(|_| bus.subscribe_as(as_user(UserId::new()))).collect();
+        let (session, cid) = (SessionId::new(), ChannelId::new());
+
+        bus.publish(
+            GlobalEvent::custom::<Channel>(&(session, cid), channel::JOINED, &ActorId::User(bob)),
+            Channel::attributes_of(cid, ActorId::User(alice)),
+        );
+
+        assert_eq!(described(drain(&mut bobs).await), ["channel joined"], "a member hears of it");
+        for stranger in &mut strangers {
+            assert!(drain(stranger).await.is_empty(), "who is no member does not");
+        }
+        assert_eq!(counting.asked.load(Ordering::SeqCst), 1, "its group read once for six parties");
+    }
+
+    /// Issue 503: an event is made once and shared by every subscriber that
+    /// receives it - by topic or as someone -, not copied for each.
+    #[tokio::test]
+    async fn an_event_is_shared_by_its_subscribers_not_copied() {
+        let bus = bus();
+        let mut first = bus.subscribe_all().into_receiver();
+        let mut second = bus.subscribe_all().into_receiver();
+        let mut party = bus.subscribe_as(as_user(UserId::new())).into_receiver();
+
+        bus.publish(created(), SecurityAttributes::systems());
+
+        let one = first.recv().await.unwrap();
+        let other = second.recv().await.unwrap();
+        let reached = time::timeout(Duration::from_secs(2), party.recv()).await.unwrap().unwrap();
+        assert!(Arc::ptr_eq(&one, &other), "one event for the subscribers of a topic");
+        assert!(Arc::ptr_eq(&one, &reached), "and for whoever it reaches as someone");
     }
 }

@@ -233,7 +233,10 @@ async fn end_commands(provider: &dyn TerminalProvider, keys: Vec<CommandKey>, wh
 /// channel and besides every `COMMANDS_CHECKED_EVERY`, the commands nobody
 /// may run any longer (issue 254), until `reaper` or the bus is gone.
 /// Events it fell behind on are a reason to check, as any is.
-async fn check_commands(reaper: Weak<CommandReaper>, mut events: broadcast::Receiver<GlobalEvent>) {
+async fn check_commands(
+    reaper: Weak<CommandReaper>,
+    mut events: broadcast::Receiver<Arc<GlobalEvent>>,
+) {
     let mut every = time::interval(COMMANDS_CHECKED_EVERY);
     loop {
         tokio::select! {
