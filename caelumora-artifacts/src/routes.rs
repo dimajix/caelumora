@@ -24,7 +24,7 @@ use caelumora_rest_api::scope::ItemDescriptionRequest;
 use caelumora_rest_server::auth::AuthenticatedUser;
 use caelumora_rest_server::error::{ApiError, Json, Path, Query};
 use caelumora_rest_server::plugin::RestPlugin;
-use caelumora_rest_server::routes::{attachment_response, channel_of, views};
+use caelumora_rest_server::routes::{attachment_response, channel_view, views};
 use caelumora_rest_server::state::AppState;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -192,7 +192,7 @@ async fn channel_artifacts(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
-    let channel = channel_of(&state.app, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state.app, &user, SessionId(id), ChannelId(cid)).await?;
     Ok(Json(listed(channel.artifacts().await?).await))
 }
 

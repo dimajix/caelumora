@@ -100,3 +100,11 @@ are side by side.
 - **2026-10-29** — Step 1 done: `ChannelLoop::channel()` and `SessionLoop::session()` answer
   `Arc<_>`; the `Arc::clone` at their callers is gone, and the reason in CODING-GUIDELINES.md
   ("Runtimes and their entities") says what holds.
+- **2026-10-29** — Step 2 done, in another shape than considered above: `channel_view_for` would
+  have stood beside `routes::channel_view`, which answered a `ChannelResponse`, while since issue
+  468 a `…_view` is a view (`Situation::channel_view`, `ActorRuntime::session_view`). So, as the
+  maintainer decided, three names of `routes` changed: `channel_of` is `channel_view` - the
+  `ChannelView` -, and the former `channel_view` and `session_view` are `channel_response` and
+  `session_response` - what a handler answers with. `Views::channel_of`, answering `Reached`, keeps
+  its name, the one `channel_of` left.
+

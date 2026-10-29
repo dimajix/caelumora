@@ -67,13 +67,13 @@ pub async fn open_channel(
 /// 80) - what a handler answers with a channel, with what is new in it to
 /// the user (issue 404). Described by the runtime, which decides what the
 /// user may read and do; does not start the session.
-pub async fn channel_view(
+pub async fn channel_response(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
     session_id: SessionId,
     channel_id: ChannelId,
 ) -> Result<ChannelResponse, ApiError> {
-    Ok(channel_of(state, user, session_id, channel_id)
+    Ok(channel_view(state, user, session_id, channel_id)
         .await?
         .snapshot(Detail::PARTICIPANTS | Detail::BRIEFING | Detail::UNREAD)
         .await
@@ -83,7 +83,7 @@ pub async fn channel_view(
 /// Session `session_id` as `user` sees it now, with its channels and their
 /// participants, the briefings (issue 245) and what is new to the user in each
 /// (issue 404) - what `GET` of one session and every change of one answer.
-pub async fn session_view(
+pub async fn session_response(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
     session_id: SessionId,
@@ -95,9 +95,10 @@ pub async fn session_view(
         .into())
 }
 
-/// Channel `channel_id` of session `session_id` as `user` reaches it
-/// (issue 163) - what a handler reads a channel through, running or not.
-pub async fn channel_of(
+/// The view of channel `channel_id` of session `session_id` as `user` reaches it (issue 163) -
+/// what a handler reads a channel through, running or not; what it answers with is
+/// `channel_response`.
+pub async fn channel_view(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
     session_id: SessionId,

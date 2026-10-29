@@ -3,7 +3,7 @@
 
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Query};
-use crate::routes::{channel_of, content_response, open_channel};
+use crate::routes::{channel_view, content_response, open_channel};
 use crate::state::AppState;
 use axum::body::Body;
 use axum::extract::State;
@@ -65,7 +65,7 @@ pub(super) async fn download_attachment(
     Path((id, cid, mid, aid)): Path<(Uuid, Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Response, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let (attachment, size, content) =
         channel.attachment_content(MessageId(mid), ContentId(aid)).await?;
     Ok(content_response(

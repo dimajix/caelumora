@@ -7,7 +7,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Query};
 use crate::routes::sessions::all_listed;
-use crate::routes::{ensure_session, session_view, views};
+use crate::routes::{ensure_session, session_response, views};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -233,7 +233,7 @@ async fn update_project(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session = ensure_session(state, user, session_id).await?;
     session.update_project(&user.security_context(), project).await?;
-    Ok(Json(session_view(state, user, session_id).await?))
+    Ok(Json(session_response(state, user, session_id).await?))
 }
 
 /// The controller of project `id`, through which what it is changes; whoever does is asked as

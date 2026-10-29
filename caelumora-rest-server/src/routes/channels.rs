@@ -1,7 +1,9 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::error::{Json, Path, Query};
-use crate::routes::{change_error, channel_of, channel_view, ensure_session, open_channel, views};
+use crate::routes::{
+    change_error, channel_response, channel_view, ensure_session, open_channel, views,
+};
 use crate::sse::{bounded_by_token, data_event, named_event};
 use crate::state::AppState;
 use axum::response::sse::Event;
@@ -81,7 +83,7 @@ pub(super) async fn restore_channel(
     let session_id = SessionId(id);
     let session = ensure_session(&state, &user, session_id).await?;
     session.restore_channel(&user.security_context(), ChannelId(cid)).await?;
-    Ok(Json(channel_view(&state, &user, session_id, ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, session_id, ChannelId(cid)).await?))
 }
 
 /// Creates a channel in the session and starts it (issue 09). Only who may
@@ -108,7 +110,7 @@ pub(super) async fn create_channel(
         internal_actors: payload.internal_actors,
     };
     let channel = session.create_channel(&context, spec).await?;
-    Ok(Json(channel_view(&state, &user, session_id, channel.id()).await?))
+    Ok(Json(channel_response(&state, &user, session_id, channel.id()).await?))
 }
 
 /// Stops and deletes a channel of the session, with its history (issue 09).
@@ -129,7 +131,7 @@ pub(super) async fn get_channel(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
 /// How many items of its history a snapshot carries: the end of the
@@ -147,7 +149,7 @@ pub(super) async fn get_channel_history(
     Query(query): Query<HistoryQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<Message>>, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let page = channel.history_page(query.before, query.limit()).await?;
     Ok(Json(HistoryPageResponse::of(page, |message, _| message)))
 }
@@ -179,7 +181,7 @@ pub(super) async fn get_message(
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Message>, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     Ok(Json(channel.message(MessageId(mid)).await?))
 }
 
@@ -191,7 +193,7 @@ pub(super) async fn get_notes(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PublishedNotesResponse>>, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let notes = channel.notes().await.map_err(|e| {
         ApiError::internal(
             "notes_failed",
@@ -265,7 +267,7 @@ pub(super) async fn join_channel(
     user: AuthenticatedUser,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let (session_id, channel_id) = (SessionId(id), ChannelId(cid));
-    let channel = channel_of(&state, &user, session_id, channel_id).await?;
+    let channel = channel_view(&state, &user, session_id, channel_id).await?;
     let watch = channel.user_follow().ok_or_else(|| not_a_participant(channel_id))?;
     let shutdown = state.shutdown.clone();
     let follower = ChannelFollower {
@@ -337,7 +339,7 @@ impl ChannelFollower {
     /// reach it.
     async fn anew(&self, marker: &'static str) -> Option<Event> {
         let channel =
-            channel_of(&self.state, &self.user, self.session_id, self.channel_id).await.ok()?;
+            channel_view(&self.state, &self.user, self.session_id, self.channel_id).await.ok()?;
         if !channel.lists(ActorId::User(self.user.id)) {
             return None;
         }
@@ -379,7 +381,7 @@ pub(super) async fn add_participant(
             Some((ChannelId(cid), payload.history)),
         )
         .await?;
-    Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
 /// Removes a participant from the channel (issue 46); `aid` is the id of the
@@ -392,7 +394,7 @@ pub(super) async fn get_participant(
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelParticipantResponse>, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let participant =
         participant_of(&channel, aid).await?.snapshot(Detail::USAGE | Detail::PROFILE).await;
     ChannelParticipantResponse::of(participant).map(Json).ok_or_else(|| {
@@ -617,7 +619,7 @@ pub(super) async fn reclassify_channel(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     channel.reclassify(&user.security_context(), classification).await?;
-    Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
 /// Has the channel's conversation held in the language the body names - a
@@ -632,7 +634,7 @@ pub(super) async fn set_channel_language(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     channel.update_language(&user.security_context(), language.as_deref()).await?;
-    Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
 /// Sets what the channel restricts of the tool calls made in it (issue 13):
@@ -651,7 +653,7 @@ pub(super) async fn update_channel_approval_rules(
         .update_approval_rules(&user.security_context(), rules)
         .await
         .map_err(|e| change_error(e, "invalid_rule"))?;
-    Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
 /// Says what the channel is for (issue 245): its summary and briefing,
@@ -672,7 +674,7 @@ pub(super) async fn update_channel_description(
             payload.briefing.as_deref(),
         )
         .await?;
-    Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
 /// Reclassifies a message of the channel (issues 133, 239): its author or
@@ -730,7 +732,7 @@ pub(super) async fn message_context(
     Path((id, cid, aid, mid)): Path<(Uuid, Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<MessageContextResponse>, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let participant = participant_of(&channel, aid).await?;
     let view = participant.context().await?;
     let seen = view.context_of(MessageId(mid)).await?;
@@ -838,7 +840,7 @@ pub(super) async fn agent_history(
     Query(query): Query<HistoryQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<HistoryMessageResponse>>, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = participant_of(&channel, aid).await?.context().await?;
     let page = view.history_page(query.before, query.limit()).await?;
     let heard: Vec<MessageId> =
@@ -858,7 +860,7 @@ pub(super) async fn agent_tools(
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentToolsResponse>, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let tool_sets = participant_of(&channel, aid).await?.tool_sets().await?;
     Ok(Json(AgentToolsResponse { tool_sets }))
 }
@@ -870,7 +872,7 @@ pub(super) async fn agent_components(
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentComponentsResponse>, ApiError> {
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let components = participant_of(&channel, aid).await?.components().await?;
     Ok(Json(AgentComponentsResponse { components }))
 }

@@ -70,7 +70,7 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
 *   **It acts on a channel through `open_channel`**, the one way a handler that writes, approves or
     runs a command gets the running channel. A handler that only reads - the history, the notes,
     what an agent saw, the channel's stream - reaches the channel through the views
-    (`routes::channel_of`), running or not, and starts nothing. Either way a channel the user may
+    (`routes::channel_view`), running or not, and starts nothing. Either way a channel the user may
     not read is answered as absent, like one that does not exist; the runtime decides that.
 *   **It acts through the user's actor.** Writing, approving and running commands go through
     `user_actor_of`, the user's own actor in the channel. Someone who is not a participant has none

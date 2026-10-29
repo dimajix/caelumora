@@ -11,7 +11,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Query};
 use crate::routes::{
-    attachment_response, channel_view, ensure_session, open_channel, session_view, views,
+    attachment_response, channel_response, ensure_session, open_channel, session_response, views,
 };
 use crate::state::AppState;
 use axum::body::Body;
@@ -291,7 +291,7 @@ pub(super) async fn set_uses_workspace(
     let (session_id, channel_id) = (SessionId(id), ChannelId(cid));
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     channel.update_uses_workspace(&user.security_context(), request.uses).await?;
-    Ok(Json(channel_view(&state, &user, session_id, channel_id).await?))
+    Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
 /// Ends command `command_id` of the workspace's shell, started in the
@@ -321,7 +321,7 @@ async fn update_workspace(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session = ensure_session(state, user, session_id).await?;
     session.update_workspace(&user.security_context(), workspace, share).await?;
-    Ok(Json(session_view(state, user, session_id).await?))
+    Ok(Json(session_response(state, user, session_id).await?))
 }
 
 /// The controller of workspace `id`, through which what it is changes and

@@ -4,7 +4,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::error::{Json, Path, Query};
-use crate::routes::{change_error, ensure_session, session_view, views};
+use crate::routes::{change_error, ensure_session, session_response, views};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, http::StatusCode};
@@ -86,7 +86,7 @@ pub(super) async fn get_session(
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// The private notes agent `aid` wrote in the channels of session `id` the
@@ -122,7 +122,7 @@ pub(super) async fn restore_session(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
     state.session_manager.restore(&user.security_context(), session_id).await?;
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// Removes the deleted session `id` for good, with its channels and their
@@ -180,7 +180,7 @@ pub(super) async fn set_session_language(
 
     session_loop.update_language(&user.security_context(), language.as_deref()).await?;
 
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// Has session `id` held in the time zone the body names - an IANA name
@@ -199,7 +199,7 @@ pub(super) async fn set_session_time_zone(
 
     session_loop.update_time_zone(&user.security_context(), time_zone.as_deref()).await?;
 
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// Changes whom session `id` lets read what was said in it (issue 134);
@@ -215,7 +215,7 @@ pub(super) async fn update_session_privacy(
 
     session_loop.update_privacy(&user.security_context(), payload.privacy).await?;
 
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// Sets what the session restricts of the tool calls made in any of its
@@ -237,7 +237,7 @@ pub(super) async fn update_session_approval_rules(
         .await
         .map_err(|e| change_error(e, "invalid_rule"))?;
 
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// Says what session `id` is for (issue 245): its summary and briefing,
@@ -261,7 +261,7 @@ pub(super) async fn update_session_description(
         )
         .await?;
 
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// Whom the user could take into session `id` (issue 221): the users and
@@ -294,7 +294,7 @@ pub(super) async fn add_participant(
     let session_loop = ensure_session(&state, &user, session_id).await?;
     let into = payload.channel.map(|channel| (channel, payload.history));
     session_loop.add_participant(&user.security_context(), payload.participant, into).await?;
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// Joins session `id` by the user's own act (issue 221) - the user, or
@@ -311,7 +311,7 @@ pub(super) async fn join_session(
     let context = user.security_context();
     let participant = payload.participant.unwrap_or(context.principal_id);
     state.session_manager.join(&context, session_id, participant, payload.channel).await?;
-    Ok(Json(session_view(&state, &user, session_id).await?))
+    Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
 /// Session `id` as a list shows it to `user`: as the views reach it, the project its results go
