@@ -683,7 +683,7 @@ mod tests {
     use caelumora_model::approval::ApprovalStrategy;
     use caelumora_model::channel::{Channel, InternalActor, STARTED, STOPPED};
     use caelumora_model::event::EntityChange;
-    use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subject};
     use caelumora_model::snapshot::Detail;
     use caelumora_model::store::StoreError;
     use caelumora_model::template::InternalActorTemplate;
@@ -1229,7 +1229,7 @@ mod tests {
         let bundle = ComponentBundle::new(
             ScopedName::new("tools", scope).unwrap(),
             Default::default(),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
         stores.component_bundles.create(&system, &bundle).await.unwrap();
         session.delete_channel(&ctx, side).await.unwrap();

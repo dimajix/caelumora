@@ -308,11 +308,8 @@ mod tests {
             ..workspace.clone()
         };
         assert!(shared.validate().is_ok(), "shared with someone");
-        let systems = Workspace {
-            security_attributes: SecurityAttributes::owned_by(ActorId::System),
-            ..workspace
-        };
-        assert!(systems.validate().is_err(), "nor nobody's");
+        let systems = Workspace { security_attributes: SecurityAttributes::systems(), ..workspace };
+        assert!(systems.validate().is_err(), "nor the system's");
     }
 
     #[test]

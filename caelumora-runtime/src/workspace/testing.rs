@@ -15,7 +15,7 @@ use caelumora_model::confidentiality::{Classification, Confidentiality, Visibili
 use caelumora_model::config::AppConfig;
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::store::Persistence;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -96,7 +96,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
         roles: None,
         introduction: None,
         components: Default::default(),
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         reasoning_visibility: Visibility::Channel,
         hears_during_turn: Default::default(),
         deleted: None,

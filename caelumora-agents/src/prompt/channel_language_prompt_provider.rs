@@ -143,9 +143,10 @@ mod tests {
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
+    use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::AgentStateHandle;
@@ -222,7 +223,7 @@ mod tests {
             roles: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
@@ -231,7 +232,7 @@ mod tests {
         let agent = Agent::new(
             ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
         let owner = user("owner");

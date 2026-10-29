@@ -176,7 +176,7 @@ mod tests {
     use caelumora_model::channel::{Channel, InternalActor, Participant};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::{User, UserId, UserProfile};
@@ -285,7 +285,7 @@ mod tests {
             roles: None,
             introduction: introduction.map(|text| Introduction::new(text).unwrap()),
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
@@ -304,7 +304,7 @@ mod tests {
         let agent = Agent::new(
             ScopedName::new(name, Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         store
             .entity_stores()

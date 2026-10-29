@@ -88,7 +88,9 @@ mod tests {
     use caelumora_model::agent::{Personality, PersonalityId};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Persistence;
+    use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
 
     #[tokio::test]
@@ -101,7 +103,7 @@ mod tests {
             kind: Default::default(),
             roles: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
@@ -109,7 +111,7 @@ mod tests {
         let agent = Agent::new(
             ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
@@ -195,7 +197,7 @@ mod tests {
             kind: Default::default(),
             roles: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,

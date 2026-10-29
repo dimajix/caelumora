@@ -9,8 +9,6 @@ use crate::skill::Skill;
 use crate::{NAMESPACE, PROMPTS};
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::security::SecurityAttributes;
 use caelumora_model::store::EntityStore;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
@@ -62,14 +60,8 @@ impl fmt::Debug for SeededSkills {
 impl SeedSection for SeededSkills {
     async fn seed(&self, section: Value) -> Result<()> {
         for skill in serde_json::from_value::<Vec<Skill>>(section)? {
-            // The system's, as everything seeded: a skill says so, since
-            // nobody's is no skill at all (`Skill::validate`).
-            let owned = Skill {
-                security_attributes: SecurityAttributes::owned_by(ActorId::System),
-                ..skill
-            };
-            if create_unless_taken(self.0.as_ref(), &owned).await? {
-                info!("Seeded skill {} ({})", owned.name, owned.id);
+            if create_unless_taken(self.0.as_ref(), &skill).await? {
+                info!("Seeded skill {} ({})", skill.name, skill.id);
             }
         }
         Ok(())

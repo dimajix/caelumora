@@ -846,7 +846,7 @@ mod tests {
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(),
+            security_attributes: SecurityAttributes::systems(),
             deleted: None,
         };
         let session2 = Session {
@@ -865,7 +865,7 @@ mod tests {
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(),
+            security_attributes: SecurityAttributes::systems(),
             deleted: None,
         };
         let store = Persistence::in_memory().entity_stores().unwrap().sessions;
@@ -956,7 +956,7 @@ mod tests {
         let notes = backend.entity_store::<Note>().unwrap();
         let note = Note {
             id: NoteId::new(),
-            security_attributes: SecurityAttributes::default(),
+            security_attributes: SecurityAttributes::systems(),
             deleted: None,
         };
         notes.create(&SecurityContext::system(), &note).await.unwrap();

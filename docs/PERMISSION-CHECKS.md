@@ -40,7 +40,7 @@ stored entity is decided by the verb, never by the kind (issue
 | a kind's own verb requiring `Write` (`WriteWorkspace`, `WriteArtifact`) | as reading, with `Write` | 1 |
 | `CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion` | the principal reads the channel | 1: reading grants acting in the conversation |
 | `ReadAgentTools` | the principal reads the agent or the channel | 1, two objects |
-| `ApproveToolCall` | `answers_for`: the principal reads the agent; nobody for an agent of nobody (issue 491) | 3, built from 1 |
+| `ApproveToolCall` | `answers_for`: the principal reads the agent | 3, built from 1 |
 | `ShowAgentCommand`, `ExecuteAgentCommand` | `owners_only`: `answers_for`; else the principal reads the channel | 3, built from 1 |
 | `ShowCommand`, `ExecuteCommand` | `owners_only`: the principal owns the channel; else reads it | 3, built from 1 |
 | `Create` of every kind | the new entity's owner is the principal | 1 |

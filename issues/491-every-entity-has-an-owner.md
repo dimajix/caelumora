@@ -1,6 +1,6 @@
 # 491 — An entity can be stored without an owner, and is then taken for the system's
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Identity and access management
@@ -48,6 +48,18 @@ entry of the history no actor made. As an owner it stands for the system by a co
 
 Recommendation: A.
 
+## Decision
+
+A, with two choices:
+
+1.  **A seed's entities are the system's by a serde default** - `#[serde(default =
+    "SecurityAttributes::systems")]` on the attributes of the kinds a seed holds: component
+    bundles, personalities, session templates and skills -, not by an owner every entry of a seed
+    file would have to write. The skills' seeding no longer sets the owner itself.
+2.  **The owner is named positively**: a user, an agent - which may own a subagent - or the
+    system. `SecurityAttributes::validate` refuses nobody and an approver alike, neither of whom
+    answers for anything.
+
 ## Done when
 
 - No store keeps an entity whose owner is `ActorId::None`.
@@ -61,3 +73,12 @@ Recommendation: A.
   to have an owner, and `None` as an owner breaks that.
 - **2026-10-29** — Issue 477 took the channel owner's approval for an agent of nobody away: nobody
   answers for it now, the one special case left in `answers_for` for this issue to remove.
+- **2026-10-29** — Decided: A, a seed's entities the system's by a serde default, the owner named
+  positively; on branch `issue-491-every-entity-has-an-owner`.
+- **2026-10-29** — Done: `SecurityAttributes` has no `Default`; `systems()` gives what a seed
+  leaves out, and `validate` refuses an owner that is no user, agent or system, so that no store
+  keeps one. `unowned()` is gone, `Admission::unowned` is `systems`, Postgres's `UNOWNED` is
+  `SYSTEM`, and `answers_for` has no case left for an agent of nobody. The tests give their
+  entities the system or a user as owner, the store suite shows that an entity of nobody is not
+  stored, and the app's seeding test that what the example seed holds is the system's.
+  SECURITY.md states the rule.

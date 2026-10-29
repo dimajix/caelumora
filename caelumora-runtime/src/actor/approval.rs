@@ -513,7 +513,7 @@ mod tests {
             kind: Default::default(),
             roles: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -871,7 +871,7 @@ mod tests {
                 channel::LEFT,
                 &ActorId::Agent(approving.agent),
             ),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
 
         // Nobody keeps waiting: the request is answered as denied.

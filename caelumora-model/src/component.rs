@@ -66,7 +66,7 @@ pub struct ComponentBundle {
     pub components: ComponentConfig,
     /// Who may use it - read it, as whoever builds what includes it - and
     /// change it.
-    #[serde(default)]
+    #[serde(default = "SecurityAttributes::systems")]
     pub security_attributes: SecurityAttributes,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.

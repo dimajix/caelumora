@@ -21,8 +21,8 @@ pub struct Admission {
     /// or a group of theirs: the principal, and the caller where it takes
     /// part itself (issue 264).
     pub actors: Vec<ActorId>,
-    /// Whether what the system or nobody owns admits as well.
-    pub unowned: bool,
+    /// Whether what the system owns admits as well.
+    pub systems: bool,
     /// What an entry of the access list must cover to admit; `None` where
     /// owning alone does.
     pub grant: Option<Grant>,
@@ -68,7 +68,8 @@ impl Admission {
     /// Whether the owner of an entity with `attributes`, or an entry of its
     /// list naming no group, admits it.
     fn admits_without_groups(&self, attributes: &SecurityAttributes) -> bool {
-        if self.actors.contains(&attributes.owner_id) || (self.unowned && attributes.unowned()) {
+        let systems = self.systems && attributes.owner_id == ActorId::System;
+        if self.actors.contains(&attributes.owner_id) || systems {
             return true;
         }
         self.covering(attributes).any(|subject| match subject {
@@ -119,7 +120,7 @@ mod tests {
     use crate::security::testing::*;
 
     fn reading(actors: Vec<ActorId>) -> Admission {
-        Admission { actors, unowned: true, grant: Some(Grant::Read), ..Admission::default() }
+        Admission { actors, systems: true, grant: Some(Grant::Read), ..Admission::default() }
     }
 
     #[tokio::test]
@@ -132,14 +133,14 @@ mod tests {
         assert!(!reading(vec![carol]).admits(&hers, &none).await, "nobody else");
         let writing = Admission { grant: Some(Grant::Write), ..reading(vec![bob]) };
         assert!(!writing.admits(&hers, &none).await, "an entry covering what is needed");
-        let owning = Admission { grant: None, unowned: false, ..reading(vec![bob]) };
+        let owning = Admission { grant: None, systems: false, ..reading(vec![bob]) };
         assert!(!owning.admits(&hers, &none).await, "no entry where owning alone admits");
         assert!(
-            reading(vec![]).admits(&SecurityAttributes::owned_by(ActorId::System), &none).await,
-            "the system's, where unowned admits"
+            reading(vec![]).admits(&SecurityAttributes::systems(), &none).await,
+            "the system's, where the system's admit"
         );
         assert!(
-            !owning.admits(&SecurityAttributes::default(), &none).await,
+            !owning.admits(&SecurityAttributes::systems(), &none).await,
             "but not where it does not"
         );
         assert!(!Admission::default().admits(&hers, &none).await, "the default admits nobody");

@@ -397,7 +397,7 @@ pub(crate) mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::config::{AppConfig, AuthConfig};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
     use caelumora_model::template::{
         ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId,
     };
@@ -660,7 +660,7 @@ pub(crate) mod tests {
                 participants: vec!["user".to_string()],
                 internal_actors: Vec::new(),
             }],
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             commands: Default::default(),
             privacy: Default::default(),
             deleted: None,

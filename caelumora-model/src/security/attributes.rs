@@ -16,9 +16,9 @@ use std::fmt::Debug;
 ///
 /// The owner may do everything with it, implicitly and unrevocably; the
 /// access list only adds - allow-only, the union of its entries, without
-/// precedence. An entity without an owner (`ActorId::None`, as in the demo
-/// data of a seed file) belongs to the system.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// precedence. Every entity has an owner (issue 491): what a seed file
+/// leaves without attributes is the system's (`systems`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SecurityAttributes {
     pub owner_id: ActorId,
     /// May be left out where the attributes are written by hand - a seed
@@ -29,13 +29,14 @@ pub struct SecurityAttributes {
 
 impl SecurityAttributes {
     /// Attributes of an entity owned by `owner`, with an empty access list.
-    pub fn owned_by(owner: ActorId) -> Self {
+    pub const fn owned_by(owner: ActorId) -> Self {
         Self { owner_id: owner, acl: Vec::new() }
     }
 
-    /// Whether the system or nobody owns the entity.
-    pub fn unowned(&self) -> bool {
-        matches!(self.owner_id, ActorId::None | ActorId::System)
+    /// Attributes of what the system owns, with an empty access list: what a
+    /// seed file leaves out.
+    pub const fn systems() -> Self {
+        Self::owned_by(ActorId::System)
     }
 
     /// These attributes, granting `subject` what `grant` covers besides.
@@ -44,11 +45,19 @@ impl SecurityAttributes {
         self
     }
 
-    /// Nothing if the attributes may be stored as they are: an entry names
-    /// a person, never an agent - an agent acts with its owner's rights
-    /// (issue 255), and an entry for it would let it reach what the person
+    /// Nothing if the attributes may be stored as they are: the owner is
+    /// someone who answers for the entity - a user, an agent or the system,
+    /// never nobody or an approver (issue 491) -, and an entry names a
+    /// person, never an agent - an agent acts with its owner's rights (issue
+    /// 255), and an entry for it would let it reach what the person
     /// responsible for it may not - nor the system or nobody.
     pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.owner_id, ActorId::User(_) | ActorId::Agent(_) | ActorId::System) {
+            return Err(format!(
+                "an entity is owned by a user, an agent or the system, not {}",
+                self.owner_id
+            ));
+        }
         for entry in &self.acl {
             if let Subject::Actor(actor) = entry.subject {
                 if !matches!(actor, ActorId::User(_)) {
@@ -180,6 +189,7 @@ pub trait Secured {
 mod tests {
     use super::*;
     use crate::agent::AgentId;
+    use crate::approval::ApproverId;
     use crate::security::testing::*;
     use crate::store::query::meets_exactly_its_equals;
     use uuid::Uuid;
@@ -209,6 +219,18 @@ mod tests {
         let written: SecurityAttributes =
             serde_json::from_value(serde_json::json!({"owner_id": alice})).unwrap();
         assert!(written.acl.is_empty(), "the list may be left out where it is written by hand");
+    }
+
+    /// Issue 491: everything has an owner, who answers for it.
+    #[test]
+    fn an_entity_is_owned_by_a_user_an_agent_or_the_system() {
+        let agent = ActorId::Agent(AgentId::new());
+        for owner in [user(), agent, ActorId::System] {
+            assert_eq!(SecurityAttributes::owned_by(owner).validate(), Ok(()), "{owner}");
+        }
+        for nobody in [ActorId::None, ActorId::Approver(ApproverId::new())] {
+            assert!(SecurityAttributes::owned_by(nobody).validate().is_err(), "not {nobody}");
+        }
     }
 
     #[test]

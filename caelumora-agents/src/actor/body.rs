@@ -408,7 +408,9 @@ mod testing {
     use crate::prompt::external_context_provider::ExternalContextProvider;
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::SessionId;
+    use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
     use caelumora_runtime::runtime::ChannelRuntime;
     use caelumora_runtime::session::testing::{bare_channel, bare_session, test_runtime};
@@ -429,7 +431,7 @@ mod testing {
                 description: None,
                 introduction: None,
                 components: ComponentConfig::default(),
-                security_attributes: Default::default(),
+                security_attributes: SecurityAttributes::systems(),
                 reasoning_visibility: Default::default(),
                 hears_during_turn: Default::default(),
                 deleted: None,
@@ -437,7 +439,7 @@ mod testing {
             let agent = Agent::new(
                 ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")),
                 personality.id,
-                ActorId::None,
+                ActorId::User(UserId::new()),
             );
             let agent =
                 Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));

@@ -426,7 +426,7 @@ mod tests {
         let bus = bus();
         let mut receiver = bus.subscribe_all().into_receiver();
         for _ in 0..SUBSCRIPTION_CAPACITY + 5 {
-            bus.publish(created(), Default::default());
+            bus.publish(created(), SecurityAttributes::systems());
         }
 
         assert!(
@@ -441,10 +441,10 @@ mod tests {
         let bus = bus();
         let mut subscription = bus.subscribe_all();
         for _ in 0..SUBSCRIPTION_CAPACITY + 5 {
-            bus.publish(created(), Default::default());
+            bus.publish(created(), SecurityAttributes::systems());
         }
         let deleted = SessionId::new();
-        bus.publish(GlobalEvent::deleted::<Session>(&deleted), Default::default());
+        bus.publish(GlobalEvent::deleted::<Session>(&deleted), SecurityAttributes::systems());
 
         let mut received = 0;
         while let Some(event) = subscription.try_recv() {
@@ -463,7 +463,7 @@ mod tests {
     async fn a_dropped_subscription_is_removed() {
         let bus = bus();
         drop(bus.subscribe_all());
-        bus.publish(created(), Default::default());
+        bus.publish(created(), SecurityAttributes::systems());
         assert!(bus.subscribers.get(&SubscriptionTopic::All).unwrap().is_empty());
     }
 
@@ -500,7 +500,7 @@ mod tests {
                 channel::JOINED,
                 &ActorId::Agent(agent),
             ),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
         bus.publish(
             GlobalEvent::custom::<Channel>(
@@ -508,7 +508,7 @@ mod tests {
                 channel::AGENT_STATE_CHANGED,
                 &agent,
             ),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
 
         assert_eq!(
@@ -798,7 +798,7 @@ mod tests {
         let mut someone = bus.subscribe_as(as_user(UserId::new()));
         bus.publish(
             GlobalEvent::created::<Session>(&SessionId::new()),
-            SecurityAttributes::default(),
+            SecurityAttributes::systems(),
         );
         assert_eq!(drain(&mut someone).await.len(), 1);
     }
@@ -813,7 +813,7 @@ mod tests {
         let mut kept = bus.subscribe_as(as_user(UserId::new()));
         bus.publish(
             GlobalEvent::created::<Session>(&SessionId::new()),
-            SecurityAttributes::default(),
+            SecurityAttributes::systems(),
         );
         drain(&mut kept).await;
         assert_eq!(bus.parties.lock().unwrap().len(), 1);

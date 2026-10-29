@@ -278,7 +278,7 @@ mod tests {
             description: None,
             participants,
             channels: Vec::new(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             commands: Default::default(),
             privacy: Default::default(),
             deleted: None,
@@ -302,7 +302,7 @@ mod tests {
             kind: Default::default(),
             roles: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
@@ -564,7 +564,7 @@ mod tests {
                 let other = Agent::new(
                     ScopedName::new("helper", Scope::GlobalScope).unwrap(),
                     personality.id,
-                    ActorId::None,
+                    ActorId::User(UserId::new()),
                 );
                 let store = Persistence::over(
                     Arc::<MemoryStore>::clone(store),
@@ -632,7 +632,7 @@ mod tests {
             .unwrap();
         assert_eq!(agents.len(), 1, "no second one");
         assert!(
-            matches!(participants[0].1, Participant::Agent(id) if id == agents[0].id && agents[0].security_attributes.owner_id == ActorId::None),
+            matches!(participants[0].1, Participant::Agent(id) if id == agents[0].id && agents[0].security_attributes.owner_id != ActorId::User(owner)),
             "the other's"
         );
     }

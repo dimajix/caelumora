@@ -403,7 +403,7 @@ mod tests {
         )
         .unwrap();
         let names: Vec<String> = executor
-            .visible(&SecurityContext::default(), &SecurityAttributes::default())
+            .visible(&SecurityContext::default(), &SecurityAttributes::systems())
             .await
             .into_iter()
             .map(|c| c.name)

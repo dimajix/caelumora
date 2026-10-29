@@ -208,7 +208,7 @@ mod tests {
     };
     use caelumora_model::session::{Session, SessionUpdateEvent};
     use caelumora_model::store::StoreError;
-    use caelumora_model::user::User;
+    use caelumora_model::user::{User, UserId};
     use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;
     use std::time::Duration;
@@ -356,7 +356,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -365,7 +365,7 @@ mod tests {
         let helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);

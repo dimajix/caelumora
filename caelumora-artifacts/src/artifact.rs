@@ -395,7 +395,7 @@ mod tests {
             assert!(artifact(scope.clone(), alice).validate().is_err(), "not in {scope:?}");
         }
         let systems = Artifact {
-            security_attributes: SecurityAttributes::owned_by(ActorId::System),
+            security_attributes: SecurityAttributes::systems(),
             ..artifact(project, alice)
         };
         assert!(systems.validate().is_err(), "nobody's");

@@ -317,7 +317,7 @@ mod tests {
     use caelumora_model::confidentiality::{Compartments, ConfidentialityRules, Place, Reading};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::security::{OwnershipPolicy, SecurityContext};
+    use caelumora_model::security::{OwnershipPolicy, SecurityAttributes, SecurityContext};
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::StateStore;
@@ -402,7 +402,10 @@ mod tests {
 
     async fn handle(agent: AgentId) -> Arc<AgentStateHandle> {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
-        AgentStates::new(store, Arc::new(())).get(agent, Default::default()).await.unwrap()
+        AgentStates::new(store, Arc::new(()))
+            .get(agent, SecurityAttributes::owned_by(ActorId::User(UserId::new())))
+            .await
+            .unwrap()
     }
 
     /// The sessions of a test, as a turn reaches them: made as the runtime
