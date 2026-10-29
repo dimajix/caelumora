@@ -78,7 +78,7 @@ impl SessionView {
     pub(super) fn of(views: Views, found: Found) -> Self {
         match found {
             Found::Running(session_loop) => {
-                let session = Arc::clone(&session_loop.session());
+                let session = session_loop.session();
                 Self { views, session, running: Some(session_loop) }
             }
             Found::Stored(session) => Self { views, session: Arc::new(session), running: None },

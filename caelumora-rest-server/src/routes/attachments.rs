@@ -42,13 +42,18 @@ pub(super) async fn upload_attachment(
             )
         })?;
     let classification = classification_of(&query)?;
-    let (_, channel_loop) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let channel = Arc::clone(&channel_loop.channel());
+    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let content = Box::pin(body.into_data_stream().map_err(Error::other));
     let uploaded = state
         .runtime_manager
         .attachment_manager()
-        .create(&user.security_context(), &channel, &query.name, classification, (size, content))
+        .create(
+            &user.security_context(),
+            &channel.channel(),
+            &query.name,
+            classification,
+            (size, content),
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(uploaded)))
 }

@@ -250,7 +250,7 @@ impl SessionLoop {
         context: &SecurityContext,
         spec: ChannelSpec,
     ) -> Result<Arc<ChannelLoop>> {
-        let session = Arc::clone(&self.session());
+        let session = self.session();
         let name = Name::new(&spec.name)?;
         let language = Language::optional(spec.language.as_deref())?;
         let classification = spec.classification.unwrap_or_default();
@@ -344,7 +344,7 @@ impl SessionLoop {
         }
         self.events.announce(
             GlobalEvent::created::<Channel>(&(self.id, channel.id)),
-            &**channel_loop.channel(),
+            &*channel_loop.channel(),
         );
         info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
         Ok(channel_loop)

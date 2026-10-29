@@ -1191,11 +1191,10 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
             .await
     };
 
-    let channel = Arc::clone(&main.channel());
     let (uploaded, asked) = world
         .asked(attachments.create(
             &World::as_user(world.alice),
-            &channel,
+            &main.channel(),
             "notes.txt",
             None,
             (5, file("notes")),

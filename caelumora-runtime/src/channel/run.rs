@@ -2694,7 +2694,7 @@ mod tests {
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
         let main = Arc::clone(&session.channels()[0]);
-        let channel = Arc::clone(&main.channel());
+        let channel = main.channel();
         let hers = World::as_user(world.alice);
         let attachments = world.runtime.attachment_manager();
         let upload = || attachments.create(&hers, &channel, "a.txt", None, (1, file("a")));

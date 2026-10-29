@@ -11,7 +11,7 @@ use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::view::{Viewer, Views};
 use crate::workspace::{WorkspaceError, WorkspaceManager, WorkspaceResult};
 use anyhow::{anyhow, Result};
-use arc_swap::{ArcSwapOption, Guard};
+use arc_swap::ArcSwapOption;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::{self, Channel, Participant};
@@ -159,7 +159,7 @@ impl ChannelEntry {
     fn listed(&self) -> Listed {
         match self {
             Self::Running { channel, .. } => {
-                (Arc::clone(&channel.channel()), ChannelRun::Running(Arc::clone(channel)))
+                (channel.channel(), ChannelRun::Running(Arc::clone(channel)))
             }
             Self::Unavailable { channel, cause } => {
                 (Arc::clone(channel), ChannelRun::Unavailable(Arc::clone(cause)))
@@ -375,9 +375,10 @@ impl SessionLoop {
         self.session_controller.id()
     }
 
-    /// The session as it is now.
-    pub fn session(&self) -> Guard<Arc<Session>> {
-        self.session_controller.load()
+    /// The session as it is now: a snapshot, to be read or handed on to an operation - not to be
+    /// kept, since it does not follow later changes.
+    pub fn session(&self) -> Arc<Session> {
+        Arc::clone(&self.session_controller.load())
     }
 
     /// The session as privacy sees it now (issue 134).
@@ -434,7 +435,7 @@ impl SessionLoop {
                                 .and_then(|mut entry| match &mut *entry {
                                     ChannelEntry::Running { channel, task } => {
                                         *task = None;
-                                        Some(Arc::clone(&channel.channel()))
+                                        Some(channel.channel())
                                     }
                                     ChannelEntry::Unavailable { .. } => None,
                                 });
@@ -501,7 +502,7 @@ impl SessionLoop {
         let channel = Arc::clone(channel);
         self.events.announce(
             GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()),
-            &**channel.channel(),
+            &*channel.channel(),
         );
         *task = Some(join_set.spawn(async move {
             let _ = channel.run().await;

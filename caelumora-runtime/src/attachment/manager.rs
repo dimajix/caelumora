@@ -462,7 +462,7 @@ mod tests {
 
     /// The channel "main" of `session` as it stands.
     fn main_of(session: &SessionLoop) -> Arc<Channel> {
-        Arc::clone(&session.channels()[0].channel())
+        session.channels()[0].channel()
     }
 
     #[tokio::test]

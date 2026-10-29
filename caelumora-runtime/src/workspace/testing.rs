@@ -182,5 +182,5 @@ fn documents_of(
     channel: ChannelId,
 ) -> WorkspaceResult<(Arc<Session>, Arc<Channel>)> {
     let channel = session.channel(channel).ok_or(WorkspaceError::NotUsableInChannel)?;
-    Ok((Arc::clone(&session.session()), Arc::clone(&channel.channel())))
+    Ok((session.session(), channel.channel()))
 }

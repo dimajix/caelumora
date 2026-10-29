@@ -279,8 +279,11 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
     (`SessionPrivacy::of(&Session)`) - never in the runtime, so that the stored document and the
     running object cannot disagree about it.
 *   **A runtime answers about its own entity, not about the one above.** A loop may have getters for
-    attributes of its own entity that callers need often; they return owned values, so that no
-    `arc_swap::Guard` is held across an `await`. Everything else is read from its snapshot. The
+    attributes of its own entity that callers need often; they return owned values. Its snapshot -
+    `channel()`, `session()` - is an `Arc`, not an `arc_swap::Guard`: what a caller is given it may
+    hand on to an operation and hold across an `await`, which a `Guard` should not be (each thread
+    has few slots for them), and the interface says nothing of how the loop keeps it. Everything
+    else is read from its snapshot. The
     entity above is reached through the parent - `channel.session_loop()` - never through a
     forwarder such as a `session_privacy()` on the channel's loop. What holds when the parent is
     missing is the caller's to decide.

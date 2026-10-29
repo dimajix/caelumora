@@ -12,7 +12,7 @@ use crate::runtime::ChannelRuntime;
 use crate::session::SessionError;
 use crate::session::SessionLoop;
 use anyhow::{Error, Result};
-use arc_swap::{ArcSwap, Guard};
+use arc_swap::ArcSwap;
 use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::actor::Envelope;
@@ -460,9 +460,10 @@ impl ChannelLoop {
         self.channel.load().security_attributes.clone()
     }
 
-    /// The channel as it is now.
-    pub fn channel(&self) -> Guard<Arc<Channel>> {
-        self.channel.load()
+    /// The channel as it is now: a snapshot, to be read or handed on to an operation - not to be
+    /// kept, since it does not follow later changes.
+    pub fn channel(&self) -> Arc<Channel> {
+        Arc::clone(&self.channel.load())
     }
 
     /// `action` on the channel, as its attributes are now, refused as a

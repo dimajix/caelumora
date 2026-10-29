@@ -3899,13 +3899,12 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
         .channel(main.id())
         .await
         .unwrap();
-    let channel = Arc::clone(&main.channel());
     let notes = world
         .runtime
         .attachment_manager()
         .create(
             &alice,
-            &channel,
+            &main.channel(),
             "notes.txt",
             None,
             (5, Box::pin(stream::iter([Ok(Bytes::from_static(b"notes"))]))),

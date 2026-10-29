@@ -137,7 +137,7 @@ impl Found {
     /// The session as it is now.
     fn session(&self) -> Session {
         match self {
-            Found::Running(session_loop) => (**session_loop.session()).clone(),
+            Found::Running(session_loop) => (*session_loop.session()).clone(),
             Found::Stored(session) => session.clone(),
         }
     }
@@ -203,7 +203,7 @@ impl SessionManager {
 
         self.events.announce(
             GlobalEvent::custom::<Session>(&id, session::STARTED, &()),
-            &**session_loop.session(),
+            &*session_loop.session(),
         );
         Ok(session_loop)
     }
@@ -759,7 +759,7 @@ impl SessionManager {
             handle.abort();
         }
         if let Some(session_loop) = &removed {
-            let session = Arc::clone(&session_loop.session());
+            let session = session_loop.session();
             self.events
                 .announce(GlobalEvent::custom::<Session>(&id, session::STOPPED, &()), &*session);
         }
@@ -2035,7 +2035,7 @@ mod tests {
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
         let (alice, system) = (World::as_user(world.alice), SecurityContext::system());
-        let main = Arc::clone(&session.channels()[0].channel());
+        let main = session.channels()[0].channel();
         let attachments = world.runtime.attachment_manager();
         let uploaded = attachments
             .create(

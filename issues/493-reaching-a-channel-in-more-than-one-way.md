@@ -1,6 +1,6 @@
 # 493 — What reaches a channel is named, held and asked in more than one way
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -84,3 +84,19 @@ are side by side.
 ## History
 
 - **2026-10-29** — Opened at the maintainer's request from the findings of issue 468.
+- **2026-10-29** — The trade-off of the first step, weighed before it was done. Holding a `Guard`
+  across an `await` is no error: `Guard<Arc<T>>` is `Send` and correct (arc-swap 1.9.2). It costs
+  efficiency only - each thread has 8 slots for guards (`DEBT_SLOT_CNT`); one held long takes one,
+  further `load()` on that thread take the slower way, and a writer settles the open slots first.
+  So the rule in CODING-GUIDELINES.md was hygiene, not correctness, and the issue's "rule broken
+  sooner or later" overstated it. Against `Arc`: `load_full()`, or an `Arc::clone` of the guard,
+  raises and lowers the shared reference count on every call, where a guard touches a slot of its
+  own thread; callers that only read a field (about ten) pay it too; and an `Arc` invites keeping a
+  snapshot - in a field, a long task - where the type `Guard` says "look now". For `Arc`: simpler
+  call sites, and an interface that says what the caller gets and nothing of how the loop keeps
+  it. The public getters are no hot paths - the loop reads itself through `self.channel.load()` -,
+  so the cost does not count. Decided by the maintainer for `Arc`, the clean interface being the
+  main argument; the getters' doc comments say the document is a snapshot, not to be held.
+- **2026-10-29** — Step 1 done: `ChannelLoop::channel()` and `SessionLoop::session()` answer
+  `Arc<_>`; the `Arc::clone` at their callers is gone, and the reason in CODING-GUIDELINES.md
+  ("Runtimes and their entities") says what holds.

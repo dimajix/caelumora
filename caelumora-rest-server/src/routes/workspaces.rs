@@ -302,12 +302,11 @@ pub(super) async fn kill_command(
     Path((id, cid, command_id)): Path<(Uuid, Uuid, String)>,
     user: AuthenticatedUser,
 ) -> Result<Json<CommandResponse>, ApiError> {
-    let (session_loop, channel_loop) =
-        open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let workspace = session_loop.workspace()?;
-    let session = Arc::clone(&session_loop.session());
-    let channel = Arc::clone(&channel_loop.channel());
-    let (_, shell) = workspace.shell_in(&user.security_context(), &session, &channel).await?;
+    let (session, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, shell) = session
+        .workspace()?
+        .shell_in(&user.security_context(), &session.session(), &channel.channel())
+        .await?;
     // Where its storage gives no shell, no command is known there.
     let shell = shell.ok_or_else(|| TerminalError::UnknownCommand(command_id.clone()))?;
     Ok(Json(command_response(shell.kill(&command_id, 0).await?)))

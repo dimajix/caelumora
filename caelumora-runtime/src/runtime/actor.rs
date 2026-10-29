@@ -234,7 +234,7 @@ impl ActorRuntime {
                 channel::AGENT_STATE_CHANGED,
                 &agent,
             ),
-            &**channel.channel(),
+            &*channel.channel(),
         );
     }
 
@@ -349,7 +349,7 @@ impl ActorRuntime {
             .and_then(|channel| channel.session_loop())
             .ok_or(WorkspaceError::NotUsableInChannel)?;
         let workspace = session_loop.workspace()?;
-        Ok((Arc::clone(&session_loop.session()), workspace))
+        Ok((session_loop.session(), workspace))
     }
 
     /// The channel the actor is in, or `None` while the channel is still

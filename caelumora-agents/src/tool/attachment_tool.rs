@@ -416,7 +416,7 @@ mod tests {
     /// message as its history holds it.
     async fn said_with_attachments(world: &World, session: &SessionLoop) -> Message {
         let main = &session.channels()[0];
-        let channel = Arc::clone(&main.channel());
+        let channel = main.channel();
         let hers = World::as_user(world.alice);
         let attachments = world.runtime.attachment_manager();
         let notes = attachments
