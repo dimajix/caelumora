@@ -8,6 +8,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
+| [495](495-a-lock-per-id-leaves-its-table-while-held.md) | open | medium | bug | `SessionManager::delete` takes a session's lock out of its table while it holds it, so that a caller who comes afterwards is given a new lock while another still waits on the old one, and both tables of locks by id keep an entry for every id ever asked. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [494](494-a-session-put-into-a-project-being-deleted.md) | open | low | bug | `SessionLoop::update_project` reads the project it puts the session into and stores the session afterwards, with nothing against the project being deleted in between: the session then lies in a deleted project, not deleted with it and not restored with it. |
 
