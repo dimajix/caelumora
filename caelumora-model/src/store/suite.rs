@@ -41,7 +41,8 @@ use crate::store::{
     EntityKind, EntityStore, EntityStores, Journaled, NoEntity, Presence, StateStore, StoreError,
     Stored,
 };
-use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
+use crate::template::testing::{make_channel_template, make_template};
+use crate::template::{ChannelTemplate, SessionTemplate, SessionTemplateId};
 use crate::tool::{ToolCall, ToolSet, ToolVisibility};
 use crate::transcript::TranscriptEntry;
 use crate::turn::TurnState;
@@ -122,34 +123,11 @@ fn personality() -> Personality {
 
 fn session_template() -> SessionTemplate {
     SessionTemplate {
-        access: Vec::new(),
-        summary: None,
-        briefing: None,
-        language: None,
-        time_zone: None,
-        approval_rules: Vec::new(),
-        workspace: None,
-        security_attributes: Default::default(),
-        commands: Default::default(),
-        privacy: Default::default(),
-        id: SessionTemplateId(Uuid::new_v4()),
-        name: scoped("pairing"),
-        description: None,
-        participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
         channels: vec![ChannelTemplate {
-            access: Vec::new(),
-            summary: None,
-            briefing: None,
-            language: None,
-            approval_rules: Vec::new(),
-            uses_workspace: true,
-            name: Name::new("general").unwrap(),
             components: moderation_components(None, Some("broadcast_policy")),
-            classification: Classification::CHANNEL_DEFAULT,
-            participants: vec!["user".to_string()],
-            internal_actors: Vec::new(),
+            ..make_channel_template("general")
         }],
-        deleted: None,
+        ..make_template("pairing")
     }
 }
 

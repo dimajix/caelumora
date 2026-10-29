@@ -24,6 +24,7 @@ chrono.workspace = true
 percent-encoding.workspace = true
 
 [dev-dependencies]
+caelumora-model = { workspace = true, features = ["test-support"] }
 caelumora-runtime = { workspace = true, features = ["test-support"] }
 tower.workspace = true
 tempfile.workspace = true

@@ -482,8 +482,67 @@ impl ParticipantTemplate {
     }
 }
 
+/// Templates for the tests of this crate and of others, which write beside them only what they
+/// differ in.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use super::*;
+    use crate::channel::uses_workspace_by_default;
+
+    /// A template `name` of the global scope for its "user" alone, without channels: a test names
+    /// those it needs (`make_channel_template`).
+    #[expect(
+        clippy::expect_used,
+        reason = "test code: a name that is none fails the test that gives it"
+    )]
+    pub fn make_template(name: &str) -> SessionTemplate {
+        SessionTemplate {
+            id: SessionTemplateId::new(),
+            name: ScopedName::new(name, Scope::GlobalScope)
+                .expect("a test's name of a template is one"),
+            description: None,
+            summary: None,
+            briefing: None,
+            language: None,
+            time_zone: None,
+            participants: vec![ParticipantTemplate::User { name: OWNER.to_string() }],
+            channels: Vec::new(),
+            approval_rules: Vec::new(),
+            workspace: None,
+            commands: Default::default(),
+            privacy: Default::default(),
+            access: Vec::new(),
+            security_attributes: Default::default(),
+            deleted: None,
+        }
+    }
+
+    /// A channel `name` of a template for its "user", with what a template written by hand leaves
+    /// out: the default components and classification, the session's workspace, no approver.
+    #[expect(
+        clippy::expect_used,
+        reason = "test code: a name that is none fails the test that gives it"
+    )]
+    pub fn make_channel_template(name: &str) -> ChannelTemplate {
+        ChannelTemplate {
+            name: Name::new(name).expect("a test's name of a channel is one"),
+            summary: None,
+            briefing: None,
+            language: None,
+            components: Default::default(),
+            classification: Default::default(),
+            participants: vec![OWNER.to_string()],
+            internal_actors: Vec::new(),
+            approval_rules: Vec::new(),
+            uses_workspace: uses_workspace_by_default(),
+            access: Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::testing::{make_channel_template, make_template};
     use super::*;
     use crate::command::default_commands;
     use crate::confidentiality::Confidentiality;
@@ -491,17 +550,6 @@ mod tests {
 
     fn template() -> SessionTemplate {
         SessionTemplate {
-            access: Vec::new(),
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            security_attributes: Default::default(),
-            id: SessionTemplateId(Uuid::new_v4()),
-            name: ScopedName::new("pairing", Scope::GlobalScope).unwrap(),
-            description: None,
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent {
@@ -512,37 +560,16 @@ mod tests {
             ],
             channels: vec![
                 ChannelTemplate {
-                    access: Vec::new(),
-                    summary: None,
-                    briefing: None,
-                    language: None,
-                    approval_rules: Vec::new(),
-                    uses_workspace: true,
-                    name: Name::new("main").unwrap(),
-                    components: ComponentConfig::default(),
-                    classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string(), "helper".to_string()],
                     internal_actors: vec![InternalActorTemplate::Approver {
                         strategy: ApprovalStrategy::All,
                     }],
+                    ..make_channel_template("main")
                 },
-                ChannelTemplate {
-                    access: Vec::new(),
-                    summary: None,
-                    briefing: None,
-                    language: None,
-                    approval_rules: Vec::new(),
-                    uses_workspace: true,
-                    name: Name::new("side").unwrap(),
-                    components: ComponentConfig::default(),
-                    classification: Classification::CHANNEL_DEFAULT,
-                    participants: vec!["user".to_string()],
-                    internal_actors: Vec::new(),
-                },
+                make_channel_template("side"),
             ],
             commands: default_commands(),
-            privacy: Default::default(),
-            deleted: None,
+            ..make_template("pairing")
         }
     }
 

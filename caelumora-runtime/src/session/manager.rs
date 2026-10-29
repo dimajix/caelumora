@@ -1161,9 +1161,9 @@ mod tests {
     use caelumora_model::store::StoreError;
     use caelumora_model::store::{Deleted, Stored};
     use caelumora_model::store::{Persistence, StateStore};
+    use caelumora_model::template::testing::{make_channel_template, make_template};
     use caelumora_model::template::{
-        ChannelTemplate, InternalActorTemplate, ParticipantTemplate, SessionTemplate,
-        SessionTemplateId,
+        ChannelTemplate, InternalActorTemplate, SessionTemplate, SessionTemplateId,
     };
     use caelumora_model::turn::{GivenUpReason, TurnState};
     use caelumora_model::user::UserProfile;
@@ -1578,36 +1578,14 @@ mod tests {
         };
         runtime.entity_stores().users.create(&system, &alice).await.unwrap();
         let template = SessionTemplate {
-            access: Vec::new(),
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            id: SessionTemplateId::new(),
-            name: ScopedName::new("pairing", Default::default()).unwrap(),
-            description: None,
-            participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
             channels: vec![ChannelTemplate {
-                access: Vec::new(),
-                summary: None,
-                briefing: None,
-                language: None,
-                approval_rules: Vec::new(),
-                uses_workspace: true,
-                name: Name::new("main").unwrap(),
                 components: moderation_components(None, Some("broadcast_policy")),
-                classification: Classification::CHANNEL_DEFAULT,
-                participants: vec!["user".to_string()],
                 internal_actors: vec![InternalActorTemplate::Approver {
                     strategy: ApprovalStrategy::All,
                 }],
+                ..make_channel_template("main")
             }],
-            security_attributes: Default::default(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            deleted: None,
+            ..make_template("pairing")
         };
         runtime.entity_stores().session_templates.create(&system, &template).await.unwrap();
         (owner, template)

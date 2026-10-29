@@ -62,6 +62,7 @@ use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::query::Query;
 use caelumora_model::store::{EntityKind, Persistence, StoreError};
+use caelumora_model::template::testing::{make_channel_template, make_template};
 use caelumora_model::template::{
     ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate,
     SessionTemplateId,
@@ -524,16 +525,6 @@ impl World {
         personality: PersonalityId,
     ) -> SessionTemplateId {
         let template = SessionTemplate {
-            access: Vec::new(),
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            id: SessionTemplateId::new(),
-            name: ScopedName::new(format!("with-{agent}"), Scope::GlobalScope).unwrap(),
-            description: None,
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent {
@@ -543,24 +534,15 @@ impl World {
                 },
             ],
             channels: vec![ChannelTemplate {
-                access: Vec::new(),
-                summary: None,
-                briefing: None,
-                language: None,
-                approval_rules: Vec::new(),
-                uses_workspace: true,
-                name: Name::new("main").unwrap(),
                 components: quiet(),
-                classification: Classification::general(Confidentiality::Internal),
                 participants: vec!["user".to_string(), agent.to_string()],
                 internal_actors: vec![InternalActorTemplate::Approver {
                     strategy: ApprovalStrategy::Any,
                 }],
+                ..make_channel_template("main")
             }],
             security_attributes: attributes(owner, contributors),
-            commands: Default::default(),
-            privacy: Default::default(),
-            deleted: None,
+            ..make_template(&format!("with-{agent}"))
         };
         self.runtime
             .entity_stores()
