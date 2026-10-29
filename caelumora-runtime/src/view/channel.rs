@@ -808,14 +808,7 @@ impl ParticipantView {
     pub async fn may_approve(&self) -> bool {
         match self.state.attributes() {
             Some(attributes) if !self.former => {
-                self.views()
-                    .access_policy()
-                    .may_approve(
-                        self.views().context(),
-                        attributes,
-                        &self.channel.channel.security_attributes,
-                    )
-                    .await
+                self.views().access_policy().may_approve(self.views().context(), attributes).await
             }
             _ => false,
         }

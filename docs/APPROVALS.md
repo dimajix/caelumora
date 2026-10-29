@@ -175,9 +175,11 @@ words with quoting and escapes removed. A word that expands - a glob, a `~` - eq
 
 Who may approve a call is the `AccessPolicy`'s to decide, and the channel enforces it as it
 admits an answer (issue 312): `ApproveToolCall` carries the attributes of the agent the answer
-names, loaded, never taken from the answer or the request, and of the channel. The ownership policy
-grants it the agent's owner and whom the agent's access list lets read it, who are responsible for
-it also in someone else's channel; for an agent of the system, the channel's owner.
+names, loaded, never taken from the answer or the request. The ownership policy grants it the
+agent's owner and whom the agent's access list lets read it, who are responsible for it also in
+someone else's channel; for an agent of nobody, which everybody may read, nobody (issue
+[491](../issues/491-every-entity-has-an-owner.md)). No agent is the system's (issue
+[477](../issues/477-only-the-system-acts-as-the-system.md)).
 
 *   An answer enters the channel only if its sender may approve, asked in the context the answer
     came with; any other is refused and its sender told (`MessageRejected`), as everything the

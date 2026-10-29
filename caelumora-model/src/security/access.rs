@@ -143,14 +143,8 @@ pub trait AccessQuestions {
     ) -> bool;
 
     /// Whether `context` may approve the tool calls of the agent with
-    /// `agent` attributes in the channel with `channel` attributes
-    /// (`ApproveToolCall`, issue 14).
-    async fn may_approve(
-        &self,
-        context: &SecurityContext,
-        agent: &SecurityAttributes,
-        channel: &SecurityAttributes,
-    ) -> bool;
+    /// `agent` attributes (`ApproveToolCall`, issue 14).
+    async fn may_approve(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
 
     /// Whether `context` may rename the agent with `agent` attributes
     /// (`UpdateAgent`, issue 227).
@@ -296,13 +290,8 @@ impl<T: AccessPolicy + ?Sized> AccessQuestions for T {
         self.check(context, ActionType::ReadAgentComponents(agent)).await
     }
 
-    async fn may_approve(
-        &self,
-        context: &SecurityContext,
-        agent: &SecurityAttributes,
-        channel: &SecurityAttributes,
-    ) -> bool {
-        self.check(context, ActionType::ApproveToolCall { agent, channel }).await
+    async fn may_approve(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::ApproveToolCall(agent)).await
     }
 
     async fn may_change_agent(

@@ -90,8 +90,7 @@ An agent may write down what it has learnt to do:
 
 *   **`create_skill(name, description, body, scope)`** - `scope` is `session`, the turn's session,
     or `user`, the owner's; never the global one. The skill is its owner's - `CreateSkill` asked
-    for the owner -, classified as the turn's label. An agent of the system writes none: a skill
-    belongs to a user.
+    for the owner -, classified as the turn's label.
 *   **`update_skill(name, description?, body?)`** - one the agent may load here and its owner owns:
     a skill shared with the owner is loaded, not changed. The skill is first raised to what the
     changing turn has seen, then its text changes - otherwise a turn that saw something

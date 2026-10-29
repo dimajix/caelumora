@@ -123,12 +123,16 @@ impl Stored for Agent {
     }
 
     /// An agent acts in its owner's name (issue 341): whoever may change it
-    /// cannot lend it another's rights by naming them as its principal. It
-    /// lies in no project's scope, which nothing is used from yet
-    /// (`Scope::admits`, issue 467): it would take part nowhere.
+    /// cannot lend it another's rights by naming them as its principal. Nor
+    /// is the system its owner: only the system itself acts in the system's
+    /// name (issue 477). It lies in no project's scope, which nothing is used
+    /// from yet (`Scope::admits`, issue 467): it would take part nowhere.
     fn validate(&self) -> Result<(), String> {
         if self.principal_id != self.security_attributes.owner_id {
             return Err("an agent acts in its owner's name".to_string());
+        }
+        if self.security_attributes.owner_id == ActorId::System {
+            return Err("the system owns no agent".to_string());
         }
         if matches!(self.name.scope, Scope::ProjectScope { .. }) {
             return Err("an agent lies in no project's scope yet".to_string());
@@ -208,6 +212,14 @@ mod tests {
         assert!(agent.validate().is_ok());
         agent.principal_id = ActorId::User(UserId::new());
         assert!(agent.validate().is_err(), "not lent another's rights");
+    }
+
+    /// Issue 477: no agent acts with the system's rights.
+    #[test]
+    fn an_agent_is_not_the_systems() {
+        let name = ScopedName::new("helper", Default::default()).unwrap();
+        let systems = Agent::new(name, PersonalityId::new(), ActorId::System);
+        assert!(systems.validate().is_err(), "made in the system's name, owned by it");
     }
 
     /// Issue 467: what lies in a project's scope is used nowhere yet, so an

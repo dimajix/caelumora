@@ -619,8 +619,8 @@ pub trait ConfidentialityQuestions {
     /// owner, who answers for the caller - and, for a caller limited to
     /// roles, by those as well (issues 179, 341): what decides which
     /// channels, and what else classified, a viewer is shown.
-    /// The system is cleared for everything, as it may do everything
-    /// (issue 312).
+    /// The system itself (`SecurityContext::is_system`) is cleared for
+    /// everything, as it may do everything (issues 312, 477).
     fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool;
 
     /// Nothing if what is classified `classification` may be put into a
@@ -710,10 +710,10 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
     }
 
     fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool {
-        let participant = context.owner_id;
-        if participant == ActorId::System {
+        if context.is_system() {
             return true;
         }
+        let participant = context.owner_id;
         self.cleared(context, participant, &context.roles, classification)
             && context
                 .limiting_roles
@@ -1403,7 +1403,8 @@ mod tests {
     }
 
     /// Issue 341: a caller is cleared by its owner, who answers for it -
-    /// whoever it acts for lends no clearance, not even the system.
+    /// whoever it acts for lends no clearance, not even the system. Only the
+    /// system itself is cleared for everything (issue 477).
     #[test]
     fn a_caller_is_cleared_as_its_owner_whoever_it_acts_for() {
         let hr = RoleId::new();
@@ -1424,9 +1425,10 @@ mod tests {
         );
         let owned_by_the_system = SecurityContext::system().next(agent, ActorId::System, owner);
         assert!(
-            rules.cleared_for(&owned_by_the_system, &secret),
-            "the system's agent is cleared as the system"
+            !rules.cleared_for(&owned_by_the_system, &secret),
+            "an agent the system answers for is not the system"
         );
+        assert!(rules.cleared_for(&SecurityContext::system(), &secret), "the system itself is");
     }
 
     /// A channel of the session `session_id`, a private one of nobody.

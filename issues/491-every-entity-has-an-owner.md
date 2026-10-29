@@ -59,3 +59,5 @@ Recommendation: A.
 
 - **2026-10-29** — Opened at the maintainer's request while planning issue 477: things are always
   to have an owner, and `None` as an owner breaks that.
+- **2026-10-29** — Issue 477 took the channel owner's approval for an agent of nobody away: nobody
+  answers for it now, the one special case left in `answers_for` for this issue to remove.

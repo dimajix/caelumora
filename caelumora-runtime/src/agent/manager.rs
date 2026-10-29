@@ -91,7 +91,8 @@ impl AgentManager {
     /// it or not read the personality, `NotFound` if there is no such
     /// session, channel or personality they may read, `NameTaken` if an
     /// agent of `name` lies in its scope already (issue 250), `Validation`
-    /// for a scope no agent lies in - a project's.
+    /// for a scope no agent lies in - a project's -, or for the system as
+    /// its owner (issue 477).
     pub async fn create(
         &self,
         context: &SecurityContext,

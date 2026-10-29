@@ -224,7 +224,7 @@ pub fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttribut
         | ReadAgentContext(a)
         | ReadAgentTools { agent: a, .. }
         | ReadAgentComponents(a)
-        | ApproveToolCall { agent: a, .. }
+        | ApproveToolCall(a)
         | ShowAgentCommand { agent: a, .. }
         | ExecuteAgentCommand { agent: a, .. }
         | StopSession(a)

@@ -127,11 +127,7 @@ impl ApproverActor {
         for participant in &channel.participants {
             let Participant::User(user) = participant else { continue };
             let Some(actor) = running.user_actor(*user) else { continue };
-            if self
-                .access_policy
-                .may_approve(&actor.security_context(), &attributes, &channel.security_attributes)
-                .await
-            {
+            if self.access_policy.may_approve(&actor.security_context(), &attributes).await {
                 approvers.push(ActorId::User(*user));
             }
         }
@@ -818,22 +814,6 @@ mod tests {
         );
         assert!(decided_by(&decided).is_empty(), "by nobody's answer");
         assert!(approving.approver.pending.lock().await.is_empty(), "nothing pending");
-    }
-
-    #[tokio::test]
-    async fn the_calls_of_an_agent_of_the_system_are_approved_by_whose_channel_it_is() {
-        let mut approving =
-            approving(ApprovalStrategy::Any, 2, |_| SecurityAttributes::owned_by(ActorId::System))
-                .await;
-        let request = approving.request();
-        approving.ask(&request).await;
-        approving.answer(1, &request, true).await;
-        approving.nothing().await;
-        approving.answer(0, &request, true).await;
-        assert!(
-            matches!(approving.next().await.event, ActorEvent::ApprovalGranted(_)),
-            "the channel's owner approved"
-        );
     }
 
     #[tokio::test]

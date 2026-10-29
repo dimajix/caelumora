@@ -42,7 +42,6 @@
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
-use crate::actor::ActorId;
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
 use crate::removal::Removal;
 use crate::security::{AccessPolicy, ActionType, Admission, Enforcement, Refused, SecurityContext};
@@ -198,10 +197,11 @@ impl<'a> Access<'a> {
         Ok(true)
     }
 
-    /// Refuses `removal` if it names another than the caller, unless the caller is the system: it
-    /// deletes what goes with something deleted, by whoever deleted that (issue 469).
+    /// Refuses `removal` if it names another than the caller, unless the caller is the system
+    /// itself: it deletes what goes with something deleted, by whoever deleted that (issues 469,
+    /// 477).
     fn by_caller<T: Stored>(&self, removal: &Removal) -> StoreResult<()> {
-        if removal.by == self.ctx.caller_id || self.ctx.caller_id == ActorId::System {
+        if removal.by == self.ctx.caller_id || self.ctx.is_system() {
             return Ok(());
         }
         Err(StoreError::Validation(format!("a {} is marked deleted by its caller", T::KIND)))

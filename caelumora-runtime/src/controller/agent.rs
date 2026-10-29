@@ -15,7 +15,7 @@ use std::sync::Arc;
 pub struct AgentController {
     agent: LiveDocument<Agent>,
     /// The live user who owns the agent, whose roles it acts with (issue
-    /// 304); none for an agent of the system, or of an owner who is gone.
+    /// 304); none for an owner that is no user, or is gone.
     owner: Option<Arc<UserController>>,
 }
 

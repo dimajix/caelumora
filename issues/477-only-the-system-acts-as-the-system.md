@@ -1,6 +1,6 @@
 # 477 — Whoever acts in the system's name has the system's rights, though only the system itself should
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Identity and access management
@@ -52,14 +52,31 @@ with every right, unchecked by any policy.
 Recommendation: A - the rule stated by the maintainer, named once, and the one way of breaking it
 closed where agents are made.
 
+## Decision
+
+A, with three changes:
+
+1.  **`is_system()` is caller, owner and principal the system**, not caller and principal alone:
+    the clearance (`ConfidentialityRules::cleared_for`) asks the owner, a third place comparing by
+    hand, and one predicate serves all three. The system acting on someone's behalf - caller and
+    owner the system, principal a person - is allowed, with that person's rights.
+2.  **Only the system is refused as an agent's owner**, not every owner that is no user: an agent
+    that starts a subagent is to own it. `Agent::validate` refuses it; `AgentManager::create` asks
+    nothing of its own, since only the system itself has the system as its principal now, and a
+    typed error would repeat the store's check for what only the program's own code can attempt.
+3.  **An agent of the system goes as a concept**: its calls were approved by whose channel it is
+    (issue [14](14-approval-privilege.md)). Nobody answers for an agent of nobody, which everybody
+    may read, until issue [491](491-every-entity-has-an-owner.md) gives every entity an owner; the
+    channel `ApproveToolCall` carried for that case goes.
+
 ## Done when
 
-- `SecurityContext::is_system()` exists, and `OwnershipPolicy` and the store's check of a mark ask
-  it; no code compares a context's ids with `ActorId::System` by hand to mean "the system itself".
-- `AgentManager::create` refuses a principal that is no user; `Agent::validate` refuses an agent
-  owned by, or acting for, the system.
-- The security suite shows that a context with the system as principal and an agent as caller has
-  no special rights, and that an agent cannot be made in the system's name.
+- `SecurityContext::is_system()` exists, and `OwnershipPolicy`, the store's check of a mark and
+  the clearance ask it; no code compares a context's ids with `ActorId::System` by hand to mean
+  "the system itself".
+- `Agent::validate` refuses an agent owned by, or acting for, the system.
+- Tests show that a context with the system as principal and an agent as caller has no special
+  rights, and the security suite that an agent cannot be made in the system's name.
 - SECURITY.md states the rule.
 
 ## History
@@ -67,3 +84,12 @@ closed where agents are made.
 - **2026-10-28** — Opened at the maintainer's request during issue 469, where the store's check of
   a deletion's mark asked whether the caller is the system while the policy asks the principal; the
   maintainer: only the system itself may act in the system's name.
+- **2026-10-29** — Decided: A, with `is_system()` asking the owner as well, the system refused as an
+  agent's owner rather than every owner that is no user, and an agent of the system gone as a
+  concept; issue 491 opened for entities without an owner.
+- **2026-10-29** — Done on branch `issue-477-only-the-system`: `SecurityContext::is_system()`, asked
+  by `OwnershipPolicy`, `Access::by_caller` and `cleared_for`; `Agent::validate` refuses an agent of
+  the system; `answers_for` lets nobody approve for an agent of nobody, and `ApproveToolCall` and
+  `AccessQuestions::may_approve` no longer carry the channel. SECURITY.md states the rule; the
+  agent of the system is gone from APPROVALS.md, PERMISSION-CHECKS.md and SKILLS.md, and
+  CONFIDENTIALITY.md and STORAGE.md speak of the system itself.

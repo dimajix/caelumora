@@ -1429,6 +1429,18 @@ async fn making_an_agent_needs_creating_it_then_its_personality() {
     );
 }
 
+/// No agent is made in the system's name (issue 477): it would act with all
+/// the system's rights. The system itself may make anything, so the store
+/// refuses it.
+#[tokio::test]
+async fn no_agent_is_made_in_the_systems_name() {
+    let world = World::new().await;
+    let plain = world.personality("plain", None, &[]).await;
+    let agents = world.runtime.agent_manager();
+    let made = agents.create(&World::system(), "helper", Scope::GlobalScope, plain.id).await;
+    assert!(matches!(made, Err(AgentError::Store(StoreError::Validation(_)))), "{made:?}");
+}
+
 /// Making an agent in a session's or a channel's scope (issue 227): who may
 /// not read the session puts none there - it would keep the session from
 /// being deleted -, asked after making it and before the personality; who
