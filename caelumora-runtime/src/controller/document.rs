@@ -100,15 +100,26 @@ where
     }
 
     /// Takes the document over as it is stored now, read in the runtime's
-    /// name: for a change made elsewhere whose announcement does not carry
-    /// all of it.
+    /// name, while its caller holds the lock - `take_stored`, or a
+    /// `Writing` whose change was outdated.
     ///
     /// # Errors
     /// Whatever the store reports; the live copy is then unchanged.
-    pub(super) async fn reload(&self) -> StoreResult<()> {
+    async fn reload(&self) -> StoreResult<()> {
         let document = self.reached(&SecurityContext::system()).await?;
         self.current.store(Arc::new(document));
         Ok(())
+    }
+
+    /// Takes the document over as it is stored now, as `reload` does, under
+    /// the lock: for a change made elsewhere, announced or lost (issue 502),
+    /// which a change of this instance under way must not be set back by.
+    ///
+    /// # Errors
+    /// Whatever the store reports; the live copy is then unchanged.
+    pub(super) async fn take_stored(&self) -> StoreResult<()> {
+        let _lock = self.write_lock.lock().await;
+        self.reload().await
     }
 
     /// Begins a change, under the lock until the `Writing` is dropped.
@@ -292,5 +303,42 @@ where
             (Some(had), Some(now)) if had != now => vec![had.clone(), now.clone()],
             (_, now) => now.cloned().into_iter().collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::agent::{Agent, PersonalityId};
+    use caelumora_model::scope::Scope;
+    use caelumora_model::store::Persistence;
+    use caelumora_model::user::UserId;
+    use caelumora_model::value::name::ScopedName;
+    use std::time::Duration;
+    use tokio::time;
+
+    /// Issue 502: taking a document over as stored waits for a change under
+    /// way, so that what it read before the change cannot set it back.
+    #[tokio::test]
+    async fn taking_over_what_is_stored_waits_for_a_change_under_way() {
+        let agent = Agent::new(
+            ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
+            PersonalityId::new(),
+            ActorId::User(UserId::new()),
+        );
+        let agents = Persistence::in_memory().entity_stores().unwrap().agents;
+        agents.create(&SecurityContext::system(), &agent).await.unwrap();
+        let document = LiveDocument::new(agent.id, agent, agents, Arc::new(()));
+
+        let writing = document.write().await;
+        let taking = document.take_stored();
+        tokio::pin!(taking);
+        assert!(
+            time::timeout(Duration::from_millis(50), &mut taking).await.is_err(),
+            "waits while the change holds the lock"
+        );
+        drop(writing);
+        taking.await.expect("taken over once it is done");
     }
 }

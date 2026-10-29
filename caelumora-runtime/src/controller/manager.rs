@@ -14,7 +14,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
-use caelumora_model::event::EntityChange;
+use caelumora_model::event::{EntityChange, GlobalEvent};
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::security::{AccessPolicy, Secured, SecurityAttributes, SecurityContext};
 use caelumora_model::session::{Session, SessionId};
@@ -25,6 +25,7 @@ use caelumora_model::workspace::{Workspace, WorkspaceId};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, OnceLock, Weak};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex;
 use tracing::warn;
 
@@ -186,9 +187,12 @@ impl ControllerManager {
         if let Some(controller) = users.get(&id).and_then(Weak::upgrade) {
             return Ok(controller);
         }
-        let user = self.stores.users.get(&SecurityContext::system(), id).await?;
-        let profile =
-            self.stores.user_profiles.get(&SecurityContext::system(), id).await.optional()?;
+        let (user, profile) = UserController::load_stored(
+            self.stores.users.as_ref(),
+            self.stores.user_profiles.as_ref(),
+            id,
+        )
+        .await?;
         let controller = Arc::new(UserController::new(
             user,
             profile,
@@ -312,45 +316,109 @@ impl ControllerManager {
     /// other instances will arrive. Started before the first controller is
     /// loaded, so that nothing announced after loading is missed; an event
     /// that arrives while a controller is being loaded waits for it, since
-    /// the registry is locked meanwhile.
+    /// the registry is locked meanwhile. Events it fell behind on are made up
+    /// for by reading every live controller anew (issue 502).
     fn start_follower(&self) {
         self.follower.get_or_init(|| {
-            let mut events = self.event_bus.subscribe_all();
-            let agents = Arc::clone(&self.agents);
-            let users = Arc::clone(&self.users);
-            let workspaces = Arc::clone(&self.workspaces);
-            let projects = Arc::clone(&self.projects);
+            let mut events = self.event_bus.subscribe_all().into_receiver();
+            let follower = Follower {
+                agents: Arc::clone(&self.agents),
+                users: Arc::clone(&self.users),
+                workspaces: Arc::clone(&self.workspaces),
+                projects: Arc::clone(&self.projects),
+            };
             tokio::spawn(async move {
-                while let Some(event) = events.recv().await {
-                    if let Some((id, EntityChange::Updated(_))) = event.about::<Agent>() {
-                        if let Some(controller) = agents.lock().await.get(&id).and_then(Weak::upgrade) {
-                            controller.process_global_event(&event);
+                loop {
+                    match events.recv().await {
+                        Ok(event) => follower.take(&event).await,
+                        Err(RecvError::Lagged(lost)) => {
+                            warn!("The controllers lost {lost} events and are read again");
+                            follower.catch_up().await;
                         }
-                    } else if let Some((id, EntityChange::Updated(_))) = event.about::<User>().or_else(|| event.about::<UserProfile>()) {
-                        if let Some(controller) = users.lock().await.get(&id).and_then(Weak::upgrade) {
-                            controller.process_global_event(&event);
-                        }
-                    } else if let Some((id, EntityChange::Updated(_))) = event.about::<Workspace>() {
-                        // Read again as stored, without holding the registry.
-                        let controller = workspaces.lock().await.get(&id).and_then(Weak::upgrade);
-                        if let Some(controller) = controller {
-                            if let Err(e) = controller.process_global_event(&event).await {
-                                warn!(workspace = %id, "A change of the workspace made elsewhere could not be taken over: {e}");
-                            }
-                        }
-                    } else if let Some((id, EntityChange::Updated(_))) = event.about::<Project>() {
-                        // Read again as stored, as a workspace is.
-                        let controller = projects.lock().await.get(&id).and_then(Weak::upgrade);
-                        if let Some(controller) = controller {
-                            if let Err(e) = controller.process_global_event(&event).await {
-                                warn!(project = %id, "A change of the project made elsewhere could not be taken over: {e}");
-                            }
-                        }
+                        Err(RecvError::Closed) => return,
                     }
                 }
             });
         });
     }
+}
+
+/// What follows the event bus for the live controllers this instance
+/// shares: the registries of the kinds whose changes are announced.
+struct Follower {
+    agents: Registry<AgentId, AgentController>,
+    users: Registry<UserId, UserController>,
+    workspaces: Registry<WorkspaceId, WorkspaceController>,
+    projects: Registry<ProjectId, ProjectController>,
+}
+
+impl Follower {
+    /// Takes `event` into the live controller it is about, if one lives.
+    async fn take(&self, event: &GlobalEvent) {
+        if let Some((id, EntityChange::Updated(_))) = event.about::<Agent>() {
+            if let Some(controller) = live(&self.agents, &id).await {
+                controller.process_global_event(event);
+            }
+        } else if let Some((id, EntityChange::Updated(_))) =
+            event.about::<User>().or_else(|| event.about::<UserProfile>())
+        {
+            if let Some(controller) = live(&self.users, &id).await {
+                controller.process_global_event(event);
+            }
+        } else if let Some((id, EntityChange::Updated(_))) = event.about::<Workspace>() {
+            // Read again as stored, without holding the registry.
+            if let Some(controller) = live(&self.workspaces, &id).await {
+                if let Err(e) = controller.process_global_event(event).await {
+                    warn!(workspace = %id, "A change of the workspace made elsewhere could not be taken over: {e}");
+                }
+            }
+        } else if let Some((id, EntityChange::Updated(_))) = event.about::<Project>() {
+            // Read again as stored, as a workspace is.
+            if let Some(controller) = live(&self.projects, &id).await {
+                if let Err(e) = controller.process_global_event(event).await {
+                    warn!(project = %id, "A change of the project made elsewhere could not be taken over: {e}");
+                }
+            }
+        }
+    }
+
+    /// Reads every live controller anew as stored, for the changes whose
+    /// announcements were lost. One that cannot be read is logged and stays
+    /// as it was.
+    async fn catch_up(&self) {
+        for controller in all_live(&self.agents).await {
+            if let Err(e) = controller.reload().await {
+                warn!(agent = %controller.id(), "The agent could not be read again: {e}");
+            }
+        }
+        for controller in all_live(&self.users).await {
+            if let Err(e) = controller.reload().await {
+                warn!(user = %controller.id(), "The user could not be read again: {e}");
+            }
+        }
+        for controller in all_live(&self.workspaces).await {
+            if let Err(e) = controller.reload().await {
+                warn!(workspace = %controller.id(), "The workspace could not be read again: {e}");
+            }
+        }
+        for controller in all_live(&self.projects).await {
+            if let Err(e) = controller.reload().await {
+                warn!(project = %controller.id(), "The project could not be read again: {e}");
+            }
+        }
+    }
+}
+
+/// The controller under `id` in `registry`, if it lives; the registry is not
+/// held once it is found.
+async fn live<K: Eq + Hash, C>(registry: &Registry<K, C>, id: &K) -> Option<Arc<C>> {
+    registry.lock().await.get(id).and_then(Weak::upgrade)
+}
+
+/// Every controller in `registry` that lives; the registry is not held
+/// while they are used.
+async fn all_live<K, C>(registry: &Registry<K, C>) -> Vec<Arc<C>> {
+    registry.lock().await.values().filter_map(Weak::upgrade).collect()
 }
 
 /// Registers `controller` under `id`, dropping the entries of controllers
@@ -379,6 +447,7 @@ mod tests {
     use caelumora_model::store::Persistence;
     use caelumora_model::store::StoreError;
     use caelumora_model::user::{User, UserUpdateEvent};
+    use caelumora_model::value::language::Language;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::workspace::WorkspaceUpdateEvent;
     use std::time::Duration;
@@ -445,6 +514,42 @@ mod tests {
         user
     }
 
+    /// A workspace of a user of its own, in the storage named `storage`.
+    async fn workspace_in(store: &Persistence, storage: &str) -> Workspace {
+        let owner = UserId::new();
+        let workspace = Workspace::new(
+            ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
+            storage,
+            Default::default(),
+            owner,
+        );
+        store
+            .entity_stores()
+            .unwrap()
+            .workspaces
+            .create(&SecurityContext::system(), &workspace)
+            .await
+            .unwrap();
+        workspace
+    }
+
+    /// A project of a user of its own.
+    async fn project_in(store: &Persistence) -> Project {
+        let owner = UserId::new();
+        let project = Project::new(
+            ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(),
+            owner,
+        );
+        store
+            .entity_stores()
+            .unwrap()
+            .projects
+            .create(&SecurityContext::system(), &project)
+            .await
+            .unwrap();
+        project
+    }
+
     #[tokio::test]
     async fn an_actor_is_named_by_its_entity_or_by_what_it_is() {
         let (store, _, manager) = manager();
@@ -475,6 +580,51 @@ mod tests {
         })
         .await
         .expect("in time");
+    }
+
+    /// Issue 502: changes whose announcements the follower lost are read
+    /// again as stored, into every live controller.
+    #[tokio::test]
+    async fn changes_whose_announcements_were_lost_are_read_again() {
+        let (store, bus, manager) = manager();
+        let agent = agent_in(&store).await;
+        let user = user_in(&store).await;
+        let workspace = workspace_in(&store, "main").await;
+        let project = project_in(&store).await;
+        let agents = manager.agent_controller(agent.id).await.unwrap();
+        let users = manager.user_controller(user.id).await.unwrap();
+        let workspaces = manager.workspace_controller(workspace.id).await.unwrap();
+        let projects = manager.project_controller(project.id).await.unwrap();
+        let stores = store.entity_stores().unwrap();
+        let system = SecurityContext::system();
+
+        // Changed in the store, as elsewhere, and not announced here.
+        let mut renamed = agent.clone();
+        renamed.name.name = Name::new("renamed").unwrap();
+        stores.agents.update(&system, &mut renamed).await.unwrap();
+        let mut promoted = user.clone();
+        promoted.roles = vec![RoleId::new()];
+        stores.users.update(&system, &mut promoted).await.unwrap();
+        let mut profile = UserProfile::new(user.id, None);
+        profile.preferred_language = Language::optional(Some("de")).unwrap();
+        stores.user_profiles.create(&system, &profile).await.unwrap();
+        let mut notes = workspace.clone();
+        notes.name.name = Name::new("notes").unwrap();
+        stores.workspaces.update(&system, &mut notes).await.unwrap();
+        let mut annual = project.clone();
+        annual.name.name = Name::new("annual").unwrap();
+        stores.projects.update(&system, &mut annual).await.unwrap();
+        // Published before the follower runs again: it falls behind.
+        bus.publish_past_capacity(&GlobalEvent::created::<Session>(&SessionId::new()));
+
+        eventually(|| {
+            agents.name() == "renamed"
+                && users.load().roles == promoted.roles
+                && users.profile().preferred_language == profile.preferred_language
+                && workspaces.load().name.name.as_str() == "notes"
+                && projects.load().name.name.as_str() == "annual"
+        })
+        .await;
     }
 
     #[tokio::test]
@@ -615,20 +765,7 @@ mod tests {
     #[tokio::test]
     async fn a_workspace_has_one_controller_which_takes_over_what_was_changed_elsewhere() {
         let (store, bus, manager) = manager();
-        let owner = UserId::new();
-        let workspace = Workspace::new(
-            ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
-            "main",
-            Default::default(),
-            owner,
-        );
-        store
-            .entity_stores()
-            .unwrap()
-            .workspaces
-            .create(&SecurityContext::system(), &workspace)
-            .await
-            .unwrap();
+        let workspace = workspace_in(&store, "main").await;
         let controller = manager.workspace_controller(workspace.id).await.unwrap();
         assert!(
             Arc::ptr_eq(&controller, &manager.workspace_controller(workspace.id).await.unwrap()),
@@ -671,18 +808,7 @@ mod tests {
     #[tokio::test]
     async fn a_project_has_one_controller_which_takes_over_what_was_changed_elsewhere() {
         let (store, bus, manager) = manager();
-        let owner = UserId::new();
-        let project = Project::new(
-            ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(),
-            owner,
-        );
-        store
-            .entity_stores()
-            .unwrap()
-            .projects
-            .create(&SecurityContext::system(), &project)
-            .await
-            .unwrap();
+        let project = project_in(&store).await;
         let controller = manager.project_controller(project.id).await.unwrap();
         assert!(
             Arc::ptr_eq(&controller, &manager.project_controller(project.id).await.unwrap()),
@@ -725,20 +851,7 @@ mod tests {
     #[tokio::test]
     async fn a_workspace_whose_storage_is_gone_has_no_terminal() {
         let (store, _, manager) = manager();
-        let owner = UserId::new();
-        let workspace = Workspace::new(
-            ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
-            "removed",
-            Default::default(),
-            owner,
-        );
-        store
-            .entity_stores()
-            .unwrap()
-            .workspaces
-            .create(&SecurityContext::system(), &workspace)
-            .await
-            .unwrap();
+        let workspace = workspace_in(&store, "removed").await;
         let controller = manager.workspace_controller(workspace.id).await.unwrap();
 
         let terminal = controller.terminal(&SecurityContext::system(), Grant::Read).await;

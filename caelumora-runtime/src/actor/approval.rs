@@ -1,3 +1,6 @@
+//! `ApproverActor`: the actor that decides an agent's requests for approval in its channel, by
+//! the answers of those taking part who may approve (issues 14, 81).
+
 use crate::actor::{Actor, Answering};
 use crate::controller::ChannelController;
 use crate::runtime::ActorRuntime;
@@ -16,9 +19,10 @@ use caelumora_model::security::{
 };
 use caelumora_model::value::name::Name;
 use chrono::{DateTime, Duration, Utc};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future;
 use std::sync::Arc;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
@@ -156,6 +160,33 @@ impl ApproverActor {
                 warn!("ApproverActor error rechecking approvals: {:?}", e);
             }
         }
+    }
+
+    /// Makes up for the events of the channel it lost (issue 502), as
+    /// `handle_global_event` would have taken them: the pending approvals
+    /// of every agent that no longer takes part - no longer a participant,
+    /// which its `ChannelController` changed before announcing the leave, or
+    /// resting in the channel without an actor - are answered as denied, and
+    /// every other is decided again by who may approve now. Nothing is
+    /// denied while the channel does not run.
+    async fn catch_up(&self, output: &dyn EventSender) -> Result<()> {
+        if let Some(running) = self.actor_runtime.channel_loop() {
+            let asking: HashSet<AgentId> =
+                self.pending.lock().await.values().map(|p| p.agent_id).collect();
+            let channel = self.channel.load();
+            let gone: Vec<AgentId> = asking
+                .into_iter()
+                .filter(|agent| {
+                    let actor = ActorId::Agent(*agent);
+                    !channel.lists(actor) || running.actor(actor).is_none()
+                })
+                .collect();
+            drop(channel);
+            for agent in gone {
+                self.discard_pending_of(agent, output).await?;
+            }
+        }
+        self.recheck_all_pending(output).await
     }
 
     /// Answers the pending approvals of `agent` as denied and forgets them.
@@ -375,6 +406,7 @@ impl Actor for ApproverActor {
     async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
         info!("ApproverActor {:?} started", self.id);
         let mut global_rx = self.actor_runtime.subscribe_channel();
+        let mut following = true;
 
         loop {
             let next_timeout = {
@@ -410,9 +442,20 @@ impl Actor for ApproverActor {
                         None => break,
                     }
                 }
-                maybe_global = global_rx.recv() => {
-                    if let Some(event) = maybe_global {
-                        self.handle_global_event(&event, &*tx).await;
+                received = global_rx.receiver().recv(), if following => {
+                    match received {
+                        Ok(event) => self.handle_global_event(&event, &*tx).await,
+                        Err(RecvError::Lagged(lost)) => {
+                            warn!(
+                                "ApproverActor {:?} lost {} events and checks its approvals again",
+                                self.id, lost
+                            );
+                            if let Err(e) = self.catch_up(&*tx).await {
+                                warn!("ApproverActor error catching up: {:?}", e);
+                            }
+                        }
+                        // Not while the runtime holds the bus.
+                        Err(RecvError::Closed) => following = false,
                     }
                 }
                 _ = timeout_fut => {
@@ -852,6 +895,39 @@ mod tests {
         );
 
         // Nobody keeps waiting: the request is answered as denied.
+        let decided = approving.next().await;
+        assert!(
+            matches!(decided.event, ActorEvent::ApprovalDenied(ref r) if r.id == request.id),
+            "denied: {:?}",
+            decided.event
+        );
+        assert!(approving.approver.pending.lock().await.is_empty(), "nothing pending any more");
+    }
+
+    /// Issue 502: a leave the approver lost among more events than it holds
+    /// is made up for - the agent no longer runs in the channel, so its
+    /// pending approvals are denied all the same.
+    #[tokio::test]
+    async fn an_agent_whose_leave_was_lost_takes_its_pending_approvals_with_it() {
+        let mut approving = approving(ApprovalStrategy::All, 1, shared).await;
+        let request = approving.request();
+        approving.ask(&request).await;
+
+        // The leave, and more than a subscription holds after it, published
+        // before the approver runs again: the leave is lost.
+        let address = (approving.channel.session_id(), approving.channel.id());
+        let bus = approving.runtime.event_bus();
+        let agent = approving.agent;
+        bus.publish(
+            GlobalEvent::custom::<Channel>(&address, channel::LEFT, &ActorId::Agent(agent)),
+            SecurityAttributes::systems(),
+        );
+        bus.publish_past_capacity(&GlobalEvent::custom::<Channel>(
+            &address,
+            channel::AGENT_STATE_CHANGED,
+            &agent,
+        ));
+
         let decided = approving.next().await;
         assert!(
             matches!(decided.event, ActorEvent::ApprovalDenied(ref r) if r.id == request.id),

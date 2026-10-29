@@ -1,6 +1,6 @@
 # 502 — Two subscribers of the event bus lose events without catching up
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -61,3 +61,37 @@ the server-sent event streams send a fresh snapshot (issue
 
 - **2026-10-29** — Opened from a review of the event bus with the maintainer: of the subscribers
   inside the runtime, the follower and the approver are the two that skip lost events.
+- **2026-10-29** — Done, branch `issue-502-bus-subscribers-catch-up`, as decided with the
+  maintainer:
+  - **The follower** is a type of its own, `Follower` in `controller/manager.rs`, which takes an
+    event into the live controller it is about (`take`) and, after a loss, reads every live agent,
+    user, workspace and project controller again (`catch_up`), through a `reload` of each. A
+    user's controller now holds the store of users for it.
+  - **Reading again under the lock**, decided: `LiveDocument::take_stored` reads the document
+    again while holding the lock of a change, so that a change of this instance under way is not
+    set back by what was read before it. The workspace's and the project's `process_global_event`
+    read again through it too, which had the same gap; `Writing::change` keeps `reload`, holding
+    the lock already.
+  - **The approver** takes the receiver itself and makes up for a loss (`catch_up`): the pending
+    requests of every agent that has no actor in the running channel are denied, the others decided
+    again.
+  - **The session**, decided to be done here: after a loss it followed its agents again
+    (`follow_agents`), but not the topic of an agent taken in whose announcement was lost, so that
+    agent's deletion or restoring would not reach it. It now follows every agent taking part after
+    a loss (`agent_topics`). Its own document it does not read again, as "Done when" asks to
+    say why: a session runs in exactly one instance, and its controller there is the one writer of
+    it, which holds every change live as it stores it; the events about it that a loss drops are
+    its own.
+  - **`EventSubscription::recv` and `try_recv`**, which skip a loss, are built for tests alone
+    (`test-support`), decided: no subscriber of the runtime can skip one unnoticed any more, which
+    the compiler holds.
+  - **The approver's catch-up** denies the requests of an agent that is no longer a participant
+    of the channel document, or rests in it without an actor: the document is changed before the
+    leave is announced, the actor taken out after, so either alone would leave a window.
+  - **Reading user and profile** as stored is one function, `UserController::load_stored`, which
+    the `ControllerManager` makes a controller from and `reload` reads again from.
+  - A test each shows the follower (agents, users, profiles, workspaces, projects), the approver
+    and the session making up for a lost announcement, each failing without the change; another
+    that reading again waits for a change under way. They make a subscriber fall behind with
+    `EventBus::publish_past_capacity`, a helper of the tests that publishes more than a
+    subscription holds.

@@ -697,7 +697,10 @@ user, a workspace or a project into its live controller, once per instance - the
 made in other instances will arrive (see [Several instances](#several-instances)). An event carries
 the resulting value, so taking over an instance's own change again changes nothing; a workspace and
 a project are read again as stored instead, since the announcement of a new access list does not
-carry it. A text in it that does not fit the model's value is left out and logged.
+carry it. A text in it that does not fit the model's value is left out and logged. Changes whose
+announcements it lost it makes up for by reading every live controller again as stored (issue
+502). Reading again holds the lock of a change, so that a change of this instance under way is not
+set back by what was read before it.
 
 No change of a personality is announced. Its controller takes in the personality as stored whenever
 it is asked for - as an agent of it is resolved to take part, and by the `CommandReaper` - and from
