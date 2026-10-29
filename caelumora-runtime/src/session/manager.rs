@@ -320,8 +320,7 @@ impl SessionManager {
     pub async fn create(&self, context: &SecurityContext, mut session: Session, mut channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
         self.access_policy.require(context, ActionType::create(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
-        let owner = session.security_attributes.owner_id;
-        let own = Project::own_of(session.id, owner.as_user_id().ok_or(SessionError::OwnerNotAUser(owner))?);
+        let own = session.new_own_project().ok_or(SessionError::OwnerNotAUser(session.security_attributes.owner_id))?;
         session.project = own.id;
         let founders: Vec<(ChannelId, Vec<Participant>)> = channels.iter_mut().map(|channel| (channel.id, mem::take(&mut channel.participants))).collect();
         let session_loop = self.establish(context, session, &own, channels).await?;
@@ -900,7 +899,7 @@ mod tests {
     use caelumora_model::value::language::Language;
     use caelumora_model::value::ValueError;
     use caelumora_model::value::time_zone::TimeZone;
-    use caelumora_model::security::{AllowAllPolicy, SecurityAttributes, SecurityContext, Grant, Subject};
+    use caelumora_model::security::{AllowAllPolicy, Secured, SecurityAttributes, SecurityContext, Grant, Subject};
     use crate::view::Viewer;
     use caelumora_model::store::StoreError;
     use caelumora_model::scope::Scope;

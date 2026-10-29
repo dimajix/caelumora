@@ -18,6 +18,9 @@ against this list, rule by rule, before it is reported (the self-review of
     be called by its module (`time::sleep` after `use tokio::time;`), never by a longer path. A
     path is written out only where an import cannot serve ([Imports](#imports); clippy checks
     it).
+*   Two values are bound by two `let` lines, never by a tuple made to be taken apart again: `let
+    alice = UserId::new();` and `let bob = UserId::new();`, not `let (alice, bob) = (UserId::new(),
+    UserId::new());` - also in a test ([Small return values](#small-return-values)).
 *   Every module begins with `//!` whose first sentence names its responsibility
     ([Comments and documentation](#comments-and-documentation)).
 *   No `unwrap()` or `expect()` in production code ([Types](#types); clippy checks it).
@@ -212,6 +215,11 @@ One exception: what builds several new documents at once for its one caller to s
 them as a tuple, also from another crate and with more than two parts - `SessionTemplate::build`
 returns the session, its own project and its channels. The parts have types of their own, are
 taken apart at once and go no further; a type for them would only name the call.
+
+A tuple is taken apart where it comes from somewhere - a function returning one, a `match` -, never
+made on the spot to be taken apart again: `let (alice, bob) = (UserId::new(), UserId::new());` is
+two values written as one, and reads as if they belonged together. Each is bound by a `let` line of
+its own (issue 485).
 
 ### States are types
 

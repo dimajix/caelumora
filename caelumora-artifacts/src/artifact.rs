@@ -168,15 +168,6 @@ impl Artifact {
         }
     }
 
-    /// The user it belongs to; `None` only for a document that could not be
-    /// stored (`Stored::validate`).
-    pub fn owner(&self) -> Option<UserId> {
-        match self.security_attributes.owner_id {
-            ActorId::User(user_id) => Some(user_id),
-            _ => None,
-        }
-    }
-
     /// The project it lies in (issue 467); `None` only for a document that could not be stored
     /// (`Stored::validate`).
     pub fn project(&self) -> Option<ProjectId> {

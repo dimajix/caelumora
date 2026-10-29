@@ -117,15 +117,6 @@ impl Project {
     pub fn is_own(&self) -> bool {
         matches!(self.name.scope, Scope::SessionScope { .. })
     }
-
-    /// The user it belongs to; `None` only for a document that could not be
-    /// stored (`Stored::validate`).
-    pub fn owner(&self) -> Option<UserId> {
-        match self.security_attributes.owner_id {
-            ActorId::User(user_id) => Some(user_id),
-            _ => None,
-        }
-    }
 }
 
 impl Stored for Project {
@@ -156,7 +147,7 @@ impl Stored for Project {
     /// anything is found from - or another project's. `OWN` is the name of a
     /// session's own alone, so that a lifted one is named anew.
     fn validate(&self) -> Result<(), String> {
-        let ActorId::User(owner) = self.security_attributes.owner_id else { return Err("a project belongs to a user".to_string()) };
+        let Some(owner) = self.owner() else { return Err("a project belongs to a user".to_string()) };
         let own = self.name.name == Name::fixed(Self::OWN);
         match &self.name.scope {
             Scope::GlobalScope | Scope::UserScope { .. } if own => Err(format!("'{}' is the name of a session's own project", Self::OWN)),

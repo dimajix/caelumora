@@ -15,6 +15,7 @@
 //! owner would not be - that session's owner could pass it on to anyone.
 
 use crate::actor::ActorId;
+use crate::security::Secured;
 use crate::session::{Participant, Session, SessionId};
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
@@ -77,7 +78,7 @@ impl SessionPrivacy {
                 Participant::User(user) => Some(*user),
                 _ => None,
             })
-            .chain(owner.as_user_id())
+            .chain(session.owner())
             .collect();
         Self { id: session.id, policy: session.privacy, owner, people }
     }

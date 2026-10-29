@@ -36,7 +36,7 @@ use caelumora_model::question::{Addressee, Answers, QuestionId, QuestionRequest,
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::group::GroupId;
-use caelumora_model::security::{AclEntry, Grant, SecurityContext, Subject};
+use caelumora_model::security::{AclEntry, Grant, Secured, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::StoreError;
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};

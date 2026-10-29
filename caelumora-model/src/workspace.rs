@@ -98,15 +98,6 @@ impl Workspace {
             deleted: None,
         }
     }
-
-    /// The user it belongs to; `None` only for a document that could not be
-    /// stored (`Stored::validate`).
-    pub fn owner(&self) -> Option<UserId> {
-        match self.security_attributes.owner_id {
-            ActorId::User(user_id) => Some(user_id),
-            _ => None,
-        }
-    }
 }
 
 impl Stored for Workspace {
@@ -135,7 +126,7 @@ impl Stored for Workspace {
     /// lies in a session's scope, its owner's or the global one: not in a
     /// channel's, since a session's channels share one.
     fn validate(&self) -> Result<(), String> {
-        let ActorId::User(owner) = self.security_attributes.owner_id else { return Err("a workspace belongs to a user".to_string()) };
+        let Some(owner) = self.owner() else { return Err("a workspace belongs to a user".to_string()) };
         match &self.name.scope {
             Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),
             Scope::UserScope { user_id } if *user_id == owner => Ok(()),

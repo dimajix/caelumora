@@ -39,10 +39,11 @@ participants. Who leaves reads the project no longer, and is told so.
 
 *   **Its own.** A session is made with a project of its own, in the session's scope, named `own` -
     a name no other project may have -, owned by the session's owner and read by its participants
-    (`Project::own_of`, built by `SessionTemplate::build`). The session keeps it as it keeps the
-    group of its participants: made with it, deleted and restored with its mark, purged with it, in
-    the runtime's name; what lies in it goes with the session in the name of whoever deletes or
-    restores the session. A session is a user's, so that its project has an owner.
+    (`Session::new_own_project`; `SessionTemplate::build`, which makes the session, builds it with
+    `Project::own_of`). The session keeps it as it keeps the group of its participants: made with
+    it, deleted and restored with its mark, purged with it, in the runtime's name; what lies in it
+    goes with the session in the name of whoever deletes or restores the session. A session is a
+    user's, so that its project has an owner.
 *   **A shared one it lies in.** Whoever may change the session (`UpdateSession`) and reads a shared
     project (`GetProject`) puts the session into it (`SessionLoop::update_project`), or takes it out
     into its own again - the one in its scope, or a new one if that was lifted. The project it lies
