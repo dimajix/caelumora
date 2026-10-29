@@ -933,11 +933,12 @@ mod tests {
     use axum::Router;
     use caelumora_model::message::MessageId;
     use caelumora_model::security::Refused;
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Participant;
     use caelumora_model::user::UserId;
     use caelumora_runtime::channel::ChannelError;
     use caelumora_runtime::command::CommandError;
-    use caelumora_runtime::session::testing::{create, make_session};
+    use caelumora_runtime::session::testing::create;
     use caelumora_runtime::view::{AgentContextError, ViewError};
     use serde_json::{json, Value};
     use std::time::Duration;

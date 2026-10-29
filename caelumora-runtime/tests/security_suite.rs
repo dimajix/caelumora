@@ -28,6 +28,7 @@ use caelumora_model::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_model::role::RoleId;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
+use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::Detail;
 use caelumora_model::store::{EntityKind, StoreError, Stored};
@@ -45,7 +46,7 @@ use caelumora_runtime::moderator::broadcast_policy::BroadcastPolicy;
 use caelumora_runtime::moderator::ResponderPolicy;
 use caelumora_runtime::project::ProjectError;
 use caelumora_runtime::scoped::ScopeNotEmpty;
-use caelumora_runtime::session::testing::{create, make_session};
+use caelumora_runtime::session::testing::create;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_runtime::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_runtime::testing::{

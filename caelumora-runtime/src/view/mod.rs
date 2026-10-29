@@ -1027,12 +1027,14 @@ mod tests {
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
     use caelumora_model::approval::ToolMatcher;
+    use caelumora_model::channel::testing::{founded, main_channel};
     use caelumora_model::channel::{Channel, ChannelState, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::context::{ContextItem, ContextRef};
     use caelumora_model::history::{Audience, HistoryEntry, HistoryPage, Recorded};
     use caelumora_model::message::Message;
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{Participant as SessionParticipant, Session};
     use caelumora_model::snapshot::Detail;
     use caelumora_model::store::Persistence;

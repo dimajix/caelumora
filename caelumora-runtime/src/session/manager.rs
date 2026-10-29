@@ -1128,6 +1128,7 @@ mod tests {
     use caelumora_model::agent::Agent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::approval::ApprovalStrategy;
+    use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::{self, moderation_components, Channel, InternalActor};
     use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
@@ -1140,6 +1141,7 @@ mod tests {
         AllowAllPolicy, Grant, Secured, SecurityAttributes, SecurityContext, Subject,
     };
     use caelumora_model::session;
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::ChannelId;
     use caelumora_model::session::Session;
     use caelumora_model::store::memory::MemoryStore;

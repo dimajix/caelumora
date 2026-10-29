@@ -1,6 +1,6 @@
 # 505 — Tests build sessions and users field by field
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -52,3 +52,12 @@ tests as not following it.
 
 - **2026-10-29** — Opened from the findings of the review of issue
   [501](501-tests-build-a-personality-field-by-field.md), step 2.
+- **2026-10-29** — Counted again: 9 tests write every field of a `Session` and 18 every field of a
+  `User`; the numbers above counted other literals too. Decided in two steps. The model's
+  `testing` modules build documents, the runtime's what runs and stores. Step 1: the documents of
+  a session and its channels move from the runtime's `session::testing` to the model -
+  `make_session` and `bare_session` to `session::testing`, `bare_channel`, `main_channel` and
+  `founded` to `channel::testing` -, imported from there, not re-exported. Step 2: `User::new`,
+  which `AcceptAnyUserProvider` makes its new users with, and `user::testing::make_user(name)` in
+  place of the runtime's `session::testing::user`. Step 1 done: the 9 sessions are written by what
+  they differ in, `make_session` on `bare_session`.

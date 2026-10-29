@@ -257,20 +257,19 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 mod tests {
     use crate::actor::ActorId;
     use crate::confidentiality::ConfidentialityRules;
-    use crate::project::ProjectId;
     use crate::removal::Removal;
     use crate::role::RoleId;
     use crate::security::{
         AccessPolicy, ActionType, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject,
         Verb,
     };
+    use crate::session::testing::bare_session;
     use crate::session::{Session, SessionId};
     use crate::store::query::Query;
     use crate::store::Persistence;
     use crate::store::{StoreError, Stored};
     use crate::user::UserId;
     use crate::value::name::Name;
-    use chrono::Utc;
     use std::sync::Arc;
 
     /// Owners do everything, whom the list names read, nobody acts for
@@ -303,25 +302,9 @@ mod tests {
 
     fn session(owner: ActorId, contributors: Vec<ActorId>) -> Session {
         Session {
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            id: SessionId::new(),
-            name: Name::new("s").unwrap(),
-            participants: Vec::new(),
-            channels: Vec::new(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
             security_attributes: SecurityAttributes::owned_by(owner)
                 .granting_read(contributors.into_iter().map(Subject::Actor)),
-            deleted: None,
-            revision: Default::default(),
+            ..bare_session(SessionId::new())
         }
     }
 

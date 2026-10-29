@@ -867,16 +867,15 @@ pub trait StateStore: Debug + Sync + Send {
 mod tests {
     use super::*;
     use crate::confidentiality::ConfidentialityRules;
-    use crate::project::ProjectId;
     use crate::removal::Removal;
     use crate::security::AllowAllPolicy;
     use crate::security::{SecurityAttributes, SecurityContext};
+    use crate::session::testing::bare_session;
     use crate::session::SessionId;
     use crate::store::memory::MemoryStore;
     use crate::store::query::NoField;
     use crate::value::name::Name;
     use std::sync::Arc;
-    use uuid::Uuid;
 
     #[test]
     fn what_is_not_found_is_none_and_every_other_error_stays_one() {
@@ -891,46 +890,10 @@ mod tests {
 
     #[tokio::test]
     async fn list_sessions_works() {
-        let session1 = Session {
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            id: SessionId(Uuid::new_v4()),
-            name: Name::new("session1").unwrap(),
-            participants: Vec::new(),
-            channels: Vec::new(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::systems(),
-            deleted: None,
-            revision: Default::default(),
-        };
-        let session2 = Session {
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            id: SessionId(Uuid::new_v4()),
-            name: Name::new("session2").unwrap(),
-            participants: Vec::new(),
-            channels: Vec::new(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::systems(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let session1 =
+            Session { name: Name::new("session1").unwrap(), ..bare_session(SessionId::new()) };
+        let session2 =
+            Session { name: Name::new("session2").unwrap(), ..bare_session(SessionId::new()) };
         let store = Persistence::in_memory().entity_stores().unwrap().sessions;
         let ctx = SecurityContext::default();
 

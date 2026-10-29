@@ -30,7 +30,8 @@ mod commands;
 
 pub(super) use crate::channel::testing::*;
 pub(super) use crate::session::testing::user;
-use crate::session::testing::{bare_session, founded};
+use caelumora_model::channel::testing::founded;
+use caelumora_model::session::testing::bare_session;
 
 /// A channel of `users`, who are recorded in the store its actors are
 /// read from.

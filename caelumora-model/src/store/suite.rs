@@ -34,6 +34,7 @@ use crate::security::{
     AccessPolicy, AclEntry, ActionType, Grant, OwnershipPolicy, Secured, SecurityAttributes,
     SecurityContext, Subject, Verb,
 };
+use crate::session::testing::bare_session;
 use crate::session::{Session, SessionId};
 use crate::store::documents;
 use crate::store::history::HistoryStore;
@@ -119,26 +120,7 @@ fn session_template() -> SessionTemplate {
 }
 
 fn session() -> Session {
-    Session {
-        summary: None,
-        briefing: None,
-        language: None,
-        time_zone: None,
-        approval_rules: Vec::new(),
-        workspace: None,
-        project: ProjectId::new(),
-        commands: Default::default(),
-        privacy: Default::default(),
-        id: SessionId(Uuid::new_v4()),
-        name: Name::new("session").unwrap(),
-        participants: Vec::new(),
-        channels: Vec::new(),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-        security_attributes: SecurityAttributes::systems(),
-        deleted: None,
-        revision: Default::default(),
-    }
+    Session { name: Name::new("session").unwrap(), ..bare_session(SessionId::new()) }
 }
 
 fn channel() -> Channel {

@@ -956,10 +956,11 @@ mod tests {
     use super::*;
     use crate::actor::manager::OUTBOX_CAPACITY;
     use crate::runtime::ChannelRuntime;
-    use crate::session::testing::{bare_session, test_runtime};
+    use crate::session::testing::test_runtime;
     use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::actor::EventContext;
     use caelumora_model::channel::testing::make_channel;
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::user::{User, UserId};
     use std::iter;
     use std::time::Duration;

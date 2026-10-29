@@ -349,9 +349,11 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Agent;
+    use caelumora_model::channel::testing::main_channel;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, SessionId};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;

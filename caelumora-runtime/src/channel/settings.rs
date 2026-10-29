@@ -153,6 +153,7 @@ mod tests {
 
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::store::StoreError;
     use std::sync::Arc;
 

@@ -408,12 +408,14 @@ mod testing {
     use crate::prompt::external_context_provider::ExternalContextProvider;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, Personality};
+    use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::scope::Scope;
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
     use caelumora_runtime::runtime::ChannelRuntime;
-    use caelumora_runtime::session::testing::{bare_channel, bare_session, test_runtime};
+    use caelumora_runtime::session::testing::test_runtime;
 
     impl AgentBody {
         /// The body of an agent in a channel outside a session, perceiving

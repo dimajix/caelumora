@@ -312,12 +312,14 @@ mod tests {
     use crate::tool::ToolError;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::Participant;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::confidentiality::{Compartments, ConfidentialityRules, Place, Reading};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::security::{OwnershipPolicy, SecurityAttributes, SecurityContext};
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::StateStore;
@@ -326,7 +328,7 @@ mod tests {
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
     use caelumora_runtime::runtime::ActorRuntime;
     use caelumora_runtime::session::testing::{
-        actor_runtime_in, main_channel, make_session, owned_runtime, record_users, spec, user,
+        actor_runtime_in, owned_runtime, record_users, spec, user,
     };
     use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
     use caelumora_runtime::transport::Discard;

@@ -491,6 +491,7 @@ mod tests {
     use caelumora_model::chain::Position;
     use caelumora_model::channel::{Channel, HistoryAccess, JOINED, LEFT};
     use caelumora_model::history::HistoryEntry;
+    use caelumora_model::session::testing::make_session;
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;

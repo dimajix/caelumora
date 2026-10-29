@@ -127,9 +127,8 @@ impl PrivacyPolicy for SharedAudience {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::ProjectId;
     use crate::security::SecurityAttributes;
-    use crate::value::name::Name;
+    use crate::session::testing::bare_session;
 
     fn session(policy: PrivacyConfig, owner: UserId, others: &[UserId]) -> SessionPrivacy {
         let people = others.iter().copied().chain([owner]).collect();
@@ -194,24 +193,10 @@ mod tests {
     fn the_people_of_a_session_are_its_users_and_its_owner() {
         let (alice, bob) = (UserId::new(), UserId::new());
         let session = Session {
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            id: Default::default(),
-            name: Name::new("s").unwrap(),
             participants: vec![Participant::User(bob), Participant::Agent(Default::default())],
-            channels: Vec::new(),
-            commands: Default::default(),
             privacy: PrivacyConfig::SharedAudience,
-            created_at: Default::default(),
-            updated_at: Default::default(),
             security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)),
-            deleted: None,
-            revision: Default::default(),
+            ..bare_session(SessionId::new())
         };
         let privacy = SessionPrivacy::of(&session);
         assert_eq!(privacy.people, [alice, bob].into_iter().collect());

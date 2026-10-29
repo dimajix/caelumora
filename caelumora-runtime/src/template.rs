@@ -233,7 +233,6 @@ mod tests {
     use super::*;
     use crate::event::EventBus;
     use crate::scoped::ScopeHolders;
-    use crate::session::testing::bare_session;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Personality;
     use caelumora_model::confidentiality::ConfidentialityRules;
@@ -241,6 +240,7 @@ mod tests {
     use caelumora_model::security::{
         AccessPolicy, ActionType, AllowAllPolicy, SecurityAttributes, Verb,
     };
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::Query;

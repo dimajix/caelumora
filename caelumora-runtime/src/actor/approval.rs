@@ -492,7 +492,6 @@ mod tests {
     use super::*;
     use crate::channel::ChannelLoop;
     use crate::runtime::{ChannelRuntime, RuntimeManager};
-    use crate::session::testing::bare_session;
     use crate::testing::TestRuntime;
     use crate::transport::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::actor::EventContext;
@@ -502,6 +501,7 @@ mod tests {
     use caelumora_model::channel::testing::make_channel;
     use caelumora_model::channel::{Channel, InternalActor, Participant};
     use caelumora_model::security::{Grant, OwnershipPolicy, Subject};
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::Persistence;
     use caelumora_model::tool::ToolCall;

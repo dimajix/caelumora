@@ -101,9 +101,10 @@ mod tests {
     use axum::http::Request;
     use caelumora_model::config::{AppConfig, BackendConfig, ContentConfig};
     use caelumora_model::security::SecurityContext;
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Participant;
     use caelumora_model::user::UserId;
-    use caelumora_runtime::session::testing::{create, make_session};
+    use caelumora_runtime::session::testing::create;
     use caelumora_runtime::view::Viewer;
     use serde_json::{json, Value};
     use std::time::Duration;

@@ -272,11 +272,13 @@ mod tests {
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
     use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::config::AppConfig;
     use caelumora_model::message::{Message, MessageEvent};
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::security::SecurityContext;
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::Persistence;
     use caelumora_model::tool::Tool;
@@ -284,9 +286,7 @@ mod tests {
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentFacets};
-    use caelumora_runtime::session::testing::{
-        bare_channel, bare_session, detached_actor_runtime_in,
-    };
+    use caelumora_runtime::session::testing::detached_actor_runtime_in;
     use caelumora_runtime::testing::TestRuntime;
     use futures::stream;
     use futures::stream::BoxStream;

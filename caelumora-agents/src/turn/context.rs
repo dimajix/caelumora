@@ -173,16 +173,16 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn the_model_is_given_along_what_its_profile_says_and_the_turn_sees_it() {
         use crate::testing::TestAgents;
+        use caelumora_model::channel::testing::bare_channel;
         use caelumora_model::confidentiality::Confidentiality;
         use caelumora_model::config::{AppConfig, BackendConfig, ContentConfig};
         use caelumora_model::content::testing::make_content_ref;
         use caelumora_model::content::{self, ContentId, ContentRef};
         use caelumora_model::digest;
+        use caelumora_model::session::testing::bare_session;
         use caelumora_model::session::SessionId;
         use caelumora_runtime::agent::state::AgentStateHandle;
-        use caelumora_runtime::session::testing::{
-            bare_channel, bare_session, detached_actor_runtime_in,
-        };
+        use caelumora_runtime::session::testing::detached_actor_runtime_in;
         use caelumora_runtime::testing::TestRuntime;
         use std::fs;
         use std::sync::Arc;

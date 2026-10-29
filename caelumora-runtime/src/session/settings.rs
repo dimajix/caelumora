@@ -316,6 +316,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::session::testing::*;
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
 
     #[tokio::test]

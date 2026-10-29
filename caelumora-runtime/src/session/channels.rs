@@ -670,8 +670,10 @@ mod tests {
     use crate::moderator::random_policy::RANDOM_POLICY_KIND;
     use caelumora_model::actor::ActorId;
     use caelumora_model::channel::moderation_components;
+    use caelumora_model::channel::testing::main_channel;
     use caelumora_model::command::HELP_COMMAND_KIND;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::session::testing::make_session;
 
     use crate::channel::ChannelLoop;
 

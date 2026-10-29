@@ -30,7 +30,6 @@ use crate::error::refusal;
 use crate::plugin::Plugin;
 use crate::project::{ProjectError, ProjectManager};
 use crate::runtime::{ActorRuntime, RuntimeManager};
-use crate::session::testing::make_session;
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::terminal::{ByteStream, Terminal, WorkspacePath};
 use crate::view::Viewer;
@@ -59,6 +58,7 @@ use caelumora_model::security::{
     AccessPolicy, ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified,
     SecurityAttributes, SecurityContext, Subject, Verb,
 };
+use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::query::Query;

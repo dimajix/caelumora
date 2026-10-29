@@ -270,9 +270,9 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testing::bare_session;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::store::Persistence;
     use caelumora_model::value::ValueError;
     use chrono::{Duration, Utc};
