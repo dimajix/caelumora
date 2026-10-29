@@ -116,9 +116,20 @@ pub async fn prune_gone_groups<'a>(
     store: &dyn EntityStore<Group>,
     lists: impl IntoIterator<Item = &'a mut Vec<AclEntry>>,
 ) {
-    let mut lists: Vec<&mut Vec<AclEntry>> = lists.into_iter().collect();
+    let lists: Vec<&mut Vec<AclEntry>> = lists.into_iter().collect();
+    let gone = gone_groups(store, lists.iter().map(|list| &**list)).await;
+    prune_groups(lists, &gone);
+}
+
+/// The groups named by `lists` that are gone for certain (`is_gone`): what `prune_groups` drops
+/// from a list, told apart before a change that is written again when it was refused as outdated
+/// (issue 492).
+pub(crate) async fn gone_groups<'a>(
+    store: &dyn EntityStore<Group>,
+    lists: impl IntoIterator<Item = &'a Vec<AclEntry>>,
+) -> Vec<GroupId> {
     let mut named = Vec::new();
-    for entry in lists.iter().flat_map(|list| list.iter()) {
+    for entry in lists.into_iter().flat_map(|list| list.iter()) {
         match entry.subject {
             Subject::Group(group) if !named.contains(&group) => named.push(group),
             _ => {}
@@ -130,10 +141,18 @@ pub async fn prune_gone_groups<'a>(
             gone.push(group);
         }
     }
+    gone
+}
+
+/// Drops from `lists` every entry naming one of `gone`, the groups `gone_groups` told apart.
+pub(crate) fn prune_groups<'a>(
+    lists: impl IntoIterator<Item = &'a mut Vec<AclEntry>>,
+    gone: &[GroupId],
+) {
     if gone.is_empty() {
         return;
     }
-    for list in &mut lists {
+    for list in lists {
         list.retain(
             |entry| !matches!(entry.subject, Subject::Group(group) if gone.contains(&group)),
         );
@@ -161,7 +180,8 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
 /// members of a project (issue 467) -, in the runtime's name: its members replace those stored, and
 /// the group is made if there is none yet. Called only while the session, channel or project is
 /// there, so a group found deleted is restored first (issue 347): it goes and comes back with it
-/// (issue 348), but taking back a deletion that failed may have failed, too.
+/// (issue 348), but taking back a deletion that failed may have failed, too. Written meanwhile
+/// elsewhere, the group is read again and the members set once more (issue 492).
 ///
 /// # Errors
 /// Whatever the store reports.
@@ -170,19 +190,23 @@ pub(crate) async fn keep_participants(
     participants: Group,
 ) -> StoreResult<()> {
     let system = SecurityContext::system();
-    let mut stored = match store.get(&system, participants.id).await.optional()? {
-        Some(stored) => stored,
-        None => match store.get_deleted(&system, participants.id).await.optional()? {
-            Some(_) => store.restore(&system, participants.id).await?,
-            None => return store.create(&system, &participants).await,
-        },
-    };
-    if stored.members == participants.members {
-        return Ok(());
+    loop {
+        let mut stored = match store.get(&system, participants.id).await.optional()? {
+            Some(stored) => stored,
+            None => match store.get_deleted(&system, participants.id).await.optional()? {
+                Some(_) => store.restore(&system, participants.id).await?,
+                None => return store.create(&system, &participants).await,
+            },
+        };
+        if stored.members == participants.members {
+            return Ok(());
+        }
+        stored.members = participants.members.clone();
+        stored.updated_at = Utc::now();
+        if store.update(&system, &mut stored).await.written()?.is_some() {
+            return Ok(());
+        }
     }
-    stored.members = participants.members;
-    stored.updated_at = Utc::now();
-    store.update(&system, &stored).await
 }
 
 #[cfg(test)]
@@ -203,6 +227,7 @@ mod tests {
     use caelumora_model::store::documents::Document;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::{Page, Query};
+    use caelumora_model::store::testing::ContendedStore;
     use caelumora_model::store::EntityStores;
     use caelumora_model::store::Persistence;
     use caelumora_model::store::{Deleted, PersistenceBackend, Stored};
@@ -238,7 +263,7 @@ mod tests {
         async fn get(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
             self.inner.get(ctx, id).await
         }
-        async fn update(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
+        async fn update(&self, ctx: &SecurityContext, value: &mut Group) -> StoreResult<()> {
             self.inner.update(ctx, value).await
         }
         async fn delete(
@@ -260,6 +285,13 @@ mod tests {
         async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
             self.fails()?;
             self.inner.restore(ctx, id).await
+        }
+        async fn begin_purge(
+            &self,
+            ctx: &SecurityContext,
+            id: GroupId,
+        ) -> StoreResult<Option<Group>> {
+            self.inner.begin_purge(ctx, id).await
         }
         async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
             self.inner.purge(ctx, id).await
@@ -316,6 +348,52 @@ mod tests {
             [bob],
             "there again, following who takes part"
         );
+    }
+
+    /// Issue 492: the members are set once more, on the group as it is now, when the group was
+    /// written meanwhile.
+    #[tokio::test]
+    async fn the_participants_follow_once_more_when_their_group_was_written_meanwhile() {
+        let (stores, refusals) = ContendedStore::stores(Group::KIND);
+        let groups = stores.entity_stores().unwrap().groups;
+        let system = SecurityContext::system();
+        let bob = ActorId::User(UserId::new());
+        let session = SessionId::new();
+        let name =
+            ScopedName::new("participants", Scope::SessionScope { session_id: session }).unwrap();
+        let participants =
+            Group { id: GroupId::of_session(session), ..Group::team(name, UserId::new()) };
+        keep_participants(groups.as_ref(), participants.clone()).await.expect("made");
+
+        refusals.store(1, Ordering::SeqCst);
+        keep_participants(groups.as_ref(), Group { members: vec![bob], ..participants.clone() })
+            .await
+            .expect("set once more");
+        assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
+        assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob]);
+    }
+
+    /// Issue 492: a team is changed once more, as it is now, when it was written meanwhile.
+    #[tokio::test]
+    async fn a_team_is_changed_once_more_when_it_was_written_meanwhile() {
+        let (stores, refusals) = ContendedStore::stores(Group::KIND);
+        let stores = stores.entity_stores().unwrap();
+        let events = Arc::new(EventBus::new(
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        ));
+        let manager = GroupManager::new(&stores, events, Arc::new(AllowAllPolicy::new()));
+        let alice = UserId::new();
+        let hers =
+            SecurityContext::new(ActorId::User(alice), Default::default(), Default::default());
+        let team =
+            manager.create(&hers, "Helpers", Scope::UserScope { user_id: alice }).await.unwrap();
+
+        refusals.store(1, Ordering::SeqCst);
+        let renamed = manager.rename(&hers, team.id, "Experts").await.expect("changed once more");
+        assert_eq!(renamed.name.name, "Experts");
+        assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
+        assert_eq!(stores.groups.get(&hers, team.id).await.unwrap().name.name, "Experts");
     }
 
     /// Issue 348: the groups of the participants of a session and its channel, and of the members
@@ -420,13 +498,17 @@ mod tests {
             .documents(Group::KIND, |_| Err(StoreError::Backend("not read".to_string())))
             .unwrap();
         storage
-            .replace(Document {
-                id: unreadable.id.into(),
-                name: None,
-                removal_id: None,
-                security_attributes: SecurityAttributes::systems(),
-                body: Value::from("not a group"),
-            })
+            .replace(
+                Document {
+                    id: unreadable.id.into(),
+                    revision: unreadable.revision.next(),
+                    name: None,
+                    removal_id: None,
+                    security_attributes: SecurityAttributes::systems(),
+                    body: Value::from("not a group"),
+                },
+                unreadable.revision,
+            )
             .await
             .unwrap();
 

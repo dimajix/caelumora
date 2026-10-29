@@ -153,8 +153,9 @@ impl AgentManager {
     /// (`SessionLoop`). Returns the agent as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if there is no such deleted agent or `context` may not see
-    /// it, or if what holds its scope is gone, `StoreError::PermissionDenied`
+    /// `NotFound` if there is no such deleted agent, `context` may not see
+    /// it or its purge is begun (issue 492), or if what holds its scope is
+    /// gone, `StoreError::PermissionDenied`
     /// if they may but not restore it, `StoreError::NameTaken` if another
     /// agent took its name in its scope meanwhile (issue 250).
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> AgentResult<Agent> {
@@ -165,8 +166,11 @@ impl AgentManager {
     }
 
     /// Removes the deleted agent `id` for good on behalf of `context` (issue
-    /// 164): its document, its own state and its state in every channel.
-    /// Only what was deleted is purged; the store asks `Purge`. Announces
+    /// 164): its own state and its state in every channel, then its
+    /// document - its purge begun before, so that no restoring takes it back
+    /// without its state (issue 492). Only what was deleted is purged; the
+    /// store asks `Purge`. A state that cannot be removed leaves the
+    /// document, its purge begun, so that the next purge tries again. Announces
     /// nothing, as no purge does. What it said stays in the channels'
     /// histories, by an agent that no longer exists; the channels it rested
     /// in show it as a former participant, without when it left. `false` if
@@ -176,10 +180,13 @@ impl AgentManager {
     /// `StoreError::PermissionDenied` if they may see it but not purge it,
     /// or whatever else the stores report.
     pub async fn purge(&self, context: &SecurityContext, id: AgentId) -> AgentResult<bool> {
-        if !self.agents.purge(context, id).await? {
+        if self.agents.begin_purge(context, id).await?.is_none() {
             return Ok(false);
         }
         self.states.delete_agent_state(id).await?;
+        if !self.agents.purge(context, id).await? {
+            return Ok(false);
+        }
         info!("Agent {} purged by {}", id, context.caller_id);
         Ok(true)
     }
@@ -200,8 +207,8 @@ impl ScopeMember for AgentManager {
         Some(self.events.as_ref())
     }
 
-    /// Removes the state of `agent`, its own and in every channel - what `purge` removes after
-    /// the agent, once the store granted it: here nothing is asked, and it goes first.
+    /// Removes the state of `agent`, its own and in every channel, once its purge is begun - as
+    /// `purge` removes it.
     ///
     /// # Errors
     /// Whatever the state store reports.

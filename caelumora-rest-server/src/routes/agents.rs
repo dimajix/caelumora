@@ -219,6 +219,7 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         state
             .runtime_manager

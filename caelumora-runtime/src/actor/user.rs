@@ -977,6 +977,7 @@ mod tests {
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
+            revision: Default::default(),
         };
         let channel_runtime = ChannelRuntime::outside_a_session(
             Arc::clone(&runtime),

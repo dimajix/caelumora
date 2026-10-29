@@ -186,7 +186,7 @@ impl SessionController {
         participant: Participant,
     ) -> StoreResult<()> {
         let event = SessionUpdateEvent::ParticipantJoined(participant);
-        let writing = self.session.write().await;
+        let mut writing = self.session.write().await;
         let session = writing.apply(ctx, &event).await?;
         self.keep_participants(&session).await;
         writing.announce_update(&event, &session);
@@ -202,10 +202,14 @@ impl SessionController {
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the session is then unchanged.
     pub async fn add_channel(&self, ctx: &SecurityContext, channel: ChannelId) -> StoreResult<()> {
-        let writing = self.session.write().await;
-        let mut session = writing.current();
-        session.channels.push(channel);
-        writing.store(ctx, session).await.map(drop)
+        let mut writing = self.session.write().await;
+        writing
+            .change(ctx, |session| {
+                session.channels.push(channel);
+                Ok(())
+            })
+            .await
+            .map(drop)
     }
 
     /// Removes the channel `channel_id` from the session's list on behalf of
@@ -220,13 +224,18 @@ impl SessionController {
         ctx: &SecurityContext,
         channel_id: ChannelId,
     ) -> StoreResult<()> {
-        let writing = self.session.write().await;
-        let mut session = writing.current();
-        let index = session.channels.iter().position(|c| *c == channel_id).ok_or_else(|| {
-            StoreError::NotFound { entity: "channel", id: channel_id.to_string() }
-        })?;
-        session.channels.remove(index);
-        writing.store(ctx, session).await.map(drop)
+        let mut writing = self.session.write().await;
+        writing
+            .change(ctx, |session| {
+                let index =
+                    session.channels.iter().position(|c| *c == channel_id).ok_or_else(|| {
+                        StoreError::NotFound { entity: "channel", id: channel_id.to_string() }
+                    })?;
+                session.channels.remove(index);
+                Ok(())
+            })
+            .await
+            .map(drop)
     }
 
     /// Takes over a change made elsewhere - already stored there - once it
@@ -311,6 +320,29 @@ mod tests {
             store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().name,
             "renamed"
         );
+    }
+
+    /// Issue 492: a change made by hand is made again when the session was written past the
+    /// controller meanwhile, on the session as written.
+    #[tokio::test]
+    async fn a_change_is_made_again_when_the_session_was_written_meanwhile() {
+        let session = session();
+        let store = Persistence::in_memory();
+        let ctx = SecurityContext::default();
+        let stores = store.entity_stores().unwrap();
+        stores.sessions.create(&ctx, &session).await.unwrap();
+        let controller = SessionController::new(session.clone(), Arc::new(()), &stores);
+        let mut renamed = session.clone();
+        renamed.name = Name::new("renamed").unwrap();
+        stores.sessions.update(&ctx, &mut renamed).await.unwrap();
+
+        let channel = ChannelId::new();
+        controller.add_channel(&ctx, channel).await.expect("made again on what was written");
+
+        let stored = stores.sessions.get(&ctx, session.id).await.unwrap();
+        assert_eq!(stored.name, "renamed", "what was written meanwhile stands");
+        assert_eq!(stored.channels, [channel], "and the change is made");
+        assert_eq!(controller.name(), "renamed", "taken over live");
     }
 
     /// Issue 358: whatever changes the session moves `updated_at`, an update

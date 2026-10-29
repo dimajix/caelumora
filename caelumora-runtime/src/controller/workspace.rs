@@ -1,6 +1,6 @@
 use super::document::{LiveDocument, Writing};
 use crate::backend::StorageGone;
-use crate::group::{prune_gone_groups, require_nameable};
+use crate::group::{gone_groups, prune_groups, require_nameable};
 use crate::terminal::{Shell, Terminal, TerminalProvider};
 use crate::view::{channel_reading, ChannelReader};
 use crate::workspace::reaper::scope_of;
@@ -20,6 +20,7 @@ use caelumora_model::security::{
 use caelumora_model::session::{Channel, Session};
 use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt, Updatable};
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
+use std::slice;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -301,7 +302,9 @@ impl WorkspaceController {
     ) -> WorkspaceResult<()> {
         let mut writing = self.workspace.write().await;
         let workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
-        self.store_access(ctx, &writing, workspace, acl).await
+        require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl)
+            .await?;
+        self.change_access(ctx, &mut writing, |list| *list = acl.clone()).await
     }
 
     /// Shares the workspace with `subject` as far as `grant` reaches, on
@@ -318,13 +321,17 @@ impl WorkspaceController {
     ) -> WorkspaceResult<()> {
         let mut writing = self.workspace.write().await;
         let workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
-        let mut acl = workspace.security_attributes.acl.clone();
+        let acl = &workspace.security_attributes.acl;
         if acl.iter().any(|entry| entry.subject == subject && entry.grant.covers(grant)) {
             return Ok(());
         }
-        acl.retain(|entry| entry.subject != subject);
-        acl.push(AclEntry { subject, grant });
-        self.store_access(ctx, &writing, workspace, acl).await
+        let entry = AclEntry { subject, grant };
+        require_nameable(self.groups.as_ref(), ctx, acl, slice::from_ref(&entry)).await?;
+        self.change_access(ctx, &mut writing, |list| {
+            list.retain(|entry| entry.subject != subject);
+            list.push(entry);
+        })
+        .await
     }
 
     /// Takes over a change made elsewhere - already stored there - once it
@@ -376,7 +383,7 @@ impl WorkspaceController {
         event: WorkspaceUpdateEvent,
     ) -> WorkspaceResult<()> {
         let mut writing = self.workspace.write().await;
-        let mut workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
+        let workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         if let WorkspaceUpdateEvent::ClassificationChanged(classification) = &event {
             let provider = self.provider(&workspace)?;
             require_classification(
@@ -387,40 +394,51 @@ impl WorkspaceController {
                 classification,
             )?;
         }
-        workspace.apply(&event)?;
-        let workspace = self.store(ctx, &writing, workspace).await?;
+        let workspace =
+            self.change(ctx, &mut writing, |workspace| Ok(workspace.apply(&event)?)).await?;
         writing.announce_update(&event, &workspace);
         Ok(())
     }
 
-    /// Gives the reached `workspace` the access list `acl`, as
-    /// `update_access` says, under `writing`. Announced without the list
-    /// (`WorkspaceUpdateEvent::AccessChanged`).
-    async fn store_access(
+    /// Changes the access list of the reached workspace under `writing` as
+    /// `change` says, on behalf of `ctx`, as `Self::change` changes it, and
+    /// announces it without the list (`WorkspaceUpdateEvent::AccessChanged`).
+    async fn change_access(
         &self,
         ctx: &SecurityContext,
-        writing: &Writing<'_, Workspace>,
-        mut workspace: Workspace,
-        acl: Vec<AclEntry>,
+        writing: &mut Writing<'_, Workspace>,
+        mut change: impl FnMut(&mut Vec<AclEntry>),
     ) -> WorkspaceResult<()> {
-        require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl)
+        let workspace = self
+            .change(ctx, writing, |workspace| {
+                change(&mut workspace.security_attributes.acl);
+                Ok(())
+            })
             .await?;
-        workspace.security_attributes.acl = acl;
-        let workspace = self.store(ctx, writing, workspace).await?;
         writing.announce_update(&WorkspaceUpdateEvent::AccessChanged, &workspace);
         Ok(())
     }
 
-    /// Stores `workspace` as changed by `ctx` under `writing` - its access
-    /// list without the entries naming a group that is gone (issue 347) -
-    /// and takes it over live.
-    async fn store(
+    /// Changes the reached workspace under `writing` as `change` says, on
+    /// behalf of `ctx`, and takes it over live (`Writing::change`) - its
+    /// access list without the entries naming a group that is gone (issue
+    /// 347), told apart from the list as the change begins.
+    async fn change(
         &self,
         ctx: &SecurityContext,
-        writing: &Writing<'_, Workspace>,
-        mut workspace: Workspace,
+        writing: &mut Writing<'_, Workspace>,
+        mut change: impl FnMut(&mut Workspace) -> StoreResult<()>,
     ) -> WorkspaceResult<Arc<Workspace>> {
-        prune_gone_groups(self.groups.as_ref(), [&mut workspace.security_attributes.acl]).await;
-        writing.store(ctx, workspace).await.map_err(store_error(self.id()))
+        let begun = writing.current();
+        let gone = gone_groups(self.groups.as_ref(), [&begun.security_attributes.acl]).await;
+        writing
+            .change(ctx, |workspace| {
+                change(workspace)?;
+                prune_groups([&mut workspace.security_attributes.acl], &gone);
+                Ok(())
+            })
+            .await
+            .map(|((), workspace)| workspace)
+            .map_err(store_error(self.id()))
     }
 }

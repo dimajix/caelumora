@@ -154,6 +154,7 @@ impl UserProvider for AcceptAnyUserProvider {
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
+            revision: Default::default(),
         };
         tracing::warn!("AcceptAnyUserProvider accepted the new user '{}' ({}) without verifying any credential", user.username, user.id);
         Ok(Some(self.configured(user)))
@@ -283,6 +284,7 @@ mod tests {
             email: "user@example.com".to_string(),
             roles: vec![RoleId::new()],
             deleted: None,
+            revision: Default::default(),
         };
         store.create(&SecurityContext::default(), &existing).await.unwrap();
 

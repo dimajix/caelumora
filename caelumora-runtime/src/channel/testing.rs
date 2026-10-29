@@ -95,6 +95,7 @@ pub async fn alice_and_an_agent(
         components,
         security_attributes: SecurityAttributes::systems(),
         deleted: None,
+        revision: Default::default(),
     };
     store
         .entity_stores()

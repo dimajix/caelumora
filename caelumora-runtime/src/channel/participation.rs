@@ -399,6 +399,7 @@ mod tests {
             email: String::new(),
             roles: ids.ids_of(roles).unwrap(),
             deleted: None,
+            revision: Default::default(),
         };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
@@ -424,6 +425,7 @@ mod tests {
                     reasoning_visibility: Default::default(),
                     hears_during_turn: Default::default(),
                     deleted: None,
+                    revision: Default::default(),
                 };
                 store
                     .entity_stores()
@@ -546,6 +548,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         personalities.create(&system, &personality).await.unwrap();
         let mut session = make_session("scoped", UserId::new());

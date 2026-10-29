@@ -11,7 +11,7 @@ use crate::group::GroupId;
 use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
-use crate::store::{EntityKind, NoEntity, Stored, Updatable};
+use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
 use crate::user::UserId;
 use crate::value::name::ScopedName;
 use crate::value::text::Description;
@@ -70,6 +70,9 @@ pub struct Workspace {
     /// hidden from every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 impl Workspace {
@@ -102,6 +105,7 @@ impl Workspace {
             created_at: now,
             updated_at: now,
             deleted: None,
+            revision: Default::default(),
         }
     }
 }
@@ -126,6 +130,14 @@ impl Stored for Workspace {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 
     /// A workspace is a user's - the system's everybody could use - and

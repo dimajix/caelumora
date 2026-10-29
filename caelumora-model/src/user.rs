@@ -7,7 +7,7 @@ use crate::role::RoleId;
 use crate::scope::{Scope, Scoped};
 use crate::security::{Secured, SecurityAttributes};
 use crate::store::query::{Field, NoField};
-use crate::store::{EntityKind, Journaled, NoEntity, Stored, Updatable};
+use crate::store::{EntityKind, Journaled, NoEntity, Revision, Stored, Updatable};
 use crate::value::language::Language;
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
@@ -46,6 +46,9 @@ pub struct User {
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 /// A user record belongs to the system, not to the user (issue 94):
@@ -72,6 +75,14 @@ impl Stored for User {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 
     fn unique_name(&self) -> Option<ScopedName> {
@@ -110,6 +121,14 @@ impl Stored for UserProfile {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 }
 
@@ -164,6 +183,9 @@ pub struct UserProfile {
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
     #[serde(skip)]
     security_attributes: SecurityAttributes,
 }
@@ -179,6 +201,7 @@ impl UserProfile {
             preferred_language: None,
             approval_rules: Vec::new(),
             deleted: None,
+            revision: Default::default(),
             security_attributes,
         }
     }
@@ -252,6 +275,8 @@ struct UserProfileFields {
     approval_rules: Vec<ApprovalRule>,
     #[serde(default)]
     deleted: Option<Removal>,
+    #[serde(default)]
+    revision: Revision,
 }
 
 impl From<UserProfileFields> for UserProfile {
@@ -260,6 +285,7 @@ impl From<UserProfileFields> for UserProfile {
             preferred_language: fields.preferred_language,
             approval_rules: fields.approval_rules,
             deleted: fields.deleted,
+            revision: fields.revision,
             ..UserProfile::new(fields.user_id, fields.introduction)
         }
     }
@@ -470,10 +496,13 @@ mod tests {
             "nobody writes a profile of someone else"
         );
         store.create(&as_user(alice), &hers).await.expect("her own");
-        let changed =
+        let mut changed =
             UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
         assert!(
-            matches!(store.update(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })),
+            matches!(
+                store.update(&as_user(bob), &mut changed).await,
+                Err(StoreError::NotFound { .. })
+            ),
             "nor changes it"
         );
         assert_eq!(

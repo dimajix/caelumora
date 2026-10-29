@@ -1,6 +1,6 @@
 # 492 — A document is written under two locks that do not know of each other
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** Persistence
@@ -69,3 +69,57 @@ The first is the goal; the second is acceptable as a step towards it.
 
 - **2026-10-29** — Opened while deciding issue [458](458-deleted-while-it-runs.md), whose first
   plan rested on `ScopeMember::writing` until it showed that the controllers do not take it.
+- **2026-10-29** — Decided for the first option, in three steps, together with issue
+  [450](450-store-overwrites-a-change-made-meanwhile.md): the revision in the store and the
+  storages; the writers that read again and change again where it matters; the locks go. The
+  counter is named `Revision`, not version, since an artifact has versions of its own. Step 1
+  done: every kind carries a `Revision`, counted up by every write; `DocumentStorage::replace`
+  and `remove` are given the revision read and refuse another (`StoreError::Outdated`), in
+  memory, in the JSON files under the lock of the kind, which every write now holds, and in
+  Postgres by a column named in the `WHERE` (table form 5); `EntityStore::update` takes `&mut T`
+  and leaves the revision written; `delete`, `restore` and `purge` read again and write again in
+  `CheckedStore`; `Writing::apply` reads again and applies again; the store suite holds every
+  backend to it. A write of a user as a provider answers them starts from the record stored.
+- **2026-10-29** — Step 2 done: every writer makes its change again when it was refused as
+  outdated. A controller changes its document through `Writing::change` alone - a closure applied
+  to the document as it stands, read again as stored on a refusal -, which replaced
+  `Writing::store` and the changes made by hand on a copy; the groups gone from an access list are
+  told apart before the change (`gone_groups`, `prune_groups`). A manager reads the entity again
+  (`StoreResultExt::written`): the groups', the skills' and the artifacts' changes, the group of
+  the participants, a user's record and profile. A version published meanwhile takes the number,
+  and the publication is refused as outdated for the caller to publish again. The planned
+  `dyn EntityStore::modify` was not built: a closure fit neither the managers' own errors nor the
+  writers that write only where something differs, and the loop in each is three lines around
+  what is its own. Two questions the review of this step raised, open for the maintainer: the
+  content of a version is kept under a key made of the number read before the write
+  (`artifacts/<id>/<number>`), so two publications of one artifact at once keep their content
+  under one key and the one refused forgets the other's - held off by the artifact manager's
+  lock within one process until step 3, and across instances since issue 03; a key of the
+  publication's own, or a number reserved by a write before the content is kept, would end it.
+  And a copy never stored carries the first revision, as one stored once does, so a write of
+  such a copy passes against a document created meanwhile under its id; the one writer that
+  held such a copy, the user's profile controller, now holds none until one is stored, creates
+  rather than changes, and takes a creation meanwhile as a refusal.
+- **2026-10-29** — The content of a version lies under a key of the publication's own
+  (`ArtifactVersion::content`, a `ContentId`; `artifacts/<artifact>/<content>`), decided for the
+  first of the options above: two publications at once never share a key, the one written second
+  is numbered after the first as the document is written (`Artifact::add_version`), and a
+  publication refused as outdated is made again instead of handed back. The second question
+  stays as it is: the one writer that held a copy never stored is the profile controller.
+- **2026-10-29** — Step 3 done, after one more decision with the maintainer: the managers' locks
+  held two things the revision does not. A purge removed what lies behind an entity - a
+  workspace's place, an artifact's content - before the document, and a restoring between brought
+  the document back without it; the agents had the gap already, without a lock. The purge is now
+  begun first (`EntityStore::begin_purge`, `Removal::purging`): no restoring takes the entity back
+  from then on, then what lies behind it goes, then the document - across every writer of the
+  store. And a project's deletion, restoring and purge each go through its sessions, its scope and
+  its group: they are serialised by one lock per project id (`ProjectManager::lifecycle_lock`), as
+  a session's are by the `SessionManager`. The `writing` locks of the managers of workspaces,
+  groups, skills and artifacts and `ScopeMember::writing` are gone; `LiveDocument::write_lock`
+  stays, ordering a controller's announcements as it writes. Three things the locks had kept
+  apart within one process were found in review and closed otherwise: a workspace whose place was
+  made after its holder's purge went through it, whose place `keep_made` now removes alone; an
+  entity deleted by another while its holder's scope is gone through, now counted as left only if
+  it is still there; and a group of participants deleted meanwhile with its channel, which is not
+  this deletion's to announce or take back. The views say that one whose purge is begun may not be
+  restored.

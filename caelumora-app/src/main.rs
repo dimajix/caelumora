@@ -368,7 +368,7 @@ mod tests {
         // A document changed in the store stays as it is.
         let mut changed = seed.personalities[0].personality.clone();
         changed.description = Some(Description::new("changed").unwrap());
-        stores.personalities.update(&system, &changed).await.unwrap();
+        stores.personalities.update(&system, &mut changed).await.unwrap();
         runtime.seed(&[example("seed.yaml")]).await.expect("seeding again is no conflict");
         assert_eq!(
             stores

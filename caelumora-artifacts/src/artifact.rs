@@ -7,6 +7,7 @@
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::content::ContentId;
 use caelumora_model::define_id;
 use caelumora_model::digest::Digest;
 use caelumora_model::project::ProjectId;
@@ -16,7 +17,7 @@ use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Su
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::AccessSnapshot;
 use caelumora_model::store::query::Field;
-use caelumora_model::store::{EntityKind, NoEntity, Stored};
+use caelumora_model::store::{EntityKind, NoEntity, Revision, Stored};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -113,13 +114,21 @@ pub struct Artifact {
     /// kept, hidden from every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 /// One version of an artifact: what was published, where and by whom.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtifactVersion {
-    /// 1 for the first, one more for each later one.
+    /// 1 for the first, one more for each later one: given as the document is written
+    /// (`Artifact::add_version`).
     pub number: u32,
+    /// Where its content lies in the artifact's storage: under a key of this publication's own
+    /// (`artifacts/<artifact>/<content>`, issue 492), as an attachment lies under its
+    /// `ContentId`.
+    pub content: ContentId,
     pub size: u64,
     /// The digest of its content (`digest::content`).
     pub digest: Digest,
@@ -172,6 +181,7 @@ impl Artifact {
             created_at: now,
             updated_at: now,
             deleted: None,
+            revision: Default::default(),
         }
     }
 
@@ -244,6 +254,14 @@ impl Stored for Artifact {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 
     /// An artifact is a user's and lies in a project's scope (issue 467), and has its versions
@@ -350,6 +368,7 @@ mod tests {
     fn version(content: &[u8], session_id: SessionId) -> ArtifactVersion {
         ArtifactVersion {
             number: 0,
+            content: ContentId::new(),
             size: content.len() as u64,
             digest: digest::content(content),
             media_type: None,

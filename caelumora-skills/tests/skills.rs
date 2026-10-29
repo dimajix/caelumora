@@ -29,7 +29,8 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError};
+use caelumora_model::store::testing::ContendedStore;
+use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError, Stored};
 use caelumora_model::tool::{ToolCall, ToolVisibility};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::value::name::ScopedName;
@@ -37,7 +38,7 @@ use caelumora_model::value::text::Description;
 use caelumora_runtime::actor::user::ChannelWatch;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::testing::{asked_for, shown, World, STAFF};
+use caelumora_runtime::testing::{asked_for, shown, TestRuntime, World, STAFF};
 use caelumora_runtime::view::Viewer;
 use caelumora_skills::component::{
     SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME,
@@ -49,6 +50,7 @@ use caelumora_skills::skill::{self, Skill, SkillBody};
 use caelumora_skills::view::SkillViews;
 use serde_json::Value;
 use std::fs;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 /// The world with skills.
@@ -513,7 +515,7 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])
     })
     .await;
-    let skilled = Personality {
+    let mut skilled = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "silent"),
@@ -522,7 +524,13 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
         },
         ..world.personality("skilled", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &skilled).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut skilled)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &skilled).await;
     let internal = Classification::general(Confidentiality::Internal);
     manager(&world)
@@ -657,7 +665,7 @@ async fn with_a_writing_agent(
         register_scripted(registry, "writing", vec![call])
     })
     .await;
-    let writing = Personality {
+    let mut writing = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "writing"),
@@ -669,7 +677,13 @@ async fn with_a_writing_agent(
         },
         ..world.personality("writing", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &writing).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut writing)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &writing).await;
     let review = manager(&world)
         .create(
@@ -682,12 +696,12 @@ async fn with_a_writing_agent(
         )
         .await
         .expect("his to make");
-    let shared = Skill {
+    let mut shared = Skill {
         security_attributes: SecurityAttributes::owned_by(ActorId::User(world.bob))
             .granting(Subject::Actor(ActorId::User(world.alice)), Grant::Read),
         ..review
     };
-    store(&world).update(&World::as_user(world.bob), &shared).await.expect("shared with alice");
+    store(&world).update(&World::as_user(world.bob), &mut shared).await.expect("shared with alice");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
@@ -791,4 +805,36 @@ async fn a_skill_of_a_sessions_scope_is_deleted_and_restored_with_it() {
     assert!(matches!(refused, Err(SkillError::NotFound(_))), "{refused:?}");
     world.manager.restore(&alice, id).await.expect("hers to restore");
     assert!(store(&world).get(&World::system(), made.id).await.is_ok(), "restored with it");
+}
+
+/// Issue 492: a skill is changed once more, as it is now, when it was written meanwhile.
+#[tokio::test]
+async fn a_skill_is_changed_once_more_when_it_was_written_meanwhile() {
+    let (store, refusals) = ContendedStore::stores(Skill::KIND);
+    let runtime =
+        TestRuntime { store: store.clone(), plugins: vec![&SkillsPlugin], ..Default::default() }
+            .build();
+    let manager = runtime.services().get::<SkillManager>().expect("a service of the plugin");
+    let system = SecurityContext::system();
+    let skill = manager
+        .create(
+            &system,
+            "notes",
+            Scope::GlobalScope,
+            "How to",
+            "1. Write.",
+            Classification::default(),
+        )
+        .await
+        .unwrap();
+
+    refusals.store(1, Ordering::SeqCst);
+    let renamed =
+        manager.rename(&system, skill.id, "release-notes").await.expect("changed once more");
+    assert_eq!(renamed.name.name, "release-notes");
+    assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
+    assert_eq!(
+        store.entity_store::<Skill>().unwrap().get(&system, skill.id).await.unwrap().name.name,
+        "release-notes"
+    );
 }

@@ -34,13 +34,14 @@ use crate::security::{
     SecurityContext, Subject, Verb,
 };
 use crate::session::{Session, SessionId};
+use crate::store::documents;
 use crate::store::history::HistoryStore;
 use crate::store::memberships::StoreMemberships;
 use crate::store::query::{Field, Filter, Page, Query};
 use crate::store::transcript::TranscriptStore;
 use crate::store::{
-    EntityKind, EntityStore, EntityStores, Journaled, NoEntity, Presence, StateStore, StoreError,
-    Stored,
+    EntityKind, EntityStore, EntityStores, Journaled, NoEntity, PersistenceBackend, Presence,
+    Revision, StateStore, StoreError, StoreResult, Stored,
 };
 use crate::template::testing::{make_channel_template, make_template};
 use crate::template::{ChannelTemplate, SessionTemplate, SessionTemplateId};
@@ -81,7 +82,7 @@ macro_rules! lifecycle {
         assert!(matches!(conflict, Err(StoreError::Conflict(_))), concat!($entity, ": creating twice is a conflict - its id before its name -, got {:?}"), conflict);
 
         value.$($field).+ = $new;
-        store.$update(&ctx, &value).await.expect(concat!($entity, ": update"));
+        store.$update(&ctx, &mut value).await.expect(concat!($entity, ": update"));
         let found = store.$get(&ctx, ($key)(&value)).await.expect(concat!($entity, ": get"));
         assert_eq!(found.$($field).+, value.$($field).+, concat!($entity, ": get sees the update"));
 
@@ -94,7 +95,7 @@ macro_rules! lifecycle {
 
         let gone = store.$get(&ctx, ($key)(&value)).await;
         assert!(matches!(gone, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": get after delete is NotFound, got {:?}"), gone);
-        let gone = store.$update(&ctx, &value).await;
+        let gone = store.$update(&ctx, &mut value).await;
         assert!(matches!(gone, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": update after delete is NotFound, got {:?}"), gone);
         assert!(store.$list(&ctx, &Query::all()).await.map(|page| page.items).expect(concat!($entity, ": list")).is_empty(), concat!($entity, ": list is empty after delete"));
         let taken = store.$create(&ctx, &value).await;
@@ -119,6 +120,7 @@ fn personality() -> Personality {
         description: None,
         components: Default::default(),
         deleted: None,
+        revision: Default::default(),
     }
 }
 
@@ -151,6 +153,7 @@ fn session() -> Session {
         updated_at: Utc::now(),
         security_attributes: SecurityAttributes::systems(),
         deleted: None,
+        revision: Default::default(),
     }
 }
 
@@ -165,6 +168,7 @@ fn user(username: &str) -> User {
         email: String::new(),
         roles: vec![RoleId::new()],
         deleted: None,
+        revision: Default::default(),
     }
 }
 
@@ -225,6 +229,8 @@ pub struct Folder {
     security_attributes: SecurityAttributes,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     deleted: Option<Removal>,
+    #[serde(default)]
+    revision: Revision,
 }
 
 /// A part of a `Folder`.
@@ -277,6 +283,7 @@ impl Folder {
             documents: vec![document],
             security_attributes: SecurityAttributes::owned_by(ActorId::User(owner)),
             deleted: None,
+            revision: Default::default(),
         }
     }
 }
@@ -303,6 +310,14 @@ impl Stored for Folder {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 }
 
@@ -705,7 +720,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     );
     let template = session_template();
     stores.session_templates.create(&ctx, &template).await.expect("a global one is");
-    let moved = SessionTemplate {
+    let mut moved = SessionTemplate {
         name: ScopedName::new(
             "nested",
             Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() },
@@ -713,7 +728,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         .unwrap(),
         ..template
     };
-    let refused = stores.session_templates.update(&ctx, &moved).await;
+    let refused = stores.session_templates.update(&ctx, &mut moved).await;
     assert!(
         matches!(refused, Err(StoreError::Validation(_))),
         "nor moved into a channel's, got {refused:?}"
@@ -863,16 +878,18 @@ macro_rules! unique_by_name {
         assert!(taken(store.$create(&ctx, &second).await), concat!($entity, ": a name taken in its name space, compared as names are"));
         $(store.$create(&ctx, &($elsewhere)("helper")).await.expect(concat!($entity, ": the name is free in another name space"));)?
 
-        let other = ($make)("Other");
+        let mut other = ($make)("Other");
         store.$create(&ctx, &other).await.expect(concat!($entity, ": create"));
-        assert!(taken(store.$update(&ctx, &($rename)(other.clone(), "HELPER")).await), concat!($entity, ": nor renamed to it"));
-        store.$update(&ctx, &($rename)(other.clone(), "other")).await.expect(concat!($entity, ": renamed to what is still its own name"));
-        store.$update(&ctx, &($rename)(other.clone(), "Another")).await.expect(concat!($entity, ": renamed to a free one"));
+        assert!(taken(store.$update(&ctx, &mut ($rename)(other.clone(), "HELPER")).await), concat!($entity, ": nor renamed to it"));
+        other = ($rename)(other, "other");
+        store.$update(&ctx, &mut other).await.expect(concat!($entity, ": renamed to what is still its own name"));
+        other = ($rename)(other, "Another");
+        store.$update(&ctx, &mut other).await.expect(concat!($entity, ": renamed to a free one"));
 
         store.$delete(&ctx, first.id, &Removal::now(ctx.caller_id)).await.expect(concat!($entity, ": delete"));
         store.$create(&ctx, &second).await.expect(concat!($entity, ": what is deleted holds no name"));
         assert!(taken(store.$restore(&ctx, first.id).await.map(drop)), concat!($entity, ": and is not restored under one taken meanwhile"));
-        store.$update(&ctx, &($rename)(second.clone(), "Helper 2")).await.expect(concat!($entity, ": rename"));
+        store.$update(&ctx, &mut ($rename)(second, "Helper 2")).await.expect(concat!($entity, ": rename"));
         store.$restore(&ctx, first.id).await.expect(concat!($entity, ": once it is free again, it is"));
     }};
 }
@@ -938,7 +955,7 @@ pub async fn names_are_unique(stores: &EntityStores) {
         .await
         .expect("create");
     let moved =
-        stores.agents.update(&ctx, &Agent { name: in_scope("Moving", &global), ..mine }).await;
+        stores.agents.update(&ctx, &mut Agent { name: in_scope("Moving", &global), ..mine }).await;
     assert!(
         matches!(moved, Err(StoreError::NameTaken { entity: "agent" })),
         "nor moved where its name is taken: {moved:?}"
@@ -1892,6 +1909,106 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     );
 }
 
+/// Every write is judged on the revision it was read at (issue 492), in every storage: a write
+/// made on an outdated one is refused and leaves what was written since; what deletes, restores
+/// and purges reads what it writes and goes through, each a write that counts the revision up.
+pub async fn writes_are_judged_on_their_revision(stores: &EntityStores) {
+    let system = SecurityContext::system();
+    let mut first = session();
+    assert_eq!(first.revision(), Revision::default(), "a new one carries the first revision");
+    stores.sessions.create(&system, &first).await.expect("create");
+    let mut second = first.clone();
+
+    first.name = Name::new("first").unwrap();
+    stores.sessions.update(&system, &mut first).await.expect("the first write");
+    assert_eq!(first.revision(), Revision::default().next(), "counted up by the write");
+    let stored = stores.sessions.get(&system, first.id).await.expect("get");
+    assert_eq!(stored.revision(), first.revision(), "as it is stored");
+
+    second.name = Name::new("second").unwrap();
+    let refused = stores.sessions.update(&system, &mut second).await;
+    assert!(
+        matches!(refused, Err(StoreError::Outdated { entity: "session", .. })),
+        "a write on what was read before the first: {refused:?}"
+    );
+    assert_eq!(second.revision(), Revision::default(), "left as it was");
+    let stored = stores.sessions.get(&system, first.id).await.expect("get");
+    assert_eq!(stored.name, first.name, "the first stands");
+
+    let mark = Removal::now(system.caller_id);
+    assert!(stores.sessions.delete(&system, first.id, &mark).await.expect("delete"));
+    let deleted = stores.sessions.get_deleted(&system, first.id).await.expect("deleted").entity;
+    assert_eq!(deleted.revision(), first.revision().next(), "a deletion is a write");
+    let restored = stores.sessions.restore(&system, first.id).await.expect("restore");
+    assert_eq!(restored.revision(), deleted.revision().next(), "so is a restoring");
+    assert!(stores.sessions.delete(&system, first.id, &mark).await.expect("delete again"));
+    assert!(stores.sessions.purge(&system, first.id).await.expect("purge"), "purged");
+    assert!(!stores.sessions.purge(&system, first.id).await.expect("purge again"), "gone");
+    let gone = stores.sessions.update(&system, &mut first).await;
+    assert!(
+        matches!(gone, Err(StoreError::NotFound { .. })),
+        "a write of what is gone is not found, whatever its revision: {gone:?}"
+    );
+}
+
+/// A storage judges a write in place of a document on the revision it was read at (issue 492), in
+/// the step that writes: `replace` and `remove` at another revision are refused, `replace` of what
+/// is gone as well, and `remove` of what is gone removes nothing. The storage of `backend` for a
+/// kind of its own.
+pub async fn storage_judges_writes_on_their_revision(backend: &dyn PersistenceBackend) {
+    let storage =
+        backend.documents(Session::KIND, documents::Document::read::<Session>).expect("opened");
+    let outdated = |result: StoreResult<()>| matches!(result, Err(StoreError::Outdated { .. }));
+    let first = session();
+    let read = first.revision();
+    storage.insert(documents::Document::of(&first).unwrap()).await.expect("insert");
+    let mut changed = first.clone();
+    changed.name = Name::new("changed").unwrap();
+    changed.set_revision(read.next());
+    let next = documents::Document::of(&changed).unwrap();
+
+    assert!(outdated(storage.replace(next.clone(), read.next()).await), "not at the revision read");
+    storage.replace(next.clone(), read).await.expect("at the revision read");
+    assert!(outdated(storage.replace(next.clone(), read).await), "nor again at the one before");
+    assert!(outdated(storage.remove(next.id, read).await.map(drop)), "not removed at it either");
+    assert!(storage.remove(next.id, read.next()).await.expect("remove"), "removed at its own");
+    assert!(!storage.remove(next.id, read.next()).await.expect("remove again"), "gone");
+    assert!(outdated(storage.replace(next, read.next()).await), "what is gone is not replaced");
+}
+
+/// A purge is begun before what lies behind an entity goes (issue 492): its mark says so, no
+/// restoring takes it back from then on, and it is purged as any deleted entity is. Only what
+/// was deleted is begun, once.
+pub async fn purges_are_begun(stores: &EntityStores) {
+    let system = SecurityContext::system();
+    let kept = session();
+    stores.sessions.create(&system, &kept).await.expect("create");
+    let begun = stores.sessions.begin_purge(&system, kept.id).await.expect("begin");
+    assert!(begun.is_none(), "nothing begun of what is there");
+    assert!(
+        stores.sessions.begin_purge(&system, SessionId::new()).await.expect("begin").is_none(),
+        "nor of what is not"
+    );
+
+    let mark = Removal::now(system.caller_id);
+    assert!(stores.sessions.delete(&system, kept.id, &mark).await.expect("delete"));
+    let begun =
+        stores.sessions.begin_purge(&system, kept.id).await.expect("begin").expect("deleted");
+    assert!(begun.deleted().is_some_and(|mark| mark.purging), "its mark says so");
+    let read = stores.sessions.get_deleted(&system, kept.id).await.expect("still deleted");
+    assert!(read.removal.purging, "as stored");
+    assert_eq!(read.removal.id, mark.id, "still the mark of its deletion");
+    let again = stores.sessions.begin_purge(&system, kept.id).await.expect("again").expect("there");
+    assert_eq!(again.revision(), begun.revision(), "begun once, answered as it is");
+    let restored = stores.sessions.restore(&system, kept.id).await;
+    assert!(
+        matches!(restored, Err(StoreError::NotFound { .. })),
+        "not restored once its purge is begun: {restored:?}"
+    );
+    assert!(stores.sessions.purge(&system, kept.id).await.expect("purge"), "purged");
+    assert!(stores.sessions.get_deleted(&system, kept.id).await.is_err(), "gone");
+}
+
 /// `value` marked deleted, as only deleting may.
 fn marked<T: Stored>(mut value: T) -> T {
     value.set_deleted(Some(Removal::now(ActorId::System)));
@@ -1923,7 +2040,7 @@ pub async fn deleting_marks(stores: &EntityStores) {
     let listed =
         stores.sessions.list(&system, &Query::all()).await.map(|page| page.items).expect("list");
     assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), [kept.id], "not listed");
-    let changed = stores.sessions.update(&system, &gone).await;
+    let changed = stores.sessions.update(&system, &mut gone.clone()).await;
     assert!(matches!(changed, Err(StoreError::NotFound { .. })), "not changed: {changed:?}");
     assert!(
         !stores
@@ -1941,7 +2058,7 @@ pub async fn deleting_marks(stores: &EntityStores) {
         matches!(created, Err(StoreError::Validation(_))),
         "nothing is created marked: {created:?}"
     );
-    let changed = stores.sessions.update(&system, &marked(kept.clone())).await;
+    let changed = stores.sessions.update(&system, &mut marked(kept.clone())).await;
     assert!(matches!(changed, Err(StoreError::Validation(_))), "nor changed to be: {changed:?}");
 
     // What was deleted.

@@ -2,8 +2,8 @@
 //! content kept first, then the document, then announced -, deletes, restores and purges them -
 //! also with the project that holds their scope (`scoped`, as their `ScopeMember`) -, and is the
 //! only code that keeps content in the key space `artifacts` of the storages of content (issue
-//! 282): a version under `artifacts/<artifact>/<number>`, an artifact's versions under
-//! `artifacts/<artifact>`.
+//! 282): a version under `artifacts/<artifact>/<content>` - a key of its publication's own,
+//! which the version names (issue 492) -, an artifact's versions under `artifacts/<artifact>`.
 //!
 //! An artifact is published into the scope of the project its session's results go to (issue 467),
 //! made with the first version of its name there and gone with the project: with the session where
@@ -19,6 +19,7 @@ use caelumora_model::confidentiality::{
     Classification, ConfidentialityPolicy, ConfidentialityQuestions,
 };
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
+use caelumora_model::content::ContentId;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::removal::Removal;
@@ -28,7 +29,7 @@ use caelumora_model::security::{
     WRITE,
 };
 use caelumora_model::store::{
-    Address, Deleted, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
+    Address, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -46,7 +47,6 @@ use serde::Deserialize;
 use std::fmt;
 use std::slice;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -107,14 +107,14 @@ impl Default for ArtifactsConfig {
     }
 }
 
-/// The key the content of version `number` of artifact `id` lies under.
-fn version_key(id: ArtifactId, number: u32) -> String {
-    format!("{}/{number}", versions_key(id))
+/// The key the content `content` of artifact `artifact` lies under.
+fn content_key(artifact: ArtifactId, content: ContentId) -> String {
+    format!("{}/{content}", versions_key(artifact))
 }
 
-/// The key every version of artifact `id` lies under.
-fn versions_key(id: ArtifactId) -> String {
-    format!("artifacts/{id}")
+/// The key every version of artifact `artifact` lies under.
+fn versions_key(artifact: ArtifactId) -> String {
+    format!("artifacts/{artifact}")
 }
 
 /// `NotFound` for artifact `id` where the store found nothing.
@@ -138,9 +138,6 @@ pub struct ArtifactManager {
     /// The storage new artifacts are made in, with its name.
     keep_in: Option<(String, Arc<dyn ContentStorage>)>,
     max_bytes: u64,
-    /// Held while a document and its content are changed together, so that
-    /// two versions of one artifact are not numbered alike.
-    writing: Mutex<()>,
 }
 
 impl fmt::Debug for ArtifactManager {
@@ -181,7 +178,6 @@ impl ArtifactManager {
             storages,
             keep_in,
             max_bytes: config.max_bytes,
-            writing: Mutex::new(()),
         })
     }
 
@@ -239,12 +235,11 @@ impl ArtifactManager {
         };
         let description = Description::optional(description)?;
         self.holders.require(ctx, &name.scope).await?;
-        let _writing = self.writing.lock().await;
         // Found whoever's it is, so that one not the caller's to add to is
         // refused as such rather than taken for a name to make anew.
         let existing =
             self.artifacts.find_by_name(&SecurityContext::system(), name).await.optional()?;
-        let (id, number, (storage_name, storage)) = match &existing {
+        let (id, (storage_name, storage)) = match &existing {
             Some(artifact) => {
                 self.access_policy
                     .require(
@@ -256,11 +251,7 @@ impl ArtifactManager {
                 if artifact.classification != *classification {
                     return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
                 }
-                (
-                    artifact.id,
-                    artifact.latest().map_or(1, |latest| latest.number + 1),
-                    (&artifact.storage, self.storages.kept_in(&artifact.storage)?),
-                )
+                (artifact.id, (&artifact.storage, self.storages.kept_in(&artifact.storage)?))
             }
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
@@ -272,7 +263,7 @@ impl ArtifactManager {
                     )
                     .await?;
                 let (name, storage) = self.keep_in.as_ref().ok_or(ArtifactError::NotConfigured)?;
-                (ArtifactId::new(), 1, (name, storage))
+                (ArtifactId::new(), (name, storage))
             }
         };
         self.confidentiality.require_storable(
@@ -282,9 +273,12 @@ impl ArtifactManager {
             || ArtifactError::StorageNotCleared(storage_name.clone()),
         )?;
 
+        // Under a key of this publication's own, so that another publication of the artifact
+        // meanwhile keeps its content beside it, whichever number each is given (issue 492).
+        let content_id = ContentId::new();
         let digest = keep_digested(
             storage.as_ref(),
-            &version_key(id, number),
+            &content_key(id, content_id),
             size,
             content,
             self.max_bytes,
@@ -299,8 +293,10 @@ impl ArtifactManager {
         // so.
         let participants = Subject::Group(GroupId::of_channel(channel));
         let members = Subject::Group(GroupId::of_project(project_id));
+        // Numbered as the document is written (`Artifact::new`, `Artifact::add_version`).
         let mut version = ArtifactVersion {
-            number,
+            number: 0,
+            content: content_id,
             size,
             digest,
             media_type: None,
@@ -312,15 +308,9 @@ impl ArtifactManager {
             acl: Vec::new(),
         };
         version.grant_reading(participants);
+        let made = existing.is_none();
         let stored = match existing {
-            Some(mut artifact) => {
-                artifact.add_version(version);
-                artifact.grant_reading(participants);
-                // Changed in the runtime's name: whoever may add a version
-                // need not own the artifact (`WriteArtifact`, asked above),
-                // and lets the channel they publish it in read it.
-                self.update(&SecurityContext::system(), &mut artifact).await.map(|()| artifact)
-            }
+            Some(artifact) => self.add_version(artifact, version, participants).await,
             None => {
                 let mut artifact = Artifact::new(
                     id,
@@ -332,23 +322,24 @@ impl ArtifactManager {
                 );
                 artifact.grant_reading(participants);
                 artifact.grant_reading(members);
-                self.artifacts.create(ctx, &artifact).await.map(|()| artifact)
+                self.artifacts.create(ctx, &artifact).await.map(|()| (artifact, 1))
             }
         };
-        let artifact = match stored {
-            Ok(artifact) => artifact,
+        let (artifact, number) = match stored {
+            Ok(written) => written,
             Err(e) => {
-                self.forget(storage, id, number, number == 1).await;
+                self.forget(storage, id, content_id, made).await;
                 return Err(e.into());
             }
         };
         // A new artifact is kept only if the project is still there (issue 458); one that was
-        // there before went with the project if it was deleted meanwhile, under `writing`.
-        if number == 1 {
+        // there before goes with the project if it was written first, and was not found by the
+        // write otherwise - marked deleted, changed since it was read (issue 492).
+        if made {
             self.holders.keep_made(self, &artifact).await?;
         }
         // Heard by whoever reads the artifact and the version.
-        let event = if number == 1 {
+        let event = if made {
             GlobalEvent::created::<Artifact>(&id)
         } else {
             GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::VersionPublished(number))
@@ -365,35 +356,61 @@ impl ArtifactManager {
         Ok((artifact, number))
     }
 
+    /// Adds `version` to `artifact`, read by `participants`, in the runtime's name: whoever may
+    /// add a version need not own the artifact (`WriteArtifact`, asked before), and lets the
+    /// channel they publish it in read it. Written meanwhile elsewhere, the artifact is read
+    /// again and the version added once more, numbered after what was published meanwhile
+    /// (issue 492). Answers the artifact as written, and the version's number.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    async fn add_version(
+        &self,
+        mut artifact: Artifact,
+        version: ArtifactVersion,
+        participants: Subject,
+    ) -> StoreResult<(Artifact, u32)> {
+        let system = SecurityContext::system();
+        loop {
+            let number = artifact.add_version(version.clone());
+            artifact.grant_reading(participants);
+            if self.update(&system, &mut artifact).await.written()?.is_some() {
+                return Ok((artifact, number));
+            }
+            artifact = self.artifacts.get(&system, artifact.id).await?;
+        }
+    }
+
     /// Stores the changed `artifact` on behalf of `ctx`, which is where the
     /// permission is asked - its access list and its versions' without the
     /// entries naming a group that is gone (issue 347).
     ///
     /// # Errors
-    /// Whatever the store reports.
+    /// Whatever the store reports, `StoreError::Outdated` among it: the
+    /// caller reads the artifact again and changes it once more.
     async fn update(&self, ctx: &SecurityContext, artifact: &mut Artifact) -> StoreResult<()> {
         prune_gone_groups(self.groups.as_ref(), artifact.access_lists_mut()).await;
         self.artifacts.update(ctx, artifact).await
     }
 
-    /// Removes what was kept of version `number` of artifact `id` for a
+    /// Removes what was kept as `content` of artifact `artifact` for a
     /// publication that failed after - all of it for an artifact that was
     /// to be made by it. Logged where it fails: the failure that led here
     /// is what the caller is told.
     async fn forget(
         &self,
         storage: &Arc<dyn ContentStorage>,
-        id: ArtifactId,
-        number: u32,
+        artifact: ArtifactId,
+        content: ContentId,
         made: bool,
     ) {
         let removed = if made {
-            storage.remove_under(&versions_key(id)).await
+            storage.remove_under(&versions_key(artifact)).await
         } else {
-            storage.delete(&version_key(id, number)).await
+            storage.delete(&content_key(artifact, content)).await
         };
         if let Err(e) = removed {
-            warn!(artifact = %id, version = number, "What was kept of a publication that failed stays: {e}");
+            warn!(%artifact, %content, "What was kept of a publication that failed stays: {e}");
         }
     }
 
@@ -408,12 +425,12 @@ impl ArtifactManager {
         artifact: &Artifact,
         number: u32,
     ) -> ArtifactResult<(u64, ByteStream)> {
-        if artifact.version(number).is_none() {
+        let Some(version) = artifact.version(number) else {
             return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
-        }
+        };
         self.storages
             .kept_in(&artifact.storage)?
-            .get(&version_key(artifact.id, number))
+            .get(&content_key(artifact.id, version.content))
             .await
             .map_err(|e| match e {
                 ContentError::NotFound(_) => {
@@ -445,27 +462,34 @@ impl ArtifactManager {
         acl: Vec<AclEntry>,
         versions: bool,
     ) -> ArtifactResult<Artifact> {
-        let _writing = self.writing.lock().await;
-        let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
-        require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl)
-            .await?;
-        if versions {
-            let named: Vec<Subject> = acl
-                .iter()
-                .map(|entry| entry.subject)
-                .filter(|subject| {
-                    !artifact.security_attributes.acl.iter().any(|entry| entry.subject == *subject)
-                })
-                .collect();
-            for version in &mut artifact.versions {
-                for subject in &named {
-                    version.grant_reading(*subject);
+        let artifact = loop {
+            let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
+            require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl)
+                .await?;
+            if versions {
+                let named: Vec<Subject> = acl
+                    .iter()
+                    .map(|entry| entry.subject)
+                    .filter(|subject| {
+                        !artifact
+                            .security_attributes
+                            .acl
+                            .iter()
+                            .any(|entry| entry.subject == *subject)
+                    })
+                    .collect();
+                for version in &mut artifact.versions {
+                    for subject in &named {
+                        version.grant_reading(*subject);
+                    }
                 }
             }
-        }
-        artifact.security_attributes.acl = acl;
-        artifact.updated_at = Utc::now();
-        self.update(ctx, &mut artifact).await?;
+            artifact.security_attributes.acl = acl.clone();
+            artifact.updated_at = Utc::now();
+            if self.update(ctx, &mut artifact).await.written()?.is_some() {
+                break artifact;
+            }
+        };
         self.events.announce(
             GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged),
             &artifact,
@@ -486,11 +510,15 @@ impl ArtifactManager {
         id: ArtifactId,
         description: Option<&str>,
     ) -> ArtifactResult<Artifact> {
-        let _writing = self.writing.lock().await;
-        let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
-        artifact.description = Description::optional(description)?;
-        artifact.updated_at = Utc::now();
-        self.update(ctx, &mut artifact).await?;
+        let description = Description::optional(description)?;
+        let artifact = loop {
+            let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
+            artifact.description = description.clone();
+            artifact.updated_at = Utc::now();
+            if self.update(ctx, &mut artifact).await.written()?.is_some() {
+                break artifact;
+            }
+        };
         self.events.announce(
             GlobalEvent::updated::<Artifact>(
                 &id,
@@ -509,7 +537,6 @@ impl ArtifactManager {
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
-        let _writing = self.writing.lock().await;
         let Some(artifact) = self.artifacts.get(ctx, id).await.optional()? else {
             return Ok(false);
         };
@@ -526,38 +553,29 @@ impl ArtifactManager {
     /// as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to restore, or if
-    /// its project is gone, or whatever else the store reports - `NameTaken`
-    /// among it.
+    /// `NotFound` if it is not deleted, not the caller's to restore or its
+    /// purge is begun (issue 492), or if its project is gone, or whatever
+    /// else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
-        let _writing = self.writing.lock().await;
         let artifact = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Artifact>(&id), &artifact);
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(artifact)
     }
 
-    /// Removes the deleted artifact `id` for good, its content first
-    /// (`Purge`, asked before anything is removed). Content that cannot be
-    /// removed leaves the document, so that the next purge tries again.
+    /// Removes the deleted artifact `id` for good, its content first: its
+    /// purge begun (`Purge`, asked before anything is removed), so that no
+    /// restoring takes it back while its content goes (issue 492), then its
+    /// content, then the document. Content that cannot be removed leaves the
+    /// document, its purge begun, so that the next purge tries again.
     /// `false` if there was nothing deleted the caller could see.
     ///
     /// # Errors
     /// `PermissionDenied`, `StorageGone`, `Content`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
-        let _writing = self.writing.lock().await;
-        let Some(Deleted { entity: artifact, .. }) =
-            self.artifacts.get_deleted(ctx, id).await.optional()?
-        else {
+        let Some(artifact) = self.artifacts.begin_purge(ctx, id).await? else {
             return Ok(false);
         };
-        self.access_policy
-            .require(
-                ctx,
-                ActionType::purge(Artifact::KIND, &artifact.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
         self.remove_content(&artifact).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
@@ -575,8 +593,7 @@ impl ArtifactManager {
 }
 
 /// Artifacts go with what holds the scope they lie in, their content kept while they are deleted,
-/// announced as `delete` and `restore` announce them, under the lock of writing, and purged with
-/// their content (`scoped`).
+/// announced as `delete` and `restore` announce them, and purged with their content (`scoped`).
 #[async_trait]
 impl ScopeMember for ArtifactManager {
     type Entity = Artifact;
@@ -587,10 +604,6 @@ impl ScopeMember for ArtifactManager {
 
     fn events(&self) -> Option<&dyn EventPublisher> {
         Some(self.events.as_ref())
-    }
-
-    fn writing(&self) -> Option<&Mutex<()>> {
-        Some(&self.writing)
     }
 
     /// Removes the content of `artifact`, as `purge` does; it is its storage too.

@@ -225,15 +225,9 @@ mod tests {
         assert_eq!(changes.text(String::new()).unwrap(), "");
     }
 
-    #[tokio::test]
-    async fn the_descriptions_are_read_at_every_turn_and_classified_as_their_place() {
-        let store = Persistence::in_memory();
-        let runtime =
-            TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }
-                .build();
-        let system = SecurityContext::system();
-
-        let personality = Personality {
+    /// A personality of the system's, without a description.
+    fn plain() -> Personality {
+        Personality {
             description: None,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
@@ -245,7 +239,19 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
-        };
+            revision: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_descriptions_are_read_at_every_turn_and_classified_as_their_place() {
+        let store = Persistence::in_memory();
+        let runtime =
+            TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }
+                .build();
+        let system = SecurityContext::system();
+
+        let personality = plain();
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(
             ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),

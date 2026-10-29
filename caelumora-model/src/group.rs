@@ -29,7 +29,7 @@ use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, Session, SessionId};
 use crate::store::query::{Field, FieldValue, Filter};
-use crate::store::{EntityKind, NoEntity, Stored};
+use crate::store::{EntityKind, NoEntity, Revision, Stored};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use chrono::{DateTime, Utc};
@@ -143,6 +143,9 @@ pub struct Group {
     /// Set when it was deleted (issue 164).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 impl Group {
@@ -215,6 +218,7 @@ impl Group {
             created_at: now,
             updated_at: now,
             deleted: None,
+            revision: Default::default(),
         }
     }
 
@@ -260,6 +264,14 @@ impl Stored for Group {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 
     /// The participants of a session or channel lie in its scope, with its

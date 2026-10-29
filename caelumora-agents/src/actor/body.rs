@@ -435,6 +435,7 @@ mod testing {
                 reasoning_visibility: Default::default(),
                 hears_during_turn: Default::default(),
                 deleted: None,
+                revision: Default::default(),
             };
             let agent = Agent::new(
                 ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")),

@@ -5,7 +5,9 @@ use arc_swap::{ArcSwap, Guard};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::security::{SecurityContext, Subject};
-use caelumora_model::store::{Address, EntityStore, StoreResult, Stored, Updatable};
+use caelumora_model::store::{
+    Address, EntityStore, StoreResult, StoreResultExt, Stored, Updatable,
+};
 use chrono::Utc;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
@@ -15,9 +17,11 @@ use tracing::{info, warn};
 /// The document a controller is the one writer of in this instance, as it
 /// stands (issue 358): every change of it is stored first - which is where
 /// the permission is checked (issue 11) -, then taken over live and
-/// announced, under a lock, so that no change overwrites another. What a
-/// controller does besides - a group that follows the participants, an
-/// event of its own - it does between the steps of a `Writing`.
+/// announced. The revision keeps a change from overwriting another (issue
+/// 492); the lock held meanwhile keeps the live copy and the announcements
+/// in the order the changes were stored. What a controller does besides - a
+/// group that follows the participants, an event of its own - it does
+/// between the steps of a `Writing`.
 pub(super) struct LiveDocument<T: Updatable> {
     address: Address<T>,
     current: ArcSwap<T>,
@@ -77,7 +81,7 @@ where
         ctx: &SecurityContext,
         update: &T::Update,
     ) -> StoreResult<Arc<T>> {
-        let writing = self.write().await;
+        let mut writing = self.write().await;
         let document = writing.apply(ctx, update).await?;
         writing.announce_update(update, &document);
         Ok(document)
@@ -110,8 +114,13 @@ where
     /// Begins a change, under the lock until the `Writing` is dropped.
     pub(super) async fn write(&self) -> Writing<'_, T> {
         let lock = self.write_lock.lock().await;
-        let had = self.current.load().classification().cloned();
-        Writing { document: self, had, _lock: lock }
+        Writing { document: self, had: self.classification(), _lock: lock }
+    }
+
+    /// How the document is classified as it stands; `None` for a kind that
+    /// is not.
+    fn classification(&self) -> Option<Classification> {
+        self.current.load().classification().cloned()
     }
 
     /// Announces `event` about the document as it stands, without a change
@@ -163,8 +172,8 @@ pub(super) fn log_changed<T: Stored>(ctx: &SecurityContext, document: &T) {
 }
 
 /// A change of a `LiveDocument` under way, holding its lock: the document
-/// to change (`current`, or `reached` as stored), stored and taken over
-/// (`store`, `apply`), then announced (`announce`, `announce_update`).
+/// to change (`current`, or `reached` as stored), changed, stored and taken
+/// over (`change`, `apply`), then announced (`announce`, `announce_update`).
 pub(super) struct Writing<'a, T: Updatable> {
     document: &'a LiveDocument<T>,
     /// How the document was classified as the change began: announced to
@@ -184,51 +193,67 @@ where
     }
 
     /// The document as `ctx` reaches it in the store now
-    /// (`LiveDocument::reached`), to change in place of the live copy: for
-    /// a change that only who reaches it may begin. Announced to who
-    /// reached it as stored.
+    /// (`LiveDocument::reached`), taken over live, so that the change begins
+    /// from it: for a change that only who reaches it may begin. Announced
+    /// to who reached it as stored.
     ///
     /// # Errors
     /// As `LiveDocument::reached`.
     pub(super) async fn reached(&mut self, ctx: &SecurityContext) -> StoreResult<T> {
         let document = self.document.reached(ctx).await?;
+        self.document.current.store(Arc::new(document.clone()));
         self.had = document.classification().cloned();
         Ok(document)
     }
 
-    /// The document with `update` applied (`Updatable::apply`), stored and
-    /// taken over as `store` does.
+    /// Changes the document as `change` says, on behalf of `ctx`: applied
+    /// to a copy of the document as it stands, stored as changed now
+    /// (`Updatable::touch`) - which is where the permission is checked -
+    /// and taken over live; not yet announced. Changed elsewhere meanwhile
+    /// (`StoreError::Outdated`, issue 492), the document is read again as
+    /// stored - which the change then begins from, as `reached` begins it -
+    /// and `change` applied once more, to that alone. Answers what `change`
+    /// answered, and the document as it now stands.
+    ///
+    /// # Errors
+    /// What `change` reports, or whatever the store reports,
+    /// `StoreError::PermissionDenied` included; the document is then
+    /// unchanged.
+    pub(super) async fn change<R>(
+        &mut self,
+        ctx: &SecurityContext,
+        mut change: impl FnMut(&mut T) -> StoreResult<R>,
+    ) -> StoreResult<(R, Arc<T>)> {
+        loop {
+            let mut document = self.current();
+            let answer = change(&mut document)?;
+            document.touch(Utc::now());
+            if self.document.store.update(ctx, &mut document).await.written()?.is_none() {
+                self.document.reload().await?;
+                self.had = self.document.classification();
+                continue;
+            }
+            log_changed(ctx, &document);
+            let document = Arc::new(document);
+            self.document.current.store(Arc::clone(&document));
+            return Ok((answer, document));
+        }
+    }
+
+    /// The document with `update` applied (`Updatable::apply`), as `change`
+    /// changes it.
     ///
     /// # Errors
     /// `StoreError::Invalid` if what `update` says does not fit, otherwise
-    /// as `store`.
+    /// as `change`.
     pub(super) async fn apply(
-        &self,
+        &mut self,
         ctx: &SecurityContext,
         update: &T::Update,
     ) -> StoreResult<Arc<T>> {
-        let mut document = self.current();
-        document.apply(update)?;
-        self.store(ctx, document).await
-    }
-
-    /// Stores `document` as changed now by `ctx` (`Updatable::touch`) and
-    /// takes it over live; not yet announced.
-    ///
-    /// # Errors
-    /// Whatever the store reports, `StoreError::PermissionDenied` included;
-    /// the document is then unchanged.
-    pub(super) async fn store(
-        &self,
-        ctx: &SecurityContext,
-        mut document: T,
-    ) -> StoreResult<Arc<T>> {
-        document.touch(Utc::now());
-        self.document.store.update(ctx, &document).await?;
-        log_changed(ctx, &document);
-        let document = Arc::new(document);
-        self.document.current.store(Arc::clone(&document));
-        Ok(document)
+        self.change(ctx, |document| Ok(document.apply(update)?))
+            .await
+            .map(|((), document)| document)
     }
 
     /// Announces `event` about `document`, as it was stored: to whoever may

@@ -1,6 +1,6 @@
 # 450 — A store overwrites a change made meanwhile, and checks a change against what may be outdated
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Persistence
@@ -59,3 +59,10 @@ in -; this is the store's part of that, which the rest builds on.
 
 - **2026-10-22** — Opened from the discussion of [03](03-postgres-entity-store.md) with the
   maintainer: not solved in 03, which brings the first store shared by several processes.
+- **2026-10-29** — Taken up with issue [492](492-a-document-is-written-under-two-locks.md), whose
+  first option is the first consideration here: every entity carries a `Revision`, every storage
+  refuses a write made on another than the one read (`StoreError::Outdated`), and the policy is
+  so asked about exactly what is replaced. What a caller does on the refusal is 492's second
+  step.
+- **2026-10-29** — Done with the second step of 492: every writer makes its change again on what
+  was written meanwhile, a controller through `Writing::change`, a manager by reading again.

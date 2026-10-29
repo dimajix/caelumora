@@ -432,6 +432,7 @@ impl World {
             email: String::new(),
             roles: vec![*STAFF],
             deleted: None,
+            revision: Default::default(),
         };
         self.runtime.entity_stores().users.create(&Self::system(), &user).await.unwrap();
         self.access_policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
@@ -504,6 +505,7 @@ impl World {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         self.runtime
             .entity_stores()

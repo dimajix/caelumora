@@ -12,6 +12,8 @@ pub mod memory;
 pub mod query;
 #[cfg(any(test, feature = "test-support"))]
 pub mod suite;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 pub mod transcript;
 
 use async_trait::async_trait;
@@ -75,6 +77,11 @@ pub enum StoreError {
     /// Refused (issue 323): what was refused is its source.
     #[error("permission denied")]
     PermissionDenied(#[source] Refused),
+    /// Written on a revision that is no longer the stored one (issue 492): something changed
+    /// it meanwhile, or purged it. Whoever wrote reads it again and makes their change once
+    /// more.
+    #[error("the {entity} {id} was changed meanwhile")]
+    Outdated { entity: &'static str, id: String },
 }
 
 impl StoreError {
@@ -91,12 +98,16 @@ pub type StoreResult<T> = Result<T, StoreError>;
 /// backend asks.
 pub(crate) type Policies = (Arc<dyn AccessPolicy>, Arc<dyn ConfidentialityPolicy>);
 
-/// What a lookup answers when what it looks for may no longer exist
-/// (issue 192).
+/// What a lookup answers when what it looks for may no longer exist (issue 192), and what a write
+/// answers when it may have been refused as outdated (issue 492).
 pub trait StoreResultExt<T> {
     /// What was found, `None` if it is not there (`StoreError::NotFound`);
     /// any other error stays one.
     fn optional(self) -> StoreResult<Option<T>>;
+
+    /// What a write answered, `None` if it was refused as outdated (`StoreError::Outdated`):
+    /// whoever wrote reads again and makes the change once more. Any other error stays one.
+    fn written(self) -> StoreResult<Option<T>>;
 }
 
 impl<T> StoreResultExt<T> for StoreResult<T> {
@@ -104,6 +115,14 @@ impl<T> StoreResultExt<T> for StoreResult<T> {
         match self {
             Ok(found) => Ok(Some(found)),
             Err(StoreError::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn written(self) -> StoreResult<Option<T>> {
+        match self {
+            Ok(written) => Ok(Some(written)),
+            Err(StoreError::Outdated { .. }) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -188,10 +207,30 @@ impl Display for EntityKind {
     }
 }
 
+/// The revision of a stored entity (issue 492): counted up by every write of it, so that a write
+/// made on an outdated one is refused (`StoreError::Outdated`) instead of overwriting what came
+/// between - by every storage, in the step that writes, so that it holds against every writer of
+/// the storage, also of another process. A new entity carries the first.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Revision(u64);
+
+impl Revision {
+    /// The revision after this one: what a write of an entity at this one is written as.
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+
+    /// Its number: the first is 0.
+    pub fn number(self) -> u64 {
+        self.0
+    }
+}
+
 /// An entity the `EntityStore` keeps: what the stores are generic over, besides `Secured`. Every
 /// kind is marked when it is deleted, not removed (issue 164): what holds content, an identity, or
 /// a definition that is managed. A store keeps it as it is serialized, and hands out copies, so
-/// that a backend can keep any kind (issue 323).
+/// that a backend can keep any kind (issue 323). Every kind carries its revision (issue 492), by
+/// which a write of it is judged.
 pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Its kind (issue 323), by which what is done with it is asked and
     /// named.
@@ -234,6 +273,13 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
 
     /// Marks it deleted, or with `None` takes the mark away.
     fn set_deleted(&mut self, deleted: Option<Removal>);
+
+    /// Its revision (issue 492): as it was read, what a write of it is judged against; once the
+    /// store wrote it, the one it was written as.
+    fn revision(&self) -> Revision;
+
+    /// Sets its revision: the store's, as it writes it.
+    fn set_revision(&mut self, revision: Revision);
 
     /// Nothing if it may be stored as it is; why not otherwise, which the
     /// store answers as `StoreError::Validation` when it is created or
@@ -414,12 +460,22 @@ impl<T: Stored> Deleted<T> {
 /// `list_deleted` read it (`ReadDeleted`), each with its mark (`Deleted`), and `list_deleted_with`
 /// what was deleted with one deletion (issue 478); `restore` takes the mark away (`Restore`) and
 /// returns what it restored, and `purge` removes what was deleted for good (`Purge`) - only what
-/// is marked, so that a purge never takes what was restored.
+/// is marked, so that a purge never takes what was restored. Where something lies behind an
+/// entity - a workspace's place, an artifact's content -, its purge is begun first
+/// (`begin_purge`): from then on no restoring takes it back, while what lies behind it is removed
+/// before `purge` (issue 492).
+///
+/// Every write is judged on the revision that was read (issue 492): `update` writes `value` in
+/// place of the revision it carries, and `Outdated` says that it is no longer the stored one -
+/// the caller reads again and changes again. `delete`, `restore` and `purge` read what they
+/// write themselves, and do so again if it was changed meanwhile; no caller sees that.
 #[async_trait]
 pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
-    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
+    /// Changes the entity into `value`, which carries the revision it was read at; `value` then
+    /// carries the one it was written as. `Outdated` if it is no longer the stored one.
+    async fn update(&self, ctx: &SecurityContext, value: &mut T) -> StoreResult<()>;
     async fn delete(
         &self,
         ctx: &SecurityContext,
@@ -428,6 +484,11 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     ) -> StoreResult<bool>;
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
+    /// Begins the purge of the deleted entity `id`, asked as `purge` asks: its mark says so from
+    /// then on (`Removal::purging`), and `restore` refuses it, so that what lies behind it can be
+    /// removed before `purge` removes it - and again, if that failed, by a purge begun once more.
+    /// Answers the entity as marked; `None` if there is nothing deleted the caller could see.
+    async fn begin_purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Option<T>>;
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>>;
     async fn list_deleted(
@@ -848,6 +909,7 @@ mod tests {
             updated_at: Utc::now(),
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
+            revision: Default::default(),
         };
         let session2 = Session {
             summary: None,
@@ -867,6 +929,7 @@ mod tests {
             updated_at: Utc::now(),
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
+            revision: Default::default(),
         };
         let store = Persistence::in_memory().entity_stores().unwrap().sessions;
         let ctx = SecurityContext::default();
@@ -888,6 +951,8 @@ mod tests {
         id: NoteId,
         security_attributes: SecurityAttributes,
         deleted: Option<Removal>,
+        #[serde(default)]
+        revision: Revision,
     }
 
     impl Secured for Note {
@@ -912,6 +977,14 @@ mod tests {
 
         fn set_deleted(&mut self, deleted: Option<Removal>) {
             self.deleted = deleted;
+        }
+
+        fn revision(&self) -> Revision {
+            self.revision
+        }
+
+        fn set_revision(&mut self, revision: Revision) {
+            self.revision = revision;
         }
     }
 
@@ -942,6 +1015,14 @@ mod tests {
         fn set_deleted(&mut self, deleted: Option<Removal>) {
             self.0.set_deleted(deleted);
         }
+
+        fn revision(&self) -> Revision {
+            self.0.revision()
+        }
+
+        fn set_revision(&mut self, revision: Revision) {
+            self.0.set_revision(revision);
+        }
     }
 
     #[tokio::test]
@@ -958,6 +1039,7 @@ mod tests {
             id: NoteId::new(),
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
+            revision: Default::default(),
         };
         notes.create(&SecurityContext::system(), &note).await.unwrap();
         let again = backend.entity_store::<Note>().unwrap();

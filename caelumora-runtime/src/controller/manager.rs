@@ -414,6 +414,7 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         store
             .entity_stores()
@@ -444,6 +445,7 @@ mod tests {
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
+            revision: Default::default(),
         };
         store
             .entity_stores()
@@ -513,7 +515,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .agents
-            .update(&SecurityContext::system(), &renamed)
+            .update(&SecurityContext::system(), &mut renamed)
             .await
             .unwrap();
         assert_eq!(manager.agent_controller(agent.id).await.unwrap().name(), "renamed");
@@ -545,7 +547,7 @@ mod tests {
 
         let mut narrowed = Personality::clone(&first.load());
         narrowed.roles = Some(vec![RoleId::new()]);
-        store.entity_stores().unwrap().personalities.update(&system, &narrowed).await.unwrap();
+        store.entity_stores().unwrap().personalities.update(&system, &mut narrowed).await.unwrap();
         assert_eq!(first.load().roles, None, "not taken in by itself");
         manager.personality_controller(agent.personality_id).await.unwrap();
         assert_eq!(
@@ -656,7 +658,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .workspaces
-            .update(&SecurityContext::system(), &changed)
+            .update(&SecurityContext::system(), &mut changed)
             .await
             .unwrap();
         bus.publish(
@@ -709,7 +711,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .projects
-            .update(&SecurityContext::system(), &changed)
+            .update(&SecurityContext::system(), &mut changed)
             .await
             .unwrap();
         bus.publish(
@@ -766,12 +768,12 @@ mod tests {
     async fn an_owner_builds_with_the_roles_of_now() {
         let (store, _bus, manager) = manager();
         let staff = RoleId::new();
-        let alice = User { roles: vec![staff], ..user_in(&store).await };
+        let mut alice = User { roles: vec![staff], ..user_in(&store).await };
         store
             .entity_stores()
             .unwrap()
             .users
-            .update(&SecurityContext::system(), &alice)
+            .update(&SecurityContext::system(), &mut alice)
             .await
             .unwrap();
         let (session, channel) = (SessionId::new(), ChannelId::new());

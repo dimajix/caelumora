@@ -93,6 +93,7 @@ async fn external_channel(
         components,
         security_attributes: SecurityAttributes::systems(),
         deleted: None,
+        revision: Default::default(),
     };
     store
         .entity_stores()
@@ -1986,6 +1987,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         reasoning_visibility: Default::default(),
         hears_during_turn: Default::default(),
         deleted: None,
+        revision: Default::default(),
     };
     store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
     let hermes = Agent::new(

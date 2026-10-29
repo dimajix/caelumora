@@ -336,11 +336,13 @@ anything (`PersistenceBackend`). Who may do what with an entity is checked once,
 every backend alike; the `Persistence` is the stores over the backends of the entities and of the
 states, with the policies (see [STORAGE.md](STORAGE.md#the-entity-store)).
 
-Every document and every kind of state has exactly **one writer**, which changes it under a lock,
-stores it and only then announces the change. For an entity, that is its manager or its controller,
-by what is changed (below); for state, the channel loop, the agent's actor in its channel, or the
-agent's state handle. Agents and users have one controller per process, however many sessions they
-take part in.
+Every document and every kind of state has exactly **one writer**, which stores a change and only
+then announces it. For an entity, that is its manager or its controller, by what is changed
+(below), and it writes on the revision it read: a write made on an outdated one is refused, and
+the writer reads again and makes its change once more, so that no two writers overwrite each other,
+in one process or several (issue 492). For state, the writer is the channel loop, the agent's actor
+in its channel, or the agent's state handle, each changing it under a lock of its own. Agents and
+users have one controller per process, however many sessions they take part in.
 
 The server runs in one process today, but is cut so that it can run in several: a session runs in
 exactly one instance, while agents and users may be active in several, kept in step through the

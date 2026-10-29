@@ -205,7 +205,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Change, reclassify (`WorkspaceController::update_*`) | reached (store `GetWorkspace` U,1, `cleared_for` U,2); a classification as creating; store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 (+ flow) | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
 | Share (`update_access`, `share`) | reached; `require_nameable`: store `GetGroup` per newly named group - the caller's own question (issue 312); store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
 | Delete, restore (`WorkspaceManager`) | delete: reached, else `false`; restore: its mark read in S, the store - `ReadDeleted`, `cleared_for`, then the verb -, then the holder of its scope in S (issue 458) - gone, marked again as it was | R1 + reach (store) | `GetWorkspace`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
-| Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); files removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
+| Purge (`purge`) | store `ReadDeleted` + `Purge`, the purge begun (issue 492); files removed; store `ReadDeleted` + `Purge` | R1 | - | `PermissionDenied` |
 
 ### Projects
 
@@ -231,7 +231,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Share (`set_access`) | store `GetArtifact` (U,1), `cleared_for` (U,2); `require_nameable`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
 | Describe (`describe`) | store `GetArtifact`, `cleared_for`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Invalid` |
 | Delete, restore (`ArtifactManager`) | the store: `GetArtifact` or `ReadDeleted`, `cleared_for`, then the verb; a deletion reads first to announce it; a restoring reads its mark in S first and asks the project in S afterwards (issue 458) - gone, marked again as it was | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
-| Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); content removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
+| Purge (`purge`) | store `ReadDeleted` + `Purge`, the purge begun (issue 492); content removed; store `ReadDeleted` + `Purge` | R1 | - | `PermissionDenied` |
 
 ### Attachments
 
@@ -253,7 +253,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Rename (`update`) | store `GetGroup`; a group that is no team refused (structural); store `UpdateGroup` | R1 | `NotFound`, `NotATeam`, `PermissionDenied` |
 | Delete, restore, purge | store; a group that is no team refused | R1 | `NotFound`, `NotATeam`, `PermissionDenied` |
 | Name a group in an access list (`require_nameable`) | store `GetGroup` (U,1) per newly named group | R1 | `Validation` |
-| Drop entries for groups that are gone (`prune_gone_groups`, issue 347) | per group the lists name, read in S, also among the deleted, as a workspace or an artifact is stored | - | - |
+| Drop entries for groups that are gone (`gone_groups`, `prune_gone_groups`, issue 347) | per group the lists name, read in S, also among the deleted, before a workspace, a project or an artifact is stored | - | - |
 | The participants' and members' groups (`keep_participants`, `delete_participants`, `restore_participants`, `purge_for_good`) | in S, after the change of the participants or members, or the deletion, restoring or purge of their session, channel or project, was permitted | - | - |
 
 ### Views, snapshots and events
@@ -267,7 +267,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | An agent's channels (`AgentView::channels`) | the sessions that have it, store `GetSession` (V,1); their channels as `SessionView::channels` reads them | R1 + reach | left out |
 | Flags of a session, channel, member, agent, workspace, skill, group, artifact | `may_change_session`, `may_change_channel`, `may_read_agent_context`, `may_read_agent_tools`, `may_read_agent_components`, `may_approve`, `may_retry_message`, `may_cancel_channel`, `may_change_agent`, `may_delete_agent`, the member's commands, `may_change_workspace`, `may_write_workspace`, `may_change_skill` (`SkillAccess`), `may_change_group`, `may_change_artifact`, `may_write_artifact` (`ArtifactAccess`) | R5 | a flag false |
 | A participant's tools, components, context, private notes (`tool_sets`, `components`, `context`) | `ReadAgentTools`, `ReadAgentComponents`, `ReadAgentContext` (V,1), the context also only of a channel read whole | R4: reading them is the views' act | `Forbidden` |
-| What was deleted (every `deleted_*`, through `Views::deleted_of`) | store `ReadDeleted` per item; flags `may_restore`, `may_purge`; for a session's channels also `may_change_session`, once, without which none may be restored - `may_purge` is asked, and none is purged alone | R1 + R5 | - |
+| What was deleted (every `deleted_*`, through `Views::deleted_of`) | store `ReadDeleted` per item; flags `may_restore` - false for one whose purge is begun (issue 492) -, `may_purge`; for a session's channels also `may_change_session`, once, without which none may be restored - `may_purge` is asked, and none is purged alone | R1 + R5 | - |
 | An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event and party `may_reach`, as the store asks it: the read question - `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's; `HearDeleted` instead for a deletion -, and for what is classified `cleared_for` the classification it has, or had as it is reclassified (issues 312, 322) | R5 + reach | not delivered |
 
 ### Users

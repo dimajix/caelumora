@@ -504,9 +504,15 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
         ..ComponentDescriptor::new("tools", MCP_TOOL_KIND)
     };
     let personality = world.personality("working", None, &[]).await;
-    let working =
+    let mut working =
         Personality { components: ComponentConfig { component_nodes: vec![mcp] }, ..personality };
-    world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut working)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &working).await;
 
     let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;

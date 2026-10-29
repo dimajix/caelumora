@@ -56,7 +56,7 @@ mod tests {
     use caelumora_model::store::transcript::TranscriptStore;
     use caelumora_model::store::Persistence;
     use caelumora_model::store::{
-        EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored,
+        EntityKind, EntityStore, EntityStoreFactory, NoEntity, Revision, StoreError, Stored,
     };
     use caelumora_model::store::{PersistenceBackend, StateStore, StoreResult};
     use caelumora_model::type_map::TypeKey;
@@ -76,6 +76,8 @@ mod tests {
         security_attributes: SecurityAttributes,
         #[serde(default)]
         deleted: Option<Removal>,
+        #[serde(default)]
+        revision: Revision,
     }
 
     impl Secured for Note {
@@ -100,6 +102,14 @@ mod tests {
 
         fn set_deleted(&mut self, deleted: Option<Removal>) {
             self.deleted = deleted;
+        }
+
+        fn revision(&self) -> Revision {
+            self.revision
+        }
+
+        fn set_revision(&mut self, revision: Revision) {
+            self.revision = revision;
         }
     }
 
@@ -183,6 +193,14 @@ mod tests {
                 }
                 fn set_deleted(&mut self, deleted: Option<Removal>) {
                     self.0.set_deleted(deleted);
+                }
+
+                fn revision(&self) -> Revision {
+                    self.0.revision()
+                }
+
+                fn set_revision(&mut self, revision: Revision) {
+                    self.0.set_revision(revision);
                 }
             }
             runtime.entity_store::<Groupie>()?;

@@ -360,6 +360,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(
