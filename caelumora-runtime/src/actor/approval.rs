@@ -453,7 +453,8 @@ mod tests {
     use crate::testing::TestRuntime;
     use crate::transport::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::actor::EventContext;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
+    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::Agent;
     use caelumora_model::approval::ApprovalRequest;
     use caelumora_model::channel::testing::make_channel;
     use caelumora_model::channel::{Channel, InternalActor, Participant};
@@ -504,20 +505,7 @@ mod tests {
             store.entity_stores().unwrap().users.create(&system, &user).await.unwrap();
             ids.push(user.id);
         }
-        let personality = Personality {
-            description: None,
-            introduction: None,
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let attributes = agent(&ids);
         let mut stored = Agent::new(

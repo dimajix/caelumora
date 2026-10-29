@@ -539,7 +539,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [493](493-reaching-a-channel-in-more-than-one-way.md) | done | The loops hand out their documents as `Guard`s that every caller clones before an `await`, two functions of different meaning share the name `channel_of`, and the question whether someone reads a channel is put together three times by hand. |
 | [497](497-the-purge-of-what-has-something-behind-it-is-written-four-times.md) | open | Begin the purge, remove what lies behind, purge the document: the sequence is written in `WorkspaceManager::purge`, `ArtifactManager::purge` and `AgentManager::purge`, and once more as `scoped::purge_behind`, which alone has a name. |
 | [499](499-two-controllers-write-the-same-change-of-an-access-list.md) | open | `ProjectController` and `WorkspaceController` each have a `change` that prunes the groups gone from the access list and a `change_access` that changes the list and announces it, the same but for the type they write. |
-| [501](501-tests-build-a-personality-field-by-field.md) | in progress | Tests of several crates build a personality of the system's by a literal of every field, each with a helper of its own or none, so that a new field of `Personality` changes every one of them. |
+| [501](501-tests-build-a-personality-field-by-field.md) | done | Tests of several crates build a personality of the system's by a literal of every field, each with a helper of its own or none, so that a new field of `Personality` changes every one of them. |
 
 ## Integrations
 

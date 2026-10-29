@@ -170,11 +170,9 @@ mod tests {
     use axum::http::header::{CONTENT_TYPE, COOKIE};
     use axum::http::{Method, Request, StatusCode};
     use axum::Router;
-    use caelumora_model::agent::{AgentId, Personality, PersonalityId};
-    use caelumora_model::confidentiality::Visibility;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::security::SecurityContext;
     use serde_json::{json, Value};
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -207,20 +205,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_is_made_of_a_personality_read_and_renamed() {
         let state = state();
-        let plain = Personality {
-            description: None,
-            introduction: None,
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Scope::GlobalScope).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Visibility::Channel,
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let plain = make_personality("plain");
         state
             .runtime_manager
             .entity_stores()

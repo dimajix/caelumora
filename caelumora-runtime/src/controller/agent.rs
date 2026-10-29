@@ -85,30 +85,16 @@ impl AgentController {
 mod tests {
     use super::*;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::{Personality, PersonalityId};
-    use caelumora_model::confidentiality::Visibility;
+    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
 
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
-        let personality = Personality {
-            description: None,
-            introduction: None,
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Visibility::Channel,
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         let agent = Agent::new(
             ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
             personality.id,
@@ -159,7 +145,7 @@ mod tests {
             store.state_store(),
             store.history_store(),
         ));
-        let personality = Personality { roles: Some(vec![staff]), ..plain() };
+        let personality = Personality { roles: Some(vec![staff]), ..make_personality("plain") };
         let agent = Agent::new(
             ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
             personality.id,
@@ -188,22 +174,5 @@ mod tests {
             context.has_role(staff) && !context.has_role(hr),
             "but only those its personality names count"
         );
-    }
-
-    fn plain() -> Personality {
-        Personality {
-            description: None,
-            introduction: None,
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Visibility::Channel,
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        }
     }
 }

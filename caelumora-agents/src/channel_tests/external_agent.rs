@@ -11,12 +11,13 @@ use crate::testing::test_registry;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Envelope};
+use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
 use caelumora_model::chain::Position;
 use caelumora_model::channel::testing::make_channel;
 use caelumora_model::channel::{Channel, HistoryAccess};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_model::confidentiality::{Classification, Visibility};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::ContextItem;
 use caelumora_model::digest;
 use caelumora_model::external_agent::{OpenTaskState, TaskId};
@@ -77,24 +78,12 @@ async fn external_channel(
     components: ComponentConfig,
     stored: impl FnOnce(AgentId) -> Option<AgentChannelState>,
 ) -> Result<(Arc<ChannelLoop>, SecurityContext, AgentId, UserId)> {
-    use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+    use caelumora_model::agent::{Agent, Personality, PersonalityKind};
     use caelumora_model::scope::Scope;
 
     let store = Persistence::in_memory();
-    let personality = Personality {
-        description: None,
-        introduction: None,
-        reasoning_visibility: Visibility::Channel,
-        hears_during_turn: Default::default(),
-        id: PersonalityId::new(),
-        name: ScopedName::new("remote", Default::default()).unwrap(),
-        kind: PersonalityKind::External,
-        roles: None,
-        components,
-        security_attributes: SecurityAttributes::systems(),
-        deleted: None,
-        revision: Default::default(),
-    };
+    let personality =
+        Personality { kind: PersonalityKind::External, components, ..make_personality("remote") };
     store
         .entity_stores()
         .unwrap()
@@ -1929,7 +1918,7 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_since() {
     use crate::external::ExternalEvent;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+    use caelumora_model::agent::{Agent, Personality, PersonalityKind};
     use caelumora_model::scope::Scope;
 
     let answer = |text: &str| {
@@ -1974,20 +1963,11 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         ComponentDescriptor::new("participants", "channel_participants_prompt_provider");
     roster.params = serde_json::json!({ "changes_only": true });
     let personality = Personality {
-        id: PersonalityId::new(),
-        name: ScopedName::new("remote", Default::default()).unwrap(),
         kind: PersonalityKind::External,
-        roles: None,
-        description: None,
-        introduction: None,
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), roster],
         },
-        security_attributes: SecurityAttributes::systems(),
-        reasoning_visibility: Default::default(),
-        hears_during_turn: Default::default(),
-        deleted: None,
-        revision: Default::default(),
+        ..make_personality("remote")
     };
     store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
     let hermes = Agent::new(

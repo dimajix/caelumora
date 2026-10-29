@@ -1,6 +1,6 @@
 # 501 — Tests build a personality field by field
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -46,3 +46,8 @@ and the copies drift: each says what a "plain" personality is a little different
   of a channel's too, which belong to the stores. Step 1 done: `stored` and `replayed` moved to
   `store::testing`, for the model's own tests only, and `agent::testing` went. Step 2: the helper,
   and the tests that write every field of `Personality` use it.
+- **2026-10-29** — Step 2 done: `agent::testing::make_personality(name)`, under `test-support`,
+  and every test that wrote each field of `Personality` writes only what it differs in; the
+  helpers of their own (`plain()`, the store suite's `personality()`, `personality(kind)` of the
+  actors' kinds) went, and `World::personality` builds on it too. The coding guidelines say that a
+  test starts from the `make_…` of its document's kind.

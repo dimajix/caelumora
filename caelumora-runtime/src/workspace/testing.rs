@@ -10,14 +10,15 @@ use crate::terminal::{Shell, Terminal};
 use crate::testing::TestRuntime;
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
+use caelumora_model::agent::testing::make_personality;
+use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant};
-use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
+use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::config::AppConfig;
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{Grant, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::store::Persistence;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -90,20 +91,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
         .await
         .unwrap();
 
-    let personality = Personality {
-        description: None,
-        id: PersonalityId::new(),
-        name: ScopedName::new("plain", Default::default()).unwrap(),
-        kind: Default::default(),
-        roles: None,
-        introduction: None,
-        components: Default::default(),
-        security_attributes: SecurityAttributes::systems(),
-        reasoning_visibility: Visibility::Channel,
-        hears_during_turn: Default::default(),
-        deleted: None,
-        revision: Default::default(),
-    };
+    let personality = make_personality("plain");
     store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
     let agent = Agent::new(
         ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),

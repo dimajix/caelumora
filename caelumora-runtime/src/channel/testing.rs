@@ -18,13 +18,13 @@ use crate::session::testing::{bare_session, founded, user};
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::chain::Position;
 use caelumora_model::channel::testing::make_channel;
 use caelumora_model::channel::{Channel, InternalActor, Participant};
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::Visibility;
 use caelumora_model::history::testing::{items_of, messages_of};
 use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::Message;
@@ -80,23 +80,10 @@ pub async fn alice_and_an_agent(
     store: &Persistence,
     components: ComponentConfig,
 ) -> (SecurityContext, AgentId, UserId) {
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
+    use caelumora_model::agent::{Agent, Personality};
     use caelumora_model::scope::Scope;
 
-    let personality = Personality {
-        description: None,
-        introduction: None,
-        reasoning_visibility: Visibility::Channel,
-        hears_during_turn: Default::default(),
-        id: PersonalityId::new(),
-        name: ScopedName::new("plain", Default::default()).unwrap(),
-        kind: Default::default(),
-        roles: None,
-        components,
-        security_attributes: SecurityAttributes::systems(),
-        deleted: None,
-        revision: Default::default(),
-    };
+    let personality = Personality { components, ..make_personality("plain") };
     store
         .entity_stores()
         .unwrap()

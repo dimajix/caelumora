@@ -406,9 +406,9 @@ pub(super) fn retry_target(retry: &Envelope) -> Option<RetryTarget> {
 mod testing {
     use super::*;
     use crate::prompt::external_context_provider::ExternalContextProvider;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
+    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::{Agent, Personality};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::SessionId;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
@@ -422,21 +422,7 @@ mod testing {
             processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
         ) -> Self {
             let runtime = test_runtime();
-            let personality = Personality {
-                id: PersonalityId::new(),
-                name: ScopedName::new("plain", Scope::GlobalScope)
-                    .unwrap_or_else(|e| panic!("{e}")),
-                kind: Default::default(),
-                roles: None,
-                description: None,
-                introduction: None,
-                components: ComponentConfig::default(),
-                security_attributes: SecurityAttributes::systems(),
-                reasoning_visibility: Default::default(),
-                hears_during_turn: Default::default(),
-                deleted: None,
-                revision: Default::default(),
-            };
+            let personality = make_personality("plain");
             let agent = Agent::new(
                 ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")),
                 personality.id,

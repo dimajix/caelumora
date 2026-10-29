@@ -1024,12 +1024,11 @@ mod tests {
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
     use caelumora_model::actor::Rejection;
-    use caelumora_model::agent::{
-        Agent, AgentChannelState, Personality, PersonalityId, PersonalityKind,
-    };
+    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
     use caelumora_model::approval::ToolMatcher;
     use caelumora_model::channel::{Channel, ChannelState, Participant};
-    use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
+    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::context::{ContextItem, ContextRef};
     use caelumora_model::history::{Audience, HistoryEntry, HistoryPage, Recorded};
     use caelumora_model::message::Message;
@@ -1094,20 +1093,7 @@ mod tests {
     }
 
     async fn an_agent_of_kind(store: &Persistence, owner: ActorId, kind: PersonalityKind) -> Agent {
-        let personality = Personality {
-            description: None,
-            introduction: None,
-            reasoning_visibility: Visibility::Channel,
-            hears_during_turn: Default::default(),
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind,
-            roles: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = Personality { kind, ..make_personality("plain") };
         store
             .entity_stores()
             .unwrap()
@@ -3074,20 +3060,7 @@ mod tests {
 
         let alice = user("alice");
         let participants = record_users(&manager, &[&alice]).await;
-        let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("thinker", Default::default()).unwrap(),
-            kind: PersonalityKind::Internal,
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("thinker");
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let thinker = Agent::new(
             ScopedName::new("thinker", Scope::GlobalScope).unwrap(),

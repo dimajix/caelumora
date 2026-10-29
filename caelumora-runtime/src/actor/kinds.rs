@@ -108,10 +108,9 @@ mod tests {
     use super::*;
     use crate::session::testing::detached_actor_runtime;
     use anyhow::anyhow;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
-    use caelumora_model::component::ComponentConfig;
+    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::{Agent, Personality};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
@@ -119,23 +118,6 @@ mod tests {
     /// The names of `facets`, to compare them by.
     fn names(facets: Option<&[TypeKey]>) -> Option<Vec<&'static str>> {
         facets.map(|facets| facets.iter().map(TypeKey::name).collect())
-    }
-
-    fn personality(kind: PersonalityKind) -> Personality {
-        Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind,
-            roles: None,
-            description: None,
-            introduction: None,
-            components: ComponentConfig::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        }
     }
 
     /// Builds the actor of an agent of `personality` with `kinds`, in a
@@ -161,9 +143,12 @@ mod tests {
     /// actor is refused, saying why (issue 370).
     #[tokio::test]
     async fn an_agent_of_a_kind_nobody_registered_is_refused() {
-        let error = built(&AgentKinds::default(), personality(PersonalityKind::External))
-            .await
-            .expect_err("no kind registered");
+        let error = built(
+            &AgentKinds::default(),
+            Personality { kind: PersonalityKind::External, ..make_personality("plain") },
+        )
+        .await
+        .expect_err("no kind registered");
         assert!(
             matches!(
                 error.downcast_ref::<ChannelError>(),
@@ -189,11 +174,14 @@ mod tests {
             Err(anyhow!("built as registered again"))
         });
 
-        let error = built(&kinds, personality(PersonalityKind::External))
-            .await
-            .expect_err("the stand-in builds nothing");
+        let error = built(
+            &kinds,
+            Personality { kind: PersonalityKind::External, ..make_personality("plain") },
+        )
+        .await
+        .expect_err("the stand-in builds nothing");
         assert_eq!(error.to_string(), "built as registered again", "replaced");
-        let error = built(&kinds, personality(PersonalityKind::Internal))
+        let error = built(&kinds, make_personality("plain"))
             .await
             .expect_err("the stand-in builds nothing");
         assert_eq!(error.to_string(), "built as first registered", "by its own kind");
