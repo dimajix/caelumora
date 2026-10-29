@@ -20,7 +20,7 @@ against this list, rule by rule, before it is reported (the self-review of
     it).
 *   One `let` binds several values by a tuple only where they belong together and the line stays
     within 100 characters; values that merely begin at the same place get a `let` each
-    ([Small return values](#small-return-values)).
+    ([Small return values](#small-return-values); `scripts/tuple-bindings.sh` checks the length).
 *   Every module begins with `//!` whose first sentence names its responsibility
     ([Comments and documentation](#comments-and-documentation)).
 *   No `unwrap()` or `expect()` in production code ([Types](#types); clippy checks it).
@@ -222,7 +222,13 @@ session's id and its channel's), or what is cloned to go into a closure together
 statement, so it stays on one line of at most 100 characters, the indentation counted. Values of
 different kinds that merely begin at the same place - a usage, a list of notes, a list of pending
 questions, each filled on its own - get a `let` each, as does every binding that does not fit on
-one line (issue 489).
+one line (issue 489). A `let … else` with a tuple on its right matches a pattern; the rule is not
+about it.
+
+`scripts/tuple-bindings.sh` checks the length, in every Rust file or in those it is given, in
+characters, and on as many lines as rustfmt may spread a binding over; the pre-commit hook gives it
+the Rust files a commit adds or changes. Whether values belong together is no script's to judge:
+that is the reviewer's, by the list above.
 
 ### States are types
 

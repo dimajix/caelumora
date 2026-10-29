@@ -1,6 +1,6 @@
 # 489 — Values are bound by a tuple made on the spot, in 426 places, and nothing checks it
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -79,3 +79,10 @@ Recommendation: A.
   `ArtifactSnapshot`, now taken apart as the struct it is; the pairs that are parts of one thing
   (a session's id and owner), actors, loop state advanced together, and what is filled and
   returned together stay.
+- **2026-10-29** — Step 2, the check: `scripts/tuple-bindings.sh` finds a tuple binding longer
+  than 100 characters or spread over several lines - so that it still finds one once rustfmt
+  (issue 487) breaks it, stepping over comments and string literals -, in every Rust file or in
+  those it is given, and leaves `let … else` and a tuple of one alone; the pre-commit hook gives
+  it the Rust files a commit adds or changes. Run on `main` before step 1, it found the 87
+  bindings the sweep took apart, and none after it. CODING-GUIDELINES.md names it beside the
+  rule. Whether values belong together stays the reviewer's.
