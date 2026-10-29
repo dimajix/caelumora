@@ -19,7 +19,10 @@ pub(crate) const OUTBOX_CAPACITY: usize = 128;
 /// and says, and where its runs begin and end - in the order it happened,
 /// so that what a run showed comes after its start and before its end.
 #[derive(Debug, Clone)]
-#[expect(clippy::large_enum_variant, reason = "nearly every item is an envelope; boxing it would cost every one an allocation")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "nearly every item is an envelope; boxing it would cost every one an allocation"
+)]
 pub enum Shown {
     /// A run of the actor began: the channel runs.
     Started,
@@ -71,11 +74,18 @@ mod tests {
         let held = manager.outbox(channel, actor);
         let mut following = held.subscribe();
         manager.outbox(channel, actor).send(Shown::Started).unwrap();
-        assert!(matches!(following.try_recv(), Ok(Shown::Started)), "one outbox for the actor and whoever follows it");
+        assert!(
+            matches!(following.try_recv(), Ok(Shown::Started)),
+            "one outbox for the actor and whoever follows it"
+        );
         assert_eq!(manager.outbox(ChannelId::new(), actor).receiver_count(), 0, "one per channel");
 
         drop((held, following));
-        assert_eq!(manager.outbox(channel, actor).receiver_count(), 0, "once nobody holds it, a new one");
+        assert_eq!(
+            manager.outbox(channel, actor).receiver_count(),
+            0,
+            "once nobody holds it, a new one"
+        );
         assert_eq!(manager.outboxes.lock().unwrap().len(), 1, "and the others are forgotten");
     }
 }

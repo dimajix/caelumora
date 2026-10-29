@@ -32,7 +32,12 @@ impl Default for RandomPolicy {
 
 #[async_trait]
 impl ResponderPolicy for RandomPolicy {
-    async fn choose(&self, _event: &Envelope, _messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+    async fn choose(
+        &self,
+        _event: &Envelope,
+        _messages: &[Message],
+        candidates: Vec<ActorDescription>,
+    ) -> Result<Vec<ActorId>, Undecided> {
         let mut rng = self.rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         Ok(candidates.choose(&mut *rng).map(|candidate| candidate.id).into_iter().collect())
     }

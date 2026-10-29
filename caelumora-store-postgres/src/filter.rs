@@ -47,7 +47,9 @@ impl Condition {
         let mut condition = Self { sql: String::new(), binds: Vec::new(), first, elements: 0 };
         let (judged, _) = condition.judging(filter, column);
         condition.sql = match contained(filter) {
-            Some(contained) => format!("{column} @> {} AND {judged}", condition.bind(Bound::Json(contained))),
+            Some(contained) => {
+                format!("{column} @> {} AND {judged}", condition.bind(Bound::Json(contained)))
+            }
             None => judged,
         };
         condition
@@ -60,7 +62,10 @@ impl Condition {
 
     /// `query`, which binds the parameters before `first`, with what the
     /// condition binds bound after them.
-    pub(crate) fn bound<'q, O>(&self, mut query: QueryAs<'q, Postgres, O, PgArguments>) -> QueryAs<'q, Postgres, O, PgArguments> {
+    pub(crate) fn bound<'q, O>(
+        &self,
+        mut query: QueryAs<'q, Postgres, O, PgArguments>,
+    ) -> QueryAs<'q, Postgres, O, PgArguments> {
         for bound in &self.binds {
             query = match bound {
                 Bound::Json(value) => query.bind(value.clone()),
@@ -81,7 +86,10 @@ impl Condition {
     fn at(&mut self, at: &str, path: FieldPath) -> String {
         match path.is_empty() {
             true => at.to_string(),
-            false => format!("({at} #> {}::text[])", self.bind(Bound::Path(path.iter().map(ToString::to_string).collect()))),
+            false => format!(
+                "({at} #> {}::text[])",
+                self.bind(Bound::Path(path.iter().map(ToString::to_string).collect()))
+            ),
         }
     }
 
@@ -95,7 +103,8 @@ impl Condition {
             }
             Filter::In(field, values) => {
                 let found = self.at(at, field);
-                let any: Vec<String> = values.iter().map(|value| self.meeting(value, &found)).collect();
+                let any: Vec<String> =
+                    values.iter().map(|value| self.meeting(value, &found)).collect();
                 (format!("COALESCE({}, false)", joined(&any, "OR", "false")), true)
             }
             Filter::IsNull(field) => {
@@ -121,7 +130,9 @@ impl Condition {
                 self.elements += 1;
                 let element = format!("e{}", self.elements);
                 let (judged, exact) = self.judging(condition, &format!("{element}.v"));
-                let elements = format!("CASE WHEN jsonb_typeof({found}) = 'array' THEN {found} ELSE '[]'::jsonb END");
+                let elements = format!(
+                    "CASE WHEN jsonb_typeof({found}) = 'array' THEN {found} ELSE '[]'::jsonb END"
+                );
                 (format!("EXISTS (SELECT 1 FROM jsonb_array_elements({elements}) AS {element}(v) WHERE {judged})"), exact)
             }
             Filter::AtLeast(field, bound) => self.comparing(at, field, ">=", *bound),
@@ -133,15 +144,33 @@ impl Condition {
     /// Whether the JSON at `field` is a number that compares with `bound`
     /// by `operator`: jsonb compares numbers exactly, and a value of another
     /// type in an order of its own, which is why its type is asked first.
-    fn comparing(&mut self, at: &str, field: FieldPath, operator: &str, bound: u64) -> (String, bool) {
+    fn comparing(
+        &mut self,
+        at: &str,
+        field: FieldPath,
+        operator: &str,
+        bound: u64,
+    ) -> (String, bool) {
         let found = self.at(at, field);
         let bound = self.bind(Bound::Json(Value::from(bound)));
-        (format!("COALESCE(jsonb_typeof({found}) = 'number' AND {found} {operator} {bound}, false)"), true)
+        (
+            format!(
+                "COALESCE(jsonb_typeof({found}) = 'number' AND {found} {operator} {bound}, false)"
+            ),
+            true,
+        )
     }
 
     /// `conditions` joined by `operator`, `empty` if there are none.
-    fn joining(&mut self, conditions: &[Filter<FieldPath>], at: &str, operator: &str, empty: &str) -> (String, bool) {
-        let judged: Vec<(String, bool)> = conditions.iter().map(|condition| self.judging(condition, at)).collect();
+    fn joining(
+        &mut self,
+        conditions: &[Filter<FieldPath>],
+        at: &str,
+        operator: &str,
+        empty: &str,
+    ) -> (String, bool) {
+        let judged: Vec<(String, bool)> =
+            conditions.iter().map(|condition| self.judging(condition, at)).collect();
         let exact = judged.iter().all(|(_, exact)| *exact);
         let sql: Vec<String> = judged.into_iter().map(|(sql, _)| sql).collect();
         (joined(&sql, operator, empty), exact)
@@ -151,11 +180,18 @@ impl Condition {
     /// judges it; `NULL` if `found` is.
     fn meeting(&mut self, value: &FieldValue, found: &str) -> String {
         match value {
-            FieldValue::Uuid(id) => format!("{found} = {}", self.bind(Bound::Json(Value::String(id.to_string())))),
-            FieldValue::Text(text) => format!("{found} = {}", self.bind(Bound::Json(Value::String(text.clone())))),
-            FieldValue::Bool(flag) => format!("{found} = {}", self.bind(Bound::Json(Value::Bool(*flag)))),
+            FieldValue::Uuid(id) => {
+                format!("{found} = {}", self.bind(Bound::Json(Value::String(id.to_string()))))
+            }
+            FieldValue::Text(text) => {
+                format!("{found} = {}", self.bind(Bound::Json(Value::String(text.clone()))))
+            }
+            FieldValue::Bool(flag) => {
+                format!("{found} = {}", self.bind(Bound::Json(Value::Bool(*flag))))
+            }
             FieldValue::Tagged(tag, inner) => {
-                let held = format!("({found} -> {}::text)", self.bind(Bound::Text(tag.to_string())));
+                let held =
+                    format!("({found} -> {}::text)", self.bind(Bound::Text(tag.to_string())));
                 self.meeting(inner, &held)
             }
             FieldValue::Variant(tag) => {
@@ -184,8 +220,13 @@ fn joined(conditions: &[String], operator: &str, empty: &str) -> String {
 fn contained(filter: &Filter<FieldPath>) -> Option<Value> {
     match filter {
         Filter::Eq(field, value) => Some(wrapped(field, as_contained(value)?)),
-        Filter::Any(collection, condition) => Some(wrapped(collection, Value::Array(vec![contained(condition)?]))),
-        Filter::And(conditions) => conditions.iter().filter_map(contained).reduce(|all, one| merged(all.clone(), one).unwrap_or(all)),
+        Filter::Any(collection, condition) => {
+            Some(wrapped(collection, Value::Array(vec![contained(condition)?])))
+        }
+        Filter::And(conditions) => conditions
+            .iter()
+            .filter_map(contained)
+            .reduce(|all, one| merged(all.clone(), one).unwrap_or(all)),
         _ => None,
     }
 }
@@ -197,14 +238,18 @@ fn as_contained(value: &FieldValue) -> Option<Value> {
         FieldValue::Uuid(id) => Some(Value::String(id.to_string())),
         FieldValue::Text(text) => Some(Value::String(text.clone())),
         FieldValue::Bool(flag) => Some(Value::Bool(*flag)),
-        FieldValue::Tagged(tag, inner) => Some(Value::Object(Map::from_iter([(tag.to_string(), as_contained(inner)?)]))),
+        FieldValue::Tagged(tag, inner) => {
+            Some(Value::Object(Map::from_iter([(tag.to_string(), as_contained(inner)?)])))
+        }
         FieldValue::Variant(_) => None,
     }
 }
 
 /// `value` at `path`: `{"a": {"b": value}}` of `["a", "b"]`.
 fn wrapped(path: FieldPath, value: Value) -> Value {
-    path.iter().rev().fold(value, |inner, key| Value::Object(Map::from_iter([(key.to_string(), inner)])))
+    path.iter()
+        .rev()
+        .fold(value, |inner, key| Value::Object(Map::from_iter([(key.to_string(), inner)])))
 }
 
 /// What contains both `one` and `other`, if one value does: the keys of

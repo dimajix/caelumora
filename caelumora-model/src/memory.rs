@@ -82,14 +82,22 @@ mod tests {
     #[test]
     fn every_entry_knows_where_it_was_written() {
         let mut chain = MemoryChain::default();
-        let origin = MemoryOrigin { channel: ChannelId::default(), session: SessionPrivacy::default() };
-        let remember = |id, text: &str| Change::Add { id: MemoryId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT };
+        let origin =
+            MemoryOrigin { channel: ChannelId::default(), session: SessionPrivacy::default() };
+        let remember = |id, text: &str| Change::Add {
+            id: MemoryId(id),
+            text: text.to_string(),
+            classification: Classification::CHANNEL_DEFAULT,
+        };
         chain.push(remember(1, "Kaya likes tea."), origin.clone(), MessageId::new());
         chain.push(remember(2, "Kaya lives in Berlin."), origin.clone(), MessageId::new());
         chain.push(Change::Remove { id: MemoryId(1) }, origin.clone(), MessageId::new());
 
         let current = chain.current();
-        assert_eq!(current.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["Kaya lives in Berlin."]);
+        assert_eq!(
+            current.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            ["Kaya lives in Berlin."]
+        );
         assert_eq!(current[0].origin, origin);
         assert_eq!(chain.next_id(), MemoryId(3));
     }
@@ -97,7 +105,11 @@ mod tests {
     #[test]
     fn the_digest_covers_where_a_change_was_made() {
         let after = MessageId::new();
-        let remember = Change::Add { id: MemoryId(1), text: "a".to_string(), classification: Classification::CHANNEL_DEFAULT };
+        let remember = Change::Add {
+            id: MemoryId(1),
+            text: "a".to_string(),
+            classification: Classification::CHANNEL_DEFAULT,
+        };
         let digest_in = |origin: MemoryOrigin| {
             let mut chain = MemoryChain::default();
             chain.push(remember.clone(), origin, after);

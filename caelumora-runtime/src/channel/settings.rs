@@ -1,12 +1,12 @@
 //! Changing a channel: its name, language, description, use of the workspace, approval rules and
 //! classification.
 
+use super::{ChannelActor, ChannelError, ChannelLoop};
 use anyhow::Result;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
 use caelumora_model::security::{ActionType, Reclassified, SecurityContext};
 use tracing::info;
-use super::{ChannelActor, ChannelError, ChannelLoop};
 
 impl ChannelLoop {
     /// Renames the channel on behalf of `context`: stored first, which is
@@ -30,7 +30,11 @@ impl ChannelLoop {
     /// `StoreError::Invalid` if `language` is no language tag,
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// channel, or whatever else storing it reports.
-    pub async fn update_language(&self, context: &SecurityContext, language: Option<&str>) -> Result<()> {
+    pub async fn update_language(
+        &self,
+        context: &SecurityContext,
+        language: Option<&str>,
+    ) -> Result<()> {
         Ok(self.channel.update_language(context, language).await?)
     }
 
@@ -43,7 +47,12 @@ impl ChannelLoop {
     /// `StoreError::Validation` if `summary` or `briefing` is too long or
     /// holds what it may not, `StoreError::PermissionDenied` if `context`
     /// may not change the channel, or whatever else storing it reports.
-    pub async fn update_description(&self, context: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> Result<()> {
+    pub async fn update_description(
+        &self,
+        context: &SecurityContext,
+        summary: Option<&str>,
+        briefing: Option<&str>,
+    ) -> Result<()> {
         Ok(self.channel.update_description(context, summary, briefing).await?)
     }
 
@@ -69,7 +78,11 @@ impl ChannelLoop {
     /// `StoreError::Validation` if a rule does not only ask or deny,
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// channel, or whatever else storing it reports.
-    pub async fn update_approval_rules(&self, context: &SecurityContext, rules: Vec<ApprovalRule>) -> Result<()> {
+    pub async fn update_approval_rules(
+        &self,
+        context: &SecurityContext,
+        rules: Vec<ApprovalRule>,
+    ) -> Result<()> {
         Ok(self.channel.update_approval_rules(context, rules).await?)
     }
 
@@ -97,10 +110,24 @@ impl ChannelLoop {
     /// channel, `ClassificationRefused` if `classification` names
     /// compartments that are not configured, `NotCleared` if it is raised
     /// above a participant; whatever storing it reports.
-    pub async fn reclassify(&self, context: &SecurityContext, classification: Classification) -> Result<()> {
+    pub async fn reclassify(
+        &self,
+        context: &SecurityContext,
+        classification: Classification,
+    ) -> Result<()> {
         let channel = self.classification();
-        self.require(context, |attributes| ActionType::Reclassify(Reclassified::Channel { attributes }), "reclassifying").await?;
-        self.confidentiality.require_classifiable(&classification, || ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.id })?;
+        self.require(
+            context,
+            |attributes| ActionType::Reclassify(Reclassified::Channel { attributes }),
+            "reclassifying",
+        )
+        .await?;
+        self.confidentiality.require_classifiable(&classification, || {
+            ChannelError::ClassificationRefused {
+                classification: classification.clone(),
+                channel: self.id,
+            }
+        })?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
         for ChannelActor { participant, .. } in self.actors.load().values() {
@@ -125,16 +152,15 @@ mod tests {
     use crate::channel::ChannelLoop;
 
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::{SecurityContext, Grant, Subject};
+    use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::store::StoreError;
     use std::sync::Arc;
 
-    
-    use caelumora_model::actor::Rejection;
-    use crate::session::{ChannelSpec, SessionManager};
-    use crate::session::testing::*;
-    use caelumora_model::message::{Message, MessageId};
     use crate::error::is_forbidden;
+    use crate::session::testing::*;
+    use crate::session::{ChannelSpec, SessionManager};
+    use caelumora_model::actor::Rejection;
+    use caelumora_model::message::{Message, MessageId};
     use std::time::Duration;
     use tokio::time;
 
@@ -148,9 +174,19 @@ mod tests {
         let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
 
         let refused = side.update_name(&ctx, "Main").await.expect_err("the session has a main");
-        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "channel" })), "{refused}");
+        assert!(
+            matches!(
+                refused.downcast_ref::<StoreError>(),
+                Some(StoreError::NameTaken { entity: "channel" })
+            ),
+            "{refused}"
+        );
         assert_eq!(side.name().as_str(), "side", "unchanged");
-        assert_eq!(runtime.entity_stores().channels.get(&ctx, side.id()).await.unwrap().name.as_str(), "side", "also as stored");
+        assert_eq!(
+            runtime.entity_stores().channels.get(&ctx, side.id()).await.unwrap().name.as_str(),
+            "side",
+            "also as stored"
+        );
         side.update_name(&ctx, "Side").await.expect("its own name, written otherwise");
         assert_eq!(side.name().as_str(), "Side");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
@@ -160,9 +196,15 @@ mod tests {
     async fn a_channel_and_its_messages_are_reclassified_by_who_may() {
         use crate::channel::ChannelError;
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
+        use caelumora_model::confidentiality::{
+            Compartment, Compartments, Confidentiality, ConfidentialityRules,
+        };
 
-        let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
+        let compartments = Compartments::new([
+            (Compartment::new("hr"), vec![]),
+            (Compartment::new("finance"), vec![]),
+        ])
+        .unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
         let runtime = Arc::clone(manager.runtime());
         let (alice, bob) = (user("alice"), user("bob"));
@@ -170,39 +212,82 @@ mod tests {
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let bob_ctx = SecurityContext::new(bob_id, Default::default(), Default::default());
         let mut session = make_session("hers", alice.id);
-        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
+        session.security_attributes =
+            session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
-        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
-        let spec = ChannelSpec { classification: Some(classified(Confidentiality::Confidential, &["hr"])), ..spec("hr", vec![bob_id]) };
+        let classified = |level, compartments: &[&str]| {
+            Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
+        };
+        let spec = ChannelSpec {
+            classification: Some(classified(Confidentiality::Confidential, &["hr"])),
+            ..spec("hr", vec![bob_id])
+        };
         let hr = session.create_channel(&alice_ctx, spec).await.unwrap();
-        hr.user_actor(bob.id).unwrap().send_message(Some("from bob".to_string()), None, Vec::new()).await.unwrap();
-        hr.user_actor(alice.id).unwrap().send_message(Some("from alice".to_string()), None, Vec::new()).await.unwrap();
+        hr.user_actor(bob.id)
+            .unwrap()
+            .send_message(Some("from bob".to_string()), None, Vec::new())
+            .await
+            .unwrap();
+        hr.user_actor(alice.id)
+            .unwrap()
+            .send_message(Some("from alice".to_string()), None, Vec::new())
+            .await
+            .unwrap();
         let history = history_of(&hr, 2).await;
         // Two users' messages arrive in either order.
-        let id_of = |history: &[Message], text: &str| history.iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).unwrap();
+        let id_of = |history: &[Message], text: &str| {
+            history.iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).unwrap()
+        };
         let (bobs, alices) = (id_of(&history, "from bob"), id_of(&history, "from alice"));
 
         // A change to what was said, through the actor of whoever makes it
         // (issue 239).
         let (as_alice, as_bob) = (hr.user_actor(alice.id).unwrap(), hr.user_actor(bob.id).unwrap());
         let released = classified(Confidentiality::Internal, &["hr", "finance"]);
-        as_bob.reclassify_message(bobs, released.clone()).await.expect("the author releases their message");
+        as_bob
+            .reclassify_message(bobs, released.clone())
+            .await
+            .expect("the author releases their message");
         let mut bobs_events = as_bob.watch();
-        as_bob.reclassify_message(alices, released.clone()).await.expect("sent: the channel decides");
-        assert_eq!(rejection(&mut bobs_events).await, (Some(alices), Rejection::Forbidden), "not another's, and he is told (issue 304)");
-        let missing = as_alice.reclassify_message(MessageId::new(), released.clone()).await.expect_err("no such message");
-        assert!(matches!(missing.downcast_ref::<ChannelError>(), Some(ChannelError::MessageNotFound { .. })), "{missing}");
+        as_bob
+            .reclassify_message(alices, released.clone())
+            .await
+            .expect("sent: the channel decides");
+        assert_eq!(
+            rejection(&mut bobs_events).await,
+            (Some(alices), Rejection::Forbidden),
+            "not another's, and he is told (issue 304)"
+        );
+        let missing = as_alice
+            .reclassify_message(MessageId::new(), released.clone())
+            .await
+            .expect_err("no such message");
+        assert!(
+            matches!(
+                missing.downcast_ref::<ChannelError>(),
+                Some(ChannelError::MessageNotFound { .. })
+            ),
+            "{missing}"
+        );
         classified_as(&hr, bobs, &released).await;
 
         let lowered = classified(Confidentiality::Internal, &["hr"]);
-        assert!(hr.reclassify(&bob_ctx, lowered.clone()).await.is_err(), "only the owner reclassifies the channel");
+        assert!(
+            hr.reclassify(&bob_ctx, lowered.clone()).await.is_err(),
+            "only the owner reclassifies the channel"
+        );
         hr.reclassify(&alice_ctx, lowered.clone()).await.expect("the owner lowers it");
         assert_eq!(hr.classification(), lowered);
-        assert_eq!(runtime.entity_stores().channels.get(&alice_ctx, hr.id()).await.unwrap().classification, lowered, "stored");
+        assert_eq!(
+            runtime.entity_stores().channels.get(&alice_ctx, hr.id()).await.unwrap().classification,
+            lowered,
+            "stored"
+        );
         let history = hr.history().await;
-        let classification_of = |id| history.iter().find(|m| m.id == id).map(|m| m.classification.clone()).unwrap();
+        let classification_of =
+            |id| history.iter().find(|m| m.id == id).map(|m| m.classification.clone()).unwrap();
         assert_eq!(classification_of(bobs), released, "what was released stays released");
         assert_eq!(classification_of(alices), lowered, "the rest is released with the channel");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
@@ -221,13 +306,25 @@ mod tests {
         let running = create(&manager, &as_user(alice), session).await.unwrap();
         let main = running.channel_named("main").unwrap();
 
-        let refused = main.update_name(&as_user(bob), "bobs").await.expect_err("a contributor may not");
+        let refused =
+            main.update_name(&as_user(bob), "bobs").await.expect_err("a contributor may not");
         assert!(is_forbidden(&refused), "{refused}");
         assert_eq!(main.name(), "main", "unchanged");
 
         main.update_name(&as_user(alice), "lobby").await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
-        assert_eq!(store.entity_stores().unwrap().channels.get(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
+        assert_eq!(
+            store
+                .entity_stores()
+                .unwrap()
+                .channels
+                .get(&as_user(alice), main.id())
+                .await
+                .unwrap()
+                .name,
+            "lobby",
+            "stored, not only in memory"
+        );
         manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
     }
 

@@ -4,10 +4,10 @@
 //! (`caelumora_runtime::command`), which the runtime keeps (issue 370).
 
 use crate::turn::Turn;
-use caelumora_runtime::command::{CommandEntry, CommandExecutor, CommandResult, ProvidesCommands};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
+use caelumora_runtime::command::{CommandEntry, CommandExecutor, CommandResult, ProvidesCommands};
 
 /// A component facet contributing commands an agent carries out itself
 /// (issue 269) - `/skill`, `/compact` -, of agents run here and elsewhere
@@ -23,7 +23,12 @@ pub trait AgentCommandProvider: ProvidesCommands {
     ///
     /// # Errors
     /// As `ChannelCommandProvider::execute`.
-    async fn execute(&self, name: &str, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput>;
+    async fn execute(
+        &self,
+        name: &str,
+        args: &str,
+        turn: &mut Turn<'_>,
+    ) -> CommandResult<CommandOutput>;
 }
 
 /// The commands of an agent (issue 269): seen and asked for by
@@ -34,7 +39,12 @@ pub trait AgentCommandProvider: ProvidesCommands {
 pub trait AgentCommandAccess {
     /// The commands `issuer` may see of the agent with `agent` attributes in
     /// the channel with `channel` attributes, sorted by name.
-    async fn visible(&self, issuer: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> Vec<Command>;
+    async fn visible(
+        &self,
+        issuer: &SecurityContext,
+        agent: &SecurityAttributes,
+        channel: &SecurityAttributes,
+    ) -> Vec<Command>;
 
     /// The command `name`, if `issuer` - who asked, in the context the
     /// request came with - may ask the agent with `agent` attributes for it
@@ -45,22 +55,42 @@ pub trait AgentCommandAccess {
     /// `CommandError::Empty` for an empty name; `Unknown` if the agent has
     /// no such command or the issuer may not see it; `Forbidden` if they
     /// may see but not ask for it.
-    async fn admitted<'c>(&'c self, name: &str, issuer: &SecurityContext, agent: &'c SecurityAttributes, channel: &'c SecurityAttributes) -> CommandResult<AdmittedCommand<'c>>;
+    async fn admitted<'c>(
+        &'c self,
+        name: &str,
+        issuer: &SecurityContext,
+        agent: &'c SecurityAttributes,
+        channel: &'c SecurityAttributes,
+    ) -> CommandResult<AdmittedCommand<'c>>;
 }
 
 #[async_trait]
 impl AgentCommandAccess for CommandExecutor<dyn AgentCommandProvider> {
-    async fn visible(&self, issuer: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> Vec<Command> {
-        self.visible_by(issuer, |command| ActionType::ShowAgentCommand { command, agent, channel }).await
+    async fn visible(
+        &self,
+        issuer: &SecurityContext,
+        agent: &SecurityAttributes,
+        channel: &SecurityAttributes,
+    ) -> Vec<Command> {
+        self.visible_by(issuer, |command| ActionType::ShowAgentCommand { command, agent, channel })
+            .await
     }
 
-    async fn admitted<'c>(&'c self, name: &str, issuer: &SecurityContext, agent: &'c SecurityAttributes, channel: &'c SecurityAttributes) -> CommandResult<AdmittedCommand<'c>> {
-        let entry = self.admit(
-            name,
-            issuer,
-            |command| ActionType::ShowAgentCommand { command, agent, channel },
-            |command| ActionType::ExecuteAgentCommand { command, agent, channel },
-        ).await?;
+    async fn admitted<'c>(
+        &'c self,
+        name: &str,
+        issuer: &SecurityContext,
+        agent: &'c SecurityAttributes,
+        channel: &'c SecurityAttributes,
+    ) -> CommandResult<AdmittedCommand<'c>> {
+        let entry = self
+            .admit(
+                name,
+                issuer,
+                |command| ActionType::ShowAgentCommand { command, agent, channel },
+                |command| ActionType::ExecuteAgentCommand { command, agent, channel },
+            )
+            .await?;
         Ok(AdmittedCommand(entry))
     }
 }

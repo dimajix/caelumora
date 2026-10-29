@@ -3,10 +3,11 @@
 //! and the routes reach it by - and as a member of a scope, the `skills`
 //! component, and the section `skills` of the seed files.
 
-use crate::{NAMESPACE, PROMPTS};
 use crate::component;
 use crate::manager::SkillManager;
 use crate::skill::Skill;
+use crate::{NAMESPACE, PROMPTS};
+use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::security::SecurityAttributes;
@@ -14,11 +15,10 @@ use caelumora_model::store::EntityStore;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::seed::{create_unless_taken, SeedSection};
+use serde_json::Value;
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
-use anyhow::Result;
-use serde_json::Value;
 
 /// The section of the seed files and the name of the plugin.
 pub const SKILLS: &str = "skills";
@@ -34,7 +34,11 @@ impl Plugin for SkillsPlugin {
 
     fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         let skills = runtime.entity_store::<Skill>()?;
-        let manager = Arc::new(SkillManager::new(Arc::clone(&skills), Arc::clone(runtime.event_bus()), Arc::clone(runtime.confidentiality())));
+        let manager = Arc::new(SkillManager::new(
+            Arc::clone(&skills),
+            Arc::clone(runtime.event_bus()),
+            Arc::clone(runtime.confidentiality()),
+        ));
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);
         runtime.seed_section(SKILLS, Arc::new(SeededSkills(skills)))?;
@@ -60,7 +64,10 @@ impl SeedSection for SeededSkills {
         for skill in serde_json::from_value::<Vec<Skill>>(section)? {
             // The system's, as everything seeded: a skill says so, since
             // nobody's is no skill at all (`Skill::validate`).
-            let owned = Skill { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..skill };
+            let owned = Skill {
+                security_attributes: SecurityAttributes::owned_by(ActorId::System),
+                ..skill
+            };
             if create_unless_taken(self.0.as_ref(), &owned).await? {
                 info!("Seeded skill {} ({})", owned.name, owned.id);
             }

@@ -20,7 +20,10 @@ pub fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, String> {
     let mut next = end;
     for node in entries.iter().filter(|node| node.seq >= end) {
         if node.seq != next {
-            return Err(format!("an entry at position {} after the one after the last, {}", node.seq, next));
+            return Err(format!(
+                "an entry at position {} after the one after the last, {}",
+                node.seq, next
+            ));
         }
         next = next.next();
     }
@@ -31,7 +34,12 @@ pub fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, String> {
 /// from the position `from` on -: in its place, the branch last taken from
 /// it, if it is there; after the last otherwise.
 pub fn place<E>(nodes: &mut Vec<Node<E>>, from: Position, node: Node<E>) {
-    match node.seq.since(from).and_then(|at| usize::try_from(at).ok()).filter(|&at| at < nodes.len()) {
+    match node
+        .seq
+        .since(from)
+        .and_then(|at| usize::try_from(at).ok())
+        .filter(|&at| at < nodes.len())
+    {
         Some(at) => nodes[at] = node,
         None => nodes.push(node),
     }
@@ -41,7 +49,11 @@ pub fn place<E>(nodes: &mut Vec<Node<E>>, from: Position, node: Node<E>) {
 /// newest first, each older than those gone through before -: takes the
 /// node `want` names into `path`, and wants the one it follows next, the
 /// newest node with that digest before it. Done once `want` is `None`.
-pub fn follow_back<'a, E: Clone + 'a>(want: &mut Option<Digest>, path: &mut Vec<Node<E>>, older: impl IntoIterator<Item = &'a Node<E>>) {
+pub fn follow_back<'a, E: Clone + 'a>(
+    want: &mut Option<Digest>,
+    path: &mut Vec<Node<E>>,
+    older: impl IntoIterator<Item = &'a Node<E>>,
+) {
     for node in older {
         if want.is_none() {
             return;
@@ -59,7 +71,10 @@ pub fn follow_back<'a, E: Clone + 'a>(want: &mut Option<Digest>, path: &mut Vec<
 /// # Errors
 /// If the path was not followed back to its root: an entry it holds follows
 /// one that is not there.
-pub fn followed<E>(want: Option<Digest>, mut path: Vec<Node<E>>) -> Result<Option<Vec<Node<E>>>, String> {
+pub fn followed<E>(
+    want: Option<Digest>,
+    mut path: Vec<Node<E>>,
+) -> Result<Option<Vec<Node<E>>>, String> {
     if path.is_empty() {
         return Ok(None);
     }
@@ -111,7 +126,8 @@ impl<E: Clone> KeptChain<E> {
 
     /// The nodes from the position `seq` on, in the order they were added.
     pub(crate) fn from(&self, seq: Position) -> &[Node<E>] {
-        let start = usize::try_from(seq.get()).map_or(self.nodes.len(), |at| at.min(self.nodes.len()));
+        let start =
+            usize::try_from(seq.get()).map_or(self.nodes.len(), |at| at.min(self.nodes.len()));
         &self.nodes[start..]
     }
 
@@ -149,12 +165,30 @@ mod tests {
     #[test]
     fn a_chain_is_kept_by_position_and_a_digest_may_be_there_twice() {
         let mut kept = KeptChain::default();
-        kept.append(Stored { entries: vec![node(0, "a"), node(1, "b")], head: Some(digest::prompt("b")) }).unwrap();
-        kept.append(Stored { entries: vec![node(1, "b"), node(2, "a")], head: Some(digest::prompt("a")) }).expect("in its place, and a digest again");
+        kept.append(Stored {
+            entries: vec![node(0, "a"), node(1, "b")],
+            head: Some(digest::prompt("b")),
+        })
+        .unwrap();
+        kept.append(Stored {
+            entries: vec![node(1, "b"), node(2, "a")],
+            head: Some(digest::prompt("a")),
+        })
+        .expect("in its place, and a digest again");
         assert_eq!(kept.end().get(), 3);
-        assert_eq!(kept.from(Position::new(1)).iter().map(|n| n.entry.as_str()).collect::<Vec<_>>(), ["b", "a"]);
-        assert!(kept.append(Stored { entries: vec![node(4, "c")], head: None }).is_err(), "past the one after the last");
-        assert_eq!((kept.end().get(), kept.head()), (3, Some(digest::prompt("a"))), "and nothing taken in");
+        assert_eq!(
+            kept.from(Position::new(1)).iter().map(|n| n.entry.as_str()).collect::<Vec<_>>(),
+            ["b", "a"]
+        );
+        assert!(
+            kept.append(Stored { entries: vec![node(4, "c")], head: None }).is_err(),
+            "past the one after the last"
+        );
+        assert_eq!(
+            (kept.end().get(), kept.head()),
+            (3, Some(digest::prompt("a"))),
+            "and nothing taken in"
+        );
     }
 
     #[test]
@@ -166,9 +200,19 @@ mod tests {
         // a - b, then anew: a again, and c after it.
         let entries = vec![node(0, "a"), child(1, "b", "a"), node(2, "a"), child(3, "c", "a")];
         kept.append(Stored { entries, head: Some(digest::prompt("c")) }).unwrap();
-        let seqs = |path: Option<Vec<Node<String>>>| path.map(|path| path.iter().map(|n| n.seq.get()).collect::<Vec<_>>());
-        assert_eq!(seqs(kept.path(digest::prompt("c")).unwrap()), Some(vec![2, 3]), "through the newest a before it");
-        assert_eq!(seqs(kept.path(digest::prompt("b")).unwrap()), Some(vec![0, 1]), "through the a before it");
+        let seqs = |path: Option<Vec<Node<String>>>| {
+            path.map(|path| path.iter().map(|n| n.seq.get()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            seqs(kept.path(digest::prompt("c")).unwrap()),
+            Some(vec![2, 3]),
+            "through the newest a before it"
+        );
+        assert_eq!(
+            seqs(kept.path(digest::prompt("b")).unwrap()),
+            Some(vec![0, 1]),
+            "through the a before it"
+        );
         assert_eq!(seqs(kept.path(digest::prompt("x")).unwrap()), None);
         let mut broken = KeptChain::default();
         broken.append(Stored { entries: vec![child(0, "b", "a")], head: None }).unwrap();

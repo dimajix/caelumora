@@ -5,11 +5,11 @@
 
 pub mod control_tokens;
 
-use caelumora_runtime::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::Tool;
+use caelumora_runtime::component::ComponentRegistry;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
@@ -54,7 +54,11 @@ pub trait LLMClient: Send + Sync + Debug {
     /// partial messages as they arrive, then the complete ones, each built
     /// on `unlabelled_message`. The stream owns the request; dropping it
     /// abandons it.
-    async fn chat_completion(&self, context: &[Message], tools: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>>;
+    async fn chat_completion(
+        &self,
+        context: &[Message],
+        tools: &[Tool],
+    ) -> BoxStream<'static, LLMResult<MessageEvent>>;
 }
 
 /// Registers the `LLMClient` with `registry` as a facet of which an agent

@@ -34,11 +34,12 @@ pub trait Plugin: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::{config_of_params, service_of};
     use crate::component::{ComponentContainer, ComponentContext, ComponentFacets, ComponentKind};
-    use crate::testing::TestRuntime;
     use crate::runtime::RuntimeManager;
     use crate::seed::SeedSection;
     use crate::session::SessionManager;
+    use crate::testing::TestRuntime;
     use crate::view::Viewer;
     use async_trait::async_trait;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -47,21 +48,22 @@ mod tests {
     use caelumora_model::group::Group;
     use caelumora_model::removal::Removal;
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
-    use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::{PersistenceBackend, StateStore, StoreResult};
+    use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
     use caelumora_model::store::documents::{DocumentOf, DocumentStorage};
     use caelumora_model::store::history::HistoryStore;
-    use caelumora_model::store::transcript::TranscriptStore;
-    use crate::component::{config_of_params, service_of};
-    use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
-    use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored};
+    use caelumora_model::store::transcript::TranscriptStore;
+    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{
+        EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored,
+    };
+    use caelumora_model::store::{PersistenceBackend, StateStore, StoreResult};
     use caelumora_model::type_map::TypeKey;
     use serde::{Deserialize, Serialize};
-    use std::sync::Arc;
     use serde_json::Value;
     use std::fs;
+    use std::sync::Arc;
 
     define_id!(NoteId);
 
@@ -134,13 +136,19 @@ mod tests {
 
         fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
             let config: NotesConfig = runtime.config("notes")?;
-            let notebook = Arc::new(Notebook { notes: runtime.entity_store::<Note>()?, greeting: config.greeting });
+            let notebook = Arc::new(Notebook {
+                notes: runtime.entity_store::<Note>()?,
+                greeting: config.greeting,
+            });
             runtime.provide(Arc::clone(&notebook));
             runtime.seed_section("notes", notebook)?;
-            runtime.components().register(ComponentKind::new("notebook").provides::<Notebook>().uses::<Notebook>(), |_, context| {
-                let notebook = Arc::clone(context.service::<Notebook>()?);
-                Ok(ComponentFacets::empty().with(notebook))
-            });
+            runtime.components().register(
+                ComponentKind::new("notebook").provides::<Notebook>().uses::<Notebook>(),
+                |_, context| {
+                    let notebook = Arc::clone(context.service::<Notebook>()?);
+                    Ok(ComponentFacets::empty().with(notebook))
+                },
+            );
             Ok(())
         }
     }
@@ -228,26 +236,49 @@ mod tests {
     async fn a_plugin_brings_its_kind_its_manager_its_component_and_its_sections() {
         let store = Persistence::in_memory();
         let config = AppConfig::from_yaml("notes:\n  greeting: hello\n").unwrap();
-        let runtime = TestRuntime { store: store.clone(), config, plugins: vec![&Notes], ..Default::default() }.build();
+        let runtime = TestRuntime {
+            store: store.clone(),
+            config,
+            plugins: vec![&Notes],
+            ..Default::default()
+        }
+        .build();
 
         let notebook = runtime.services().get::<Notebook>().expect("its manager, a service");
         assert_eq!(notebook.greeting, "hello", "its section of the configuration");
-        let views = Arc::new(SessionManager::new(Arc::clone(&runtime))).views(Viewer::new(SecurityContext::system()));
+        let views = Arc::new(SessionManager::new(Arc::clone(&runtime)))
+            .views(Viewer::new(SecurityContext::system()));
         assert!(views.service::<Notebook>().is_some(), "reached by its views");
 
         // Its component kind, given the manager it uses.
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
-        let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("notebook", "notebook")] };
-        ComponentContainer::from_config(&config, &[TypeKey::of::<Notebook>()], runtime.component_registry(), &context).await.expect("built with its service");
+        let config = ComponentConfig {
+            component_nodes: vec![ComponentDescriptor::new("notebook", "notebook")],
+        };
+        ComponentContainer::from_config(
+            &config,
+            &[TypeKey::of::<Notebook>()],
+            runtime.component_registry(),
+            &context,
+        )
+        .await
+        .expect("built with its service");
 
         // Its seed section, into the store of its kind - the one the backend
         // gives whoever asks.
         let dir = tempfile::tempdir().unwrap();
         let seed = dir.path().join("seed.yaml");
-        fs::write(&seed, "notes:\n- id: 3f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  text: remember\n").unwrap();
+        fs::write(&seed, "notes:\n- id: 3f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  text: remember\n")
+            .unwrap();
         runtime.seed(&[seed]).await.unwrap();
         let notes = store.entity_store::<Note>().unwrap();
-        let note = notes.get(&SecurityContext::system(), "3f9a5e56-e5ea-43f9-9114-2098a6f417a9".parse().unwrap()).await.expect("seeded");
+        let note = notes
+            .get(
+                &SecurityContext::system(),
+                "3f9a5e56-e5ea-43f9-9114-2098a6f417a9".parse().unwrap(),
+            )
+            .await
+            .expect("seeded");
         assert_eq!(note.text, "remember");
     }
 
@@ -277,8 +308,15 @@ mod tests {
     /// 447), which are made before them.
     #[tokio::test]
     async fn a_backend_of_the_stores_is_given_the_secrets() {
-        let config = AppConfig::from_yaml("persistence:\n  entity_store:\n    type: probe\n  state_store:\n    type: probe\n").unwrap();
-        RuntimeBuilder::from_config(&config, &[&Probe]).await.expect("made with the secrets").build().unwrap();
+        let config = AppConfig::from_yaml(
+            "persistence:\n  entity_store:\n    type: probe\n  state_store:\n    type: probe\n",
+        )
+        .unwrap();
+        RuntimeBuilder::from_config(&config, &[&Probe])
+            .await
+            .expect("made with the secrets")
+            .build()
+            .unwrap();
     }
 
     /// Brings a backend of the stores, `ledger`, that keeps the entities
@@ -289,7 +327,11 @@ mod tests {
     struct EntitiesAlone(MemoryStore);
 
     impl PersistenceBackend for EntitiesAlone {
-        fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
+        fn documents(
+            &self,
+            kind: EntityKind,
+            document_of: DocumentOf,
+        ) -> StoreResult<Arc<dyn DocumentStorage>> {
             self.0.documents(kind, document_of)
         }
 
@@ -312,7 +354,9 @@ mod tests {
         }
 
         fn backends(&self, backends: &mut Backends) {
-            backends.register::<dyn PersistenceBackend, _>("ledger", |_, _, _| Ok(Arc::new(EntitiesAlone(MemoryStore::new()))));
+            backends.register::<dyn PersistenceBackend, _>("ledger", |_, _, _| {
+                Ok(Arc::new(EntitiesAlone(MemoryStore::new())))
+            });
         }
 
         fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
@@ -325,29 +369,61 @@ mod tests {
     /// store, naming it.
     #[tokio::test]
     async fn a_backend_of_the_entities_alone_is_no_state_store() {
-        let beside = AppConfig::from_yaml("persistence:\n  entity_store:\n    type: ledger\n  state_store:\n    type: memory\n").unwrap();
-        RuntimeBuilder::from_config(&beside, &[&Ledger]).await.expect("the states kept in memory").build().unwrap();
-        let alone = AppConfig::from_yaml("persistence:\n  entity_store:\n    type: ledger\n  state_store:\n    type: ledger\n").unwrap();
-        let refused = RuntimeBuilder::from_config(&alone, &[&Ledger]).await.map(|_| ()).expect_err("it keeps no states");
-        assert!(format!("{refused:#}").contains("Cannot make the state store: backend: the ledger keeps no states"), "{refused:#}");
+        let beside = AppConfig::from_yaml(
+            "persistence:\n  entity_store:\n    type: ledger\n  state_store:\n    type: memory\n",
+        )
+        .unwrap();
+        RuntimeBuilder::from_config(&beside, &[&Ledger])
+            .await
+            .expect("the states kept in memory")
+            .build()
+            .unwrap();
+        let alone = AppConfig::from_yaml(
+            "persistence:\n  entity_store:\n    type: ledger\n  state_store:\n    type: ledger\n",
+        )
+        .unwrap();
+        let refused = RuntimeBuilder::from_config(&alone, &[&Ledger])
+            .await
+            .map(|_| ())
+            .expect_err("it keeps no states");
+        assert!(
+            format!("{refused:#}")
+                .contains("Cannot make the state store: backend: the ledger keeps no states"),
+            "{refused:#}"
+        );
     }
 
     #[tokio::test]
     async fn a_plugin_brings_a_backend_of_a_service_of_the_core() {
-        let config = AppConfig::from_yaml("secrets:\n  providers:\n    - type: vault\n      secret: s3cr3t\n").unwrap();
-        let runtime = RuntimeBuilder::from_config(&config, &[&Vault]).await.unwrap().build().unwrap();
-        assert_eq!(runtime.secret_manager().resolve(&SecurityContext::system(), "ANY").await.unwrap(), "s3cr3t", "made by the plugin's factory");
-        let without = RuntimeBuilder::from_config(&config, &[]).await.map(|_| ()).expect_err("nobody brings it");
+        let config = AppConfig::from_yaml(
+            "secrets:\n  providers:\n    - type: vault\n      secret: s3cr3t\n",
+        )
+        .unwrap();
+        let runtime =
+            RuntimeBuilder::from_config(&config, &[&Vault]).await.unwrap().build().unwrap();
+        assert_eq!(
+            runtime.secret_manager().resolve(&SecurityContext::system(), "ANY").await.unwrap(),
+            "s3cr3t",
+            "made by the plugin's factory"
+        );
+        let without = RuntimeBuilder::from_config(&config, &[])
+            .await
+            .map(|_| ())
+            .expect_err("nobody brings it");
         assert!(format!("{without:#}").contains("the secret provider 1 (vault)"), "{without:#}");
     }
 
     #[test]
     fn a_section_of_the_configuration_nobody_claims_is_an_error() {
-        let refused = built(AppConfig::from_yaml("notez:\n  greeting: hello\n").unwrap(), &Notes).expect_err("a typo");
+        let refused = built(AppConfig::from_yaml("notez:\n  greeting: hello\n").unwrap(), &Notes)
+            .expect_err("a typo");
         assert!(refused.to_string().contains("'notez'"), "{refused}");
-        let unreadable = built(AppConfig::from_yaml("notes:\n  greting: hello\n").unwrap(), &Notes).expect_err("not its section");
+        let unreadable = built(AppConfig::from_yaml("notes:\n  greting: hello\n").unwrap(), &Notes)
+            .expect_err("not its section");
         assert!(format!("{unreadable:#}").contains("greting"), "{unreadable:#}");
-        let again = TestRuntime { plugins: vec![&Notes, &Notes], ..Default::default() }.try_build().expect_err("claimed twice");
+        let again = TestRuntime { plugins: vec![&Notes, &Notes], ..Default::default() }
+            .try_build()
+            .expect_err("claimed twice");
         assert!(format!("{again:#}").contains("claimed twice"), "{again:#}");
     }
 
@@ -355,6 +431,12 @@ mod tests {
     fn a_kind_named_as_another_is_refused() {
         let refused = built(AppConfig::default(), &Impostor).expect_err("named as the groups are");
         assert!(refused.to_string().contains("impostor"), "names the plugin: {refused}");
-        assert!(matches!(refused.root_cause().downcast_ref::<StoreError>(), Some(StoreError::Conflict(_))), "{refused:#}");
+        assert!(
+            matches!(
+                refused.root_cause().downcast_ref::<StoreError>(),
+                Some(StoreError::Conflict(_))
+            ),
+            "{refused:#}"
+        );
     }
 }

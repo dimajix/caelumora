@@ -25,16 +25,20 @@
 //! to choose for, and that.
 
 use crate::actor::Actor;
-use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
+use crate::component::{
+    ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry,
+};
 use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing, Undecided};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason};
+use caelumora_model::actor::{
+    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason,
+};
 use caelumora_model::message::Message;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::slice;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, warn};
-use std::slice;
 
 pub const POLICY_MODERATOR_KIND: &str = "policy_moderator";
 
@@ -77,7 +81,9 @@ impl MentionsReplacePolicy {
             Some(value) => match value.as_str() {
                 Some("anyone") => Ok(Self::Anyone),
                 Some("agents") => Ok(Self::Agents),
-                _ => Err(ComponentError::InvalidConfig("parameter 'mentions_replace_policy' must be 'anyone' or 'agents'".to_string())),
+                _ => Err(ComponentError::InvalidConfig(
+                    "parameter 'mentions_replace_policy' must be 'anyone' or 'agents'".to_string(),
+                )),
             },
         }
     }
@@ -105,7 +111,9 @@ impl OnUndecided {
             Some(value) => match value.as_str() {
                 Some("none") => Ok(Self::None),
                 Some("all") => Ok(Self::All),
-                _ => Err(ComponentError::InvalidConfig("parameter 'on_undecided' must be 'none' or 'all'".to_string())),
+                _ => Err(ComponentError::InvalidConfig(
+                    "parameter 'on_undecided' must be 'none' or 'all'".to_string(),
+                )),
             },
         }
     }
@@ -130,7 +138,11 @@ pub struct PolicyModerator {
 }
 
 impl PolicyModerator {
-    pub fn new(policy: ComponentImpl<dyn ResponderPolicy>, max_agent_hops: u32, context_messages: usize) -> Self {
+    pub fn new(
+        policy: ComponentImpl<dyn ResponderPolicy>,
+        max_agent_hops: u32,
+        context_messages: usize,
+    ) -> Self {
         Self {
             actors: Mutex::new(ModeratorActors::new()),
             policy,
@@ -145,7 +157,10 @@ impl PolicyModerator {
 
     /// This moderator, its policy replaced by the mentions of those
     /// `mentions_replace_policy` says.
-    pub fn with_mentions_replace_policy(self, mentions_replace_policy: MentionsReplacePolicy) -> Self {
+    pub fn with_mentions_replace_policy(
+        self,
+        mentions_replace_policy: MentionsReplacePolicy,
+    ) -> Self {
         Self { mentions_replace_policy, ..self }
     }
 
@@ -223,7 +238,11 @@ impl PolicyModerator {
         let heard = messages.iter().any(Message::is_heard);
         let (mentioned, candidates, users) = {
             let actors = self.actors();
-            (actors.mentioned_responders(messages, self.mentions_replace_policy), actors.actor_candidates(messages), actors.user_ids())
+            (
+                actors.mentioned_responders(messages, self.mentions_replace_policy),
+                actors.actor_candidates(messages),
+                actors.user_ids(),
+            )
         };
         let conversation: Vec<Message> = self.heard().iter().chain(messages).cloned().collect();
         if !heard {
@@ -245,7 +264,10 @@ impl PolicyModerator {
             _ => 0,
         };
         if agent_hops > self.max_agent_hops {
-            debug!(agent_hops, "Asking nobody to respond: the chain between agents has reached its limit");
+            debug!(
+                agent_hops,
+                "Asking nobody to respond: the chain between agents has reached its limit"
+            );
             return self.cut_off(event, messages, mentioned.unwrap_or_default(), users);
         }
 
@@ -258,7 +280,15 @@ impl PolicyModerator {
                 let candidate_ids = candidates.iter().map(|candidate| candidate.id).collect();
                 match self.policy.choose(event, &conversation, candidates).await {
                     Ok(chosen) => (chosen, RequestReason::Chosen),
-                    Err(undecided) => return self.undecided(&undecided, messages, candidate_ids, users, agent_hops),
+                    Err(undecided) => {
+                        return self.undecided(
+                            &undecided,
+                            messages,
+                            candidate_ids,
+                            users,
+                            agent_hops,
+                        )
+                    }
                 }
             }
         };
@@ -268,7 +298,14 @@ impl PolicyModerator {
     /// Whom to ask to respond to the response `messages` when the policy could not choose among
     /// `candidates` (issue 441): whom `on_undecided` says - if nobody, the `users` are told so by a
     /// `ResponderUndecided`.
-    fn undecided(&self, undecided: &Undecided, messages: &[Message], candidates: Vec<ActorId>, users: Vec<ActorId>, agent_hops: u32) -> Routing {
+    fn undecided(
+        &self,
+        undecided: &Undecided,
+        messages: &[Message],
+        candidates: Vec<ActorId>,
+        users: Vec<ActorId>,
+        agent_hops: u32,
+    ) -> Routing {
         warn!(candidates = candidates.len(), on_undecided = ?self.on_undecided, "The responder policy could not choose who responds: {undecided}");
         let ask = match self.on_undecided {
             OnUndecided::All => candidates,
@@ -285,11 +322,21 @@ impl PolicyModerator {
     /// since its chain reached the limit (issue 200): a `ChainCutOff` to the
     /// `users` and to the agents involved - its sender and the agents it
     /// mentioned, `not_asked`.
-    fn cut_off(&self, event: &Envelope, messages: &[Message], not_asked: Vec<ActorId>, users: Vec<ActorId>) -> Routing {
+    fn cut_off(
+        &self,
+        event: &Envelope,
+        messages: &[Message],
+        not_asked: Vec<ActorId>,
+        users: Vec<ActorId>,
+    ) -> Routing {
         let Some(last) = messages.last() else {
             return Routing::default();
         };
-        let notice = Notice::ChainCutOff { message: last.id, max_agent_hops: self.max_agent_hops, not_asked: not_asked.clone() };
+        let notice = Notice::ChainCutOff {
+            message: last.id,
+            max_agent_hops: self.max_agent_hops,
+            not_asked: not_asked.clone(),
+        };
         let mut recipients = users;
         recipients.push(event.context.sender_id);
         recipients.extend(not_asked);
@@ -322,12 +369,24 @@ impl Moderator for PolicyModerator {
             // respond, as if a message of the user had mentioned them - no
             // policy is consulted, and no chain between agents counted.
             ActorEvent::NudgeRequested { participant } => {
-                let ask = self.actors().takes_part(*participant).then_some(*participant).into_iter().collect();
-                Routing { ask, reason: RequestReason::Nudged, agent_hops: event.context.agent_hops, ..Routing::default() }
+                let ask = self
+                    .actors()
+                    .takes_part(*participant)
+                    .then_some(*participant)
+                    .into_iter()
+                    .collect();
+                Routing {
+                    ask,
+                    reason: RequestReason::Nudged,
+                    agent_hops: event.context.agent_hops,
+                    ..Routing::default()
+                }
             }
             // A change to what was said, in what the moderator keeps of
             // what was heard (issue 234).
-            ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } => {
+            ActorEvent::MessageModified(_)
+            | ActorEvent::MessageRevoked { .. }
+            | ActorEvent::MessageReclassified { .. } => {
                 self.apply_change(&event.event);
                 Routing::default()
             }
@@ -363,9 +422,15 @@ impl ModeratorActors {
     fn add_actor(&mut self, actor: Arc<dyn Actor>) {
         let id = actor.id();
         match id {
-            ActorId::User(_) => { self.user_actors.insert(id, actor); }
-            ActorId::Approver(_) => { self.approval_actors.insert(id, actor); }
-            ActorId::Agent(_) => { self.agent_actors.insert(id, actor); }
+            ActorId::User(_) => {
+                self.user_actors.insert(id, actor);
+            }
+            ActorId::Approver(_) => {
+                self.approval_actors.insert(id, actor);
+            }
+            ActorId::Agent(_) => {
+                self.agent_actors.insert(id, actor);
+            }
             ActorId::None | ActorId::System => warn!("Actor {} takes no part in routing", id),
         }
     }
@@ -378,7 +443,9 @@ impl ModeratorActors {
 
     /// Whether `participant`, of whatever kind, is in the channel.
     fn takes_part(&self, participant: ActorId) -> bool {
-        [&self.agent_actors, &self.user_actors, &self.approval_actors].iter().any(|actors| actors.contains_key(&participant))
+        [&self.agent_actors, &self.user_actors, &self.approval_actors]
+            .iter()
+            .any(|actors| actors.contains_key(&participant))
     }
 
     /// The agents a policy may choose from, as they are described to
@@ -388,7 +455,8 @@ impl ModeratorActors {
     /// agent chosen here would be woken without being addressed (issue 45).
     fn actor_candidates(&self, messages: &[Message]) -> Vec<ActorDescription> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
-        self.agent_actors.iter()
+        self.agent_actors
+            .iter()
             .filter(|(id, actor)| actor.state() != ActorState::Sleeping && !sender_ids.contains(id))
             .map(|(_, actor)| actor.describe())
             .collect()
@@ -405,13 +473,20 @@ impl ModeratorActors {
     /// sender of the messages counts for nothing. Sleeping agents are not
     /// filtered out here - the channel wakes whom the moderator asks to
     /// respond before it delivers anything of the decision.
-    fn mentioned_responders(&self, messages: &[Message], replacing: MentionsReplacePolicy) -> Option<Vec<ActorId>> {
+    fn mentioned_responders(
+        &self,
+        messages: &[Message],
+        replacing: MentionsReplacePolicy,
+    ) -> Option<Vec<ActorId>> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         let mut addressed = false;
         let mut responders: Vec<ActorId> = Vec::new();
-        for id in messages.iter().flat_map(|m| m.mentions.iter()).filter(|id| !sender_ids.contains(id)) {
+        for id in
+            messages.iter().flat_map(|m| m.mentions.iter()).filter(|id| !sender_ids.contains(id))
+        {
             let agent = self.agent_actors.contains_key(id);
-            addressed |= agent || (replacing == MentionsReplacePolicy::Anyone && self.takes_part(*id));
+            addressed |=
+                agent || (replacing == MentionsReplacePolicy::Anyone && self.takes_part(*id));
             if agent && !responders.contains(id) {
                 responders.push(*id);
             }
@@ -426,27 +501,45 @@ impl ModeratorActors {
     }
 }
 
-
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(POLICY_MODERATOR_KIND).provides::<dyn Moderator>().needs::<dyn ResponderPolicy>(),
+        ComponentKind::new(POLICY_MODERATOR_KIND)
+            .provides::<dyn Moderator>()
+            .needs::<dyn ResponderPolicy>(),
         |descriptor, context| async move {
             let max_agent_hops = match descriptor.params.get("max_agent_hops") {
                 None => DEFAULT_MAX_AGENT_HOPS,
-                Some(value) => value.as_u64().and_then(|hops| u32::try_from(hops).ok())
-                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'max_agent_hops' must be a number of at least 0".to_string()))?,
+                Some(value) => {
+                    value.as_u64().and_then(|hops| u32::try_from(hops).ok()).ok_or_else(|| {
+                        ComponentError::InvalidConfig(
+                            "parameter 'max_agent_hops' must be a number of at least 0".to_string(),
+                        )
+                    })?
+                }
             };
             let max_span_depth = match descriptor.params.get("max_span_depth") {
                 None => DEFAULT_MAX_SPAN_DEPTH,
-                Some(value) => value.as_u64().and_then(|depth| i32::try_from(depth).ok())
-                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'max_span_depth' must be a number of at least 0".to_string()))?,
+                Some(value) => {
+                    value.as_u64().and_then(|depth| i32::try_from(depth).ok()).ok_or_else(|| {
+                        ComponentError::InvalidConfig(
+                            "parameter 'max_span_depth' must be a number of at least 0".to_string(),
+                        )
+                    })?
+                }
             };
             let mentions_replace_policy = MentionsReplacePolicy::of_params(&descriptor.params)?;
             let on_undecided = OnUndecided::of_params(&descriptor.params)?;
             let context_messages = match descriptor.params.get("context_messages") {
                 None => DEFAULT_CONTEXT_MESSAGES,
-                Some(value) => value.as_u64().and_then(|count| usize::try_from(count).ok())
-                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'context_messages' must be a number of at least 0".to_string()))?,
+                Some(value) => value
+                    .as_u64()
+                    .and_then(|count| usize::try_from(count).ok())
+                    .ok_or_else(|| {
+                        ComponentError::InvalidConfig(
+                            "parameter 'context_messages' must be a number of at least 0"
+                                .to_string(),
+                        )
+                    })?,
             };
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
@@ -464,38 +557,49 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::moderator::Moderator;
     use crate::channel::ChannelLoop;
+    use crate::moderator::Moderator;
+    use crate::moderator::{
+        broadcast_policy, mentions_only_policy, random_policy, round_robin_policy,
+        user_driven_policy,
+    };
     use crate::testing::test_registry;
-    use crate::moderator::{broadcast_policy, mentions_only_policy, random_policy, round_robin_policy, user_driven_policy};
+    use crate::testing::StandIn;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::ApprovalRequest;
+    use caelumora_model::confidentiality::Classification;
     use caelumora_model::history::Audience;
     use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::tool::ToolCall;
-    use caelumora_model::user::UserId;
-    use caelumora_model::confidentiality::Classification;
     use caelumora_model::store::Persistence;
+    use caelumora_model::tool::ToolCall;
     use caelumora_model::turn::GivenUpReason;
+    use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
-    use crate::testing::StandIn;
     use chrono::Utc;
 
     fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
-        let context = EventContext::new(Default::default(), Default::default(), sender_id, "test".to_string());
+        let context = EventContext::new(
+            Default::default(),
+            Default::default(),
+            sender_id,
+            "test".to_string(),
+        );
         Envelope::new(SecurityContext::default(), context, event)
     }
 
     /// Three agents, the middle one asleep, registered with `moderator`.
     fn add_agents(moderator: &dyn Moderator) -> Vec<ActorId> {
         let states = [ActorState::Idle, ActorState::Sleeping, ActorState::Idle];
-        states.iter().map(|state| {
-            let id = ActorId::Agent(AgentId::new());
-            moderator.add_actor(Arc::new(StandIn::new(id, "test", *state)));
-            id
-        }).collect()
+        states
+            .iter()
+            .map(|state| {
+                let id = ActorId::Agent(AgentId::new());
+                moderator.add_actor(Arc::new(StandIn::new(id, "test", *state)));
+                id
+            })
+            .collect()
     }
 
     fn text_from(sender_id: ActorId, content: &str, mentions: Vec<ActorId>) -> Message {
@@ -511,23 +615,38 @@ mod tests {
     /// The end of the answer `content` of `sender_id`, whom the moderator
     /// decides from whom to ask.
     fn message_from(sender_id: ActorId, content: &str, mentions: Vec<ActorId>) -> Envelope {
-        envelope(sender_id, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![text_from(sender_id, content, mentions)] })
+        envelope(
+            sender_id,
+            ActorEvent::TurnFinished {
+                turn_id: TurnId::new(),
+                messages: vec![text_from(sender_id, content, mentions)],
+            },
+        )
     }
 
     /// The message `content` of `sender_id` as it is said (issue 258).
     fn said_from(sender_id: ActorId, content: &str, mentions: Vec<ActorId>) -> Envelope {
-        envelope(sender_id, ActorEvent::CompleteMessageGenerated(text_from(sender_id, content, mentions)))
+        envelope(
+            sender_id,
+            ActorEvent::CompleteMessageGenerated(text_from(sender_id, content, mentions)),
+        )
     }
 
     /// Whether `routing` delivers its event as every channel does, asks
     /// nobody and tells nothing of its own.
     fn as_every_channel(routing: &Routing) -> bool {
-        routing.audience == Audience::Everybody && routing.ask.is_empty() && routing.notices.is_empty()
+        routing.audience == Audience::Everybody
+            && routing.ask.is_empty()
+            && routing.notices.is_empty()
     }
 
     /// `policy` as a component.
     fn policy(policy: impl ResponderPolicy + 'static) -> ComponentImpl<dyn ResponderPolicy> {
-        ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(policy) }
+        ComponentImpl {
+            id: "responders".to_string(),
+            fail_policy: Default::default(),
+            facet: Arc::new(policy),
+        }
     }
 
     /// What a policy was told once: the contents of the conversation and
@@ -540,7 +659,12 @@ mod tests {
 
     #[async_trait]
     impl ResponderPolicy for Recording {
-        async fn choose(&self, _event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+        async fn choose(
+            &self,
+            _event: &Envelope,
+            messages: &[Message],
+            candidates: Vec<ActorDescription>,
+        ) -> Result<Vec<ActorId>, Undecided> {
             let said = messages.iter().filter_map(|message| message.content.clone()).collect();
             self.0.lock().unwrap().push((said, candidates));
             Ok(Vec::new())
@@ -560,7 +684,11 @@ mod tests {
     #[tokio::test]
     async fn a_policy_is_told_what_was_said_and_who_the_candidates_are() {
         let recording = Recording::default();
-        let moderator = PolicyModerator::new(policy(recording.clone()), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
+        let moderator = PolicyModerator::new(
+            policy(recording.clone()),
+            DEFAULT_MAX_AGENT_HOPS,
+            DEFAULT_CONTEXT_MESSAGES,
+        );
         let agents = add_agents(&moderator);
 
         moderator.route(&message_from(agents[0], "who knows?", vec![])).await;
@@ -568,7 +696,11 @@ mod tests {
         let told = recording.0.lock().unwrap().clone();
         let [(said, candidates)] = told.as_slice() else { panic!("asked once: {told:?}") };
         assert_eq!(said, &["who knows?"], "nothing was said before");
-        assert_eq!(candidates.iter().map(|candidate| candidate.id).collect::<Vec<_>>(), [agents[2]], "awake, and not who said it");
+        assert_eq!(
+            candidates.iter().map(|candidate| candidate.id).collect::<Vec<_>>(),
+            [agents[2]],
+            "awake, and not who said it"
+        );
         assert_eq!(candidates[0].name.as_str(), "test", "as it is described");
     }
 
@@ -582,46 +714,111 @@ mod tests {
         let moderator = PolicyModerator::new(policy(recording.clone()), DEFAULT_MAX_AGENT_HOPS, 3);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
-        let said = |content: &str| envelope(user, ActorEvent::CompleteMessageGenerated(Message { id: MessageId::new(), ..text_from(user, content, vec![]) }));
+        let said = |content: &str| {
+            envelope(
+                user,
+                ActorEvent::CompleteMessageGenerated(Message {
+                    id: MessageId::new(),
+                    ..text_from(user, content, vec![])
+                }),
+            )
+        };
 
         moderator.route(&said("one")).await;
-        let in_turn = Message { id: MessageId::new(), turn_id: Some(TurnId::new()), ..text_from(agents[0], "two", vec![]) };
-        moderator.route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone()))).await;
+        let in_turn = Message {
+            id: MessageId::new(),
+            turn_id: Some(TurnId::new()),
+            ..text_from(agents[0], "two", vec![])
+        };
+        moderator
+            .route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone())))
+            .await;
         moderator.route(&said("three")).await;
         assert_eq!(recording.last_told().0, ["one", "three"], "the turn has not ended yet");
 
-        let tool_calls_only = Message { id: MessageId::new(), content: None, ..text_from(agents[0], "", vec![]) };
-        moderator.route(&envelope(agents[0], ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![in_turn.clone(), tool_calls_only] })).await;
+        let tool_calls_only =
+            Message { id: MessageId::new(), content: None, ..text_from(agents[0], "", vec![]) };
+        moderator
+            .route(&envelope(
+                agents[0],
+                ActorEvent::TurnFinished {
+                    turn_id: TurnId::new(),
+                    messages: vec![in_turn.clone(), tool_calls_only],
+                },
+            ))
+            .await;
         assert_eq!(recording.last_told().0, ["one", "three", "two"], "what the turn said, last");
 
         moderator.route(&said("four")).await;
-        assert_eq!(recording.last_told().0, ["one", "three", "two", "four"], "the turn's once it ended");
+        assert_eq!(
+            recording.last_told().0,
+            ["one", "three", "two", "four"],
+            "the turn's once it ended"
+        );
 
         let five = said("five");
         moderator.route(&five).await;
-        assert_eq!(recording.last_told().0, ["three", "two", "four", "five"], "at most three before, the oldest dropped");
+        assert_eq!(
+            recording.last_told().0,
+            ["three", "two", "four", "five"],
+            "at most three before, the oldest dropped"
+        );
 
         let ActorEvent::CompleteMessageGenerated(five) = five.event else { unreachable!() };
-        moderator.route(&envelope(user, ActorEvent::MessageModified(Message { content: Some("FIVE".to_string()), ..five }))).await;
-        moderator.route(&envelope(agents[0], ActorEvent::MessageRevoked { message: in_turn.id, at: Utc::now() })).await;
+        moderator
+            .route(&envelope(
+                user,
+                ActorEvent::MessageModified(Message { content: Some("FIVE".to_string()), ..five }),
+            ))
+            .await;
+        moderator
+            .route(&envelope(
+                agents[0],
+                ActorEvent::MessageRevoked { message: in_turn.id, at: Utc::now() },
+            ))
+            .await;
         moderator.route(&said("six")).await;
-        assert_eq!(recording.last_told().0, ["four", "FIVE", "six"], "modified, and the revoked one says nothing");
+        assert_eq!(
+            recording.last_told().0,
+            ["four", "FIVE", "six"],
+            "modified, and the revoked one says nothing"
+        );
     }
 
     /// The moderators that ask someone to respond to a user when nobody is
     /// mentioned.
     fn answering_moderators() -> Vec<PolicyModerator> {
         vec![
-            PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES),
-            PolicyModerator::new(policy(random_policy::RandomPolicy::new()), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES),
-            PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES),
-            PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES),
+            PolicyModerator::new(
+                policy(broadcast_policy::BroadcastPolicy),
+                DEFAULT_MAX_AGENT_HOPS,
+                DEFAULT_CONTEXT_MESSAGES,
+            ),
+            PolicyModerator::new(
+                policy(random_policy::RandomPolicy::new()),
+                DEFAULT_MAX_AGENT_HOPS,
+                DEFAULT_CONTEXT_MESSAGES,
+            ),
+            PolicyModerator::new(
+                policy(round_robin_policy::RoundRobinPolicy::default()),
+                DEFAULT_MAX_AGENT_HOPS,
+                DEFAULT_CONTEXT_MESSAGES,
+            ),
+            PolicyModerator::new(
+                policy(user_driven_policy::UserDrivenPolicy),
+                DEFAULT_MAX_AGENT_HOPS,
+                DEFAULT_CONTEXT_MESSAGES,
+            ),
         ]
     }
 
     fn moderators() -> Vec<PolicyModerator> {
         let mut all = answering_moderators();
-        all.push(PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES));
+        all.push(PolicyModerator::new(
+            policy(mentions_only_policy::MentionsOnlyPolicy),
+            DEFAULT_MAX_AGENT_HOPS,
+            DEFAULT_CONTEXT_MESSAGES,
+        ));
         all
     }
 
@@ -634,8 +831,20 @@ mod tests {
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
-        let config = ComponentConfig { component_nodes: config.iter().map(|(id, kind)| ComponentDescriptor::new(id, kind)).collect() };
-        let container = ComponentContainer::from_config(&config, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.unwrap();
+        let config = ComponentConfig {
+            component_nodes: config
+                .iter()
+                .map(|(id, kind)| ComponentDescriptor::new(id, kind))
+                .collect(),
+        };
+        let container = ComponentContainer::from_config(
+            &config,
+            ChannelLoop::COMPONENT_FACETS,
+            &registry,
+            &context,
+        )
+        .await
+        .unwrap();
         container.one::<dyn Moderator>().await.unwrap().facet
     }
 
@@ -646,7 +855,11 @@ mod tests {
         let broadcast = built(&[("responders", broadcast_policy::BROADCAST_POLICY_KIND)]).await;
         let agents = add_agents(broadcast.as_ref());
         let asked = broadcast.route(&message_from(user, "hello", Vec::new())).await.ask;
-        assert_eq!(asked.into_iter().collect::<HashSet<_>>(), HashSet::from([agents[0], agents[2]]), "every awake agent");
+        assert_eq!(
+            asked.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([agents[0], agents[2]]),
+            "every awake agent"
+        );
 
         let default = built(&[]).await;
         let agents = add_agents(default.as_ref());
@@ -654,7 +867,10 @@ mod tests {
         let second = default.route(&message_from(user, "two", Vec::new())).await.ask;
         assert_eq!(first.len(), 1, "one agent at a time");
         assert_ne!(first, second, "round robin by default");
-        assert!(!first.contains(&agents[1]) && !second.contains(&agents[1]), "not the sleeping one");
+        assert!(
+            !first.contains(&agents[1]) && !second.contains(&agents[1]),
+            "not the sleeping one"
+        );
     }
 
     #[tokio::test]
@@ -666,11 +882,31 @@ mod tests {
 
             let routing = moderator.route(&event).await;
 
-            assert_eq!(routing.ask, vec![agents[1], agents[2]], "{:?} must ask the mentioned agents, the sleeping one included", moderator);
-            assert_eq!(routing.reason, RequestReason::Mentioned, "{:?} must say they were mentioned", moderator);
-            assert!(routing.audience == Audience::Everybody, "{:?} must deliver the end of the turn as every channel does", moderator);
-            let said = moderator.route(&said_from(user, "@b and @c, please", vec![agents[1], agents[2]])).await;
-            assert!(said.audience == Audience::Everybody, "{:?} must deliver the message as every channel does", moderator);
+            assert_eq!(
+                routing.ask,
+                vec![agents[1], agents[2]],
+                "{:?} must ask the mentioned agents, the sleeping one included",
+                moderator
+            );
+            assert_eq!(
+                routing.reason,
+                RequestReason::Mentioned,
+                "{:?} must say they were mentioned",
+                moderator
+            );
+            assert!(
+                routing.audience == Audience::Everybody,
+                "{:?} must deliver the end of the turn as every channel does",
+                moderator
+            );
+            let said = moderator
+                .route(&said_from(user, "@b and @c, please", vec![agents[1], agents[2]]))
+                .await;
+            assert!(
+                said.audience == Audience::Everybody,
+                "{:?} must deliver the message as every channel does",
+                moderator
+            );
         }
     }
 
@@ -685,8 +921,17 @@ mod tests {
             let routing = moderator.route(&event).await;
 
             assert!(!routing.ask.is_empty(), "{:?} must apply its own policy", moderator);
-            assert!(!routing.ask.contains(&agents[1]), "{:?} must not ask the sleeping agent without a mention", moderator);
-            assert_eq!(routing.reason, RequestReason::Chosen, "{:?} must say its policy chose them", moderator);
+            assert!(
+                !routing.ask.contains(&agents[1]),
+                "{:?} must not ask the sleeping agent without a mention",
+                moderator
+            );
+            assert_eq!(
+                routing.reason,
+                RequestReason::Chosen,
+                "{:?} must say its policy chose them",
+                moderator
+            );
         }
     }
 
@@ -703,12 +948,28 @@ mod tests {
             moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
 
             let to_her = moderator.route(&message_from(user, "@other, look", vec![other])).await;
-            assert!(to_her.ask.is_empty(), "{:?} must ask nobody for a message to a person", moderator);
-            let to_both = moderator.route(&message_from(user, "@other and @c, look", vec![other, agents[2]])).await;
-            assert_eq!(to_both.ask, vec![agents[2]], "{:?} must ask the agent mentioned beside her", moderator);
+            assert!(
+                to_her.ask.is_empty(),
+                "{:?} must ask nobody for a message to a person",
+                moderator
+            );
+            let to_both = moderator
+                .route(&message_from(user, "@other and @c, look", vec![other, agents[2]]))
+                .await;
+            assert_eq!(
+                to_both.ask,
+                vec![agents[2]],
+                "{:?} must ask the agent mentioned beside her",
+                moderator
+            );
             assert_eq!(to_both.reason, RequestReason::Mentioned);
-            let to_himself = moderator.route(&message_from(user, "@user, note to self", vec![user])).await;
-            assert!(!to_himself.ask.is_empty(), "{:?} must apply its policy to a mention of the sender alone", moderator);
+            let to_himself =
+                moderator.route(&message_from(user, "@user, note to self", vec![user])).await;
+            assert!(
+                !to_himself.ask.is_empty(),
+                "{:?} must apply its policy to a mention of the sender alone",
+                moderator
+            );
         }
         for moderator in answering_moderators() {
             let moderator = moderator.with_mentions_replace_policy(MentionsReplacePolicy::Agents);
@@ -717,7 +978,11 @@ mod tests {
             moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
 
             let to_her = moderator.route(&message_from(user, "@other, look", vec![other])).await;
-            assert!(!to_her.ask.is_empty() && !to_her.ask.contains(&agents[1]), "{:?} must apply its policy, with only agents replacing it", moderator);
+            assert!(
+                !to_her.ask.is_empty() && !to_her.ask.contains(&agents[1]),
+                "{:?} must apply its policy, with only agents replacing it",
+                moderator
+            );
             assert_eq!(to_her.reason, RequestReason::Chosen);
         }
     }
@@ -725,8 +990,15 @@ mod tests {
     #[test]
     fn whose_mentions_replace_the_policy_is_configured() {
         let of = |params| MentionsReplacePolicy::of_params(&params);
-        assert_eq!(of(serde_json::json!({})).unwrap(), MentionsReplacePolicy::Anyone, "anyone's by default");
-        assert_eq!(of(serde_json::json!({ "mentions_replace_policy": "agents" })).unwrap(), MentionsReplacePolicy::Agents);
+        assert_eq!(
+            of(serde_json::json!({})).unwrap(),
+            MentionsReplacePolicy::Anyone,
+            "anyone's by default"
+        );
+        assert_eq!(
+            of(serde_json::json!({ "mentions_replace_policy": "agents" })).unwrap(),
+            MentionsReplacePolicy::Agents
+        );
         assert!(of(serde_json::json!({ "mentions_replace_policy": "people" })).is_err());
     }
 
@@ -738,7 +1010,12 @@ mod tests {
 
             let routing = moderator.route(&event).await;
 
-            assert_eq!(routing.ask, vec![agents[1]], "{:?} must ask the agent an agent mentioned", moderator);
+            assert_eq!(
+                routing.ask,
+                vec![agents[1]],
+                "{:?} must ask the agent an agent mentioned",
+                moderator
+            );
             assert_eq!(routing.agent_hops, 1, "{:?} must count the hop", moderator);
         }
     }
@@ -750,12 +1027,26 @@ mod tests {
             let user = ActorId::User(UserId::new());
             // `@all`, as the channel resolves it (issue 401): every participant, the sender
             // included.
-            let event = message_from(agents[0], "@all, what do you think?", vec![user, agents[0], agents[1], agents[2]]);
+            let event = message_from(
+                agents[0],
+                "@all, what do you think?",
+                vec![user, agents[0], agents[1], agents[2]],
+            );
 
             let routing = moderator.route(&event).await;
 
-            assert_eq!(routing.ask, vec![agents[1], agents[2]], "{:?} must ask every other agent, the sleeping one included", moderator);
-            assert_eq!(routing.reason, RequestReason::Mentioned, "{:?} must say they were mentioned, as everyone", moderator);
+            assert_eq!(
+                routing.ask,
+                vec![agents[1], agents[2]],
+                "{:?} must ask every other agent, the sleeping one included",
+                moderator
+            );
+            assert_eq!(
+                routing.reason,
+                RequestReason::Mentioned,
+                "{:?} must say they were mentioned, as everyone",
+                moderator
+            );
         }
     }
 
@@ -769,7 +1060,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_chain_between_agents_ends_at_the_limit_and_a_user_starts_a_new_one() {
-        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2, DEFAULT_CONTEXT_MESSAGES);
+        let moderator = PolicyModerator::new(
+            policy(broadcast_policy::BroadcastPolicy),
+            2,
+            DEFAULT_CONTEXT_MESSAGES,
+        );
         let agents = add_agents(&moderator);
         let asked = |routing: &Routing| (routing.ask.len(), routing.agent_hops);
 
@@ -778,7 +1073,10 @@ mod tests {
 
         let routing = moderator.route(&hops_from(agents[0], 2, vec![agents[2]])).await;
         assert!(routing.ask.is_empty(), "beyond the limit nobody is asked, mentioned or not");
-        assert!(routing.audience == Audience::Everybody, "but the end of the turn is delivered as ever");
+        assert!(
+            routing.audience == Audience::Everybody,
+            "but the end of the turn is delivered as ever"
+        );
         let said = moderator.route(&said_from(agents[0], "and you?", vec![agents[2]])).await;
         assert!(said.audience == Audience::Everybody, "and so is the message");
 
@@ -789,27 +1087,49 @@ mod tests {
 
     #[tokio::test]
     async fn a_chain_cut_off_is_told_to_the_users_and_the_agents_involved() {
-        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2, DEFAULT_CONTEXT_MESSAGES);
+        let moderator = PolicyModerator::new(
+            policy(broadcast_policy::BroadcastPolicy),
+            2,
+            DEFAULT_CONTEXT_MESSAGES,
+        );
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
-        let told = |routing: &Routing| routing.notices.iter()
-            .map(|(recipients, notice)| (recipients.iter().copied().collect::<HashSet<_>>(), notice.clone()))
-            .collect::<Vec<_>>();
+        let told = |routing: &Routing| {
+            routing
+                .notices
+                .iter()
+                .map(|(recipients, notice)| {
+                    (recipients.iter().copied().collect::<HashSet<_>>(), notice.clone())
+                })
+                .collect::<Vec<_>>()
+        };
 
         let routing = moderator.route(&hops_from(agents[0], 1, vec![agents[2]])).await;
         assert!(routing.notices.is_empty(), "below the limit, nothing is cut off");
 
         let event = hops_from(agents[0], 2, vec![agents[2]]);
         let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
-        let cut_off = Notice::ChainCutOff { message: messages[0].id, max_agent_hops: 2, not_asked: vec![agents[2]] };
+        let cut_off = Notice::ChainCutOff {
+            message: messages[0].id,
+            max_agent_hops: 2,
+            not_asked: vec![agents[2]],
+        };
         assert_eq!(told(&moderator.route(&event).await), [(HashSet::from([user, agents[0], agents[2]]), cut_off)],
             "the users, the sender and whom it mentioned - not agents[1] -, naming the message cut off");
 
         let event = hops_from(agents[0], 2, Vec::new());
         let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
-        let cut_off = Notice::ChainCutOff { message: messages[0].id, max_agent_hops: 2, not_asked: Vec::new() };
-        assert_eq!(told(&moderator.route(&event).await), [(HashSet::from([user, agents[0]]), cut_off)], "told even when nobody was mentioned");
+        let cut_off = Notice::ChainCutOff {
+            message: messages[0].id,
+            max_agent_hops: 2,
+            not_asked: Vec::new(),
+        };
+        assert_eq!(
+            told(&moderator.route(&event).await),
+            [(HashSet::from([user, agents[0]]), cut_off)],
+            "told even when nobody was mentioned"
+        );
     }
 
     /// A policy that cannot choose.
@@ -818,7 +1138,12 @@ mod tests {
 
     #[async_trait]
     impl ResponderPolicy for Failing {
-        async fn choose(&self, _event: &Envelope, _messages: &[Message], _candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+        async fn choose(
+            &self,
+            _event: &Envelope,
+            _messages: &[Message],
+            _candidates: Vec<ActorDescription>,
+        ) -> Result<Vec<ActorId>, Undecided> {
             Err(Undecided("no answer".to_string()))
         }
     }
@@ -828,7 +1153,8 @@ mod tests {
     /// undecided, and tells nothing.
     #[tokio::test]
     async fn a_policy_that_could_not_choose_asks_nobody_and_the_users_are_told() {
-        let moderator = PolicyModerator::new(policy(Failing), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
+        let moderator =
+            PolicyModerator::new(policy(Failing), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
@@ -838,15 +1164,29 @@ mod tests {
             let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
             let routing = moderator.route(&event).await;
             assert!(routing.ask.is_empty(), "nobody by default");
-            assert_eq!(routing.notices, [(vec![user], Notice::ResponderUndecided { message: messages[0].id })], "the users, naming the message");
+            assert_eq!(
+                routing.notices,
+                [(vec![user], Notice::ResponderUndecided { message: messages[0].id })],
+                "the users, naming the message"
+            );
         }
 
-        let moderator = PolicyModerator::new(policy(Failing), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES).with_on_undecided(OnUndecided::All);
+        let moderator =
+            PolicyModerator::new(policy(Failing), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES)
+                .with_on_undecided(OnUndecided::All);
         let agents = add_agents(&moderator);
         moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
         let routing = moderator.route(&message_from(user, "who knows?", Vec::new())).await;
-        assert_eq!(routing.ask.into_iter().collect::<HashSet<_>>(), HashSet::from([agents[0], agents[2]]), "every candidate, as configured");
-        assert_eq!(routing.reason, RequestReason::Undecided, "not chosen: none of them may stay silent");
+        assert_eq!(
+            routing.ask.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([agents[0], agents[2]]),
+            "every candidate, as configured"
+        );
+        assert_eq!(
+            routing.reason,
+            RequestReason::Undecided,
+            "not chosen: none of them may stay silent"
+        );
         assert!(routing.notices.is_empty(), "somebody is asked: nothing to tell");
     }
 
@@ -866,18 +1206,33 @@ mod tests {
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
-        let configured = |max_agent_hops: Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
-            params: serde_json::json!({ "max_agent_hops": max_agent_hops }),
-            ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
-        }] };
+        let configured = |max_agent_hops: Value| ComponentConfig {
+            component_nodes: vec![ComponentDescriptor {
+                params: serde_json::json!({ "max_agent_hops": max_agent_hops }),
+                ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
+            }],
+        };
 
-        let container = ComponentContainer::from_config(&configured(serde_json::json!(0)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await.unwrap();
+        let container = ComponentContainer::from_config(
+            &configured(serde_json::json!(0)),
+            ChannelLoop::COMPONENT_FACETS,
+            &registry,
+            &context,
+        )
+        .await
+        .unwrap();
         let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
         let agents = add_agents(moderator.as_ref());
         let asked = moderator.route(&message_from(agents[0], "@c", vec![agents[2]])).await.ask;
         assert!(asked.is_empty(), "with no hops allowed, agents answer only users");
 
-        let invalid = ComponentContainer::from_config(&configured(serde_json::json!(-1)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await;
+        let invalid = ComponentContainer::from_config(
+            &configured(serde_json::json!(-1)),
+            ChannelLoop::COMPONENT_FACETS,
+            &registry,
+            &context,
+        )
+        .await;
         assert!(invalid.is_err(), "a negative limit is refused");
     }
 
@@ -886,7 +1241,12 @@ mod tests {
     /// or chosen, and what was said is delivered as ever.
     #[tokio::test]
     async fn an_event_as_deep_as_the_moderator_allows_is_delivered_and_nobody_asked() {
-        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES).with_max_span_depth(5);
+        let moderator = PolicyModerator::new(
+            policy(broadcast_policy::BroadcastPolicy),
+            DEFAULT_MAX_AGENT_HOPS,
+            DEFAULT_CONTEXT_MESSAGES,
+        )
+        .with_max_span_depth(5);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         let at_depth = |depth: i32, mentions: Vec<ActorId>| {
@@ -895,11 +1255,18 @@ mod tests {
             event
         };
 
-        assert_eq!(moderator.route(&at_depth(4, vec![agents[1]])).await.ask, vec![agents[1]], "beneath the bound, as ever");
+        assert_eq!(
+            moderator.route(&at_depth(4, vec![agents[1]])).await.ask,
+            vec![agents[1]],
+            "beneath the bound, as ever"
+        );
         let deep = moderator.route(&at_depth(5, vec![agents[1]])).await;
         assert!(deep.ask.is_empty(), "at the bound nobody is asked, mentioned or not");
         assert!(deep.audience == Audience::Everybody, "but what was said is delivered");
-        assert!(moderator.route(&at_depth(5, Vec::new())).await.ask.is_empty(), "nor whom the policy would choose");
+        assert!(
+            moderator.route(&at_depth(5, Vec::new())).await.ask.is_empty(),
+            "nor whom the policy would choose"
+        );
     }
 
     #[tokio::test]
@@ -910,31 +1277,56 @@ mod tests {
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
-        let configured = |max_span_depth: Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
-            params: serde_json::json!({ "max_span_depth": max_span_depth }),
-            ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
-        }] };
+        let configured = |max_span_depth: Value| ComponentConfig {
+            component_nodes: vec![ComponentDescriptor {
+                params: serde_json::json!({ "max_span_depth": max_span_depth }),
+                ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
+            }],
+        };
 
-        let container = ComponentContainer::from_config(&configured(serde_json::json!(0)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await.unwrap();
+        let container = ComponentContainer::from_config(
+            &configured(serde_json::json!(0)),
+            ChannelLoop::COMPONENT_FACETS,
+            &registry,
+            &context,
+        )
+        .await
+        .unwrap();
         let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
         let agents = add_agents(moderator.as_ref());
-        let asked = moderator.route(&message_from(ActorId::User(UserId::new()), "@b", vec![agents[1]])).await.ask;
+        let asked = moderator
+            .route(&message_from(ActorId::User(UserId::new()), "@b", vec![agents[1]]))
+            .await
+            .ask;
         assert!(asked.is_empty(), "with no depth allowed, nobody is asked");
 
-        let invalid = ComponentContainer::from_config(&configured(serde_json::json!(-1)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await;
+        let invalid = ComponentContainer::from_config(
+            &configured(serde_json::json!(-1)),
+            ChannelLoop::COMPONENT_FACETS,
+            &registry,
+            &context,
+        )
+        .await;
         assert!(invalid.is_err(), "a negative bound is refused");
     }
 
     #[tokio::test]
     async fn mentions_only_asks_nobody_without_a_mention() {
-        let moderator = PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
+        let moderator = PolicyModerator::new(
+            policy(mentions_only_policy::MentionsOnlyPolicy),
+            DEFAULT_MAX_AGENT_HOPS,
+            DEFAULT_CONTEXT_MESSAGES,
+        );
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
         let asked = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await.ask;
         assert!(asked.is_empty(), "nobody was mentioned, so nobody answers");
         let said = moderator.route(&said_from(user, "hello, everyone", Vec::new())).await;
-        assert!(said.audience == Audience::Everybody, "the message is still delivered as every channel does");
+        assert!(
+            said.audience == Audience::Everybody,
+            "the message is still delivered as every channel does"
+        );
 
         let asked = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await.ask;
         assert!(asked.is_empty(), "nor does anybody answer an agent without a mention");
@@ -942,12 +1334,20 @@ mod tests {
 
     #[tokio::test]
     async fn user_driven_asks_every_agent_for_a_user_and_nobody_for_an_agent() {
-        let moderator = PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
+        let moderator = PolicyModerator::new(
+            policy(user_driven_policy::UserDrivenPolicy),
+            DEFAULT_MAX_AGENT_HOPS,
+            DEFAULT_CONTEXT_MESSAGES,
+        );
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
         let asked = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await.ask;
-        assert_eq!(asked.into_iter().collect::<HashSet<_>>(), HashSet::from([agents[0], agents[2]]), "every awake agent answers a user");
+        assert_eq!(
+            asked.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([agents[0], agents[2]]),
+            "every awake agent answers a user"
+        );
 
         let asked = moderator.route(&message_from(user, "@b", vec![agents[1]])).await.ask;
         assert_eq!(asked, vec![agents[1]], "a user's mention asks only the mentioned agent");
@@ -960,7 +1360,11 @@ mod tests {
 
     #[tokio::test]
     async fn round_robin_takes_turns_and_a_mention_does_not_advance_it() {
-        let moderator = PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
+        let moderator = PolicyModerator::new(
+            policy(round_robin_policy::RoundRobinPolicy::default()),
+            DEFAULT_MAX_AGENT_HOPS,
+            DEFAULT_CONTEXT_MESSAGES,
+        );
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         let mut awake = [agents[0], agents[2]];
@@ -981,30 +1385,87 @@ mod tests {
     /// delivers it (issue 418): the moderator decides nothing of it.
     #[tokio::test]
     async fn every_moderator_lets_what_asks_nobody_go_where_every_channel_delivers_it() {
-        let call = ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
+        let call = ToolCall {
+            id: None,
+            function_name: "noop".to_string(),
+            arguments: serde_json::json!({}),
+            visibility: Default::default(),
+            presentation: Default::default(),
+        };
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
             moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
             let turn_id = TurnId::new();
-            let in_turn = Message { turn_id: Some(turn_id), ..text_from(agents[0], "@c?", vec![agents[2]]) };
+            let in_turn =
+                Message { turn_id: Some(turn_id), ..text_from(agents[0], "@c?", vec![agents[2]]) };
             let events = [
                 (agents[0], ActorEvent::CompleteMessageGenerated(in_turn)),
-                (agents[0], ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Failed { message: "boom".to_string() } }),
-                (agents[0], ActorEvent::ActivityStarted { turn_id, activity: "compacting".to_string() }),
-                (agents[0], ActorEvent::PlanStepStarted { turn_id, step_index: 0, total_steps: 2, description: "first".to_string() }),
-                (user, ActorEvent::CommandExecuted { command: "wakeup".to_string(), args: String::new(), output: "Woke b.".to_string(), to: None, turn_id: None }),
-                (agents[0], ActorEvent::CommandStarted { command: "compact".to_string(), args: String::new(), to: user, turn_id }),
-                (user, ActorEvent::ParticipantJoined { participant: user, name: "user".to_string() }),
-                (agents[0], ActorEvent::ApprovalRequested(ApprovalRequest {
-                    suggested: None, explicit: false, id: Default::default(), session_id: Default::default(), channel_id: Default::default(),
-                    agent_id: AgentId::new(), tool_call: call.clone(), description: "test".to_string(),
-                })),
+                (
+                    agents[0],
+                    ActorEvent::TurnGivenUp {
+                        turn_id,
+                        reason: GivenUpReason::Failed { message: "boom".to_string() },
+                    },
+                ),
+                (
+                    agents[0],
+                    ActorEvent::ActivityStarted { turn_id, activity: "compacting".to_string() },
+                ),
+                (
+                    agents[0],
+                    ActorEvent::PlanStepStarted {
+                        turn_id,
+                        step_index: 0,
+                        total_steps: 2,
+                        description: "first".to_string(),
+                    },
+                ),
+                (
+                    user,
+                    ActorEvent::CommandExecuted {
+                        command: "wakeup".to_string(),
+                        args: String::new(),
+                        output: "Woke b.".to_string(),
+                        to: None,
+                        turn_id: None,
+                    },
+                ),
+                (
+                    agents[0],
+                    ActorEvent::CommandStarted {
+                        command: "compact".to_string(),
+                        args: String::new(),
+                        to: user,
+                        turn_id,
+                    },
+                ),
+                (
+                    user,
+                    ActorEvent::ParticipantJoined { participant: user, name: "user".to_string() },
+                ),
+                (
+                    agents[0],
+                    ActorEvent::ApprovalRequested(ApprovalRequest {
+                        suggested: None,
+                        explicit: false,
+                        id: Default::default(),
+                        session_id: Default::default(),
+                        channel_id: Default::default(),
+                        agent_id: AgentId::new(),
+                        tool_call: call.clone(),
+                        description: "test".to_string(),
+                    }),
+                ),
                 (user, ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() }),
             ];
             for (sender, event) in events {
                 let kind = event.kind();
-                assert!(as_every_channel(&moderator.route(&envelope(sender, event)).await), "{:?}: {kind}", moderator);
+                assert!(
+                    as_every_channel(&moderator.route(&envelope(sender, event)).await),
+                    "{:?}: {kind}",
+                    moderator
+                );
             }
         }
     }
@@ -1020,13 +1481,31 @@ mod tests {
             // The sleeping one, too: the channel wakes whom a decision asks;
             // and a user as well as an agent.
             for nudged in [agents[1], other] {
-                let routing = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: nudged })).await;
-                assert_eq!(routing.ask, vec![nudged], "{:?} must ask whom the nudge names, and no policy", moderator);
-                assert_eq!(routing.reason, RequestReason::Nudged, "{:?} must say they were nudged", moderator);
-                assert!(routing.audience == Audience::Everybody && routing.notices.is_empty(), "{:?} must tell nobody else", moderator);
+                let routing = moderator
+                    .route(&envelope(user, ActorEvent::NudgeRequested { participant: nudged }))
+                    .await;
+                assert_eq!(
+                    routing.ask,
+                    vec![nudged],
+                    "{:?} must ask whom the nudge names, and no policy",
+                    moderator
+                );
+                assert_eq!(
+                    routing.reason,
+                    RequestReason::Nudged,
+                    "{:?} must say they were nudged",
+                    moderator
+                );
+                assert!(
+                    routing.audience == Audience::Everybody && routing.notices.is_empty(),
+                    "{:?} must tell nobody else",
+                    moderator
+                );
             }
             let stranger = ActorId::Agent(AgentId::new());
-            let routing = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: stranger })).await;
+            let routing = moderator
+                .route(&envelope(user, ActorEvent::NudgeRequested { participant: stranger }))
+                .await;
             assert!(routing.ask.is_empty(), "{:?} must ask nobody it does not know", moderator);
         }
     }
@@ -1042,15 +1521,29 @@ mod tests {
             // message of no turn asks whom it mentions (issue 258).
             for sender in [user, agents[0]] {
                 let asked = moderator.route(&said_from(sender, "@c?", mention())).await.ask;
-                assert_eq!(asked, vec![agents[2]], "{:?}: {sender:?} said it outside of a turn", moderator);
+                assert_eq!(
+                    asked,
+                    vec![agents[2]],
+                    "{:?}: {sender:?} said it outside of a turn",
+                    moderator
+                );
             }
 
             // Within a turn it asks nobody yet: the turn's end does.
             let turn = TurnId::new();
             let in_turn = Message { turn_id: Some(turn), ..text_from(agents[0], "@c?", mention()) };
-            let asked = moderator.route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone()))).await.ask;
+            let asked = moderator
+                .route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone())))
+                .await
+                .ask;
             assert!(asked.is_empty(), "{:?}: not before the turn ended", moderator);
-            let asked = moderator.route(&envelope(agents[0], ActorEvent::TurnFinished { turn_id: turn, messages: vec![in_turn] })).await.ask;
+            let asked = moderator
+                .route(&envelope(
+                    agents[0],
+                    ActorEvent::TurnFinished { turn_id: turn, messages: vec![in_turn] },
+                ))
+                .await
+                .ask;
             assert_eq!(asked, vec![agents[2]], "{:?}: at its end", moderator);
         }
     }
@@ -1059,19 +1552,45 @@ mod tests {
     async fn an_answer_of_nothing_to_hear_asks_nobody() {
         use caelumora_model::tool::{ToolCallResult, ToolVisibility};
         let classified = Classification::CHANNEL_DEFAULT;
-        let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
-        let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), classified.clone());
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            function_name: "noop".to_string(),
+            arguments: serde_json::json!({}),
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        };
+        let result =
+            ToolCallResult::of(&call, Default::default(), "done".to_string(), classified.clone());
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let sender = agents[0];
-            let ended = |messages: Vec<Message>| envelope(sender, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages });
-            let calling = Message { sender_id: sender, role: MessageRole::Assistant, content: None, tool_calls: vec![call.clone()], mentions: vec![agents[2]], ..Message::new(classified.clone()) };
-            let tool = Message { sender_id: sender, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result.clone()], ..Message::new(classified.clone()) };
+            let ended = |messages: Vec<Message>| {
+                envelope(sender, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages })
+            };
+            let calling = Message {
+                sender_id: sender,
+                role: MessageRole::Assistant,
+                content: None,
+                tool_calls: vec![call.clone()],
+                mentions: vec![agents[2]],
+                ..Message::new(classified.clone())
+            };
+            let tool = Message {
+                sender_id: sender,
+                role: MessageRole::Tool,
+                content: Some("done".to_string()),
+                tool_results: vec![result.clone()],
+                ..Message::new(classified.clone())
+            };
 
             // A response of tool calls only, or a turn cancelled before it
             // said anything: nobody is asked.
             for nothing in [vec![calling.clone(), tool.clone()], Vec::new()] {
-                assert!(as_every_channel(&moderator.route(&ended(nothing)).await), "{:?}: nobody is asked", moderator);
+                assert!(
+                    as_every_channel(&moderator.route(&ended(nothing)).await),
+                    "{:?}: nobody is asked",
+                    moderator
+                );
             }
         }
     }

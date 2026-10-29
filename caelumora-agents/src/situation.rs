@@ -12,11 +12,6 @@
 //! what it offers - are given a `Situation` rather than a `Turn`, so that
 //! they serve both kinds of agent.
 
-use caelumora_runtime::agent::state::AgentStateHandle;
-use caelumora_runtime::terminal::Terminal;
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::view::{ChannelView, SessionView, ViewResult, WorkspaceView};
-use caelumora_runtime::workspace::WorkspaceResult;
 use caelumora_model::actor::{ActorId, RequestReason};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
@@ -25,9 +20,14 @@ use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
+use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::work::Work;
 use caelumora_model::workspace::Workspace;
-use caelumora_model::value::time_zone::TimeZone;
+use caelumora_runtime::agent::state::AgentStateHandle;
+use caelumora_runtime::runtime::ActorRuntime;
+use caelumora_runtime::terminal::Terminal;
+use caelumora_runtime::view::{ChannelView, SessionView, ViewResult, WorkspaceView};
+use caelumora_runtime::workspace::WorkspaceResult;
 use std::sync::Arc;
 
 /// The situation of the work under way of an agent in its channel, to
@@ -110,7 +110,9 @@ impl<'a> Situation<'a> {
     /// As `ActorRuntime::session_view`: the agent may not read it, or reading
     /// it failed.
     pub async fn session(&self) -> ViewResult<Option<SessionView>> {
-        self.runtime.session_view(&self.work.security_context, self.work.classification.clone()).await
+        self.runtime
+            .session_view(&self.work.security_context, self.work.classification.clone())
+            .await
     }
 
     /// The agent's channel as the work reads it from there (`session`,
@@ -164,7 +166,11 @@ impl<'a> Situation<'a> {
     /// # Errors
     /// `PromptError` if a text it is given cannot be had.
     pub fn token_positions(&self) -> Result<Option<(Vec<u64>, bool)>, PromptError> {
-        ContextResolver::of(self.agent_channel_state, self.runtime.prompts()).token_positions(&self.work.context, self.work.turn_id, ActorId::Agent(self.agent_id))
+        ContextResolver::of(self.agent_channel_state, self.runtime.prompts()).token_positions(
+            &self.work.context,
+            self.work.turn_id,
+            ActorId::Agent(self.agent_id),
+        )
     }
 
     /// How the agent's model is given its context (issue 135): what a
@@ -191,7 +197,13 @@ impl<'a> Situation<'a> {
     /// names. None for work that offers no tools, e.g. an external agent's.
     pub fn tool_sets(&self) -> &'a [ToolSet] {
         let state = self.agent_channel_state;
-        self.work.context.frame.tools.and_then(|digest| state.offered_tools.get(&digest)).map(Vec::as_slice).unwrap_or_default()
+        self.work
+            .context
+            .frame
+            .tools
+            .and_then(|digest| state.offered_tools.get(&digest))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// The agent's own state (issue 62), shared by all its actors.

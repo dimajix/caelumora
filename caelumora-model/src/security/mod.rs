@@ -30,8 +30,10 @@ mod ownership;
 mod testing;
 
 pub use access::{AccessPolicy, AccessQuestions, AllowAllPolicy, Enforcement};
-pub use admission::Admission;
 pub use action::{ActionType, CustomVerb, Reclassified, Refused, Requirement, Verb, JOIN, WRITE};
-pub use attributes::{AclEntry, Grant, Memberships, NoMemberships, Secured, SecurityAttributes, Subject};
+pub use admission::Admission;
+pub use attributes::{
+    AclEntry, Grant, Memberships, NoMemberships, Secured, SecurityAttributes, Subject,
+};
 pub use context::SecurityContext;
 pub use ownership::OwnershipPolicy;

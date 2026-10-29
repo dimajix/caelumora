@@ -32,7 +32,9 @@ pub mod testing;
 
 pub use container::{ComponentContainer, ComponentImpl};
 pub use context::{service_of, ComponentContext};
-pub use registry::{ComponentFacets, ComponentKind, ComponentRegistry, COMPONENT_DEFAULT_KIND, BUNDLE_REF_KIND};
+pub use registry::{
+    ComponentFacets, ComponentKind, ComponentRegistry, BUNDLE_REF_KIND, COMPONENT_DEFAULT_KIND,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComponentError {
@@ -69,7 +71,9 @@ pub enum ComponentError {
     /// A component of a kind only an operator configures was written in a
     /// request rather than named through a `ref` (issue 403,
     /// `ComponentKind::operator_only`).
-    #[error("components of kind '{0}' are configured by an operator: name a bundle that holds one")]
+    #[error(
+        "components of kind '{0}' are configured by an operator: name a bundle that holds one"
+    )]
     OperatorOnly(String),
     /// A component of a graph could not be built. Wraps whatever went wrong
     /// with the component's id and kind, so that the message names the
@@ -86,7 +90,11 @@ pub enum ComponentError {
 impl ComponentError {
     /// `cause`, as what went wrong with the component `entry` (`Build`).
     fn of_component(entry: &ComponentDescriptor, cause: ComponentError) -> Self {
-        Self::Build { component: entry.id.clone(), kind: entry.kind.clone(), cause: Box::new(cause) }
+        Self::Build {
+            component: entry.id.clone(),
+            kind: entry.kind.clone(),
+            cause: Box::new(cause),
+        }
     }
 
     /// Whether it says that a component bundle is gone or not the reader's
@@ -110,8 +118,9 @@ pub type ComponentResult<T> = Result<T, ComponentError>;
 pub fn flag_of_params(params: &Value, name: &str) -> ComponentResult<bool> {
     match params.get(name) {
         None => Ok(false),
-        Some(value) => value.as_bool()
-            .ok_or_else(|| ComponentError::InvalidConfig(format!("parameter '{name}' must be true or false"))),
+        Some(value) => value.as_bool().ok_or_else(|| {
+            ComponentError::InvalidConfig(format!("parameter '{name}' must be true or false"))
+        }),
     }
 }
 
@@ -135,7 +144,11 @@ pub fn config_of_params<T: DeserializeOwned>(params: &Value) -> ComponentResult<
 /// `ComponentError::Undeclared` if it is not.
 fn require_declared<T: ?Sized + 'static>(declared: &[TypeKey]) -> ComponentResult<()> {
     let facet = TypeKey::of::<T>();
-    if declared.iter().any(|f| f.id == facet.id) { Ok(()) } else { Err(ComponentError::Undeclared(facet.name())) }
+    if declared.iter().any(|f| f.id == facet.id) {
+        Ok(())
+    } else {
+        Err(ComponentError::Undeclared(facet.name()))
+    }
 }
 
 #[cfg(test)]
@@ -144,17 +157,24 @@ mod tests {
     use serde::Deserialize;
     use serde_json::json;
 
-        #[test]
-        fn params_left_out_give_the_defaults() {
-            #[derive(Debug, Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Config {
-                #[serde(default)]
-                limit: u32,
-            }
-            assert_eq!(config_of_params::<Config>(&Value::Null).unwrap().limit, 0, "left out: all defaults");
-            assert_eq!(config_of_params::<Config>(&json!({ "limit": 3 })).unwrap().limit, 3);
-            let message = config_of_params::<Config>(&json!({ "limti": 3 })).unwrap_err().to_string();
-            assert!(message.starts_with("invalid configuration: invalid parameters: unknown field `limti`"), "{message}");
+    #[test]
+    fn params_left_out_give_the_defaults() {
+        #[derive(Debug, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Config {
+            #[serde(default)]
+            limit: u32,
         }
+        assert_eq!(
+            config_of_params::<Config>(&Value::Null).unwrap().limit,
+            0,
+            "left out: all defaults"
+        );
+        assert_eq!(config_of_params::<Config>(&json!({ "limit": 3 })).unwrap().limit, 3);
+        let message = config_of_params::<Config>(&json!({ "limti": 3 })).unwrap_err().to_string();
+        assert!(
+            message.starts_with("invalid configuration: invalid parameters: unknown field `limti`"),
+            "{message}"
+        );
+    }
 }

@@ -57,10 +57,22 @@ mod tests {
     fn what_changed_in_an_agents_own_state_replays_onto_what_was_stored() {
         use crate::memory::{MemoryChange, MemoryId};
         let mut state = AgentState::default();
-        state.memory.push(MemoryChange::Add { id: MemoryId(1), text: "a".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), MessageId::default());
+        state.memory.push(
+            MemoryChange::Add {
+                id: MemoryId(1),
+                text: "a".to_string(),
+                classification: Classification::CHANNEL_DEFAULT,
+            },
+            Default::default(),
+            MessageId::default(),
+        );
         let mut copy = stored(&mut state);
         assert!(state.changes().is_empty(), "nothing between turns");
-        state.memory.push(MemoryChange::Remove { id: MemoryId(1) }, Default::default(), MessageId::default());
+        state.memory.push(
+            MemoryChange::Remove { id: MemoryId(1) },
+            Default::default(),
+            MessageId::default(),
+        );
         assert!(matches!(state.changes().as_slice(), [AgentStateChange::Memory(_)]));
         replayed(&state, &mut copy);
         assert!(copy.memory.current().is_empty());

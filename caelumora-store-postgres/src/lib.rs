@@ -28,10 +28,10 @@ mod transcripts;
 use crate::connection::Connection;
 use crate::documents::PgDocuments;
 use async_trait::async_trait;
+use caelumora_model::group::Group;
 use caelumora_model::store::documents::{DocumentOf, DocumentStorage};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::group::Group;
 use caelumora_model::store::{EntityKind, PersistenceBackend, StateStore, StoreResult, Stored};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -75,7 +75,11 @@ impl PostgresStore {
 
     /// The storage of `kind` among `all`, made if it is not there yet - with
     /// the storage of the groups, which its lists are narrowed by.
-    fn storage(&self, all: &mut HashMap<EntityKind, Arc<PgDocuments>>, kind: EntityKind) -> StoreResult<Arc<PgDocuments>> {
+    fn storage(
+        &self,
+        all: &mut HashMap<EntityKind, Arc<PgDocuments>>,
+        kind: EntityKind,
+    ) -> StoreResult<Arc<PgDocuments>> {
         if let Some(storage) = all.get(&kind) {
             return Ok(Arc::clone(storage));
         }
@@ -93,7 +97,11 @@ impl PostgresStore {
 /// the Postgres store itself.
 #[async_trait]
 impl PersistenceBackend for PostgresStore {
-    fn documents(&self, kind: EntityKind, _document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
+    fn documents(
+        &self,
+        kind: EntityKind,
+        _document_of: DocumentOf,
+    ) -> StoreResult<Arc<dyn DocumentStorage>> {
         let mut all = self.documents.write().unwrap_or_else(PoisonError::into_inner);
         Ok(self.storage(&mut all, kind)?)
     }
@@ -115,7 +123,13 @@ impl PersistenceBackend for PostgresStore {
     /// start.
     async fn open(&self) -> StoreResult<()> {
         self.connection.pool().await?;
-        let opened: Vec<Arc<PgDocuments>> = self.documents.read().unwrap_or_else(PoisonError::into_inner).values().cloned().collect();
+        let opened: Vec<Arc<PgDocuments>> = self
+            .documents
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
         for documents in opened {
             documents.ready().await?;
         }

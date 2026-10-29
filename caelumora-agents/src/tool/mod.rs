@@ -15,28 +15,34 @@ pub mod stop_tool;
 
 pub use page::{page_of, TextPage};
 
-use crate::turn::Turn;
+use crate::prompt::NAMESPACE;
 use crate::situation::Situation;
-use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentResult};
-use providers::ToolProviders;
-use caelumora_runtime::controller::{ChannelController, SessionController};
+use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision, ToolMatcher};
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Compartment, Confidentiality};
+use caelumora_model::confidentiality::{
+    Classification, Compartment, Confidentiality, ConfidentialityPolicy,
+};
 use caelumora_model::content::ContentRef;
-use caelumora_model::security::{ActionType, Enforcement, AccessPolicy};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::{Answers, Questions};
-use caelumora_runtime::runtime::ActorRuntime;
+use caelumora_model::security::{AccessPolicy, ActionType, Enforcement};
+use caelumora_model::tool::{
+    Tool, ToolCall, ToolCallResult, ToolCallState, ToolParameters, ToolResultStatus, ToolSet,
+    ToolVisibility,
+};
+use caelumora_model::turn::GivenUpReason;
 use caelumora_runtime::attachment::AttachmentError;
 use caelumora_runtime::backend::StorageGone;
+use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentResult};
 use caelumora_runtime::content::ContentError;
+use caelumora_runtime::controller::{ChannelController, SessionController};
+use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ViewError, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceError;
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus, ToolParameters};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::turn::GivenUpReason;
-use crate::prompt::NAMESPACE;
+use chrono::Utc;
+use providers::ToolProviders;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -46,7 +52,6 @@ use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
-use chrono::Utc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -85,10 +90,12 @@ impl From<AttachmentError> for ToolError {
             AttachmentError::Content(e) => e.into(),
             AttachmentError::StorageGone(e) => e.into(),
             AttachmentError::Altered(_) => ToolError::ExecutionFailed(error.to_string()),
-            AttachmentError::NotConfigured | AttachmentError::ClassificationRefused | AttachmentError::StorageNotCleared(_)
-            | AttachmentError::NotAParticipant(_) | AttachmentError::NotFound(_) | AttachmentError::Invalid(_) => {
-                ToolError::InvalidParameter(error.to_string())
-            }
+            AttachmentError::NotConfigured
+            | AttachmentError::ClassificationRefused
+            | AttachmentError::StorageNotCleared(_)
+            | AttachmentError::NotAParticipant(_)
+            | AttachmentError::NotFound(_)
+            | AttachmentError::Invalid(_) => ToolError::InvalidParameter(error.to_string()),
         }
     }
 }
@@ -110,7 +117,9 @@ impl From<WorkspaceError> for ToolError {
 /// the tool's failure, without the name, which is the configuration's - as a user is told it.
 impl From<StorageGone> for ToolError {
     fn from(_: StorageGone) -> Self {
-        ToolError::ExecutionFailed("the storage of what was asked for is no longer configured".to_string())
+        ToolError::ExecutionFailed(
+            "the storage of what was asked for is no longer configured".to_string(),
+        )
     }
 }
 
@@ -120,8 +129,12 @@ impl From<StorageGone> for ToolError {
 impl From<ContentError> for ToolError {
     fn from(error: ContentError) -> Self {
         match error {
-            ContentError::TooLarge { .. } | ContentError::Changed => ToolError::InvalidParameter(error.to_string()),
-            ContentError::Unavailable(_) | ContentError::InvalidKey(_) | ContentError::NotFound(_) => ToolError::ExecutionFailed(error.to_string()),
+            ContentError::TooLarge { .. } | ContentError::Changed => {
+                ToolError::InvalidParameter(error.to_string())
+            }
+            ContentError::Unavailable(_)
+            | ContentError::InvalidKey(_)
+            | ContentError::NotFound(_) => ToolError::ExecutionFailed(error.to_string()),
         }
     }
 }
@@ -133,10 +146,14 @@ impl From<TerminalError> for ToolError {
     fn from(error: TerminalError) -> Self {
         match error {
             TerminalError::Unavailable(_) => ToolError::ExecutionFailed(error.to_string()),
-            TerminalError::InvalidPath(_) | TerminalError::NotFound(_) | TerminalError::Exists(_) | TerminalError::IsADirectory(_)
-            | TerminalError::NotADirectory(_) | TerminalError::NotEmpty(_) | TerminalError::TooLarge { .. } | TerminalError::UnknownCommand(_) => {
-                ToolError::InvalidParameter(error.to_string())
-            }
+            TerminalError::InvalidPath(_)
+            | TerminalError::NotFound(_)
+            | TerminalError::Exists(_)
+            | TerminalError::IsADirectory(_)
+            | TerminalError::NotADirectory(_)
+            | TerminalError::NotEmpty(_)
+            | TerminalError::TooLarge { .. }
+            | TerminalError::UnknownCommand(_) => ToolError::InvalidParameter(error.to_string()),
         }
     }
 }
@@ -184,7 +201,9 @@ pub fn arguments<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
 /// note to revoke.
 pub fn id_argument<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
     #[derive(Deserialize)]
-    struct Id<T> { id: T }
+    struct Id<T> {
+        id: T,
+    }
     let Id { id } = arguments(params)?;
     Ok(id)
 }
@@ -194,7 +213,11 @@ pub fn id_argument<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
 /// public one with compartments - is the model's to correct.
 pub fn classification_argument(params: &Value) -> ToolResult<Classification> {
     #[derive(Deserialize)]
-    struct Asked { level: Confidentiality, #[serde(default)] compartments: Vec<String> }
+    struct Asked {
+        level: Confidentiality,
+        #[serde(default)]
+        compartments: Vec<String>,
+    }
     let Asked { level, compartments } = arguments(params)?;
     Classification::new(level, compartments.into_iter().map(Compartment::new))
         .map_err(|e| ToolError::InvalidParameter(e.to_string()))
@@ -210,7 +233,13 @@ pub fn classification_argument(params: &Value) -> ToolResult<Classification> {
 /// # Errors
 /// `PromptError` if the catalogue has no such text, or it cannot be
 /// rendered with `values`.
-pub fn tool_text(prompts: &PromptTexts, namespace: &str, kind: &str, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+pub fn tool_text(
+    prompts: &PromptTexts,
+    namespace: &str,
+    kind: &str,
+    key: &str,
+    values: impl Serialize,
+) -> Result<String, PromptError> {
     prompts.render(&format!("{namespace}.tools.{kind}.{key}"), values)
 }
 
@@ -220,9 +249,16 @@ pub fn tool_text(prompts: &PromptTexts, namespace: &str, kind: &str, key: &str, 
 ///
 /// # Errors
 /// As `tool_text`, for the first text that cannot be had.
-pub fn described(prompts: &PromptTexts, namespace: &str, kind: &str, mut tool: Tool, values: impl Serialize) -> Result<Tool, PromptError> {
+pub fn described(
+    prompts: &PromptTexts,
+    namespace: &str,
+    kind: &str,
+    mut tool: Tool,
+    values: impl Serialize,
+) -> Result<Tool, PromptError> {
     tool.description = tool_text(prompts, namespace, kind, &tool.name, &values)?;
-    tool.parameters.describe(&tool.name, &mut |path| tool_text(prompts, namespace, kind, path, &values))?;
+    tool.parameters
+        .describe(&tool.name, &mut |path| tool_text(prompts, namespace, kind, path, &values))?;
     Ok(tool)
 }
 
@@ -238,7 +274,13 @@ pub fn reclassify_parameters(prompts: &PromptTexts) -> Result<ToolParameters, Pr
         [
             ("id", ToolParameters::number()),
             ("level", ToolParameters::string().described(shared("level")?)),
-            ("compartments", ToolParameters::array(ToolParameters::string().described(shared("compartments.item")?)).described(shared("compartments")?)),
+            (
+                "compartments",
+                ToolParameters::array(
+                    ToolParameters::string().described(shared("compartments.item")?),
+                )
+                .described(shared("compartments")?),
+            ),
         ],
         ["id", "level"],
     ))
@@ -248,7 +290,9 @@ pub fn reclassify_parameters(prompts: &PromptTexts) -> Result<ToolParameters, Pr
 /// trimmed; an empty one is no text.
 pub fn text_argument(params: &Value) -> ToolResult<String> {
     #[derive(Deserialize)]
-    struct Text { text: String }
+    struct Text {
+        text: String,
+    }
     let Text { text } = arguments(params)?;
     let text = text.trim();
     if text.is_empty() {
@@ -259,7 +303,11 @@ pub fn text_argument(params: &Value) -> ToolResult<String> {
 
 /// The text `key` of `prompts` for the result of a tool call (issue 57),
 /// rendered with `values`.
-pub(crate) fn result_text(prompts: &PromptTexts, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+pub(crate) fn result_text(
+    prompts: &PromptTexts,
+    key: &str,
+    values: impl Serialize,
+) -> Result<String, PromptError> {
     prompts.render(&format!("{NAMESPACE}.results.{key}"), values)
 }
 
@@ -292,7 +340,11 @@ fn unsuccessful_result(status: ToolResultStatus, message: Result<String, PromptE
 /// # Errors
 /// `PromptError` if the mark is needed and cannot be had: the result is
 /// not to be given without it.
-pub fn successful_result(prompts: &PromptTexts, value: Value, visibility: ToolVisibility) -> Result<String, PromptError> {
+pub fn successful_result(
+    prompts: &PromptTexts,
+    value: Value,
+    visibility: ToolVisibility,
+) -> Result<String, PromptError> {
     if visibility.result.is_channel() {
         return Ok(match value {
             Value::String(text) => text,
@@ -365,8 +417,14 @@ impl Interruption {
         let seconds = format!("{:.1}", after.as_secs_f64());
         match self {
             Self::TurnEnded => interrupted_result(prompts),
-            Self::Stopped => unsuccessful_result(ToolResultStatus::Interrupted, result_text(prompts, "interrupted_stopped", context! { seconds })),
-            Self::ByUser(by) => unsuccessful_result(ToolResultStatus::Interrupted, result_text(prompts, "interrupted_by_user", context! { by, seconds })),
+            Self::Stopped => unsuccessful_result(
+                ToolResultStatus::Interrupted,
+                result_text(prompts, "interrupted_stopped", context! { seconds }),
+            ),
+            Self::ByUser(by) => unsuccessful_result(
+                ToolResultStatus::Interrupted,
+                result_text(prompts, "interrupted_by_user", context! { by, seconds }),
+            ),
         }
     }
 }
@@ -374,14 +432,18 @@ impl Interruption {
 /// The result for a call that a user, `by`, interrupted before it ran
 /// (issue 276): it was not run, and the turn goes on.
 pub(crate) fn skipped_result(prompts: &PromptTexts, by: &str) -> String {
-    unsuccessful_result(ToolResultStatus::NotExecuted, result_text(prompts, "skipped", context! { by }))
+    unsuccessful_result(
+        ToolResultStatus::NotExecuted,
+        result_text(prompts, "skipped", context! { by }),
+    )
 }
 
 /// The result for a call that had no result when its turn ended (issue
 /// 148): it never ran, because of what the text `cause` of `prompts` says -
 /// "the turn ended before it ran, because it was cancelled" (`TurnEnd`).
 pub(crate) fn abandoned_result(prompts: &PromptTexts, cause: &TurnEnd) -> String {
-    let message = prompts.render(&cause.key(), ())
+    let message = prompts
+        .render(&cause.key(), ())
         .and_then(|cause| result_text(prompts, "abandoned", context! { cause }));
     unsuccessful_result(ToolResultStatus::NotExecuted, message)
 }
@@ -401,8 +463,12 @@ impl TurnEnd<'_> {
     /// (`core.given_up_cause`), the agents' otherwise.
     fn key(&self) -> String {
         match self {
-            TurnEnd::Committed { cancelled: true } => format!("{NAMESPACE}.results.ended_because.cancelled"),
-            TurnEnd::Committed { cancelled: false } => format!("{NAMESPACE}.results.ended_because.ended"),
+            TurnEnd::Committed { cancelled: true } => {
+                format!("{NAMESPACE}.results.ended_because.cancelled")
+            }
+            TurnEnd::Committed { cancelled: false } => {
+                format!("{NAMESPACE}.results.ended_because.ended")
+            }
             TurnEnd::GivenUp(reason) => reason.cause_key(),
         }
     }
@@ -413,7 +479,10 @@ impl TurnEnd<'_> {
 /// classification, so that it can tell the user why, and not to look for
 /// the result elsewhere.
 pub(crate) fn withheld_result(prompts: &PromptTexts, classification: &Classification) -> String {
-    unsuccessful_result(ToolResultStatus::Withheld, result_text(prompts, "withheld", context! { classification => classification.to_string() }))
+    unsuccessful_result(
+        ToolResultStatus::Withheld,
+        result_text(prompts, "withheld", context! { classification => classification.to_string() }),
+    )
 }
 
 /// The result for a call the policy does not permit. Deliberately without the
@@ -429,12 +498,26 @@ impl ToolError {
     /// exist, offered when the model called one that does not. What went
     /// wrong is the error's own text, which is no text of the catalogue
     /// (issue 57).
-    pub fn to_result(&self, prompts: &PromptTexts, available: &[String]) -> (ToolResultStatus, String) {
+    pub fn to_result(
+        &self,
+        prompts: &PromptTexts,
+        available: &[String],
+    ) -> (ToolResultStatus, String) {
         let (status, message) = match self {
-            ToolError::PermissionDenied(_) => return (ToolResultStatus::Forbidden, forbidden_result(prompts)),
-            ToolError::UnknownTool(name) => (ToolResultStatus::UnknownTool, result_text(prompts, "unknown_tool", context! { name, available })),
-            ToolError::InvalidParameter(reason) => (ToolResultStatus::InvalidArguments, result_text(prompts, "invalid_arguments", context! { reason })),
-            ToolError::ExecutionFailed(reason) => (ToolResultStatus::Failed, result_text(prompts, "failed", context! { reason })),
+            ToolError::PermissionDenied(_) => {
+                return (ToolResultStatus::Forbidden, forbidden_result(prompts))
+            }
+            ToolError::UnknownTool(name) => (
+                ToolResultStatus::UnknownTool,
+                result_text(prompts, "unknown_tool", context! { name, available }),
+            ),
+            ToolError::InvalidParameter(reason) => (
+                ToolResultStatus::InvalidArguments,
+                result_text(prompts, "invalid_arguments", context! { reason }),
+            ),
+            ToolError::ExecutionFailed(reason) => {
+                (ToolResultStatus::Failed, result_text(prompts, "failed", context! { reason }))
+            }
         };
         (status, unsuccessful_result(status, message))
     }
@@ -468,7 +551,13 @@ pub trait ToolProvider: Send + Sync + Debug {
 
     /// Executes a specific tool by name - with the `answers` to the
     /// questions it asked for the call (`questions`), if it asked any.
-    async fn execute(&self, name: &str, params: &Value, answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput>;
+    async fn execute(
+        &self,
+        name: &str,
+        params: &Value,
+        answers: Option<&Answers>,
+        turn: &mut Turn,
+    ) -> ToolResult<ToolOutput>;
     /// What the call of tool `name` with `params` asks a person before it
     /// runs (issue 165): the answers are handed to `execute`, and reach the
     /// model only as far as the tool puts them into its result. By default
@@ -485,12 +574,11 @@ pub trait ToolProvider: Send + Sync + Debug {
         proposed_matcher(&self.tools(), name, params)
     }
     /// Provides a textual description for a specific tool call
-    fn describe(&self,  name: &str, _params: &Value) -> ToolResult<String> {
+    fn describe(&self, name: &str, _params: &Value) -> ToolResult<String> {
         let tools = self.tools();
         if let Some(tool) = tools.iter().find(|t| t.name == name) {
             Ok(tool.description.to_string())
-        }
-        else {
+        } else {
             Err(ToolError::UnknownTool(name.to_string()))
         }
     }
@@ -517,7 +605,13 @@ pub async fn usable_workspace(situation: &Situation<'_>) -> Result<WorkspaceView
 /// tell (`ToolMatcher::proposed`, issue 247); the calls exactly like it if
 /// none has that name.
 pub fn proposed_matcher(tools: &[Tool], name: &str, params: &Value) -> ToolMatcher {
-    let call = ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+    let call = ToolCall {
+        id: None,
+        function_name: name.to_string(),
+        arguments: params.clone(),
+        visibility: ToolVisibility::SHOWN,
+        presentation: Default::default(),
+    };
     match tools.iter().find(|tool| tool.name == name) {
         Some(tool) => ToolMatcher::proposed(&call, &tool.parameters),
         None => ToolMatcher::exact(&call),
@@ -533,7 +627,12 @@ pub enum Admission {
     /// `suggested` is what a rule derived from the call would match, if one
     /// can be kept (issue 400).
     /// Approved, it asks `questions`, if it has any (issue 165).
-    Ask { description: String, explicit: bool, suggested: Option<ToolMatcher>, questions: Option<Questions> },
+    Ask {
+        description: String,
+        explicit: bool,
+        suggested: Option<ToolMatcher>,
+        questions: Option<Questions>,
+    },
     /// The users answer its questions first (issue 165), as put to them.
     Await(Questions),
     /// It runs as it is.
@@ -547,7 +646,9 @@ impl Admission {
     /// The state `call` starts with, admitted so.
     pub fn state(self, call: ToolCall) -> ToolCallState {
         match self {
-            Admission::Ask { description, explicit, suggested, questions } => ToolCallState::pending(call, description, explicit, suggested, questions),
+            Admission::Ask { description, explicit, suggested, questions } => {
+                ToolCallState::pending(call, description, explicit, suggested, questions)
+            }
             Admission::Await(questions) => ToolCallState::asking(call, questions),
             Admission::Run => ToolCallState::approved(call),
             Admission::Answered(result) => ToolCallState::answered(call, *result),
@@ -644,7 +745,10 @@ impl ToolExecutor {
     /// # Errors
     /// `ComponentError::InvalidConfig` if two providers have a tool of the
     /// same name (`ToolProviders::new`).
-    pub(crate) fn new(providers: Vec<ComponentImpl<dyn ToolProvider>>, runtime: ActorRuntime) -> ComponentResult<Self> {
+    pub(crate) fn new(
+        providers: Vec<ComponentImpl<dyn ToolProvider>>,
+        runtime: ActorRuntime,
+    ) -> ComponentResult<Self> {
         Ok(Self {
             access_policy: Arc::clone(runtime.access_policy()),
             confidentiality: Arc::clone(runtime.confidentiality()),
@@ -663,11 +767,11 @@ impl ToolExecutor {
     fn questions(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<Option<Questions>> {
         let Some(questions) = self.providers.questions(call)? else { return Ok(None) };
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
-        let addressed = self.runtime.address_questions(questions, turn.situation().security_context())
+        let addressed = self
+            .runtime
+            .address_questions(questions, turn.situation().security_context())
             .ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
-        addressed
-            .map(Some)
-            .map_err(|e| ToolError::InvalidParameter(e.to_string()))
+        addressed.map(Some).map_err(|e| ToolError::InvalidParameter(e.to_string()))
     }
 
     /// The rule of a place that decides `call` now, if one does, with what
@@ -675,8 +779,10 @@ impl ToolExecutor {
     /// channel's (`ApprovalRule::decide`).
     fn place_rule(&self, call: &ToolCall) -> Option<(ApprovalRuleId, RuleDecision)> {
         let (session, channel) = (self.session.load(), self.channel.load());
-        let rules = self.system_rules.iter().chain(&session.approval_rules).chain(&channel.approval_rules);
-        ApprovalRule::decide(rules, call, session.id, channel.id, Utc::now()).map(|(rule, decision)| (rule.id, decision))
+        let rules =
+            self.system_rules.iter().chain(&session.approval_rules).chain(&channel.approval_rules);
+        ApprovalRule::decide(rules, call, session.id, channel.id, Utc::now())
+            .map(|(rule, decision)| (rule.id, decision))
     }
 
     /// Runs `call` if it may be run now, with the `answers` to the questions
@@ -687,7 +793,13 @@ impl ToolExecutor {
     /// is answered as interrupted, saying why, with when it started, so that
     /// it counts as having run. Dropping a tool does not undo what it did
     /// (issue 20).
-    pub async fn execute(&self, call: &ToolCall, answers: Option<&Answers>, turn: &mut Turn<'_>, interrupted: impl Future<Output = Interruption>) -> ToolCallResult {
+    pub async fn execute(
+        &self,
+        call: &ToolCall,
+        answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+        interrupted: impl Future<Output = Interruption>,
+    ) -> ToolCallResult {
         if let Err(e) = self.check(call, turn).await {
             return self.failed(call, e, turn);
         }
@@ -705,7 +817,12 @@ impl ToolExecutor {
                 let after = (finished_at - started_at).to_std().unwrap_or_default();
                 info!(tool = %call.function_name, duration_ms = after.as_millis(), by_user = matches!(interruption, Interruption::ByUser(_)), "Tool interrupted");
                 // A fixed text of the runtime's: as the turn (issue 168).
-                let mut result = ToolCallResult::of(call, ToolResultStatus::Interrupted, interruption.result(&turn.situation().texts(), after), turn.situation().label());
+                let mut result = ToolCallResult::of(
+                    call,
+                    ToolResultStatus::Interrupted,
+                    interruption.result(&turn.situation().texts(), after),
+                    turn.situation().label(),
+                );
                 result.started_at = Some(started_at);
                 result.finished_at = Some(finished_at);
                 return result;
@@ -743,22 +860,48 @@ impl ToolExecutor {
     /// it showed (issue 282) - if that, or what it showed, may not flow into
     /// the channel (`ConfidentialityPolicy::may_publish`, in the agent's
     /// name: the result enters its context in the channel).
-    async fn admitted(&self, call: &ToolCall, output: ToolOutput, turn: &Turn<'_>) -> ToolCallResult {
+    async fn admitted(
+        &self,
+        call: &ToolCall,
+        output: ToolOutput,
+        turn: &Turn<'_>,
+    ) -> ToolCallResult {
         let channel = turn.situation().classification();
-        let configured = turn.tools().find(|t| t.name == call.function_name).and_then(|t| t.classification.clone());
-        let classification = output.classification.or(configured).unwrap_or_else(|| channel.clone());
+        let configured = turn
+            .tools()
+            .find(|t| t.name == call.function_name)
+            .and_then(|t| t.classification.clone());
+        let classification =
+            output.classification.or(configured).unwrap_or_else(|| channel.clone());
         let context = turn.situation().security_context();
-        let parts = iter::once(&classification).chain(output.shown.iter().map(|shown| &shown.classification));
-        if let Some(refused) = parts.into_iter().find(|part| !self.confidentiality.may_publish(context, part, &channel)) {
+        let parts = iter::once(&classification)
+            .chain(output.shown.iter().map(|shown| &shown.classification));
+        if let Some(refused) = parts
+            .into_iter()
+            .find(|part| !self.confidentiality.may_publish(context, part, &channel))
+        {
             debug!(tool = %call.function_name, classification = %refused, "Withheld a result the channel does not admit");
-            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&turn.situation().texts(), refused), channel);
+            return ToolCallResult::of(
+                call,
+                ToolResultStatus::Withheld,
+                withheld_result(&turn.situation().texts(), refused),
+                channel,
+            );
         }
         match successful_result(&turn.situation().texts(), output.value, call.visibility) {
-            Ok(content) => ToolCallResult { shown: output.shown, ..ToolCallResult::of(call, ToolResultStatus::Ok, content, classification) },
+            Ok(content) => ToolCallResult {
+                shown: output.shown,
+                ..ToolCallResult::of(call, ToolResultStatus::Ok, content, classification)
+            },
             // Not given without the mark that it is the agent's alone.
             Err(e) => {
                 error!(tool = %call.function_name, "Withheld a result only its agent may see, which cannot be marked so: {e}");
-                ToolCallResult::of(call, ToolResultStatus::Withheld, unsuccessful_result(ToolResultStatus::Withheld, Err(e)), channel)
+                ToolCallResult::of(
+                    call,
+                    ToolResultStatus::Withheld,
+                    unsuccessful_result(ToolResultStatus::Withheld, Err(e)),
+                    channel,
+                )
             }
         }
     }
@@ -776,19 +919,44 @@ impl ToolExecutor {
     pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
         let agent = turn.situation().agent_id();
         if !offered(call, turn) {
-            info!("Tool call '{}' by agent {} names a tool it was not offered", call.function_name, agent);
-            return Admission::Answered(Box::new(self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn)));
+            info!(
+                "Tool call '{}' by agent {} names a tool it was not offered",
+                call.function_name, agent
+            );
+            return Admission::Answered(Box::new(self.failed(
+                call,
+                ToolError::UnknownTool(call.function_name.clone()),
+                turn,
+            )));
         }
         // The one question of the call's permission (issue 304, rule 4):
         // asked as it is admitted, not again when it runs.
-        if self.access_policy.require(turn.situation().security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
-            info!("Tool call '{}' by agent {} forbidden by the access policy", call.function_name, agent);
-            return Admission::Answered(Box::new(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(&turn.situation().texts()), turn.situation().label())));
+        if self
+            .access_policy
+            .require(turn.situation().security_context(), ActionType::CallTool(call), |_| ())
+            .await
+            .is_err()
+        {
+            info!(
+                "Tool call '{}' by agent {} forbidden by the access policy",
+                call.function_name, agent
+            );
+            return Admission::Answered(Box::new(ToolCallResult::of(
+                call,
+                ToolResultStatus::Forbidden,
+                forbidden_result(&turn.situation().texts()),
+                turn.situation().label(),
+            )));
         }
         let rule = self.place_rule(call);
         if let Some((rule_id, RuleDecision::Deny)) = rule {
             info!(rule = %rule_id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
-            return Admission::Answered(Box::new(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(&turn.situation().texts()), turn.situation().label())));
+            return Admission::Answered(Box::new(ToolCallResult::of(
+                call,
+                ToolResultStatus::Forbidden,
+                forbidden_result(&turn.situation().texts()),
+                turn.situation().label(),
+            )));
         }
         let description = match self.providers.describe(call) {
             Ok(description) => description,
@@ -804,14 +972,23 @@ impl ToolExecutor {
         let questions = match self.questions(call, turn) {
             Ok(questions) => questions,
             Err(e) => {
-                info!("Tool call '{}' by agent {} cannot ask its questions: {}", call.function_name, agent, e);
+                info!(
+                    "Tool call '{}' by agent {} cannot ask its questions: {}",
+                    call.function_name, agent, e
+                );
                 return Admission::Answered(Box::new(self.failed(call, e, turn)));
             }
         };
         let explicit = rule.is_some_and(|(_, decision)| decision == RuleDecision::Ask);
-        let asks = explicit || turn.tools().any(|t| t.name == call.function_name && t.requires_approval);
+        let asks =
+            explicit || turn.tools().any(|t| t.name == call.function_name && t.requires_approval);
         match questions {
-            _ if asks => Admission::Ask { description, explicit, suggested: self.providers.matcher(call), questions },
+            _ if asks => Admission::Ask {
+                description,
+                explicit,
+                suggested: self.providers.matcher(call),
+                questions,
+            },
             Some(questions) => Admission::Await(questions),
             None => Admission::Run,
         }
@@ -828,7 +1005,9 @@ impl ToolExecutor {
         let mut offered = Vec::new();
         for set in self.providers.tool_sets(situation).await {
             let withheld = match (&set.destination, &set.unavailable) {
-                (Some(destination), None) => !self.confidentiality.may_publish(context, channel, destination),
+                (Some(destination), None) => {
+                    !self.confidentiality.may_publish(context, channel, destination)
+                }
                 _ => false,
             };
             if withheld {
@@ -849,11 +1028,16 @@ impl ToolExecutor {
         }
         let security = turn.situation().security_context();
         if security.caller_id.as_agent_id().is_none() {
-            return Err(ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)));
+            return Err(ToolError::PermissionDenied(format!(
+                "tools can only be called by agents, not by {}",
+                security.caller_id
+            )));
         }
         // A rule that denies may have been set while the call waited.
         match self.place_rule(call) {
-            Some((rule_id, RuleDecision::Deny)) => Err(ToolError::PermissionDenied(format!("rule {rule_id}"))),
+            Some((rule_id, RuleDecision::Deny)) => {
+                Err(ToolError::PermissionDenied(format!("rule {rule_id}")))
+            }
             _ => Ok(()),
         }
     }
@@ -872,28 +1056,28 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{self, TestAgents};
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::config::{AppConfig, ApprovalsConfig};
     use caelumora_model::content::testing::make_content_ref;
     use caelumora_model::content::ContentId;
-    use crate::testing::{self, TestAgents};
     use caelumora_model::event::GlobalEvent;
     use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
     use caelumora_runtime::testing::TestRuntime;
-    use caelumora_model::config::{AppConfig, ApprovalsConfig};
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
 
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext, OwnershipPolicy};
-    use caelumora_model::session::{Session, SessionId, SessionUpdateEvent};
-    use caelumora_model::tool::{ToolResultStatus, ToolCallStatus};
-    use serde_json::json;
     use caelumora_model::channel::Channel;
     use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::note::NoteId;
     use caelumora_model::context::{ContextRef, FrameRef};
+    use caelumora_model::note::NoteId;
+    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy, SecurityContext};
+    use caelumora_model::session::{Session, SessionId, SessionUpdateEvent};
+    use caelumora_model::tool::{ToolCallStatus, ToolResultStatus};
     use caelumora_model::turn::TurnState;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
+    use serde_json::json;
     use std::future;
     use tokio::time;
 
@@ -906,37 +1090,73 @@ mod tests {
         assert!(corrected(ContentError::TooLarge { limit: 1 }.into()));
         assert!(corrected(ContentError::Changed.into()));
         assert!(failed(ContentError::Unavailable("permission denied".to_string()).into()));
-        assert!(failed(ContentError::NotFound("attachments/a".to_string()).into()), "a key its owner made");
-        assert!(corrected(AttachmentError::Content(ContentError::TooLarge { limit: 1 }).into()), "an attachment's, as the storage's");
-        assert!(failed(AttachmentError::Content(ContentError::Unavailable("permission denied".to_string())).into()));
+        assert!(
+            failed(ContentError::NotFound("attachments/a".to_string()).into()),
+            "a key its owner made"
+        );
+        assert!(
+            corrected(AttachmentError::Content(ContentError::TooLarge { limit: 1 }).into()),
+            "an attachment's, as the storage's"
+        );
+        assert!(failed(
+            AttachmentError::Content(ContentError::Unavailable("permission denied".to_string()))
+                .into()
+        ));
         let gone = ToolError::from(AttachmentError::StorageGone(StorageGone("old".to_string())));
-        assert!(matches!(&gone, ToolError::ExecutionFailed(m) if !m.contains("old")), "a storage no longer configured, without its name: {gone}");
+        assert!(
+            matches!(&gone, ToolError::ExecutionFailed(m) if !m.contains("old")),
+            "a storage no longer configured, without its name: {gone}"
+        );
         let gone = ToolError::from(WorkspaceError::StorageGone(StorageGone("old".to_string())));
-        assert!(matches!(&gone, ToolError::ExecutionFailed(m) if !m.contains("old")), "a workspace's too: {gone}");
-        assert!(failed(AttachmentError::Altered(ContentId::new()).into()), "other bytes than were kept");
+        assert!(
+            matches!(&gone, ToolError::ExecutionFailed(m) if !m.contains("old")),
+            "a workspace's too: {gone}"
+        );
+        assert!(
+            failed(AttachmentError::Altered(ContentId::new()).into()),
+            "other bytes than were kept"
+        );
         assert!(corrected(AttachmentError::NotFound(ContentId::new()).into()));
     }
 
     #[test]
     fn arguments_are_read_as_a_struct_and_what_does_not_fit_is_the_models_to_correct() {
         #[derive(Deserialize, Debug)]
-        struct Note { text: String, #[serde(default)] channel: Option<String> }
+        struct Note {
+            text: String,
+            #[serde(default)]
+            channel: Option<String>,
+        }
         #[derive(Deserialize, Debug)]
-        struct Optional { #[serde(default)] channel: Option<String> }
+        struct Optional {
+            #[serde(default)]
+            channel: Option<String>,
+        }
 
-        let note: Note = arguments(&json!({ "text": "hello", "extra": 1 })).expect("unknown fields are ignored");
+        let note: Note =
+            arguments(&json!({ "text": "hello", "extra": 1 })).expect("unknown fields are ignored");
         assert_eq!((note.text.as_str(), note.channel), ("hello", None));
-        let Optional { channel } = arguments(&Value::Null).expect("no arguments are an empty object");
+        let Optional { channel } =
+            arguments(&Value::Null).expect("no arguments are an empty object");
         assert!(channel.is_none());
 
         let missing = arguments::<Note>(&json!({})).unwrap_err();
-        assert!(matches!(&missing, ToolError::InvalidParameter(m) if m.contains("`text`")), "serde names what is missing: {missing}");
+        assert!(
+            matches!(&missing, ToolError::InvalidParameter(m) if m.contains("`text`")),
+            "serde names what is missing: {missing}"
+        );
         let wrong = arguments::<Note>(&json!({ "text": 5 })).unwrap_err();
-        assert!(matches!(&wrong, ToolError::InvalidParameter(m) if m.contains("invalid type")), "{wrong}");
+        assert!(
+            matches!(&wrong, ToolError::InvalidParameter(m) if m.contains("invalid type")),
+            "{wrong}"
+        );
         let id: NoteId = id_argument(&json!({ "id": 3 })).unwrap();
         assert_eq!(id.0, 3);
         assert_eq!(text_argument(&json!({ "text": "  tea " })).unwrap(), "tea", "trimmed");
-        assert!(matches!(text_argument(&json!({ "text": " " })), Err(ToolError::InvalidParameter(_))), "empty is no text");
+        assert!(
+            matches!(text_argument(&json!({ "text": " " })), Err(ToolError::InvalidParameter(_))),
+            "empty is no text"
+        );
     }
 
     /// `test_tool` does not classify its result; `hr_tool` classifies it as
@@ -956,7 +1176,10 @@ mod tests {
         Tool {
             name: name.to_string(),
             description: "desc".to_string(),
-            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
+            parameters: ToolParameters::object(
+                Vec::<(String, ToolParameters)>::new(),
+                Vec::<String>::new(),
+            ),
             requires_approval,
             visibility: Default::default(),
             classification,
@@ -979,13 +1202,23 @@ mod tests {
                 tool("showing_hr_tool", self.requires_approval, None),
             ]
         }
-        async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+        async fn execute(
+            &self,
+            name: &str,
+            _params: &Value,
+            _answers: Option<&Answers>,
+            _turn: &mut Turn,
+        ) -> ToolResult<ToolOutput> {
             match name {
                 "hr_tool" => Ok(ToolOutput::classified(json!({"salary": 1}), hr())),
                 "configured_tool" => Ok(json!({"salary": 2}).into()),
                 "hanging_tool" => future::pending().await,
                 "showing_tool" | "showing_hr_tool" => {
-                    let classification = if name == "showing_hr_tool" { hr() } else { Classification::CHANNEL_DEFAULT };
+                    let classification = if name == "showing_hr_tool" {
+                        hr()
+                    } else {
+                        Classification::CHANNEL_DEFAULT
+                    };
                     let shown = ContentRef { classification, ..make_content_ref("a.png", b"a") };
                     Ok(ToolOutput { shown: vec![shown], ..json!({"shown": true}).into() })
                 }
@@ -1005,7 +1238,13 @@ mod tests {
     }
 
     fn call(name: &str) -> ToolCall {
-        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), visibility: Default::default(), presentation: Default::default() }
+        ToolCall {
+            id: Some("call_1".to_string()),
+            function_name: name.to_string(),
+            arguments: json!({}),
+            visibility: Default::default(),
+            presentation: Default::default(),
+        }
     }
 
     fn parse(result: &str) -> Value {
@@ -1016,10 +1255,26 @@ mod tests {
     fn each_error_maps_to_its_own_status_with_a_next_step() {
         let available = vec!["calculator".to_string(), "echo".to_string()];
         let cases = [
-            (ToolError::UnknownTool("shell".to_string()), ToolResultStatus::UnknownTool, "Available tools: calculator, echo"),
-            (ToolError::InvalidParameter("'x' is missing".to_string()), ToolResultStatus::InvalidArguments, "call the tool again"),
-            (ToolError::ExecutionFailed("disk full".to_string()), ToolResultStatus::Failed, "disk full"),
-            (ToolError::PermissionDenied("rule 7: no shell after 18:00".to_string()), ToolResultStatus::Forbidden, "not permitted"),
+            (
+                ToolError::UnknownTool("shell".to_string()),
+                ToolResultStatus::UnknownTool,
+                "Available tools: calculator, echo",
+            ),
+            (
+                ToolError::InvalidParameter("'x' is missing".to_string()),
+                ToolResultStatus::InvalidArguments,
+                "call the tool again",
+            ),
+            (
+                ToolError::ExecutionFailed("disk full".to_string()),
+                ToolResultStatus::Failed,
+                "disk full",
+            ),
+            (
+                ToolError::PermissionDenied("rule 7: no shell after 18:00".to_string()),
+                ToolResultStatus::Forbidden,
+                "not permitted",
+            ),
         ];
         for (error, expected, fragment) in cases {
             let (status, result) = error.to_result(&testing::prompts(), &available);
@@ -1033,7 +1288,8 @@ mod tests {
 
     #[test]
     fn a_policy_refusal_does_not_disclose_the_policy() {
-        let (_, result) = ToolError::PermissionDenied("rule 7: no shell after 18:00".to_string()).to_result(&testing::prompts(), &[]);
+        let (_, result) = ToolError::PermissionDenied("rule 7: no shell after 18:00".to_string())
+            .to_result(&testing::prompts(), &[]);
         assert!(!result.contains("rule 7"), "{}", result);
         assert_eq!(result, forbidden_result(&testing::prompts()));
     }
@@ -1062,38 +1318,91 @@ mod tests {
     /// guarded by `access_policy` and the rules of `places`; the controllers of
     /// the session and the channel are returned, for their rules to be
     /// changed.
-    fn guarded_in(access_policy: Arc<dyn AccessPolicy>, requires_approval: bool, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
-        guarding(access_policy, vec![("tools", Arc::new(MockToolProvider { requires_approval }))], places)
+    fn guarded_in(
+        access_policy: Arc<dyn AccessPolicy>,
+        requires_approval: bool,
+        places: Places,
+    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+        guarding(
+            access_policy,
+            vec![("tools", Arc::new(MockToolProvider { requires_approval }))],
+            places,
+        )
     }
 
     /// The tools of `providers`, by their component ids, guarded by
     /// `access_policy` and the rules of `places`.
-    fn guarding(access_policy: Arc<dyn AccessPolicy>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+    fn guarding(
+        access_policy: Arc<dyn AccessPolicy>,
+        providers: Vec<(&str, Arc<dyn ToolProvider>)>,
+        places: Places,
+    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
         guarding_under(access_policy, Arc::new(ConfidentialityRules::default()), providers, places)
     }
 
     /// As `guarding`, the flow decided by `confidentiality` (issue 304): for
     /// an agent whose runtime holds the policies, the system's rules and the
     /// session of the test (issue 371).
-    fn guarding_under(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
-        let providers = providers.into_iter().map(|(id, facet)| ComponentImpl { id: id.to_string(), fail_policy: Default::default(), facet }).collect();
-        let config = AppConfig { approvals: ApprovalsConfig { rules: places.system }, ..Default::default() };
+    fn guarding_under(
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        providers: Vec<(&str, Arc<dyn ToolProvider>)>,
+        places: Places,
+    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+        let providers = providers
+            .into_iter()
+            .map(|(id, facet)| ComponentImpl {
+                id: id.to_string(),
+                fail_policy: Default::default(),
+                facet,
+            })
+            .collect();
+        let config =
+            AppConfig { approvals: ApprovalsConfig { rules: places.system }, ..Default::default() };
         let session = Session { approval_rules: places.session, ..bare_session(SessionId::new()) };
-        let mut channel = Channel::build(session.id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
+        let mut channel = Channel::build(
+            session.id,
+            ActorId::None,
+            Name::new("main").unwrap(),
+            Default::default(),
+            Classification::CHANNEL_DEFAULT,
+            None,
+        );
         channel.approval_rules = places.channel;
-        let runtime = detached_actor_runtime_in(TestRuntime { access_policy, confidentiality, config, plugins: vec![&TestAgents], ..Default::default() }.build(), session, channel);
+        let runtime = detached_actor_runtime_in(
+            TestRuntime {
+                access_policy,
+                confidentiality,
+                config,
+                plugins: vec![&TestAgents],
+                ..Default::default()
+            }
+            .build(),
+            session,
+            channel,
+        );
         let session = Arc::clone(runtime.session_controller());
         let channel = Arc::clone(runtime.channel_controller());
         let executor = ToolExecutor::new(providers, runtime).unwrap();
         (executor, session, channel)
     }
 
-    fn guarded(access_policy: Arc<dyn AccessPolicy>, requires_approval: bool, places: Places) -> ToolExecutor {
+    fn guarded(
+        access_policy: Arc<dyn AccessPolicy>,
+        requires_approval: bool,
+        places: Places,
+    ) -> ToolExecutor {
         guarded_in(access_policy, requires_approval, places).0
     }
 
     fn rule(tool: &str, decision: RuleDecision) -> ApprovalRule {
-        ApprovalRule::new(ToolMatcher { tool: tool.to_string(), arguments: Default::default() }, decision, Default::default(), None).unwrap()
+        ApprovalRule::new(
+            ToolMatcher { tool: tool.to_string(), arguments: Default::default() },
+            decision,
+            Default::default(),
+            None,
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -1105,27 +1414,65 @@ mod tests {
             executor.admit(&call("test_tool"), &turn).await
         };
 
-        let denied = admitted(guarded(Arc::clone(&access_policy), false, Places { system: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() })).await;
-        assert!(matches!(denied, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())), "the system's, as the policy refuses: {denied:?}");
-        let asked = admitted(guarded(Arc::clone(&access_policy), false, Places { channel: vec![rule("test_tool", RuleDecision::Ask)], ..Default::default() })).await;
-        assert!(matches!(asked, Admission::Ask { explicit: true, .. }), "the channel's, of a tool that would not ask: {asked:?}");
-        let both = admitted(guarded(Arc::clone(&access_policy), false, Places { session: vec![rule("*", RuleDecision::Ask)], channel: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() })).await;
-        assert!(matches!(both, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden), "the strongest of all places: {both:?}");
-        let other = admitted(guarded(Arc::clone(&access_policy), false, Places { session: vec![rule("hr_tool", RuleDecision::Deny)], ..Default::default() })).await;
+        let denied = admitted(guarded(
+            Arc::clone(&access_policy),
+            false,
+            Places { system: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() },
+        ))
+        .await;
+        assert!(
+            matches!(denied, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())),
+            "the system's, as the policy refuses: {denied:?}"
+        );
+        let asked = admitted(guarded(
+            Arc::clone(&access_policy),
+            false,
+            Places { channel: vec![rule("test_tool", RuleDecision::Ask)], ..Default::default() },
+        ))
+        .await;
+        assert!(
+            matches!(asked, Admission::Ask { explicit: true, .. }),
+            "the channel's, of a tool that would not ask: {asked:?}"
+        );
+        let both = admitted(guarded(
+            Arc::clone(&access_policy),
+            false,
+            Places {
+                session: vec![rule("*", RuleDecision::Ask)],
+                channel: vec![rule("test_tool", RuleDecision::Deny)],
+                ..Default::default()
+            },
+        ))
+        .await;
+        assert!(
+            matches!(both, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden),
+            "the strongest of all places: {both:?}"
+        );
+        let other = admitted(guarded(
+            Arc::clone(&access_policy),
+            false,
+            Places { session: vec![rule("hr_tool", RuleDecision::Deny)], ..Default::default() },
+        ))
+        .await;
         assert!(matches!(other, Admission::Run), "a rule about another tool: {other:?}");
         let default = admitted(guarded(access_policy, true, Places::default())).await;
-        assert!(matches!(default, Admission::Ask { explicit: false, .. }), "the tool's own default is no rule: {default:?}");
+        assert!(
+            matches!(default, Admission::Ask { explicit: false, .. }),
+            "the tool's own default is no rule: {default:?}"
+        );
     }
 
     #[tokio::test]
     async fn a_rule_that_denies_set_while_a_call_waits_refuses_it_when_run() {
-        let (executor, session, _channel) = guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
+        let (executor, session, _channel) =
+            guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(matches!(executor.admit(&call("test_tool"), &turn).await, Admission::Ask { .. }));
 
         // As if set in another instance, and announced.
-        let denying = SessionUpdateEvent::ApprovalRulesChanged(vec![rule("test_tool", RuleDecision::Deny)]);
+        let denying =
+            SessionUpdateEvent::ApprovalRulesChanged(vec![rule("test_tool", RuleDecision::Deny)]);
         session.process_global_event(&GlobalEvent::updated::<Session>(&session.id(), &denying));
         let result = executor.execute(&call("test_tool"), None, &mut turn, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "as it stands when run");
@@ -1140,13 +1487,31 @@ mod tests {
         let executor = executor(Arc::new(DenyAllPolicy));
 
         let agent_id = AgentId::new();
-        let mut agent_channel_state = offered(&executor, Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }).await;
+        let mut agent_channel_state = offered(
+            &executor,
+            Work {
+                security_context: SecurityContext {
+                    caller_id: ActorId::Agent(agent_id),
+                    ..SecurityContext::default()
+                },
+                ..Default::default()
+            },
+        )
+        .await;
         let mut context = Turn::under_way(agent_id, &mut agent_channel_state);
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
-        assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())), "refused before anyone is asked: {admitted:?}");
-        let result = executor.execute(&call("test_tool"), None, &mut context, future::pending()).await;
-        assert_eq!(result.status, ToolResultStatus::Ok, "running asks the policy nothing more: only an admitted call is run");
+        assert!(
+            matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())),
+            "refused before anyone is asked: {admitted:?}"
+        );
+        let result =
+            executor.execute(&call("test_tool"), None, &mut context, future::pending()).await;
+        assert_eq!(
+            result.status,
+            ToolResultStatus::Ok,
+            "running asks the policy nothing more: only an admitted call is run"
+        );
     }
 
     /// A rule is offered only where one can be kept (issue 400): of a call
@@ -1158,14 +1523,19 @@ mod tests {
         let asking = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&asking).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        let with = |text: String| ToolCall { arguments: json!({ "text": text }), ..call("test_tool") };
+        let with =
+            |text: String| ToolCall { arguments: json!({ "text": text }), ..call("test_tool") };
         let suggested = |admitted| match admitted {
             Admission::Ask { suggested, .. } => suggested,
             other => panic!("its tool requires approval, got {other:?}"),
         };
-        let long = suggested(asking.admit(&with("x".repeat(MAX_PATTERN_CHARS + 1)), &turn).await).expect("a rule by equality");
+        let long = suggested(asking.admit(&with("x".repeat(MAX_PATTERN_CHARS + 1)), &turn).await)
+            .expect("a rule by equality");
         assert!(matches!(long.arguments["text"], ArgumentMatcher::Equals { .. }), "{long:?}");
-        assert!(suggested(asking.admit(&with("x".repeat(MAX_EQUALS_CHARS + 1)), &turn).await).is_none(), "no rule that cannot be kept");
+        assert!(
+            suggested(asking.admit(&with("x".repeat(MAX_EQUALS_CHARS + 1)), &turn).await).is_none(),
+            "no rule that cannot be kept"
+        );
     }
 
     #[tokio::test]
@@ -1173,11 +1543,18 @@ mod tests {
         let asking = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&asking).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        assert!(matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false, .. } if description == "desc"), "its tool requires approval");
+        assert!(
+            matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false, .. } if description == "desc"),
+            "its tool requires approval"
+        );
         match asking.admit(&call("does_not_exist"), &turn).await {
             Admission::Answered(result) => {
                 assert_eq!(result.status, ToolResultStatus::UnknownTool);
-                assert!(result.content.contains("Available tools: test_tool"), "the tools the turn began with: {}", result.content);
+                assert!(
+                    result.content.contains("Available tools: test_tool"),
+                    "the tools the turn began with: {}",
+                    result.content
+                );
             }
             other => panic!("an unknown tool is answered at once, got {other:?}"),
         }
@@ -1185,7 +1562,10 @@ mod tests {
         let refusing = executor(Arc::new(DenyAllPolicy));
         let mut agent_channel_state = agent_turn(&refusing).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        assert!(matches!(refusing.admit(&call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden), "first the policy");
+        assert!(
+            matches!(refusing.admit(&call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden),
+            "first the policy"
+        );
 
         let running = guarded(Arc::new(AllowAllPolicy::new()), false, Places::default());
         let mut agent_channel_state = agent_turn(&running).await;
@@ -1214,33 +1594,91 @@ mod tests {
         fn destination(&self) -> Option<Classification> {
             Some(self.destination.clone())
         }
-        async fn execute(&self, _: &str, _: &Value, _: Option<&Answers>, _: &mut Turn) -> ToolResult<ToolOutput> {
+        async fn execute(
+            &self,
+            _: &str,
+            _: &Value,
+            _: Option<&Answers>,
+            _: &mut Turn,
+        ) -> ToolResult<ToolOutput> {
             Ok(json!({ "sent": true }).into())
         }
     }
 
     #[tokio::test]
-    async fn a_set_whose_remote_side_the_channel_may_not_flow_to_is_withheld_and_its_tools_not_called() {
+    async fn a_set_whose_remote_side_the_channel_may_not_flow_to_is_withheld_and_its_tools_not_called(
+    ) {
         use caelumora_model::confidentiality::Confidentiality;
         let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
-        let outward: Arc<dyn ToolProvider> = Arc::new(Outward { destination: Classification::general(Confidentiality::Internal) });
+        let outward: Arc<dyn ToolProvider> =
+            Arc::new(Outward { destination: Classification::general(Confidentiality::Internal) });
         let local: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: false });
-        let (executor, _, _) = guarding(access_policy, vec![("outward", outward), ("local", local)], Places::default());
-        let agent = SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() };
+        let (executor, _, _) = guarding(
+            access_policy,
+            vec![("outward", outward), ("local", local)],
+            Places::default(),
+        );
+        let agent = SecurityContext {
+            caller_id: ActorId::Agent(AgentId::new()),
+            ..SecurityContext::default()
+        };
 
-        let internal = sets_offered(&executor, Work { security_context: agent.clone(), classification: Classification::general(Confidentiality::Internal), ..Default::default() }).await;
-        assert!(internal.iter().all(|set| set.unavailable.is_none() && !set.tools.is_empty()), "offered where the channel flows to it: {internal:?}");
-        assert_eq!(internal[0].destination, Some(Classification::general(Confidentiality::Internal)), "and says where");
+        let internal = sets_offered(
+            &executor,
+            Work {
+                security_context: agent.clone(),
+                classification: Classification::general(Confidentiality::Internal),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            internal.iter().all(|set| set.unavailable.is_none() && !set.tools.is_empty()),
+            "offered where the channel flows to it: {internal:?}"
+        );
+        assert_eq!(
+            internal[0].destination,
+            Some(Classification::general(Confidentiality::Internal)),
+            "and says where"
+        );
 
-        let confidential = sets_offered(&executor, Work { security_context: agent.clone(), classification: Classification::general(Confidentiality::Confidential), ..Default::default() }).await;
+        let confidential = sets_offered(
+            &executor,
+            Work {
+                security_context: agent.clone(),
+                classification: Classification::general(Confidentiality::Confidential),
+                ..Default::default()
+            },
+        )
+        .await;
         let (outward, local) = (&confidential[0], &confidential[1]);
-        assert!(outward.tools.is_empty() && outward.unavailable.as_deref().is_some_and(|why| why.contains("not cleared for this channel")), "withheld above it: {outward:?}");
-        assert!(local.unavailable.is_none() && !local.tools.is_empty(), "a set that sends nothing out is offered");
+        assert!(
+            outward.tools.is_empty()
+                && outward
+                    .unavailable
+                    .as_deref()
+                    .is_some_and(|why| why.contains("not cleared for this channel")),
+            "withheld above it: {outward:?}"
+        );
+        assert!(
+            local.unavailable.is_none() && !local.tools.is_empty(),
+            "a set that sends nothing out is offered"
+        );
 
-        let mut agent_channel_state = offering(Work { security_context: agent, classification: Classification::general(Confidentiality::Confidential), ..Default::default() }, confidential);
+        let mut agent_channel_state = offering(
+            Work {
+                security_context: agent,
+                classification: Classification::general(Confidentiality::Confidential),
+                ..Default::default()
+            },
+            confidential,
+        );
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let admitted = executor.admit(&call("send_out"), &turn).await;
-        assert!(matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool), "not called by its name: {admitted:?}");
+        assert!(
+            matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool),
+            "not called by its name: {admitted:?}"
+        );
         let result = executor.execute(&call("send_out"), None, &mut turn, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::UnknownTool, "nor run, approved or not");
         assert!(result.started_at.is_none());
@@ -1253,25 +1691,54 @@ mod tests {
         assert_eq!(configured(json!(false)).unwrap(), ApprovalMode::Never);
         assert_eq!(configured(json!("unless_read_only")).unwrap(), ApprovalMode::UnlessReadOnly);
         assert!(configured(json!("hints")).is_err());
-        for (approval, asks) in [(ApprovalMode::Always, [true, true]), (ApprovalMode::Never, [false, false]), (ApprovalMode::UnlessReadOnly, [false, true])] {
-            assert_eq!([true, false].map(|read_only| approval.required(read_only)), asks, "{approval:?}: reading, writing");
+        for (approval, asks) in [
+            (ApprovalMode::Always, [true, true]),
+            (ApprovalMode::Never, [false, false]),
+            (ApprovalMode::UnlessReadOnly, [false, true]),
+        ] {
+            assert_eq!(
+                [true, false].map(|read_only| approval.required(read_only)),
+                asks,
+                "{approval:?}: reading, writing"
+            );
         }
     }
 
     #[tokio::test]
     async fn only_an_agent_calls_tools() {
         let executor = executor(Arc::new(AllowAllPolicy::new()));
-        let mut agent_channel_state = offered(&executor, Work { security_context: SecurityContext { caller_id: ActorId::User(UserId::new()), ..SecurityContext::default() }, ..Default::default() }).await;
+        let mut agent_channel_state = offered(
+            &executor,
+            Work {
+                security_context: SecurityContext {
+                    caller_id: ActorId::User(UserId::new()),
+                    ..SecurityContext::default()
+                },
+                ..Default::default()
+            },
+        )
+        .await;
         let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
-        let result = executor.execute(&call("test_tool"), None, &mut context, future::pending()).await;
+        let result =
+            executor.execute(&call("test_tool"), None, &mut context, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
     }
 
     /// A turn of an agent in a general internal channel, with the tools of
     /// `executor` as it began with them.
     async fn agent_turn(executor: &ToolExecutor) -> AgentChannelState {
-        offered(executor, Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() }).await
+        offered(
+            executor,
+            Work {
+                security_context: SecurityContext {
+                    caller_id: ActorId::Agent(AgentId::new()),
+                    ..SecurityContext::default()
+                },
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// The tool sets `executor` offers in a turn done as `work` says.
@@ -1293,7 +1760,16 @@ mod tests {
     fn offering(work: Work, tool_sets: Vec<ToolSet>) -> AgentChannelState {
         let mut state = AgentChannelState::default();
         let tools = state.keep_offer(tool_sets);
-        state.turn = Some(TurnState { work: Work { context: ContextRef { frame: FrameRef { tools, ..work.context.frame }, ..work.context }, ..work }, ..Default::default() });
+        state.turn = Some(TurnState {
+            work: Work {
+                context: ContextRef {
+                    frame: FrameRef { tools, ..work.context.frame },
+                    ..work.context
+                },
+                ..work
+            },
+            ..Default::default()
+        });
         state
     }
 
@@ -1303,7 +1779,13 @@ mod tests {
         use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules};
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let tools: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: true });
-        guarding_under(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::new(compartments)), vec![("tools", tools)], Places::default()).0
+        guarding_under(
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::new(compartments)),
+            vec![("tools", tools)],
+            Places::default(),
+        )
+        .0
     }
 
     #[tokio::test]
@@ -1319,12 +1801,20 @@ mod tests {
         let started_at = result.started_at.expect("a call that ran has its start");
         let finished_at = result.finished_at.expect("and its end");
         assert!(finished_at >= started_at);
-        assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
+        assert!(
+            serde_json::to_string(&result).unwrap().contains("\"started_at\""),
+            "and it is stored with the history"
+        );
 
-        let unknown = executor.execute(&call("does_not_exist"), None, &mut turn, future::pending()).await;
+        let unknown =
+            executor.execute(&call("does_not_exist"), None, &mut turn, future::pending()).await;
         assert_eq!(unknown.status, ToolResultStatus::UnknownTool);
         assert!(unknown.content.contains("Available tools: test_tool"), "{}", unknown.content);
-        assert_eq!((unknown.id.as_deref(), unknown.tool_name.as_str()), (Some("call_1"), "does_not_exist"), "the result is the call's");
+        assert_eq!(
+            (unknown.id.as_deref(), unknown.tool_name.as_str()),
+            (Some("call_1"), "does_not_exist"),
+            "the result is the call's"
+        );
         assert!(unknown.started_at.is_none(), "it never ran");
     }
 
@@ -1339,13 +1829,19 @@ mod tests {
         };
 
         let result = executor.execute(&call("hanging_tool"), None, &mut turn, ending).await;
-        assert_eq!(result.status, ToolResultStatus::Interrupted, "not waited for once the turn ends");
+        assert_eq!(
+            result.status,
+            ToolResultStatus::Interrupted,
+            "not waited for once the turn ends"
+        );
         assert_eq!(result.content, interrupted_result(&testing::prompts()));
         let started_at = result.started_at.expect("it ran");
         let finished_at = result.finished_at.expect("until it was interrupted");
         assert!(finished_at >= started_at);
 
-        let done = executor.execute(&call("test_tool"), None, &mut turn, future::ready(Interruption::TurnEnded)).await;
+        let done = executor
+            .execute(&call("test_tool"), None, &mut turn, future::ready(Interruption::TurnEnded))
+            .await;
         assert_eq!(done.status, ToolResultStatus::Ok, "a tool that is done has its result");
     }
 
@@ -1376,10 +1872,22 @@ mod tests {
 
         for name in ["hr_tool", "configured_tool"] {
             let result = executor.execute(&call(name), None, &mut turn, future::pending()).await;
-            assert_eq!(result.status, ToolResultStatus::Withheld, "{name}: HR's, and the channel is general");
+            assert_eq!(
+                result.status,
+                ToolResultStatus::Withheld,
+                "{name}: HR's, and the channel is general"
+            );
             assert!(!result.content.contains("salary"), "{name}: {}", result.content);
-            assert!(result.content.contains("internal {hr}"), "the model is told why: {}", result.content);
-            assert_eq!(result.classification, Classification::CHANNEL_DEFAULT, "what the model is told is the channel's");
+            assert!(
+                result.content.contains("internal {hr}"),
+                "the model is told why: {}",
+                result.content
+            );
+            assert_eq!(
+                result.classification,
+                Classification::CHANNEL_DEFAULT,
+                "what the model is told is the channel's"
+            );
             assert!(result.started_at.is_some(), "it ran");
         }
     }
@@ -1392,12 +1900,18 @@ mod tests {
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
-        let shown = executor.execute(&call("showing_tool"), None, &mut turn, future::pending()).await;
+        let shown =
+            executor.execute(&call("showing_tool"), None, &mut turn, future::pending()).await;
         assert_eq!((shown.status, shown.shown.len()), (ToolResultStatus::Ok, 1), "into the result");
-        let withheld = executor.execute(&call("showing_hr_tool"), None, &mut turn, future::pending()).await;
+        let withheld =
+            executor.execute(&call("showing_hr_tool"), None, &mut turn, future::pending()).await;
         assert_eq!(withheld.status, ToolResultStatus::Withheld, "HR's, and the channel is general");
         assert!(withheld.shown.is_empty(), "withheld with the result");
-        assert!(withheld.content.contains("internal {hr}"), "the model is told why: {}", withheld.content);
+        assert!(
+            withheld.content.contains("internal {hr}"),
+            "the model is told why: {}",
+            withheld.content
+        );
     }
 
     #[tokio::test]
@@ -1426,21 +1940,37 @@ mod tests {
     #[test]
     fn a_result_the_channel_does_not_see_is_marked_for_the_model() {
         let value = json!({"secret": 42});
-        let public = successful_result(&testing::prompts(), value.clone(), ToolVisibility::SHOWN).unwrap();
+        let public =
+            successful_result(&testing::prompts(), value.clone(), ToolVisibility::SHOWN).unwrap();
         assert_eq!(parse(&public), value, "passed on unchanged");
 
-        let hidden = parse(&successful_result(&testing::prompts(), value.clone(), ToolVisibility::CALL_ONLY).unwrap());
+        let hidden = parse(
+            &successful_result(&testing::prompts(), value.clone(), ToolVisibility::CALL_ONLY)
+                .unwrap(),
+        );
         assert_eq!(hidden["result"], value);
         assert!(hidden["note"].as_str().unwrap().contains("Do not quote or reveal it"));
-        let without_result = parse(&successful_result(&testing::prompts(), value.clone(), ToolVisibility::WITHOUT_RESULT).unwrap());
+        let without_result = parse(
+            &successful_result(&testing::prompts(), value.clone(), ToolVisibility::WITHOUT_RESULT)
+                .unwrap(),
+        );
         assert_eq!(without_result, hidden, "the result is what counts, not the arguments");
     }
 
     #[test]
     fn a_result_that_is_text_is_given_as_text() {
         let text = json!("1. Collect.\n2. Group.");
-        assert_eq!(successful_result(&testing::prompts(), text.clone(), ToolVisibility::SHOWN).unwrap(), "1. Collect.\n2. Group.", "not a JSON string");
-        let hidden = successful_result(&testing::prompts(), text, ToolVisibility::CALL_ONLY).unwrap();
-        assert!(hidden.starts_with("1. Collect.\n2. Group.\n\n[") && hidden.contains("Do not quote or reveal it"), "{hidden}");
+        assert_eq!(
+            successful_result(&testing::prompts(), text.clone(), ToolVisibility::SHOWN).unwrap(),
+            "1. Collect.\n2. Group.",
+            "not a JSON string"
+        );
+        let hidden =
+            successful_result(&testing::prompts(), text, ToolVisibility::CALL_ONLY).unwrap();
+        assert!(
+            hidden.starts_with("1. Collect.\n2. Group.\n\n[")
+                && hidden.contains("Do not quote or reveal it"),
+            "{hidden}"
+        );
     }
 }

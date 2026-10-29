@@ -42,9 +42,18 @@ pub struct ProjectMemberResponse {
 
 impl From<snapshot::ProjectSnapshot> for ProjectResponse {
     fn from(view: snapshot::ProjectSnapshot) -> Self {
-        let members = view.members.into_iter().map(|(id, name)| ProjectMemberResponse { id, name }).collect();
+        let members =
+            view.members.into_iter().map(|(id, name)| ProjectMemberResponse { id, name }).collect();
         let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
-        Self { id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), description: view.description, members, can_change: view.can_change, access }
+        Self {
+            id: view.id,
+            name: view.name,
+            scope: ScopeResponse::of(&view.scope),
+            description: view.description,
+            members,
+            can_change: view.can_change,
+            access,
+        }
     }
 }
 

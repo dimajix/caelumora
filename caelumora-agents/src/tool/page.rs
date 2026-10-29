@@ -38,11 +38,20 @@ impl TextPage {
 ///
 /// # Errors
 /// `InvalidParameter` if `start_line` lies beyond the text, which the message names as `what`.
-pub fn page_of(text: &str, what: &str, start_line: Option<usize>, line_count: Option<usize>, max_bytes: usize) -> ToolResult<TextPage> {
+pub fn page_of(
+    text: &str,
+    what: &str,
+    start_line: Option<usize>,
+    line_count: Option<usize>,
+    max_bytes: usize,
+) -> ToolResult<TextPage> {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let start = start_line.unwrap_or(1).max(1);
     if start > lines.len().max(1) {
-        return Err(ToolError::InvalidParameter(format!("{what} has {} lines; start_line {start} is beyond them", lines.len())));
+        return Err(ToolError::InvalidParameter(format!(
+            "{what} has {} lines; start_line {start} is beyond them",
+            lines.len()
+        )));
     }
     let wanted = lines.iter().skip(start - 1).take(line_count.unwrap_or(usize::MAX));
     let (mut content, mut end) = (String::new(), start - 1);
@@ -66,11 +75,35 @@ mod tests {
     fn a_page_holds_whole_lines_within_its_bytes_and_says_where_to_read_on() {
         let text = "line one\nline two\nline three\n";
         let page = |start, count, bytes| page_of(text, "'long.txt'", start, count, bytes);
-        assert_eq!(page(None, None, 10).unwrap(), TextPage { content: "line one\n".to_string(), start_line: 1, end_line: 1, total_lines: 3, next_line: Some(2) }, "one line at least, and where to go on");
-        assert_eq!(page(Some(2), Some(1), 100).unwrap(), TextPage { content: "line two\n".to_string(), start_line: 2, end_line: 2, total_lines: 3, next_line: None }, "no more than asked for");
+        assert_eq!(
+            page(None, None, 10).unwrap(),
+            TextPage {
+                content: "line one\n".to_string(),
+                start_line: 1,
+                end_line: 1,
+                total_lines: 3,
+                next_line: Some(2)
+            },
+            "one line at least, and where to go on"
+        );
+        assert_eq!(
+            page(Some(2), Some(1), 100).unwrap(),
+            TextPage {
+                content: "line two\n".to_string(),
+                start_line: 2,
+                end_line: 2,
+                total_lines: 3,
+                next_line: None
+            },
+            "no more than asked for"
+        );
         assert_eq!(page(Some(3), None, 100).unwrap().next_line, None, "to the end");
         let beyond = page(Some(9), None, 100).unwrap_err().to_string();
         assert!(beyond.contains("'long.txt' has 3 lines"), "{beyond}");
-        assert_eq!(page_of("", "'empty'", None, None, 10).unwrap().content, "", "an empty text is one page");
+        assert_eq!(
+            page_of("", "'empty'", None, None, 10).unwrap().content,
+            "",
+            "an empty text is one page"
+        );
     }
 }

@@ -12,19 +12,19 @@
 //! as the REST server does for them.
 
 use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_runtime::terminal::{CommandState, Shell};
-use caelumora_model::workspace::CommandStatus;
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
+use caelumora_model::workspace::CommandStatus;
+use caelumora_runtime::terminal::{CommandState, Shell};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::warn;
 use tokio::runtime::Handle;
-use std::mem;
 use tokio::time;
+use tracing::warn;
 
 /// A shell command (issue 251): its `command` as a line of code, its
 /// `output` as a terminal shows it, and its exit code.
@@ -101,7 +101,11 @@ fn result(config: &TerminalToolConfig, prompts: &PromptTexts, state: CommandStat
         result["exit_code"] = json!(code);
     }
     if state.status == CommandStatus::Running {
-        if let Some(next) = next(prompts, "still_running", context! { command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND }) {
+        if let Some(next) = next(
+            prompts,
+            "still_running",
+            context! { command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND },
+        ) {
             result["next"] = json!(next);
         }
     }
@@ -124,14 +128,20 @@ struct Follow {
     wait_secs: Option<f64>,
 }
 
-pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
+pub(crate) fn tools(
+    config: &TerminalToolConfig,
+    prompts: &PromptTexts,
+) -> Result<Vec<Tool>, PromptError> {
     let most = config.max_wait_secs.min(MAX_WAIT_SECS);
     let values = context! { most, run_command => RUN_COMMAND, command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND };
     Ok(vec![
         tool(
             prompts,
             RUN_COMMAND,
-            ToolParameters::object([("command", ToolParameters::shell()), ("wait_secs", ToolParameters::number())], ["command"]),
+            ToolParameters::object(
+                [("command", ToolParameters::shell()), ("wait_secs", ToolParameters::number())],
+                ["command"],
+            ),
             config.requires_approval.required(false),
             SHELL_PRESENTATION,
             &values,
@@ -139,12 +149,26 @@ pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptTexts) -> Resul
         tool(
             prompts,
             COMMAND_OUTPUT,
-            ToolParameters::object([("id", ToolParameters::string()), ("offset", ToolParameters::number()), ("wait_secs", ToolParameters::number())], ["id"]),
+            ToolParameters::object(
+                [
+                    ("id", ToolParameters::string()),
+                    ("offset", ToolParameters::number()),
+                    ("wait_secs", ToolParameters::number()),
+                ],
+                ["id"],
+            ),
             false,
             SHELL_PRESENTATION,
             &values,
         )?,
-        tool(prompts, KILL_COMMAND, ToolParameters::object([("id", ToolParameters::string())], ["id"]), false, SHELL_PRESENTATION, &values)?,
+        tool(
+            prompts,
+            KILL_COMMAND,
+            ToolParameters::object([("id", ToolParameters::string())], ["id"]),
+            false,
+            SHELL_PRESENTATION,
+            &values,
+        )?,
     ])
 }
 
@@ -155,20 +179,29 @@ pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
             let Run { command, .. } = arguments(params)?;
             Ok(format!("Run in the workspace:\n{command}"))
         }
-        COMMAND_OUTPUT => arguments::<Follow>(params).map(|follow| format!("Follow command {}", follow.id)),
+        COMMAND_OUTPUT => {
+            arguments::<Follow>(params).map(|follow| format!("Follow command {}", follow.id))
+        }
         _ => arguments::<Follow>(params).map(|follow| format!("Kill command {}", follow.id)),
     }
 }
 
 /// Runs the shell tool `name` of `tool` with `params` on `shell`, the workspace's as
 /// the turn's channel sees it.
-pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, shell: Arc<dyn Shell>) -> ToolResult<Value> {
+pub(crate) async fn execute(
+    tool: &TerminalTool,
+    name: &str,
+    params: &Value,
+    shell: Arc<dyn Shell>,
+) -> ToolResult<Value> {
     let (config, prompts) = (&tool.config, &tool.prompts);
     let state = match name {
         RUN_COMMAND => {
             let Run { command, wait_secs } = arguments(params)?;
             if command.trim().is_empty() {
-                return Err(ToolError::InvalidParameter("'command' must name a command".to_string()));
+                return Err(ToolError::InvalidParameter(
+                    "'command' must name a command".to_string(),
+                ));
             }
             let id = shell.start(&command).await?;
             let guard = KillOnDrop { shell: Arc::clone(&shell), id: id.clone(), armed: true };
@@ -191,14 +224,14 @@ pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, she
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::prompt_catalogue::PromptCatalogue;
-    use caelumora_agents::testing::workspace_turn;
-    use caelumora_agents::tool::ToolProvider;
     use crate::terminal_tool::tests::tool as terminal_tool;
     use crate::terminal_tool::TerminalTool;
-    use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
+    use caelumora_agents::testing::workspace_turn;
+    use caelumora_agents::tool::ToolProvider;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::approval::ArgumentMatcher;
+    use caelumora_model::prompt_catalogue::PromptCatalogue;
+    use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use std::collections::BTreeMap;
 
     fn the_tool(world: &WithWorkspace) -> TerminalTool {
@@ -210,11 +243,23 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let ran = the_tool(&world).execute(RUN_COMMAND, &json!({ "command": "echo draft > notes.md; cat notes.md; ls" }), None, &mut turn).await.unwrap();
+        let ran = the_tool(&world)
+            .execute(
+                RUN_COMMAND,
+                &json!({ "command": "echo draft > notes.md; cat notes.md; ls" }),
+                None,
+                &mut turn,
+            )
+            .await
+            .unwrap();
         assert_eq!(ran.value["status"], "completed");
         assert_eq!(ran.value["exit_code"], 0);
         assert_eq!(ran.value["output"], "draft\nnotes.md\n");
-        assert_eq!(ran.classification.as_ref(), Some(&world.workspace.classification), "classified as the workspace");
+        assert_eq!(
+            ran.classification.as_ref(),
+            Some(&world.workspace.classification),
+            "classified as the workspace"
+        );
         assert!(world.dir().join("notes.md").is_file(), "written into the workspace");
     }
 
@@ -224,17 +269,42 @@ mod tests {
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
         let tool = the_tool(&world);
-        let running = tool.execute(RUN_COMMAND, &json!({ "command": "echo begun; sleep 30", "wait_secs": 0.3 }), None, &mut turn).await.unwrap();
+        let running = tool
+            .execute(
+                RUN_COMMAND,
+                &json!({ "command": "echo begun; sleep 30", "wait_secs": 0.3 }),
+                None,
+                &mut turn,
+            )
+            .await
+            .unwrap();
         assert_eq!(running.value["status"], "running");
         assert!(running.value["next"].as_str().unwrap().contains(COMMAND_OUTPUT));
         let id = running.value["id"].clone();
         let offset = running.value["next_offset"].clone();
-        let followed = tool.execute(COMMAND_OUTPUT, &json!({ "id": id, "offset": offset, "wait_secs": 0.1 }), None, &mut turn).await.unwrap();
-        assert_eq!((followed.value["status"].as_str(), followed.value["output"].as_str()), (Some("running"), Some("")), "nothing new");
-        let killed = tool.execute(KILL_COMMAND, &json!({ "id": id }), None, &mut turn).await.unwrap();
+        let followed = tool
+            .execute(
+                COMMAND_OUTPUT,
+                &json!({ "id": id, "offset": offset, "wait_secs": 0.1 }),
+                None,
+                &mut turn,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (followed.value["status"].as_str(), followed.value["output"].as_str()),
+            (Some("running"), Some("")),
+            "nothing new"
+        );
+        let killed =
+            tool.execute(KILL_COMMAND, &json!({ "id": id }), None, &mut turn).await.unwrap();
         assert_eq!(killed.value["status"], "killed");
-        let unknown = tool.execute(COMMAND_OUTPUT, &json!({ "id": "nonesuch" }), None, &mut turn).await;
-        assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))), "the model's to correct: {unknown:?}");
+        let unknown =
+            tool.execute(COMMAND_OUTPUT, &json!({ "id": "nonesuch" }), None, &mut turn).await;
+        assert!(
+            matches!(unknown, Err(ToolError::InvalidParameter(_))),
+            "the model's to correct: {unknown:?}"
+        );
     }
 
     #[tokio::test]
@@ -245,7 +315,11 @@ mod tests {
         let tool = the_tool(&world);
         let marker = world.dir().join("still-running");
         let command = format!("sleep 1.5 && touch {}", marker.display());
-        let interrupted = time::timeout(Duration::from_millis(300), tool.execute(RUN_COMMAND, &json!({ "command": command }), None, &mut turn)).await;
+        let interrupted = time::timeout(
+            Duration::from_millis(300),
+            tool.execute(RUN_COMMAND, &json!({ "command": command }), None, &mut turn),
+        )
+        .await;
         assert!(interrupted.is_err(), "dropped while it waited");
         time::sleep(Duration::from_millis(2500)).await;
         assert!(!marker.exists(), "the command was killed with the call");
@@ -255,22 +329,52 @@ mod tests {
     async fn the_approver_reads_the_command_whole_and_a_rule_covers_its_first_words() {
         let world = session_with_workspace().await;
         let tool = the_tool(&world);
-        assert_eq!(tool.describe(RUN_COMMAND, &json!({ "command": "rm -rf build && make" })).unwrap(), "Run in the workspace:\nrm -rf build && make");
-        assert!(tool.tools().iter().filter(|t| TOOLS.contains(&t.name.as_str())).all(|t| t.presentation == SHELL_PRESENTATION));
+        assert_eq!(
+            tool.describe(RUN_COMMAND, &json!({ "command": "rm -rf build && make" })).unwrap(),
+            "Run in the workspace:\nrm -rf build && make"
+        );
+        assert!(tool
+            .tools()
+            .iter()
+            .filter(|t| TOOLS.contains(&t.name.as_str()))
+            .all(|t| t.presentation == SHELL_PRESENTATION));
 
-        let matcher = tool.matcher(RUN_COMMAND, &json!({ "command": "cargo test -p x", "wait_secs": 30 }));
-        let first_words = ArgumentMatcher::Shell { shell: vec!["cargo".to_string(), "test".to_string()] };
-        assert_eq!(matcher.arguments, BTreeMap::from([("command".to_string(), first_words)]), "however long it waits");
+        let matcher =
+            tool.matcher(RUN_COMMAND, &json!({ "command": "cargo test -p x", "wait_secs": 30 }));
+        let first_words =
+            ArgumentMatcher::Shell { shell: vec!["cargo".to_string(), "test".to_string()] };
+        assert_eq!(
+            matcher.arguments,
+            BTreeMap::from([("command".to_string(), first_words)]),
+            "however long it waits"
+        );
         let chained = tool.matcher(RUN_COMMAND, &json!({ "command": "ls && rm x" }));
-        assert_eq!(chained.arguments["command"], ArgumentMatcher::Pattern(regex::escape("ls && rm x")), "a chain, alone");
+        assert_eq!(
+            chained.arguments["command"],
+            ArgumentMatcher::Pattern(regex::escape("ls && rm x")),
+            "a chain, alone"
+        );
     }
 
     #[test]
     fn output_beyond_what_a_result_holds_is_cut_from_the_front() {
-        let config: TerminalToolConfig = serde_json::from_value(json!({ "max_output_bytes": 2 })).unwrap();
-        let state = CommandState { id: "x".to_string(), status: CommandStatus::Completed, exit_code: Some(0), output: "abcdéf".to_string(), next_offset: 7, truncated: false };
+        let config: TerminalToolConfig =
+            serde_json::from_value(json!({ "max_output_bytes": 2 })).unwrap();
+        let state = CommandState {
+            id: "x".to_string(),
+            status: CommandStatus::Completed,
+            exit_code: Some(0),
+            output: "abcdéf".to_string(),
+            next_offset: 7,
+            truncated: false,
+        };
         // No text of how to go on is needed for a command that ended.
-        let result = result(&config, &PromptTexts::new(Arc::new(PromptCatalogue::new()), None), state);
-        assert_eq!((result["output"].as_str(), result["truncated"].as_bool()), (Some("f"), Some(true)), "the cut falls inside é and moves past it: {result}");
+        let result =
+            result(&config, &PromptTexts::new(Arc::new(PromptCatalogue::new()), None), state);
+        assert_eq!(
+            (result["output"].as_str(), result["truncated"].as_bool()),
+            (Some("f"), Some(true)),
+            "the cut falls inside é and moves past it: {result}"
+        );
     }
 }

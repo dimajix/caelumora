@@ -7,8 +7,8 @@
 use crate::secret::{SecretManager, SecretResult};
 use crate::security::SecurityContext;
 use serde::Deserialize;
-use std::time::Duration;
 use std::cmp::Reverse;
+use std::time::Duration;
 use url::Url;
 
 /// Where and how a component reaches its remote side, written in its
@@ -76,10 +76,16 @@ impl RemoteEndpoint {
     ///
     /// # Errors
     /// Whatever resolving the secret reports.
-    pub async fn bearer_token(&self, secrets: &SecretManager, context: &SecurityContext) -> SecretResult<Option<String>> {
+    pub async fn bearer_token(
+        &self,
+        secrets: &SecretManager,
+        context: &SecurityContext,
+    ) -> SecretResult<Option<String>> {
         match &self.auth {
             None => Ok(None),
-            Some(RemoteAuthConfig::Bearer { secret }) => Ok(Some(secrets.resolve(context, secret).await?)),
+            Some(RemoteAuthConfig::Bearer { secret }) => {
+                Ok(Some(secrets.resolve(context, secret).await?))
+            }
         }
     }
 }
@@ -117,7 +123,10 @@ mod tests {
 
     #[test]
     fn an_endpoint_is_shown_without_what_may_carry_a_credential() {
-        assert_eq!(redact_endpoint("https://user:secret@agent.example/a2a/?key=secret#secret"), "https://agent.example/a2a");
+        assert_eq!(
+            redact_endpoint("https://user:secret@agent.example/a2a/?key=secret#secret"),
+            "https://agent.example/a2a"
+        );
         assert_eq!(redact_endpoint("http://127.0.0.1:11434"), "http://127.0.0.1:11434");
         assert!(!redact_endpoint("not a url with secret").contains("secret"));
     }
@@ -126,8 +135,15 @@ mod tests {
     fn the_url_a_library_writes_into_its_message_is_shown_instead() {
         let endpoint = RemoteEndpoint::new("http://user:secret@mcp.example?key=secret");
         let message = "error sending request for url (http://user:secret@mcp.example/?key=secret)";
-        assert_eq!(endpoint.redact_in(message), "error sending request for url (http://mcp.example)");
+        assert_eq!(
+            endpoint.redact_in(message),
+            "error sending request for url (http://mcp.example)"
+        );
         let sent = "error sending request for url (http://mcp.example/?key=secret)";
-        assert_eq!(endpoint.redact_in(sent), "error sending request for url (http://mcp.example)", "the credentials in a header");
+        assert_eq!(
+            endpoint.redact_in(sent),
+            "error sending request for url (http://mcp.example)",
+            "the credentials in a header"
+        );
     }
 }

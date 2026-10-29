@@ -5,14 +5,14 @@
 //! history, and what passes its processors - what it processes - in its
 //! transcript.
 
-use caelumora_runtime::component::ComponentImpl;
-use caelumora_runtime::view::ViewError;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StoreError;
+use caelumora_runtime::component::ComponentImpl;
+use caelumora_runtime::view::ViewError;
 use std::fmt::Debug;
 
 #[async_trait]
@@ -22,7 +22,11 @@ pub trait MessageProcessor: Send + Sync + Debug {
     ///
     /// # Errors
     /// `ProcessingError` if the messages cannot be processed.
-    async fn process_messages(&self, input: Vec<Message>, security: &SecurityContext) -> Result<Vec<Message>, ProcessingError>;
+    async fn process_messages(
+        &self,
+        input: Vec<Message>,
+        security: &SecurityContext,
+    ) -> Result<Vec<Message>, ProcessingError>;
 }
 
 /// Why a `MessageProcessor` cannot process what it was given (issue 336).
@@ -58,9 +62,12 @@ where
 {
     for stage_processor in processors {
         // What it was given, should it be left out.
-        let kept = matches!(stage_processor.fail_policy, ComponentFailPolicy::FailOpen).then(|| input.clone());
+        let kept = matches!(stage_processor.fail_policy, ComponentFailPolicy::FailOpen)
+            .then(|| input.clone());
         let output = stage_processor.process_messages(input, security).await;
-        let output = stage_processor.apply_fail_policy(output).with_context(|| format!("component '{}' failed", stage_processor.id))?;
+        let output = stage_processor
+            .apply_fail_policy(output)
+            .with_context(|| format!("component '{}' failed", stage_processor.id))?;
         input = match output {
             Some(output) => output,
             None => kept.unwrap_or_default(),
@@ -80,13 +87,21 @@ pub(crate) mod testing {
     /// The turns the agent of `state` gave up, as its transcript records
     /// them on its active path (issue 258): each with why, and the messages
     /// before its end that carry its id.
-    pub(crate) fn given_up_turns(state: &AgentChannelState) -> Vec<(TurnId, GivenUpReason, Vec<Message>)> {
+    pub(crate) fn given_up_turns(
+        state: &AgentChannelState,
+    ) -> Vec<(TurnId, GivenUpReason, Vec<Message>)> {
         let path: Vec<_> = as_they_stand(state.transcript.entries()).collect();
-        path.iter().enumerate()
+        path.iter()
+            .enumerate()
             .filter_map(|(at, (node, _))| {
-                let TranscriptEntry::TurnGivenUp { turn_id, reason, .. } = &node.entry else { return None };
-                let messages = path[..at].iter()
-                    .filter_map(|(_, message)| message.clone().filter(|message| message.turn_id == Some(*turn_id)))
+                let TranscriptEntry::TurnGivenUp { turn_id, reason, .. } = &node.entry else {
+                    return None;
+                };
+                let messages = path[..at]
+                    .iter()
+                    .filter_map(|(_, message)| {
+                        message.clone().filter(|message| message.turn_id == Some(*turn_id))
+                    })
                     .collect();
                 Some((*turn_id, reason.clone(), messages))
             })
@@ -99,9 +114,18 @@ pub(crate) mod testing {
 
     #[async_trait]
     impl MessageProcessor for Without {
-        async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> Result<Vec<Message>, ProcessingError> {
-            let Some(word) = self.0 else { return Err(ProcessingError::Failed("broken".to_string())) };
-            Ok(input.into_iter().filter(|m| !m.content.as_deref().unwrap_or_default().contains(word)).collect())
+        async fn process_messages(
+            &self,
+            input: Vec<Message>,
+            _security: &SecurityContext,
+        ) -> Result<Vec<Message>, ProcessingError> {
+            let Some(word) = self.0 else {
+                return Err(ProcessingError::Failed("broken".to_string()));
+            };
+            Ok(input
+                .into_iter()
+                .filter(|m| !m.content.as_deref().unwrap_or_default().contains(word))
+                .collect())
         }
     }
 
@@ -113,19 +137,28 @@ mod tests {
     use super::testing::Without;
     use super::*;
     use caelumora_model::confidentiality::Classification;
-    use std::sync::Arc;
     use caelumora_model::message::MessageRole;
+    use std::sync::Arc;
 
-    fn stage(id: &str, processor: Without, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn MessageProcessor> {
+    fn stage(
+        id: &str,
+        processor: Without,
+        fail_policy: ComponentFailPolicy,
+    ) -> ComponentImpl<dyn MessageProcessor> {
         ComponentImpl { id: id.to_string(), fail_policy, facet: Arc::new(processor) }
     }
 
     fn said(text: &str) -> Message {
-        Message { role: MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+        Message {
+            role: MessageRole::User,
+            content: Some(text.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }
     }
 
     #[tokio::test]
-    async fn each_processor_filters_what_the_one_before_left_and_a_broken_one_that_fails_open_is_skipped() {
+    async fn each_processor_filters_what_the_one_before_left_and_a_broken_one_that_fails_open_is_skipped(
+    ) {
         let security = SecurityContext::default();
         let input = vec![said("hello"), said("secret plan"), said("spam offer")];
         let stages = [
@@ -133,10 +166,19 @@ mod tests {
             stage("broken", Without(None), ComponentFailPolicy::FailOpen),
             stage("no-spam", Without(Some("spam")), ComponentFailPolicy::FailClosed),
         ];
-        let output = apply_stage_processors(&stages, input.clone(), &security).await.expect("the broken one fails open");
-        assert_eq!(output.iter().filter_map(|m| m.content.as_deref()).collect::<Vec<_>>(), vec!["hello"], "the next is given what the broken one was given");
+        let output = apply_stage_processors(&stages, input.clone(), &security)
+            .await
+            .expect("the broken one fails open");
+        assert_eq!(
+            output.iter().filter_map(|m| m.content.as_deref()).collect::<Vec<_>>(),
+            vec!["hello"],
+            "the next is given what the broken one was given"
+        );
 
         let stages = [stage("broken", Without(None), ComponentFailPolicy::FailClosed)];
-        assert!(apply_stage_processors(&stages, input, &security).await.is_err(), "failing closed fails the stage");
+        assert!(
+            apply_stage_processors(&stages, input, &security).await.is_err(),
+            "failing closed fails the stage"
+        );
     }
 }

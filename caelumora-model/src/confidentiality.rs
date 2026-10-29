@@ -19,7 +19,7 @@ use crate::context::ModelProfile;
 use crate::message::Message;
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
-use crate::security::{ActionType, SecurityContext, AccessPolicy};
+use crate::security::{AccessPolicy, ActionType, SecurityContext};
 use crate::session::ChannelId;
 use crate::store::query::FieldValue;
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,12 @@ pub enum Confidentiality {
 
 impl Confidentiality {
     /// Every level, from the lowest to the highest.
-    pub const LEVELS: [Confidentiality; 4] = [Confidentiality::Public, Confidentiality::Internal, Confidentiality::Confidential, Confidentiality::StrictlyConfidential];
+    pub const LEVELS: [Confidentiality; 4] = [
+        Confidentiality::Public,
+        Confidentiality::Internal,
+        Confidentiality::Confidential,
+        Confidentiality::StrictlyConfidential,
+    ];
 }
 
 /// A level as a query compares it: as serde writes it, `"internal"`.
@@ -146,7 +151,10 @@ impl Classification {
     /// `level` with the audience `compartments`; refused for `Public` with
     /// compartments. Whether the compartments exist is the configuration's
     /// question (`Compartments::check`).
-    pub fn new(level: Confidentiality, compartments: impl IntoIterator<Item = Compartment>) -> Result<Self, ClassificationError> {
+    pub fn new(
+        level: Confidentiality,
+        compartments: impl IntoIterator<Item = Compartment>,
+    ) -> Result<Self, ClassificationError> {
         let compartments: BTreeSet<Compartment> = compartments.into_iter().collect();
         if level == Confidentiality::Public && !compartments.is_empty() {
             return Err(ClassificationError::PublicWithCompartments);
@@ -159,7 +167,10 @@ impl Classification {
     ///
     /// # Errors
     /// `CompartmentsWithoutLevel` for compartments without a level, `PublicWithCompartments`.
-    pub fn given(level: Option<Confidentiality>, compartments: impl IntoIterator<Item = Compartment>) -> Result<Option<Self>, ClassificationError> {
+    pub fn given(
+        level: Option<Confidentiality>,
+        compartments: impl IntoIterator<Item = Compartment>,
+    ) -> Result<Option<Self>, ClassificationError> {
         let mut compartments = compartments.into_iter().peekable();
         match level {
             Some(level) => Self::new(level, compartments).map(Some),
@@ -199,7 +210,9 @@ impl Classification {
             return true;
         }
         !destination.compartments.is_empty()
-            && destination.compartments.iter().all(|reader| self.compartments.iter().any(|source| compartments.may_read(reader, source)))
+            && destination.compartments.iter().all(|reader| {
+                self.compartments.iter().any(|source| compartments.may_read(reader, source))
+            })
     }
 }
 
@@ -213,7 +226,9 @@ impl Classification {
     /// channel is released to `destination` (issue 133).
     pub fn fitted_into(&self, destination: &Classification) -> Classification {
         let level = self.level.min(destination.level);
-        let general = self.compartments.is_empty() || destination.compartments.is_empty() || level == Confidentiality::Public;
+        let general = self.compartments.is_empty()
+            || destination.compartments.is_empty()
+            || level == Confidentiality::Public;
         let compartments = if general {
             BTreeSet::new()
         } else {
@@ -236,7 +251,8 @@ impl Classification {
             (true, _) => other.compartments.clone(),
             (false, true) => self.compartments.clone(),
             (false, false) => {
-                let common: BTreeSet<Compartment> = self.compartments.intersection(&other.compartments).cloned().collect();
+                let common: BTreeSet<Compartment> =
+                    self.compartments.intersection(&other.compartments).cloned().collect();
                 if common.is_empty() {
                     return None;
                 }
@@ -248,7 +264,9 @@ impl Classification {
 
     /// The join of all `classifications` (`join`): `PUBLIC` for none,
     /// `None` if they have no compartment in common.
-    pub fn join_all<'a>(classifications: impl IntoIterator<Item = &'a Classification>) -> Option<Classification> {
+    pub fn join_all<'a>(
+        classifications: impl IntoIterator<Item = &'a Classification>,
+    ) -> Option<Classification> {
         classifications.into_iter().try_fold(Classification::PUBLIC, |joined, c| joined.join(c))
     }
 
@@ -259,7 +277,9 @@ impl Classification {
     /// seen nothing that does not flow into its bound, so the bound holds
     /// all of it.
     pub fn join_within(&self, other: &Classification, bound: &Classification) -> Classification {
-        self.join(other).filter(|joined| joined.surely_flows_to(bound)).unwrap_or_else(|| bound.clone())
+        self.join(other)
+            .filter(|joined| joined.surely_flows_to(bound))
+            .unwrap_or_else(|| bound.clone())
     }
 
     /// Whether what is classified `self` flows into `destination` whatever
@@ -306,7 +326,10 @@ pub struct LabelCauses {
 impl LabelCauses {
     /// The causes of `label`, the classification of a message whose
     /// context's parts are classified `classifications` - those known.
-    pub fn new<'a>(label: Classification, classifications: impl IntoIterator<Item = &'a Classification>) -> Self {
+    pub fn new<'a>(
+        label: Classification,
+        classifications: impl IntoIterator<Item = &'a Classification>,
+    ) -> Self {
         let disjoint = Classification::join_all(classifications).is_none();
         Self { label, disjoint }
     }
@@ -325,7 +348,9 @@ impl LabelCauses {
     /// label: by its own classification, that of a tool result in it, or that
     /// of an attachment it was given along (issue 282).
     pub fn set_by_message(&self, message: &Message, profile: &ModelProfile) -> bool {
-        profile.classifications_given(message).any(|classification| self.set_by(Some(classification)))
+        profile
+            .classifications_given(message)
+            .any(|classification| self.set_by(Some(classification)))
     }
 }
 
@@ -363,7 +388,9 @@ impl Compartments {
     /// The compartments `definitions` name, each with the compartments it
     /// may read. Refused if a name is empty, given twice, or reads a
     /// compartment that is not defined.
-    pub fn new(definitions: impl IntoIterator<Item = (Compartment, Vec<Compartment>)>) -> Result<Self, ClassificationError> {
+    pub fn new(
+        definitions: impl IntoIterator<Item = (Compartment, Vec<Compartment>)>,
+    ) -> Result<Self, ClassificationError> {
         let mut reads: BTreeMap<Compartment, BTreeSet<Compartment>> = BTreeMap::new();
         for (compartment, readable) in definitions {
             if compartment.name().is_empty() {
@@ -385,7 +412,8 @@ impl Compartments {
             let mut changed = false;
             let snapshot = reads.clone();
             for readable in reads.values_mut() {
-                let further: BTreeSet<Compartment> = readable.iter().flat_map(|c| snapshot[c].iter().cloned()).collect();
+                let further: BTreeSet<Compartment> =
+                    readable.iter().flat_map(|c| snapshot[c].iter().cloned()).collect();
                 if !further.is_subset(readable) {
                     readable.extend(further);
                     changed = true;
@@ -410,8 +438,13 @@ impl Compartments {
 
     /// The compartments whose audience `reader`'s may read (`may_read`):
     /// itself, and those it reads.
-    pub fn readable_by<'a>(&'a self, reader: &'a Compartment) -> impl Iterator<Item = &'a Compartment> {
-        iter::once(reader).chain(self.reads.get(reader).into_iter().flatten().filter(move |source| *source != reader))
+    pub fn readable_by<'a>(
+        &'a self,
+        reader: &'a Compartment,
+    ) -> impl Iterator<Item = &'a Compartment> {
+        iter::once(reader).chain(
+            self.reads.get(reader).into_iter().flatten().filter(move |source| *source != reader),
+        )
     }
 
     /// Nothing if every compartment of `classification` is configured.
@@ -466,7 +499,8 @@ impl Clearances {
     /// Whether what is classified `classification` may be seen - by one of
     /// the clearances, or because it is public.
     pub fn admits(&self, classification: &Classification, compartments: &Compartments) -> bool {
-        classification.level == Confidentiality::Public || self.0.iter().any(|c| c.sees(classification, compartments))
+        classification.level == Confidentiality::Public
+            || self.0.iter().any(|c| c.sees(classification, compartments))
     }
 }
 
@@ -520,19 +554,36 @@ pub trait ConfidentialityPolicy: fmt::Debug + Send + Sync {
     /// Whether what is classified `classification` may be put, in
     /// `context`, into a destination classified `into` - a channel's
     /// history, an agent's context, a storage that keeps it.
-    fn may_publish(&self, context: &SecurityContext, classification: &Classification, into: &Classification) -> bool;
+    fn may_publish(
+        &self,
+        context: &SecurityContext,
+        classification: &Classification,
+        into: &Classification,
+    ) -> bool;
 
     /// What of the channel `channel`, in a session with the privacy
     /// `session`, may be copied, in `context`, to `into`, where an agent
     /// reads it (issues 17, 134, 264): not a decision for each
     /// classification, but which classifications - data, so that a store
     /// reads only what may be copied (issue 421).
-    fn copyable(&self, context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading;
+    fn copyable(
+        &self,
+        context: &SecurityContext,
+        channel: ChannelId,
+        session: &SessionPrivacy,
+        into: &Place,
+    ) -> Reading;
 
     /// Whether `participant`, by `roles`, is cleared for what is classified
     /// `classification` - asked in `context`, which may be another's: whoever
     /// admits the participant.
-    fn cleared(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification) -> bool;
+    fn cleared(
+        &self,
+        context: &SecurityContext,
+        participant: ActorId,
+        roles: &[RoleId],
+        classification: &Classification,
+    ) -> bool;
 
     /// The configured compartments: what a classification may name. Giving
     /// one that names others is invalid, not refused (`require_classifiable`).
@@ -552,7 +603,13 @@ pub trait ConfidentialityQuestions {
     /// What of the channel `channel`, in a session with the privacy
     /// `session`, may be copied to `into` in `context`: of a channel into
     /// itself the whole, without asking.
-    fn copyable_information(&self, context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading;
+    fn copyable_information(
+        &self,
+        context: &SecurityContext,
+        channel: ChannelId,
+        session: &SessionPrivacy,
+        into: &Place,
+    ) -> Reading;
 
     /// Whether what is at `from` may be copied to `into` in `context`
     /// (`copyable_information`).
@@ -571,7 +628,13 @@ pub trait ConfidentialityQuestions {
     ///
     /// # Errors
     /// `refusal()` if it may not.
-    fn require_publish<E>(&self, context: &SecurityContext, classification: &Classification, into: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E>;
+    fn require_publish<E>(
+        &self,
+        context: &SecurityContext,
+        classification: &Classification,
+        into: &Classification,
+        refusal: impl FnOnce() -> E,
+    ) -> Result<(), E>;
 
     /// Nothing if what is so classified may be put into a storage bounded
     /// by `destination` - a storage of workspaces or of content, which says
@@ -580,21 +643,39 @@ pub trait ConfidentialityQuestions {
     ///
     /// # Errors
     /// `refusal()` if it may not.
-    fn require_storable<E>(&self, context: &SecurityContext, classification: &Classification, destination: Option<&Classification>, refusal: impl FnOnce() -> E) -> Result<(), E>;
+    fn require_storable<E>(
+        &self,
+        context: &SecurityContext,
+        classification: &Classification,
+        destination: Option<&Classification>,
+        refusal: impl FnOnce() -> E,
+    ) -> Result<(), E>;
 
     /// Nothing if `participant`, by `roles`, is cleared for `classification`;
     /// `refusal` otherwise.
     ///
     /// # Errors
     /// `refusal()` if they are not.
-    fn require_cleared<E>(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E>;
+    fn require_cleared<E>(
+        &self,
+        context: &SecurityContext,
+        participant: ActorId,
+        roles: &[RoleId],
+        classification: &Classification,
+        refusal: impl FnOnce() -> E,
+    ) -> Result<(), E>;
 
     /// Nothing if `context` is cleared for `classification` (`cleared_for`);
     /// `refusal` otherwise.
     ///
     /// # Errors
     /// `refusal()` if it is not.
-    fn require_cleared_for<E>(&self, context: &SecurityContext, classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E>;
+    fn require_cleared_for<E>(
+        &self,
+        context: &SecurityContext,
+        classification: &Classification,
+        refusal: impl FnOnce() -> E,
+    ) -> Result<(), E>;
 
     /// Nothing if `classification` names only configured compartments;
     /// `invalid` otherwise - a classification that cannot be given at all,
@@ -602,11 +683,21 @@ pub trait ConfidentialityQuestions {
     ///
     /// # Errors
     /// `invalid()` if it is not.
-    fn require_classifiable<E>(&self, classification: &Classification, invalid: impl FnOnce() -> E) -> Result<(), E>;
+    fn require_classifiable<E>(
+        &self,
+        classification: &Classification,
+        invalid: impl FnOnce() -> E,
+    ) -> Result<(), E>;
 }
 
 impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
-    fn copyable_information(&self, context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading {
+    fn copyable_information(
+        &self,
+        context: &SecurityContext,
+        channel: ChannelId,
+        session: &SessionPrivacy,
+        into: &Place,
+    ) -> Reading {
         match channel == into.channel {
             true => Reading::Whole,
             false => self.copyable(context, channel, session, into),
@@ -614,7 +705,8 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
     }
 
     fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
-        self.copyable_information(context, from.channel, &from.session, into).admits(&from.classification, self.compartments())
+        self.copyable_information(context, from.channel, &from.session, into)
+            .admits(&from.classification, self.compartments())
     }
 
     fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool {
@@ -623,26 +715,74 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
             return true;
         }
         self.cleared(context, participant, &context.roles, classification)
-            && context.limiting_roles.as_ref().is_none_or(|limit| self.cleared(context, participant, limit, classification))
+            && context
+                .limiting_roles
+                .as_ref()
+                .is_none_or(|limit| self.cleared(context, participant, limit, classification))
     }
 
-    fn require_publish<E>(&self, context: &SecurityContext, classification: &Classification, into: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
-        refused(self.may_publish(context, classification, into), context, || format!("publishing {classification} into {into}"), refusal)
+    fn require_publish<E>(
+        &self,
+        context: &SecurityContext,
+        classification: &Classification,
+        into: &Classification,
+        refusal: impl FnOnce() -> E,
+    ) -> Result<(), E> {
+        refused(
+            self.may_publish(context, classification, into),
+            context,
+            || format!("publishing {classification} into {into}"),
+            refusal,
+        )
     }
 
-    fn require_storable<E>(&self, context: &SecurityContext, classification: &Classification, destination: Option<&Classification>, refusal: impl FnOnce() -> E) -> Result<(), E> {
-        destination.map_or(Ok(()), |destination| self.require_publish(context, classification, destination, refusal))
+    fn require_storable<E>(
+        &self,
+        context: &SecurityContext,
+        classification: &Classification,
+        destination: Option<&Classification>,
+        refusal: impl FnOnce() -> E,
+    ) -> Result<(), E> {
+        destination.map_or(Ok(()), |destination| {
+            self.require_publish(context, classification, destination, refusal)
+        })
     }
 
-    fn require_cleared<E>(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
-        refused(self.cleared(context, participant, roles, classification), context, || format!("{participant} not cleared for {classification}"), refusal)
+    fn require_cleared<E>(
+        &self,
+        context: &SecurityContext,
+        participant: ActorId,
+        roles: &[RoleId],
+        classification: &Classification,
+        refusal: impl FnOnce() -> E,
+    ) -> Result<(), E> {
+        refused(
+            self.cleared(context, participant, roles, classification),
+            context,
+            || format!("{participant} not cleared for {classification}"),
+            refusal,
+        )
     }
 
-    fn require_cleared_for<E>(&self, context: &SecurityContext, classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
-        refused(self.cleared_for(context, classification), context, || format!("not cleared for {classification}"), refusal)
+    fn require_cleared_for<E>(
+        &self,
+        context: &SecurityContext,
+        classification: &Classification,
+        refusal: impl FnOnce() -> E,
+    ) -> Result<(), E> {
+        refused(
+            self.cleared_for(context, classification),
+            context,
+            || format!("not cleared for {classification}"),
+            refusal,
+        )
     }
 
-    fn require_classifiable<E>(&self, classification: &Classification, invalid: impl FnOnce() -> E) -> Result<(), E> {
+    fn require_classifiable<E>(
+        &self,
+        classification: &Classification,
+        invalid: impl FnOnce() -> E,
+    ) -> Result<(), E> {
         match self.compartments().check(classification) {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -661,14 +801,28 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
 /// asks of what it lists and the event bus of whom an event reaches, so
 /// that both reach alike. A question, for filtering: an operation reads
 /// through the store, which enforces it.
-pub async fn may_reach(access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, read: ActionType<'_>, classifications: &[Classification]) -> bool {
+pub async fn may_reach(
+    access_policy: &dyn AccessPolicy,
+    confidentiality: &dyn ConfidentialityPolicy,
+    context: &SecurityContext,
+    read: ActionType<'_>,
+    classifications: &[Classification],
+) -> bool {
     access_policy.check(context, read).await
-        && (classifications.is_empty() || classifications.iter().any(|classification| confidentiality.cleared_for(context, classification)))
+        && (classifications.is_empty()
+            || classifications
+                .iter()
+                .any(|classification| confidentiality.cleared_for(context, classification)))
 }
 
 /// `Ok` if `allowed`, else `refusal()`, logged at `debug!` by what
 /// `describe` names - never content.
-fn refused<E>(allowed: bool, context: &SecurityContext, describe: impl FnOnce() -> String, refusal: impl FnOnce() -> E) -> Result<(), E> {
+fn refused<E>(
+    allowed: bool,
+    context: &SecurityContext,
+    describe: impl FnOnce() -> String,
+    refusal: impl FnOnce() -> E,
+) -> Result<(), E> {
     if allowed {
         return Ok(());
     }
@@ -703,15 +857,27 @@ impl ConfidentialityRules {
 
 impl ConfidentialityPolicy for ConfidentialityRules {
     /// If it names only configured compartments and flows into `into`.
-    fn may_publish(&self, _context: &SecurityContext, classification: &Classification, into: &Classification) -> bool {
-        self.compartments.check(classification).is_ok() && classification.flows_to(into, &self.compartments)
+    fn may_publish(
+        &self,
+        _context: &SecurityContext,
+        classification: &Classification,
+        into: &Classification,
+    ) -> bool {
+        self.compartments.check(classification).is_ok()
+            && classification.flows_to(into, &self.compartments)
     }
 
     /// A channel into itself the whole; within a session what flows into
     /// `into`; beyond it only where the session of the channel permits it
     /// as well (issue 134), and nothing otherwise - whatever the
     /// classification, `public` included.
-    fn copyable(&self, _context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading {
+    fn copyable(
+        &self,
+        _context: &SecurityContext,
+        channel: ChannelId,
+        session: &SessionPrivacy,
+        into: &Place,
+    ) -> Reading {
         if channel == into.channel {
             return Reading::Whole;
         }
@@ -723,9 +889,17 @@ impl ConfidentialityPolicy for ConfidentialityRules {
 
     /// By the clearances the configured roles grant. Without roles
     /// configured, everybody is.
-    fn cleared(&self, _context: &SecurityContext, _participant: ActorId, roles: &[RoleId], classification: &Classification) -> bool {
+    fn cleared(
+        &self,
+        _context: &SecurityContext,
+        _participant: ActorId,
+        roles: &[RoleId],
+        classification: &Classification,
+    ) -> bool {
         match &self.roles {
-            Some(configured) => configured.clearances_of(roles).admits(classification, &self.compartments),
+            Some(configured) => {
+                configured.clearances_of(roles).admits(classification, &self.compartments)
+            }
             None => true,
         }
     }
@@ -761,15 +935,15 @@ impl Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::query::meets_exactly_its_equals;
     use crate::agent::AgentId;
-    use crate::user::UserId;
-    use crate::tool::{ToolCall, ToolCallResult};
-    use crate::content::ContentRef;
     use crate::content::testing::make_content_ref;
+    use crate::content::ContentRef;
     use crate::context::ModelProfile;
-    use Confidentiality::*;
     use crate::session::SessionId;
+    use crate::store::query::meets_exactly_its_equals;
+    use crate::tool::{ToolCall, ToolCallResult};
+    use crate::user::UserId;
+    use Confidentiality::*;
 
     #[test]
     fn a_level_and_a_compartment_meet_exactly_their_serialized_forms() {
@@ -777,7 +951,10 @@ mod tests {
         let samples = [Compartment::new("hr"), Compartment::new("finance")];
         for compartment in &samples {
             for other in &samples {
-                assert_eq!(FieldValue::from(compartment).matches(&serde_json::to_value(other).unwrap()), compartment == other);
+                assert_eq!(
+                    FieldValue::from(compartment).matches(&serde_json::to_value(other).unwrap()),
+                    compartment == other
+                );
             }
         }
     }
@@ -807,32 +984,61 @@ mod tests {
 
     #[test]
     fn the_levels_are_ordered_by_sensitivity() {
-        assert!(Public < Internal && Internal < Confidential && Confidential < StrictlyConfidential);
+        assert!(
+            Public < Internal && Internal < Confidential && Confidential < StrictlyConfidential
+        );
         assert_eq!(serde_json::to_value(StrictlyConfidential).unwrap(), "strictly_confidential");
         assert_eq!(Classification::default(), Classification::general(Internal));
     }
 
     #[test]
     fn public_takes_no_compartment() {
-        assert_eq!(Classification::new(Public, [compartment("hr")]), Err(ClassificationError::PublicWithCompartments));
+        assert_eq!(
+            Classification::new(Public, [compartment("hr")]),
+            Err(ClassificationError::PublicWithCompartments)
+        );
         let written = serde_json::json!({"level": "public", "compartments": ["hr"]});
-        assert!(serde_json::from_value::<Classification>(written).is_err(), "not even when it is read");
+        assert!(
+            serde_json::from_value::<Classification>(written).is_err(),
+            "not even when it is read"
+        );
     }
 
     #[test]
     fn a_classification_given_without_a_level_is_left_to_its_destination() {
         assert_eq!(Classification::given(None, []), Ok(None));
-        assert_eq!(Classification::given(Some(Confidential), [compartment("hr")]), Ok(Some(classified(Confidential, &["hr"]))));
-        assert_eq!(Classification::given(None, [compartment("hr")]), Err(ClassificationError::CompartmentsWithoutLevel));
-        assert_eq!(Classification::given(Some(Public), [compartment("hr")]), Err(ClassificationError::PublicWithCompartments));
+        assert_eq!(
+            Classification::given(Some(Confidential), [compartment("hr")]),
+            Ok(Some(classified(Confidential, &["hr"])))
+        );
+        assert_eq!(
+            Classification::given(None, [compartment("hr")]),
+            Err(ClassificationError::CompartmentsWithoutLevel)
+        );
+        assert_eq!(
+            Classification::given(Some(Public), [compartment("hr")]),
+            Err(ClassificationError::PublicWithCompartments)
+        );
     }
 
     #[test]
     fn a_classification_is_written_without_an_empty_audience() {
-        assert_eq!(serde_json::to_value(Classification::general(Internal)).unwrap(), serde_json::json!({"level": "internal"}));
+        assert_eq!(
+            serde_json::to_value(Classification::general(Internal)).unwrap(),
+            serde_json::json!({"level": "internal"})
+        );
         let hr = classified(Confidential, &["hr"]);
-        assert_eq!(serde_json::to_value(&hr).unwrap(), serde_json::json!({"level": "confidential", "compartments": ["hr"]}));
-        assert_eq!(serde_json::from_value::<Classification>(serde_json::json!({"level": "confidential", "compartments": ["hr"]})).unwrap(), hr);
+        assert_eq!(
+            serde_json::to_value(&hr).unwrap(),
+            serde_json::json!({"level": "confidential", "compartments": ["hr"]})
+        );
+        assert_eq!(
+            serde_json::from_value::<Classification>(
+                serde_json::json!({"level": "confidential", "compartments": ["hr"]})
+            )
+            .unwrap(),
+            hr
+        );
     }
 
     #[test]
@@ -844,13 +1050,40 @@ mod tests {
             fitted
         };
         let hr_confidential = classified(Confidential, &["hr"]);
-        assert_eq!(fitted(hr_confidential.clone(), classified(Internal, &["hr"])), classified(Internal, &["hr"]), "the level lowered");
-        assert_eq!(fitted(classified(Confidential, &["hr", "sales"]), classified(Internal, &["hr"])), classified(Internal, &["hr", "sales"]), "keeps its wider audience");
-        assert_eq!(fitted(classified(Internal, &["hr"]), classified(Internal, &["hr", "sales"])), classified(Internal, &["hr", "sales"]), "released to the new audience");
-        assert_eq!(fitted(hr_confidential.clone(), Classification::general(Internal)), Classification::general(Internal), "released to everyone");
-        assert_eq!(fitted(hr_confidential.clone(), Classification::general(Public)), Classification::general(Public));
-        assert_eq!(fitted(classified(Internal, &["hr"]), classified(StrictlyConfidential, &["hr"])), classified(Internal, &["hr"]), "raising changes nothing");
-        assert_eq!(fitted(Classification::general(Internal), classified(Internal, &["hr"])), Classification::general(Internal), "what is general stays general");
+        assert_eq!(
+            fitted(hr_confidential.clone(), classified(Internal, &["hr"])),
+            classified(Internal, &["hr"]),
+            "the level lowered"
+        );
+        assert_eq!(
+            fitted(classified(Confidential, &["hr", "sales"]), classified(Internal, &["hr"])),
+            classified(Internal, &["hr", "sales"]),
+            "keeps its wider audience"
+        );
+        assert_eq!(
+            fitted(classified(Internal, &["hr"]), classified(Internal, &["hr", "sales"])),
+            classified(Internal, &["hr", "sales"]),
+            "released to the new audience"
+        );
+        assert_eq!(
+            fitted(hr_confidential.clone(), Classification::general(Internal)),
+            Classification::general(Internal),
+            "released to everyone"
+        );
+        assert_eq!(
+            fitted(hr_confidential.clone(), Classification::general(Public)),
+            Classification::general(Public)
+        );
+        assert_eq!(
+            fitted(classified(Internal, &["hr"]), classified(StrictlyConfidential, &["hr"])),
+            classified(Internal, &["hr"]),
+            "raising changes nothing"
+        );
+        assert_eq!(
+            fitted(Classification::general(Internal), classified(Internal, &["hr"])),
+            Classification::general(Internal),
+            "what is general stays general"
+        );
     }
 
     #[test]
@@ -860,44 +1093,102 @@ mod tests {
             let joined = a.join(&b);
             assert_eq!(joined, b.join(&a), "in either order");
             if let Some(joined) = &joined {
-                assert!(a.flows_to(joined, &compartments) && b.flows_to(joined, &compartments), "{a} and {b} flow into {joined}");
+                assert!(
+                    a.flows_to(joined, &compartments) && b.flows_to(joined, &compartments),
+                    "{a} and {b} flow into {joined}"
+                );
             }
             joined
         };
-        assert_eq!(joined(Classification::PUBLIC, classified(Internal, &["hr"])), Some(classified(Internal, &["hr"])), "public adds nothing");
-        assert_eq!(joined(Classification::general(Confidential), classified(Internal, &["hr"])), Some(classified(Confidential, &["hr"])), "the higher level, the audience");
-        assert_eq!(joined(classified(Internal, &["hr", "sales"]), classified(Internal, &["hr"])), Some(classified(Internal, &["hr"])), "the audience in common");
-        assert_eq!(joined(classified(Internal, &["hr"]), classified(Internal, &["sales"])), None, "no audience in common");
+        assert_eq!(
+            joined(Classification::PUBLIC, classified(Internal, &["hr"])),
+            Some(classified(Internal, &["hr"])),
+            "public adds nothing"
+        );
+        assert_eq!(
+            joined(Classification::general(Confidential), classified(Internal, &["hr"])),
+            Some(classified(Confidential, &["hr"])),
+            "the higher level, the audience"
+        );
+        assert_eq!(
+            joined(classified(Internal, &["hr", "sales"]), classified(Internal, &["hr"])),
+            Some(classified(Internal, &["hr"])),
+            "the audience in common"
+        );
+        assert_eq!(
+            joined(classified(Internal, &["hr"]), classified(Internal, &["sales"])),
+            None,
+            "no audience in common"
+        );
         assert_eq!(Classification::join_all([]), Some(Classification::PUBLIC));
-        assert_eq!(Classification::join_all(&[Classification::general(Internal), classified(Confidential, &["hr", "sales"]), classified(Internal, &["sales"])]), Some(classified(Confidential, &["sales"])));
+        assert_eq!(
+            Classification::join_all(&[
+                Classification::general(Internal),
+                classified(Confidential, &["hr", "sales"]),
+                classified(Internal, &["sales"])
+            ]),
+            Some(classified(Confidential, &["sales"]))
+        );
     }
 
     #[test]
     fn a_join_within_a_bound_is_the_join_where_it_surely_flows_and_else_the_bound() {
         let bound = classified(Confidential, &["hr"]);
-        assert_eq!(Classification::PUBLIC.join_within(&Classification::general(Internal), &bound), Classification::general(Internal), "within it: the join");
-        assert_eq!(Classification::general(Internal).join_within(&classified(Internal, &["hr", "sales"]), &bound), classified(Internal, &["hr", "sales"]), "a wider audience than the bound's");
-        assert_eq!(classified(Internal, &["hr"]).join_within(&classified(Internal, &["sales"]), &bound), bound, "no audience in common: the bound");
-        assert_eq!(classified(Internal, &["hr", "sales"]).join_within(&classified(Internal, &["sales"]), &bound), bound, "not known to flow into the bound: the bound");
+        assert_eq!(
+            Classification::PUBLIC.join_within(&Classification::general(Internal), &bound),
+            Classification::general(Internal),
+            "within it: the join"
+        );
+        assert_eq!(
+            Classification::general(Internal)
+                .join_within(&classified(Internal, &["hr", "sales"]), &bound),
+            classified(Internal, &["hr", "sales"]),
+            "a wider audience than the bound's"
+        );
+        assert_eq!(
+            classified(Internal, &["hr"]).join_within(&classified(Internal, &["sales"]), &bound),
+            bound,
+            "no audience in common: the bound"
+        );
+        assert_eq!(
+            classified(Internal, &["hr", "sales"])
+                .join_within(&classified(Internal, &["sales"]), &bound),
+            bound,
+            "not known to flow into the bound: the bound"
+        );
         let hr_management = classified(Internal, &["hr_management"]);
-        assert_eq!(Classification::PUBLIC.join_within(&classified(Internal, &["hr"]), &hr_management), hr_management, "only by the read relation: the bound");
+        assert_eq!(
+            Classification::PUBLIC.join_within(&classified(Internal, &["hr"]), &hr_management),
+            hr_management,
+            "only by the read relation: the bound"
+        );
     }
 
     #[test]
     fn what_surely_flows_flows_whatever_compartments_read() {
         let compartments = organisation();
-        assert!(classified(Internal, &["hr", "sales"]).surely_flows_to(&classified(Confidential, &["hr"])));
+        assert!(classified(Internal, &["hr", "sales"])
+            .surely_flows_to(&classified(Confidential, &["hr"])));
         assert!(Classification::general(Internal).surely_flows_to(&classified(Internal, &["hr"])));
-        assert!(!classified(Internal, &["hr"]).surely_flows_to(&Classification::general(Internal)), "an audience never into what is general");
+        assert!(
+            !classified(Internal, &["hr"]).surely_flows_to(&Classification::general(Internal)),
+            "an audience never into what is general"
+        );
         let hr_management = classified(Internal, &["hr_management"]);
         assert!(classified(Internal, &["hr"]).flows_to(&hr_management, &compartments));
-        assert!(!classified(Internal, &["hr"]).surely_flows_to(&hr_management), "only by the read relation");
+        assert!(
+            !classified(Internal, &["hr"]).surely_flows_to(&hr_management),
+            "only by the read relation"
+        );
     }
 
     #[test]
     fn a_clearance_sees_per_compartment_up_to_its_own_level() {
         let compartments = organisation();
-        let clearance = |level, compartment: Option<&str>| Clearance { level, compartment: compartment.map(compartment_named) };
+        let clearance = |level, compartment: Option<&str>| Clearance {
+            level,
+            compartment: compartment.map(compartment_named),
+        };
         // Alice: internal of sales, confidential of HR, and what is general up to internal.
         let alice = Clearances(vec![
             clearance(Internal, Some("sales")),
@@ -905,25 +1196,55 @@ mod tests {
             clearance(Internal, None),
         ]);
         assert!(alice.admits(&classified(Confidential, &["hr"]), &compartments));
-        assert!(!alice.admits(&classified(Confidential, &["sales"]), &compartments), "only internal of sales");
+        assert!(
+            !alice.admits(&classified(Confidential, &["sales"]), &compartments),
+            "only internal of sales"
+        );
         assert!(alice.admits(&classified(Internal, &["sales"]), &compartments));
-        assert!(alice.admits(&classified(Confidential, &["finance"]), &compartments), "HR reads finance");
-        assert!(alice.admits(&classified(Confidential, &["hr", "sales"]), &compartments), "published to HR too");
-        assert!(!alice.admits(&classified(Internal, &["hr_management"]), &compartments), "not hers");
+        assert!(
+            alice.admits(&classified(Confidential, &["finance"]), &compartments),
+            "HR reads finance"
+        );
+        assert!(
+            alice.admits(&classified(Confidential, &["hr", "sales"]), &compartments),
+            "published to HR too"
+        );
+        assert!(
+            !alice.admits(&classified(Internal, &["hr_management"]), &compartments),
+            "not hers"
+        );
         assert!(alice.admits(&Classification::general(Internal), &compartments));
-        assert!(!alice.admits(&Classification::general(Confidential), &compartments), "a compartment says nothing of what is general");
-        assert!(Clearances::default().admits(&Classification::general(Public), &compartments), "public is public");
-        assert!(!Clearances::default().admits(&Classification::general(Internal), &compartments), "without a clearance only that");
+        assert!(
+            !alice.admits(&Classification::general(Confidential), &compartments),
+            "a compartment says nothing of what is general"
+        );
+        assert!(
+            Clearances::default().admits(&Classification::general(Public), &compartments),
+            "public is public"
+        );
+        assert!(
+            !Clearances::default().admits(&Classification::general(Internal), &compartments),
+            "without a clearance only that"
+        );
         let management = Clearances(vec![clearance(Internal, Some("hr_management"))]);
-        assert!(management.admits(&classified(Internal, &["finance"]), &compartments), "through what it reads");
+        assert!(
+            management.admits(&classified(Internal, &["finance"]), &compartments),
+            "through what it reads"
+        );
     }
 
     #[test]
     fn the_read_relation_is_closed_transitively() {
         let compartments = organisation();
-        assert!(compartments.may_read(&compartment("hr_management"), &compartment("finance")), "through hr");
+        assert!(
+            compartments.may_read(&compartment("hr_management"), &compartment("finance")),
+            "through hr"
+        );
         assert!(compartments.may_read(&compartment("hr"), &compartment("hr")), "itself");
-        assert!(!compartments.may_read(&compartment("finance"), &compartment("hr")), "not the other way round");
+        assert!(
+            !compartments.may_read(&compartment("finance"), &compartment("hr")),
+            "not the other way round"
+        );
         assert!(!compartments.may_read(&compartment("sales"), &compartment("hr")));
     }
 
@@ -933,24 +1254,36 @@ mod tests {
         assert_eq!(refused, Err(ClassificationError::UnknownCompartment(compartment("payroll"))));
         let twice = Compartments::new([(compartment("hr"), vec![]), (compartment("hr"), vec![])]);
         assert_eq!(twice, Err(ClassificationError::DuplicateCompartment(compartment("hr"))));
-        assert_eq!(organisation().check(&classified(Internal, &["hrr"])), Err(ClassificationError::UnknownCompartment(compartment("hrr"))));
+        assert_eq!(
+            organisation().check(&classified(Internal, &["hrr"])),
+            Err(ClassificationError::UnknownCompartment(compartment("hrr")))
+        );
         assert_eq!(organisation().check(&classified(Internal, &["hr"])), Ok(()));
     }
 
     #[test]
     fn information_flows_only_to_a_level_at_least_its_own() {
         let none = Compartments::default();
-        assert!(Classification::general(Internal).flows_to(&Classification::general(Confidential), &none));
-        assert!(Classification::general(Internal).flows_to(&Classification::general(Internal), &none));
-        assert!(!Classification::general(Confidential).flows_to(&Classification::general(Internal), &none));
-        assert!(Classification::general(Public).flows_to(&classified(Internal, &["hr"]), &none), "what is general flows anywhere");
+        assert!(Classification::general(Internal)
+            .flows_to(&Classification::general(Confidential), &none));
+        assert!(
+            Classification::general(Internal).flows_to(&Classification::general(Internal), &none)
+        );
+        assert!(!Classification::general(Confidential)
+            .flows_to(&Classification::general(Internal), &none));
+        assert!(
+            Classification::general(Public).flows_to(&classified(Internal, &["hr"]), &none),
+            "what is general flows anywhere"
+        );
     }
 
     #[test]
     fn information_with_an_audience_never_flows_into_a_general_destination() {
         let compartments = organisation();
-        assert!(!classified(Internal, &["hr"]).flows_to(&Classification::general(Internal), &compartments));
-        assert!(!classified(Internal, &["hr"]).flows_to(&Classification::general(StrictlyConfidential), &compartments));
+        assert!(!classified(Internal, &["hr"])
+            .flows_to(&Classification::general(Internal), &compartments));
+        assert!(!classified(Internal, &["hr"])
+            .flows_to(&Classification::general(StrictlyConfidential), &compartments));
     }
 
     #[test]
@@ -958,14 +1291,33 @@ mod tests {
         let compartments = organisation();
         let hr = classified(Internal, &["hr"]);
         assert!(hr.flows_to(&classified(Internal, &["hr"]), &compartments));
-        assert!(hr.flows_to(&classified(Internal, &["hr_management"]), &compartments), "HR management reads HR");
-        assert!(classified(Internal, &["finance"]).flows_to(&classified(Internal, &["hr_management"]), &compartments), "transitively");
-        assert!(!hr.flows_to(&classified(Internal, &["finance"]), &compartments), "finance does not read HR");
-        assert!(!hr.flows_to(&classified(Internal, &["hr", "sales"]), &compartments), "sales would see it too");
+        assert!(
+            hr.flows_to(&classified(Internal, &["hr_management"]), &compartments),
+            "HR management reads HR"
+        );
+        assert!(
+            classified(Internal, &["finance"])
+                .flows_to(&classified(Internal, &["hr_management"]), &compartments),
+            "transitively"
+        );
+        assert!(
+            !hr.flows_to(&classified(Internal, &["finance"]), &compartments),
+            "finance does not read HR"
+        );
+        assert!(
+            !hr.flows_to(&classified(Internal, &["hr", "sales"]), &compartments),
+            "sales would see it too"
+        );
 
         let released = classified(Internal, &["hr", "sales"]);
-        assert!(released.flows_to(&classified(Internal, &["hr", "sales"]), &compartments), "released to both");
-        assert!(released.flows_to(&classified(Internal, &["sales"]), &compartments), "any of its audiences will do");
+        assert!(
+            released.flows_to(&classified(Internal, &["hr", "sales"]), &compartments),
+            "released to both"
+        );
+        assert!(
+            released.flows_to(&classified(Internal, &["sales"]), &compartments),
+            "any of its audiences will do"
+        );
     }
 
     #[test]
@@ -973,20 +1325,53 @@ mod tests {
         let rules = ConfidentialityRules::new(organisation());
         let anyone = SecurityContext::default();
         let classifiable = |c: &Classification| rules.require_classifiable(c, || ()).is_ok();
-        assert!(classifiable(&classified(Internal, &["hr"])) && !classifiable(&classified(Internal, &["hrr"])));
-        assert!(rules.may_publish(&anyone, &classified(Internal, &["hr"]), &classified(Confidential, &["hr_management"])));
-        assert!(!rules.may_publish(&anyone, &classified(Internal, &["hrr"]), &classified(Internal, &["hrr"])), "not configured, though it would flow");
-        assert!(!rules.may_publish(&anyone, &classified(Confidential, &["hr"]), &classified(Internal, &["hr"])), "it would not flow");
+        assert!(
+            classifiable(&classified(Internal, &["hr"]))
+                && !classifiable(&classified(Internal, &["hrr"]))
+        );
+        assert!(rules.may_publish(
+            &anyone,
+            &classified(Internal, &["hr"]),
+            &classified(Confidential, &["hr_management"])
+        ));
+        assert!(
+            !rules.may_publish(
+                &anyone,
+                &classified(Internal, &["hrr"]),
+                &classified(Internal, &["hrr"])
+            ),
+            "not configured, though it would flow"
+        );
+        assert!(
+            !rules.may_publish(
+                &anyone,
+                &classified(Confidential, &["hr"]),
+                &classified(Internal, &["hr"])
+            ),
+            "it would not flow"
+        );
 
         let secret = classified(Confidential, &["hr"]);
         let nobody = ActorId::None;
-        assert!(rules.cleared(&anyone, nobody, &[], &secret), "without roles, clearances are not checked");
+        assert!(
+            rules.cleared(&anyone, nobody, &[], &secret),
+            "without roles, clearances are not checked"
+        );
         let hr = RoleId::new();
-        let roles = Roles::new([(hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
+        let roles = Roles::new([(
+            hr,
+            "hr".to_string(),
+            vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }],
+        )])
+        .unwrap();
         let rules = rules.with_roles(roles);
         assert_eq!(rules.roles().and_then(|r| r.name_of(hr)), Some("hr"));
         assert!(rules.cleared(&anyone, nobody, &[hr], &secret));
-        assert!(!rules.cleared(&anyone, nobody, &[], &secret) && rules.cleared(&anyone, nobody, &[], &Classification::general(Public)), "with roles, nobody else but for what is public");
+        assert!(
+            !rules.cleared(&anyone, nobody, &[], &secret)
+                && rules.cleared(&anyone, nobody, &[], &Classification::general(Public)),
+            "with roles, nobody else but for what is public"
+        );
     }
 
     /// Issue 304: a viewer is cleared by the roles of their context, and a
@@ -994,14 +1379,26 @@ mod tests {
     #[test]
     fn a_context_is_cleared_by_its_roles_and_its_limit() {
         let hr = RoleId::new();
-        let roles = Roles::new([(hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
+        let roles = Roles::new([(
+            hr,
+            "hr".to_string(),
+            vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }],
+        )])
+        .unwrap();
         let rules = ConfidentialityRules::new(organisation()).with_roles(roles);
         let secret = classified(Confidential, &["hr"]);
-        let alice = SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default());
+        let alice = SecurityContext::new(
+            ActorId::User(UserId::new()),
+            Default::default(),
+            Default::default(),
+        );
         assert!(!rules.cleared_for(&alice, &secret), "without roles");
         let hers = alice.clone().with_roles(vec![hr], None);
         assert!(rules.cleared_for(&hers, &secret));
-        assert!(!rules.cleared_for(&alice.with_roles(vec![hr], Some(vec![])), &secret), "limited below it");
+        assert!(
+            !rules.cleared_for(&alice.with_roles(vec![hr], Some(vec![])), &secret),
+            "limited below it"
+        );
         assert!(rules.require_cleared_for(&hers, &secret, || ()).is_ok());
     }
 
@@ -1010,28 +1407,53 @@ mod tests {
     #[test]
     fn a_caller_is_cleared_as_its_owner_whoever_it_acts_for() {
         let hr = RoleId::new();
-        let roles = Roles::new([(hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
+        let roles = Roles::new([(
+            hr,
+            "hr".to_string(),
+            vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }],
+        )])
+        .unwrap();
         let rules = ConfidentialityRules::new(organisation()).with_roles(roles);
         let secret = classified(Confidential, &["hr"]);
         let owner = ActorId::User(UserId::new());
         let agent = ActorId::Agent(AgentId::new());
         let for_the_system = SecurityContext::system().next(agent, owner, ActorId::System);
-        assert!(!rules.cleared_for(&for_the_system, &secret), "acting for the system, still bounded by its owner");
+        assert!(
+            !rules.cleared_for(&for_the_system, &secret),
+            "acting for the system, still bounded by its owner"
+        );
         let owned_by_the_system = SecurityContext::system().next(agent, ActorId::System, owner);
-        assert!(rules.cleared_for(&owned_by_the_system, &secret), "the system's agent is cleared as the system");
+        assert!(
+            rules.cleared_for(&owned_by_the_system, &secret),
+            "the system's agent is cleared as the system"
+        );
     }
 
     /// A channel of the session `session_id`, a private one of nobody.
     fn place(session_id: SessionId, level: Confidentiality, compartments: &[&str]) -> Place {
-        in_session(SessionPrivacy { id: session_id, ..SessionPrivacy::default() }, level, compartments)
+        in_session(
+            SessionPrivacy { id: session_id, ..SessionPrivacy::default() },
+            level,
+            compartments,
+        )
     }
 
     fn in_session(session: SessionPrivacy, level: Confidentiality, compartments: &[&str]) -> Place {
-        Place { channel: ChannelId::new(), classification: classified(level, compartments), session }
+        Place {
+            channel: ChannelId::new(),
+            classification: classified(level, compartments),
+            session,
+        }
     }
 
     fn hr_reads_finance() -> ConfidentialityRules {
-        ConfidentialityRules::new(Compartments::new([(compartment("hr"), vec![compartment("finance")]), (compartment("finance"), vec![])]).unwrap())
+        ConfidentialityRules::new(
+            Compartments::new([
+                (compartment("hr"), vec![compartment("finance")]),
+                (compartment("finance"), vec![]),
+            ])
+            .unwrap(),
+        )
     }
 
     fn someone() -> SecurityContext {
@@ -1060,7 +1482,10 @@ mod tests {
         assert!(rules.may_copy_information(&alice, &finance, &hr), "HR reads finance");
         assert!(!rules.may_copy_information(&alice, &hr, &finance), "not the other way round");
         assert!(!rules.may_copy_information(&alice, &hr, &general), "nor a general channel");
-        assert!(rules.may_copy_information(&alice, &general, &hr), "what is general flows anywhere");
+        assert!(
+            rules.may_copy_information(&alice, &general, &hr),
+            "what is general flows anywhere"
+        );
     }
 
     #[test]
@@ -1076,12 +1501,51 @@ mod tests {
         let rules = ConfidentialityRules::default();
         let reader = in_session(hers(PrivacyConfig::Private, &[]), Internal, &[]);
         let elsewhere = |policy, level| in_session(hers(policy, &[bob]), level, &[]);
-        let agent = SecurityContext::new(ActorId::Agent(AgentId::new()), Default::default(), Default::default());
-        assert!(!rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::Private, Internal), &reader), "a private session is read by no other");
-        assert!(!rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::Private, Public), &reader), "not even what is public");
-        assert!(rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::SameOwner, Internal), &reader), "her other sessions, where she lets them");
-        assert!(rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::SharedAudience, Internal), &reader), "she took part there");
-        assert!(!rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::SameOwner, Confidential), &reader), "and still only what flows into the reader");
+        let agent = SecurityContext::new(
+            ActorId::Agent(AgentId::new()),
+            Default::default(),
+            Default::default(),
+        );
+        assert!(
+            !rules.may_copy_information(
+                &agent,
+                &elsewhere(PrivacyConfig::Private, Internal),
+                &reader
+            ),
+            "a private session is read by no other"
+        );
+        assert!(
+            !rules.may_copy_information(
+                &agent,
+                &elsewhere(PrivacyConfig::Private, Public),
+                &reader
+            ),
+            "not even what is public"
+        );
+        assert!(
+            rules.may_copy_information(
+                &agent,
+                &elsewhere(PrivacyConfig::SameOwner, Internal),
+                &reader
+            ),
+            "her other sessions, where she lets them"
+        );
+        assert!(
+            rules.may_copy_information(
+                &agent,
+                &elsewhere(PrivacyConfig::SharedAudience, Internal),
+                &reader
+            ),
+            "she took part there"
+        );
+        assert!(
+            !rules.may_copy_information(
+                &agent,
+                &elsewhere(PrivacyConfig::SameOwner, Confidential),
+                &reader
+            ),
+            "and still only what flows into the reader"
+        );
     }
 
     #[test]
@@ -1092,10 +1556,17 @@ mod tests {
         let hr = place(session, Confidential, &["hr"]);
         let finance = place(session, Confidential, &["finance"]);
         assert!(!rules.may_copy_information(&alice, &hr, &finance), "finance does not read HR");
-        let released = Place { classification: classified(Confidential, &["hr", "finance"]), ..hr.clone() };
-        assert!(rules.may_copy_information(&alice, &released, &finance), "but what HR released to it");
+        let released =
+            Place { classification: classified(Confidential, &["hr", "finance"]), ..hr.clone() };
+        assert!(
+            rules.may_copy_information(&alice, &released, &finance),
+            "but what HR released to it"
+        );
         let elsewhere = place(SessionId::new(), Confidential, &["finance"]);
-        assert!(!rules.may_copy_information(&alice, &released, &elsewhere), "not from another session");
+        assert!(
+            !rules.may_copy_information(&alice, &released, &elsewhere),
+            "not from another session"
+        );
     }
 
     #[test]
@@ -1104,11 +1575,26 @@ mod tests {
         let alice = someone();
         let hr = classified(Confidential, &["hr"]);
         assert!(rules.may_publish(&alice, &hr, &hr), "the channel's own");
-        assert!(rules.may_publish(&alice, &classified(Internal, &["hr", "finance"]), &hr), "released to finance, at a lower level");
-        assert!(!rules.may_publish(&alice, &classified(StrictlyConfidential, &["hr"]), &hr), "above the channel - never reclassified there either");
-        assert!(rules.may_publish(&alice, &classified(Confidential, &["finance"]), &hr), "HR may read what is finance's");
-        assert!(rules.may_publish(&alice, &Classification::general(Confidential), &hr), "what is general flows into any channel");
-        assert!(!rules.may_publish(&alice, &classified(Confidential, &["hr", "payroll"]), &hr), "not configured");
+        assert!(
+            rules.may_publish(&alice, &classified(Internal, &["hr", "finance"]), &hr),
+            "released to finance, at a lower level"
+        );
+        assert!(
+            !rules.may_publish(&alice, &classified(StrictlyConfidential, &["hr"]), &hr),
+            "above the channel - never reclassified there either"
+        );
+        assert!(
+            rules.may_publish(&alice, &classified(Confidential, &["finance"]), &hr),
+            "HR may read what is finance's"
+        );
+        assert!(
+            rules.may_publish(&alice, &Classification::general(Confidential), &hr),
+            "what is general flows into any channel"
+        );
+        assert!(
+            !rules.may_publish(&alice, &classified(Confidential, &["hr", "payroll"]), &hr),
+            "not configured"
+        );
     }
 
     #[test]
@@ -1117,22 +1603,57 @@ mod tests {
         #[derive(Debug)]
         struct DenyAll(Compartments);
         impl ConfidentialityPolicy for DenyAll {
-            fn may_publish(&self, _: &SecurityContext, _: &Classification, _: &Classification) -> bool { false }
-            fn copyable(&self, _: &SecurityContext, _: ChannelId, _: &SessionPrivacy, _: &Place) -> Reading { Reading::Nothing }
-            fn cleared(&self, _: &SecurityContext, _: ActorId, _: &[RoleId], _: &Classification) -> bool { false }
-            fn compartments(&self) -> &Compartments { &self.0 }
-            fn roles(&self) -> Option<&Roles> { None }
+            fn may_publish(
+                &self,
+                _: &SecurityContext,
+                _: &Classification,
+                _: &Classification,
+            ) -> bool {
+                false
+            }
+            fn copyable(
+                &self,
+                _: &SecurityContext,
+                _: ChannelId,
+                _: &SessionPrivacy,
+                _: &Place,
+            ) -> Reading {
+                Reading::Nothing
+            }
+            fn cleared(
+                &self,
+                _: &SecurityContext,
+                _: ActorId,
+                _: &[RoleId],
+                _: &Classification,
+            ) -> bool {
+                false
+            }
+            fn compartments(&self) -> &Compartments {
+                &self.0
+            }
+            fn roles(&self) -> Option<&Roles> {
+                None
+            }
         }
         let session = SessionId::new();
         let (own, other) = (place(session, Confidential, &[]), place(session, Public, &[]));
         let policy = DenyAll(Compartments::default());
-        assert!(policy.may_copy_information(&someone(), &own, &own), "a channel into itself, without asking");
-        assert!(!policy.may_copy_information(&someone(), &other, &own), "another channel as the policy decides");
+        assert!(
+            policy.may_copy_information(&someone(), &own, &own),
+            "a channel into itself, without asking"
+        );
+        assert!(
+            !policy.may_copy_information(&someone(), &other, &own),
+            "another channel as the policy decides"
+        );
     }
 
     #[test]
     fn what_set_a_label_is_told_by_level_by_audience_and_by_what_is_not_known() {
-        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
+        let classified = |level, compartments: &[&str]| {
+            Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
+        };
         let internal = Classification::general(Internal);
         let confidential = Classification::general(Confidential);
 
@@ -1142,19 +1663,44 @@ mod tests {
         assert!(causes.set_by(None), "what is not known counted as the channel");
 
         let sales = classified(Internal, &["sales"]);
-        let causes = LabelCauses::new(confidential.clone(), [&sales, &classified(Internal, &["hr"])]);
-        assert!(causes.set_by(Some(&sales)), "without an audience in common, the parts with one set the channel's label");
+        let causes =
+            LabelCauses::new(confidential.clone(), [&sales, &classified(Internal, &["hr"])]);
+        assert!(
+            causes.set_by(Some(&sales)),
+            "without an audience in common, the parts with one set the channel's label"
+        );
         assert!(!causes.set_by(Some(&internal)), "a general part did not");
 
         let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
         let result = ToolCallResult::of(
-            &ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
-            Default::default(), "secret".to_string(), confidential.clone());
+            &ToolCall {
+                id: Some("1".to_string()),
+                function_name: "noop".to_string(),
+                arguments: serde_json::json!({}),
+                visibility: Default::default(),
+                presentation: Default::default(),
+            },
+            Default::default(),
+            "secret".to_string(),
+            confidential.clone(),
+        );
         let message = Message { tool_results: vec![result], ..Message::new(internal.clone()) };
         let profile = ModelProfile::default();
-        assert!(causes.set_by_message(&message, &profile), "a tool result in a message sets the label as the message");
-        let attached = Message { attachments: vec![ContentRef { classification: confidential.clone(), ..make_content_ref("a.png", b"a") }], ..Message::new(internal.clone()) };
-        assert!(causes.set_by_message(&attached, &ModelProfile { images: true, ..profile }), "and an attachment given along (issue 282)");
+        assert!(
+            causes.set_by_message(&message, &profile),
+            "a tool result in a message sets the label as the message"
+        );
+        let attached = Message {
+            attachments: vec![ContentRef {
+                classification: confidential.clone(),
+                ..make_content_ref("a.png", b"a")
+            }],
+            ..Message::new(internal.clone())
+        };
+        assert!(
+            causes.set_by_message(&attached, &ModelProfile { images: true, ..profile }),
+            "and an attachment given along (issue 282)"
+        );
         assert!(!causes.set_by_message(&attached, &profile), "not one only noted");
         assert!(!causes.set_by_message(&Message::new(internal), &profile));
     }

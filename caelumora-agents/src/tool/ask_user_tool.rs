@@ -7,14 +7,18 @@
 //! runtime's (see `ToolProvider::questions`). Its questions are never
 //! sensitive: their answers go to the model.
 
-use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
+use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
+use crate::tool::{
+    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+};
 use crate::turn::Turn;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::{Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS};
+use caelumora_model::question::{
+    Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS,
+};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -60,22 +64,31 @@ impl AskUserToolProvider {
             ],
             vec!["header", "question"],
         );
-        let tools = vec![described(prompts, NAMESPACE, ASK_USER_TOOL_KIND, Tool {
-            name: ASK_USER_TOOL_NAME.to_string(),
-            description: String::new(),
-            parameters: ToolParameters::object(
-                vec![
-                    ("questions", ToolParameters::array(question)),
-                    ("ask", ToolParameters::array(ToolParameters::string())),
-                ],
-                vec!["questions", "ask"],
-            ),
-            requires_approval: false,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: QUESTIONS_PRESENTATION,
-        }, &limits)?];
-        Ok(Self { description: tool_text(prompts, NAMESPACE, ASK_USER_TOOL_KIND, "description", &limits)?, tools })
+        let tools = vec![described(
+            prompts,
+            NAMESPACE,
+            ASK_USER_TOOL_KIND,
+            Tool {
+                name: ASK_USER_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    vec![
+                        ("questions", ToolParameters::array(question)),
+                        ("ask", ToolParameters::array(ToolParameters::string())),
+                    ],
+                    vec!["questions", "ask"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: QUESTIONS_PRESENTATION,
+            },
+            &limits,
+        )?];
+        Ok(Self {
+            description: tool_text(prompts, NAMESPACE, ASK_USER_TOOL_KIND, "description", &limits)?,
+            tools,
+        })
     }
 }
 
@@ -97,12 +110,20 @@ impl ToolProvider for AskUserToolProvider {
         self.tools.clone()
     }
 
-    async fn execute(&self, name: &str, _params: &Value, answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(
+        &self,
+        name: &str,
+        _params: &Value,
+        answers: Option<&Answers>,
+        _turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
         if name != ASK_USER_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
         // The runtime runs it only with its answers.
-        let answers = answers.ok_or_else(|| ToolError::ExecutionFailed("it ran without the answers to its questions".to_string()))?;
+        let answers = answers.ok_or_else(|| {
+            ToolError::ExecutionFailed("it ran without the answers to its questions".to_string())
+        })?;
         // What users wrote: classified as the channel, as configured for none.
         Ok(serde_json::json!({ "answered_by": answers.answered_by_name, "responses": answers.responses }).into())
     }
@@ -112,13 +133,19 @@ impl ToolProvider for AskUserToolProvider {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
         let AskUser { questions, ask } = arguments(params)?;
-        Ok(Some(Questions { questions, ask: ask.into_iter().map(Addressee::Handle).collect(), sensitive: false }))
+        Ok(Some(Questions {
+            questions,
+            ask: ask.into_iter().map(Addressee::Handle).collect(),
+            sensitive: false,
+        }))
     }
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(ASK_USER_TOOL_KIND).provides::<dyn ToolProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(ASK_USER_TOOL_KIND).provides::<dyn ToolProvider>(),
+        ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
@@ -148,18 +175,34 @@ mod tests {
         });
         let questions = tool.questions(ASK_USER_TOOL_NAME, &params).unwrap().expect("it asks");
         assert_eq!(questions.check(), Ok(()));
-        assert_eq!(questions.ask, [Addressee::Handle("@alice".to_string()), Addressee::Handle("bob".to_string())]);
+        assert_eq!(
+            questions.ask,
+            [Addressee::Handle("@alice".to_string()), Addressee::Handle("bob".to_string())]
+        );
         assert!(!questions.sensitive, "the answers go to the model");
-        assert!(questions.questions[0].choices[0].recommended && questions.questions[1].choices.is_empty());
+        assert!(
+            questions.questions[0].choices[0].recommended
+                && questions.questions[1].choices.is_empty()
+        );
 
-        let without_ask = serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }] });
-        assert!(matches!(tool.questions(ASK_USER_TOOL_NAME, &without_ask), Err(ToolError::InvalidParameter(_))), "`ask` is required");
+        let without_ask =
+            serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }] });
+        assert!(
+            matches!(
+                tool.questions(ASK_USER_TOOL_NAME, &without_ask),
+                Err(ToolError::InvalidParameter(_))
+            ),
+            "`ask` is required"
+        );
         assert!(matches!(tool.questions("other", &params), Err(ToolError::UnknownTool(_))));
     }
 
     #[test]
     fn its_calls_are_presented_as_questions() {
-        assert_eq!(AskUserToolProvider::new(&testing::prompts()).unwrap().tools().remove(0).presentation, QUESTIONS_PRESENTATION);
+        assert_eq!(
+            AskUserToolProvider::new(&testing::prompts()).unwrap().tools().remove(0).presentation,
+            QUESTIONS_PRESENTATION
+        );
     }
 
     #[tokio::test]
@@ -173,15 +216,28 @@ mod tests {
             questions,
             answered_by: ActorId::None,
             answered_by_name: "alice".to_string(),
-            responses: vec![Response::Text { text: "Kaya".to_string() }, Response::Chosen { chosen: vec!["yes".to_string()], other: None }],
+            responses: vec![
+                Response::Text { text: "Kaya".to_string() },
+                Response::Chosen { chosen: vec!["yes".to_string()], other: None },
+            ],
         };
 
-        let output = tool.execute(ASK_USER_TOOL_NAME, &params, Some(&answers), &mut turn).await.unwrap();
-        assert_eq!(output.value, serde_json::json!({
-            "answered_by": "alice",
-            "responses": [{ "kind": "text", "text": "Kaya" }, { "kind": "chosen", "chosen": ["yes"] }],
-        }));
-        assert!(output.classification.is_none(), "classified as the channel, like what users write");
-        assert!(matches!(tool.execute(ASK_USER_TOOL_NAME, &params, None, &mut turn).await, Err(ToolError::ExecutionFailed(_))));
+        let output =
+            tool.execute(ASK_USER_TOOL_NAME, &params, Some(&answers), &mut turn).await.unwrap();
+        assert_eq!(
+            output.value,
+            serde_json::json!({
+                "answered_by": "alice",
+                "responses": [{ "kind": "text", "text": "Kaya" }, { "kind": "chosen", "chosen": ["yes"] }],
+            })
+        );
+        assert!(
+            output.classification.is_none(),
+            "classified as the channel, like what users write"
+        );
+        assert!(matches!(
+            tool.execute(ASK_USER_TOOL_NAME, &params, None, &mut turn).await,
+            Err(ToolError::ExecutionFailed(_))
+        ));
     }
 }

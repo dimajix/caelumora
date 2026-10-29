@@ -3,11 +3,10 @@
 
 use crate::history::{HistoryPageItem, HistoryPageResponse};
 use crate::session::{ParticipantKind, UNKNOWN};
-use caelumora_model::chain::Position;
-use caelumora_model::snapshot;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::agent::PersonalityKind;
 use caelumora_model::approval::{ApprovalRequest, ApprovalRule};
+use caelumora_model::chain::Position;
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::command::Command;
 use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -17,14 +16,15 @@ use caelumora_model::note::Note;
 use caelumora_model::question::{QuestionRequest, Response};
 use caelumora_model::removal::Removal;
 use caelumora_model::session::ChannelId;
+use caelumora_model::snapshot;
 use caelumora_model::template::InternalActorTemplate;
 use caelumora_model::value::language::Language;
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::work::TurnId;
 use caelumora_model::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::mem;
+use uuid::Uuid;
 
 /// The state of a channel when a stream connects: its participants and the last
 /// page of its history, as items - messages and how turns ended (issue 258).
@@ -54,18 +54,32 @@ impl ChannelSnapshot {
     /// The snapshot of a channel's stream: `channel`, whose agents carry
     /// their notes and pending approvals - listed beside the channel, as the
     /// API has them - and the last page of its history.
-    pub fn of(mut channel: snapshot::ChannelSnapshot, history: HistoryPageResponse<Message>) -> Self {
+    pub fn of(
+        mut channel: snapshot::ChannelSnapshot,
+        history: HistoryPageResponse<Message>,
+    ) -> Self {
         let mut notes = Vec::new();
         let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         for participant in &mut channel.participants {
             if matches!(participant.id, ActorId::Agent(_)) {
                 let name = participant.name.clone().unwrap_or_default();
-                notes.push(PublishedNotesResponse { agent_id: participant.id, name, notes: mem::take(&mut participant.notes) });
+                notes.push(PublishedNotesResponse {
+                    agent_id: participant.id,
+                    name,
+                    notes: mem::take(&mut participant.notes),
+                });
             }
             pending_approvals.append(&mut participant.pending_approvals);
             pending_questions.append(&mut participant.pending_questions);
         }
-        Self { channel: channel.into(), items: history.items, earlier: history.earlier, notes, pending_approvals, pending_questions }
+        Self {
+            channel: channel.into(),
+            items: history.items,
+            earlier: history.earlier,
+            notes,
+            pending_approvals,
+            pending_questions,
+        }
     }
 }
 
@@ -202,7 +216,11 @@ pub struct UnreadResponse {
 
 impl From<snapshot::Unread> for UnreadResponse {
     fn from(unread: snapshot::Unread) -> Self {
-        Self { messages: unread.messages, mentioned: unread.mentioned, read_up_to: unread.read_up_to }
+        Self {
+            messages: unread.messages,
+            mentioned: unread.mentioned,
+            read_up_to: unread.read_up_to,
+        }
     }
 }
 
@@ -221,7 +239,11 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             summary: view.summary,
             briefing: view.briefing,
             // Every participant is a user or an agent.
-            participants: view.participants.into_iter().filter_map(ChannelParticipantResponse::of).collect(),
+            participants: view
+                .participants
+                .into_iter()
+                .filter_map(ChannelParticipantResponse::of)
+                .collect(),
             moderator: view.moderator,
             responder_policy: view.responder_policy,
             classification: view.classification,
@@ -232,7 +254,11 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             workspace_id: view.workspace_id,
             can_change: view.can_change,
             unavailable: view.unavailable,
-            former_participants: view.former_participants.into_iter().filter_map(ChannelParticipantResponse::of).collect(),
+            former_participants: view
+                .former_participants
+                .into_iter()
+                .filter_map(ChannelParticipantResponse::of)
+                .collect(),
             unread: view.unread.map(UnreadResponse::from),
         }
     }
@@ -442,17 +468,51 @@ mod tests {
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let alice = ActorId::User(UserId::new());
         let approver = ActorId::Approver(ApproverId(Uuid::new_v4()));
-        let participant = |id, name: Option<&str>| snapshot::ChannelParticipantSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None,
+        let participant = |id, name: Option<&str>| snapshot::ChannelParticipantSnapshot {
+            id,
+            name: name.map(str::to_string),
+            handle: None,
+            can_read_context: false,
+            can_read_tools: false,
+            can_read_components: false,
+            can_approve: false,
+            can_retry: false,
+            can_cancel: false,
+            usage: None,
+            notes: Vec::new(),
+            pending_approvals: Vec::new(),
+            pending_questions: Vec::new(),
+            left: None,
+            can_delete: false,
+            turn_under_way: None,
+            state: None,
+            commands: Vec::new(),
+            introduction: None,
+            personality: None,
+            personality_kind: None,
+            owner: None,
+            owner_name: None,
+        };
+        let view = snapshot::ChannelSnapshot {
+            summary: None,
+            briefing: None,
+            approval_rules: Vec::new(),
+            workspace_id: None,
+            unavailable: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: Some("policy_moderator".to_string()),
             responder_policy: Some("broadcast_policy".to_string()),
             classification: Classification::CHANNEL_DEFAULT,
-            language: None, effective_language: None,
+            language: None,
+            effective_language: None,
             can_change: true,
-            participants: vec![participant(alice, None), participant(approver, Some("Approver")), participant(ActorId::System, Some("system"))],
+            participants: vec![
+                participant(alice, None),
+                participant(approver, Some("Approver")),
+                participant(ActorId::System, Some("system")),
+            ],
             former_participants: Vec::new(),
             unread: None,
         };
@@ -460,26 +520,66 @@ mod tests {
         let response = ChannelResponse::from(view);
 
         assert!(response.can_change);
-        let kinds: Vec<_> = response.participants.iter().map(|m| (m.kind, m.name.as_str())).collect();
-        assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN)], "neither the system nor an approver is a participant");
+        let kinds: Vec<_> =
+            response.participants.iter().map(|m| (m.kind, m.name.as_str())).collect();
+        assert_eq!(
+            kinds,
+            [(ParticipantKind::User, UNKNOWN)],
+            "neither the system nor an approver is a participant"
+        );
     }
 
     #[test]
     fn what_a_place_is_for_is_left_out_where_nothing_was_said_or_read() {
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None, id: ChannelId::new(), name: "main".to_string(),
+        let view = snapshot::ChannelSnapshot {
+            summary: None,
+            briefing: None,
+            approval_rules: Vec::new(),
+            workspace_id: None,
+            unavailable: None,
+            id: ChannelId::new(),
+            name: "main".to_string(),
             uses_workspace: true,
-            moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, effective_language: None, can_change: false, participants: Vec::new(), former_participants: Vec::new(), unread: None };
+            moderator: None,
+            responder_policy: None,
+            classification: Classification::CHANNEL_DEFAULT,
+            language: None,
+            effective_language: None,
+            can_change: false,
+            participants: Vec::new(),
+            former_participants: Vec::new(),
+            unread: None,
+        };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
         assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
-        let described = snapshot::ChannelSnapshot { summary: Some(Summary::new("Planning").unwrap()), briefing: Some(Briefing::new("Dates in UTC.").unwrap()), ..view.clone() };
+        let described = snapshot::ChannelSnapshot {
+            summary: Some(Summary::new("Planning").unwrap()),
+            briefing: Some(Briefing::new("Dates in UTC.").unwrap()),
+            ..view.clone()
+        };
         let json = serde_json::to_value(ChannelResponse::from(described)).unwrap();
-        assert_eq!((&json["summary"], &json["briefing"]), (&serde_json::json!("Planning"), &serde_json::json!("Dates in UTC.")));
+        assert_eq!(
+            (&json["summary"], &json["briefing"]),
+            (&serde_json::json!("Planning"), &serde_json::json!("Dates in UTC."))
+        );
         assert!(json.get("unread").is_none(), "nothing new is told where it was not read: {json}");
-        let unread = snapshot::ChannelSnapshot { unread: Some(snapshot::Unread { messages: 3, mentioned: true, read_up_to: None }), ..view };
+        let unread = snapshot::ChannelSnapshot {
+            unread: Some(snapshot::Unread { messages: 3, mentioned: true, read_up_to: None }),
+            ..view
+        };
         let json = serde_json::to_value(ChannelResponse::from(unread)).unwrap();
-        assert_eq!(json["unread"], serde_json::json!({ "messages": 3, "mentioned": true }), "nothing read yet: no message it ends at");
-        let request: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "Planning" })).unwrap();
-        assert_eq!((request.summary.as_deref(), request.briefing), (Some("Planning"), None), "one left out is none: removed");
+        assert_eq!(
+            json["unread"],
+            serde_json::json!({ "messages": 3, "mentioned": true }),
+            "nothing read yet: no message it ends at"
+        );
+        let request: DescriptionRequest =
+            serde_json::from_value(serde_json::json!({ "summary": "Planning" })).unwrap();
+        assert_eq!(
+            (request.summary.as_deref(), request.briefing),
+            (Some("Planning"), None),
+            "one left out is none: removed"
+        );
     }
 
     #[test]
@@ -495,46 +595,112 @@ mod tests {
             written_at: Utc::now(),
         };
         let participant = |id, name: &str, notes: Vec<Note>| snapshot::ChannelParticipantSnapshot {
-            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(), pending_questions: Vec::new(),
-            left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(),
-            introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
+            id,
+            name: Some(name.to_string()),
+            handle: None,
+            can_read_context: false,
+            can_read_tools: false,
+            can_read_components: false,
+            can_approve: false,
+            can_retry: false,
+            can_cancel: false,
+            usage: None,
+            notes,
+            pending_approvals: Vec::new(),
+            pending_questions: Vec::new(),
+            left: None,
+            can_delete: false,
+            turn_under_way: None,
+            state: None,
+            commands: Vec::new(),
+            introduction: None,
+            personality: None,
+            personality_kind: None,
+            owner: None,
+            owner_name: None,
         };
-        let channel = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None,
+        let channel = snapshot::ChannelSnapshot {
+            summary: None,
+            briefing: None,
+            approval_rules: Vec::new(),
+            workspace_id: None,
+            unavailable: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: None,
             responder_policy: None,
             classification: Classification::CHANNEL_DEFAULT,
-            language: None, effective_language: None,
+            language: None,
+            effective_language: None,
             can_change: false,
-            participants: vec![participant(alice, "alice", Vec::new()), participant(helper, "Helper", vec![note])],
+            participants: vec![
+                participant(alice, "alice", Vec::new()),
+                participant(helper, "Helper", vec![note]),
+            ],
             former_participants: Vec::new(),
             unread: None,
         };
 
-        let json = serde_json::to_value(ChannelSnapshot::of(channel, HistoryPageResponse { items: Vec::new(), earlier: None })).unwrap();
+        let json = serde_json::to_value(ChannelSnapshot::of(
+            channel,
+            HistoryPageResponse { items: Vec::new(), earlier: None },
+        ))
+        .unwrap();
 
         assert_eq!(json["notes"].as_array().map(Vec::len), Some(1), "one entry per agent");
         assert_eq!(json["notes"][0]["name"], "Helper");
         assert_eq!(json["notes"][0]["notes"][0]["id"], 1);
         assert_eq!(json["pending_approvals"], serde_json::json!([]));
-        assert!(json["channel"]["participants"][1].get("notes").is_none(), "not repeated at the participant");
+        assert!(
+            json["channel"]["participants"][1].get("notes").is_none(),
+            "not repeated at the participant"
+        );
     }
 
     #[test]
     fn a_former_participant_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
         let left = Removal::now(alice);
-        let participant = |id, left| snapshot::ChannelParticipantSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None,
+        let participant = |id, left| snapshot::ChannelParticipantSnapshot {
+            id,
+            name: Some("x".to_string()),
+            handle: None,
+            can_read_context: true,
+            can_read_tools: false,
+            can_read_components: false,
+            can_approve: false,
+            can_retry: false,
+            can_cancel: false,
+            usage: None,
+            notes: Vec::new(),
+            pending_approvals: Vec::new(),
+            pending_questions: Vec::new(),
+            left,
+            can_delete: false,
+            turn_under_way: None,
+            state: None,
+            commands: Vec::new(),
+            introduction: None,
+            personality: None,
+            personality_kind: None,
+            owner: None,
+            owner_name: None,
+        };
+        let view = snapshot::ChannelSnapshot {
+            summary: None,
+            briefing: None,
+            approval_rules: Vec::new(),
+            workspace_id: None,
+            unavailable: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: None,
             responder_policy: None,
             classification: Classification::CHANNEL_DEFAULT,
-            language: None, effective_language: None,
+            language: None,
+            effective_language: None,
             can_change: true,
             participants: vec![participant(alice, None)],
             former_participants: vec![participant(helper, Some(left.clone()))],
@@ -543,50 +709,165 @@ mod tests {
         let json = serde_json::to_value(ChannelResponse::from(view)).unwrap();
         assert!(json["participants"][0].get("left").is_none(), "a participant has not left");
         assert_eq!(json["former_participants"][0]["id"], serde_json::to_value(helper).unwrap());
-        assert_eq!(json["former_participants"][0]["left"]["by"], serde_json::to_value(alice).unwrap());
-        assert_eq!(json["former_participants"][0]["can_read_context"], true, "what it saw may still be read");
+        assert_eq!(
+            json["former_participants"][0]["left"]["by"],
+            serde_json::to_value(alice).unwrap()
+        );
+        assert_eq!(
+            json["former_participants"][0]["can_read_context"], true,
+            "what it saw may still be read"
+        );
     }
 
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
-        let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, context_size: Some(8192), context_tokens: 120 };
-        let participant = |usage| snapshot::ChannelParticipantSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let usage = TokenUsage {
+            calls: 2,
+            prompt_tokens: 300,
+            completion_tokens: 20,
+            context_size: Some(8192),
+            context_tokens: 120,
+        };
+        let participant = |usage| snapshot::ChannelParticipantSnapshot {
+            id: ActorId::User(UserId::new()),
+            name: Some("alice".to_string()),
+            handle: None,
+            can_read_context: false,
+            can_read_tools: false,
+            can_read_components: false,
+            can_approve: false,
+            can_retry: false,
+            can_cancel: false,
+            usage,
+            notes: Vec::new(),
+            pending_approvals: Vec::new(),
+            pending_questions: Vec::new(),
+            left: None,
+            can_delete: false,
+            turn_under_way: None,
+            state: None,
+            commands: Vec::new(),
+            introduction: None,
+            personality: None,
+            personality_kind: None,
+            owner: None,
+            owner_name: None,
+        };
 
-        let json = serde_json::to_value(ChannelParticipantResponse::of(participant(Some(usage))).unwrap()).unwrap();
-        assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "context_size": 8192, "context_tokens": 120 }));
-        let json = serde_json::to_value(ChannelParticipantResponse::of(participant(None)).unwrap()).unwrap();
+        let json =
+            serde_json::to_value(ChannelParticipantResponse::of(participant(Some(usage))).unwrap())
+                .unwrap();
+        assert_eq!(
+            json["usage"],
+            serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "context_size": 8192, "context_tokens": 120 })
+        );
+        let json = serde_json::to_value(ChannelParticipantResponse::of(participant(None)).unwrap())
+            .unwrap();
         assert!(json.get("usage").is_none());
         assert!(json.get("turn_under_way").is_none(), "no answer under way, nothing said of one");
         let turn = TurnId::new();
-        let json = serde_json::to_value(ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot { turn_under_way: Some(turn), ..participant(None) }).unwrap()).unwrap();
-        assert_eq!(json["turn_under_way"], serde_json::json!(turn.to_string()), "the turn its messages carry");
+        let json = serde_json::to_value(
+            ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot {
+                turn_under_way: Some(turn),
+                ..participant(None)
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            json["turn_under_way"],
+            serde_json::json!(turn.to_string()),
+            "the turn its messages carry"
+        );
         assert!(json.get("state").is_none(), "where nothing runs, no state");
-        let json = serde_json::to_value(ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot { state: Some(ActorState::WaitingForUser), ..participant(None) }).unwrap()).unwrap();
-        assert_eq!(json["state"], serde_json::json!("WaitingForUser"), "named as `StateChanged` names it (issue 243)");
+        let json = serde_json::to_value(
+            ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot {
+                state: Some(ActorState::WaitingForUser),
+                ..participant(None)
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            json["state"],
+            serde_json::json!("WaitingForUser"),
+            "named as `StateChanged` names it (issue 243)"
+        );
         assert!(json.get("commands").is_none(), "absent without commands");
-        let mark = Command { name: "mark".to_string(), description: "Marks.".to_string(), usage: None, owners_only: false };
-        let json = serde_json::to_value(ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot { commands: vec![mark], ..participant(None) }).unwrap()).unwrap();
-        assert_eq!(json["commands"][0]["name"], "mark", "an agent's commands, as `GET …/commands` gives the channel's (issue 269)");
+        let mark = Command {
+            name: "mark".to_string(),
+            description: "Marks.".to_string(),
+            usage: None,
+            owners_only: false,
+        };
+        let json = serde_json::to_value(
+            ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot {
+                commands: vec![mark],
+                ..participant(None)
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            json["commands"][0]["name"], "mark",
+            "an agent's commands, as `GET …/commands` gives the channel's (issue 269)"
+        );
     }
 
     #[test]
     fn a_participants_profile_is_answered_only_where_it_was_read() {
         let carol = UserId::new();
-        let participant = snapshot::ChannelParticipantSnapshot { id: ActorId::Agent(AgentId::new()), name: Some("Helper".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let participant = snapshot::ChannelParticipantSnapshot {
+            id: ActorId::Agent(AgentId::new()),
+            name: Some("Helper".to_string()),
+            handle: None,
+            can_read_context: false,
+            can_read_tools: false,
+            can_read_components: false,
+            can_approve: false,
+            can_retry: false,
+            can_cancel: false,
+            usage: None,
+            notes: Vec::new(),
+            pending_approvals: Vec::new(),
+            pending_questions: Vec::new(),
+            left: None,
+            can_delete: false,
+            turn_under_way: None,
+            state: None,
+            commands: Vec::new(),
+            introduction: None,
+            personality: None,
+            personality_kind: None,
+            owner: None,
+            owner_name: None,
+        };
 
-        let json = serde_json::to_value(ChannelParticipantResponse::of(participant.clone()).unwrap()).unwrap();
+        let json =
+            serde_json::to_value(ChannelParticipantResponse::of(participant.clone()).unwrap())
+                .unwrap();
         for field in ["introduction", "personality", "personality_kind", "owner", "owner_name"] {
             assert!(json.get(field).is_none(), "{field}: not read, not said");
         }
         let profiled = snapshot::ChannelParticipantSnapshot {
-            introduction: Some("Answers questions.".to_string()), personality: Some("plain".to_string()), personality_kind: Some(PersonalityKind::External),
-            owner: Some(ActorId::User(carol)), owner_name: Some("carol".to_string()), ..participant
+            introduction: Some("Answers questions.".to_string()),
+            personality: Some("plain".to_string()),
+            personality_kind: Some(PersonalityKind::External),
+            owner: Some(ActorId::User(carol)),
+            owner_name: Some("carol".to_string()),
+            ..participant
         };
         let json = serde_json::to_value(ChannelParticipantResponse::of(profiled).unwrap()).unwrap();
         assert_eq!(json["introduction"], "Answers questions.");
-        assert_eq!((&json["personality"], &json["personality_kind"]), (&serde_json::json!("plain"), &serde_json::json!("external")));
-        assert_eq!(json["owner"], serde_json::to_value(ActorId::User(carol)).unwrap(), "as every actor is named");
+        assert_eq!(
+            (&json["personality"], &json["personality_kind"]),
+            (&serde_json::json!("plain"), &serde_json::json!("external"))
+        );
+        assert_eq!(
+            json["owner"],
+            serde_json::to_value(ActorId::User(carol)).unwrap(),
+            "as every actor is named"
+        );
         assert_eq!(json["owner_name"], "carol");
     }
-
 }

@@ -7,7 +7,7 @@
 //! files of its own beside these.
 
 use super::{read_json_opt, to_backend_error, write_json_atomic};
-use caelumora_model::chain::{Position, Chain, Node, Stored};
+use caelumora_model::chain::{Chain, Node, Position, Stored};
 use caelumora_model::digest::Digest;
 use caelumora_model::store::kept_chain::{fits, follow_back, followed, place};
 use caelumora_model::store::{StoreError, StoreResult};
@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
-use tracing::debug;
 use tokio::fs;
+use tracing::debug;
 
 /// How many entries of a chain one file holds.
 pub(super) const SEGMENT: u64 = 256;
@@ -54,16 +54,28 @@ pub(super) async fn read_head(dir: &Path) -> StoreResult<ChainHead> {
 
 /// The entries of the segment from `from`, as written - past the head's end
 /// too, if a crash left some.
-async fn read_segment<E: DeserializeOwned>(dir: &Path, from: Position) -> StoreResult<Vec<Node<E>>> {
+async fn read_segment<E: DeserializeOwned>(
+    dir: &Path,
+    from: Position,
+) -> StoreResult<Vec<Node<E>>> {
     Ok(read_json_opt(&segment_path(dir, from)).await?.unwrap_or_default())
 }
 
 /// The entries from the position `from` up to `end`, in order.
-pub(super) async fn read_chain<E: DeserializeOwned>(dir: &Path, from: Position, end: Position) -> StoreResult<Vec<Node<E>>> {
+pub(super) async fn read_chain<E: DeserializeOwned>(
+    dir: &Path,
+    from: Position,
+    end: Position,
+) -> StoreResult<Vec<Node<E>>> {
     let mut nodes = Vec::new();
     let mut segment = segment_of(from);
     while segment < end {
-        nodes.extend(read_segment(dir, segment).await?.into_iter().filter(|node| node.seq >= from && node.seq < end));
+        nodes.extend(
+            read_segment(dir, segment)
+                .await?
+                .into_iter()
+                .filter(|node| node.seq >= from && node.seq < end),
+        );
         segment = segment.after(SEGMENT);
     }
     Ok(nodes)
@@ -76,13 +88,18 @@ pub(super) async fn read_chain<E: DeserializeOwned>(dir: &Path, from: Position, 
 ///
 /// # Errors
 /// If they do not fit (`fits`), or cannot be written.
-pub(super) async fn append<E>(dir: &Path, key: impl Display, changes: Stored<E>) -> StoreResult<(ChainHead, Vec<Node<E>>)>
+pub(super) async fn append<E>(
+    dir: &Path,
+    key: impl Display,
+    changes: Stored<E>,
+) -> StoreResult<(ChainHead, Vec<Node<E>>)>
 where
     E: Serialize + DeserializeOwned + Clone,
 {
     fs::create_dir_all(dir).await.map_err(to_backend_error)?;
     let head = read_head(dir).await?;
-    let end = fits(head.end, &changes.entries).map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
+    let end = fits(head.end, &changes.entries)
+        .map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
     let mut added = Vec::new();
     let mut by_segment: BTreeMap<Position, Vec<Node<E>>> = BTreeMap::new();
     for node in changes.entries {
@@ -110,7 +127,11 @@ where
 ///
 /// # Errors
 /// If it cannot be read, or what is read is no chain.
-pub(super) async fn load<E: DeserializeOwned>(dir: &Path, key: impl Display, from: Position) -> StoreResult<Chain<E>> {
+pub(super) async fn load<E: DeserializeOwned>(
+    dir: &Path,
+    key: impl Display,
+    from: Position,
+) -> StoreResult<Chain<E>> {
     let head = read_head(dir).await?;
     let entries = read_chain(dir, from, head.end).await?;
     Chain::suffix(from, Stored { entries, head: head.head })
@@ -124,7 +145,11 @@ pub(super) async fn load<E: DeserializeOwned>(dir: &Path, key: impl Display, fro
 ///
 /// # Errors
 /// If it cannot be read, or the path does not lead back to a root.
-pub(super) async fn path<E: DeserializeOwned + Clone>(dir: &Path, key: impl Display, digest: Digest) -> StoreResult<Option<Vec<Node<E>>>> {
+pub(super) async fn path<E: DeserializeOwned + Clone>(
+    dir: &Path,
+    key: impl Display,
+    digest: Digest,
+) -> StoreResult<Option<Vec<Node<E>>>> {
     let end = read_head(dir).await?.end;
     let mut want = Some(digest);
     let mut path = Vec::new();
@@ -134,5 +159,6 @@ pub(super) async fn path<E: DeserializeOwned + Clone>(dir: &Path, key: impl Disp
         follow_back(&mut want, &mut path, nodes.iter().rev().filter(|node| node.seq < end));
         segment = segment_before(from);
     }
-    followed(want, path).map_err(|e| StoreError::Backend(format!("{key} does not lead back to its root: {e}")))
+    followed(want, path)
+        .map_err(|e| StoreError::Backend(format!("{key} does not lead back to its root: {e}")))
 }

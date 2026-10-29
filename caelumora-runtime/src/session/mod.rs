@@ -1,40 +1,42 @@
 //! A running session: `SessionLoop`, how it is built and runs its channels.
 
-use caelumora_model::value::name::Name;
 use crate::channel::{ChannelLoop, Participation};
-use crate::command::{CommandExecutor, ChannelCommandProvider};
+use crate::command::{ChannelCommandProvider, CommandExecutor};
+use crate::component::ComponentError;
+use crate::controller::{ControllerManager, SessionController, WorkspaceController};
+use crate::event::{EventBus, SubscriptionTopic};
+use crate::group::{keep_participants, GroupManager};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
-use crate::event::{EventBus, SubscriptionTopic};
-use anyhow::{anyhow, Result};
-use caelumora_model::actor::ActorId;
-use caelumora_model::channel::{self, Channel, Participant};
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use crate::view::{Viewer, Views};
-use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
-use caelumora_model::scope::Scope;
-use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
-use caelumora_model::template::SessionTemplateId;
-use caelumora_model::group::GroupId;
-use crate::group::{keep_participants, GroupManager};
-use caelumora_model::group::Group;
-use caelumora_model::project::{Project, ProjectId};
-use caelumora_model::workspace::{Workspace, WorkspaceId};
 use crate::workspace::WorkspaceManager;
-use crate::controller::{ControllerManager, SessionController, WorkspaceController};
+use anyhow::{anyhow, Result};
 use arc_swap::{ArcSwapOption, Guard};
+use caelumora_model::actor::ActorId;
+use caelumora_model::agent::{Agent, AgentId};
+use caelumora_model::channel::{self, Channel, Participant};
+use caelumora_model::confidentiality::{
+    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
+};
+use caelumora_model::event::EntityChange;
+use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::group::Group;
+use caelumora_model::group::GroupId;
+use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::project::{Project, ProjectId};
+use caelumora_model::scope::Scope;
+use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
+use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
+use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::template::SessionTemplateId;
+use caelumora_model::value::name::Name;
+use caelumora_model::workspace::{Workspace, WorkspaceId};
 use dashmap::DashMap;
 use std::sync::Arc;
-use tracing::warn;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use caelumora_model::agent::{Agent, AgentId};
-use caelumora_model::event::EntityChange;
-use crate::component::ComponentError;
+use tracing::warn;
 
 mod channels;
 mod manager;
@@ -44,8 +46,8 @@ mod settings;
 pub mod testing;
 
 pub use channels::ChannelSpec;
-pub use manager::SessionManager;
 pub(crate) use manager::Found;
+pub use manager::SessionManager;
 
 /// A request for a channel that cannot be met as asked (issue 09). The
 /// messages are meant for users (see `crate::error::user_message`).
@@ -82,10 +84,17 @@ pub enum SessionError {
     /// The session lists the channel, but it does not run (issue 463): its components cannot be
     /// read - a bundle it names is gone, or no longer its owner's to read.
     #[error("Channel {channel} of session {session} does not run: {cause}")]
-    ChannelUnavailable { session: SessionId, channel: ChannelId, #[source] cause: Arc<ComponentError> },
+    ChannelUnavailable {
+        session: SessionId,
+        channel: ChannelId,
+        #[source]
+        cause: Arc<ComponentError>,
+    },
     /// No classification that can be given (`require_classifiable`, issue
     /// 304): it names a compartment that is not configured.
-    #[error("A channel cannot be classified {0}: a compartment is not configured or may not be given")]
+    #[error(
+        "A channel cannot be classified {0}: a compartment is not configured or may not be given"
+    )]
     ClassificationRefused(Classification),
     /// The workspace lies in another session's scope, and is used within
     /// that session alone (issue 251, `Scope::admits`).
@@ -96,7 +105,9 @@ pub enum SessionError {
     ProjectOutOfScope(ProjectId),
     /// The shared project a deleted session lies in is deleted too: the session comes back with
     /// it, not alone (issue 467).
-    #[error("The session lies in the project {0}, which is deleted: it comes back with the project")]
+    #[error(
+        "The session lies in the project {0}, which is deleted: it comes back with the project"
+    )]
     ProjectDeleted(ProjectId),
     /// What lies in the scope of a session or channel being deleted is not
     /// all the caller's to delete (issue 320): what was is deleted, the
@@ -112,8 +123,13 @@ pub enum SessionError {
 /// Nothing if a channel may be given `classification` at all - it names
 /// only configured compartments (issues 133, 304) - checked before anything
 /// is stored.
-fn require_classification(runtime_manager: &RuntimeManager, classification: &Classification) -> Result<()> {
-    runtime_manager.confidentiality().require_classifiable(classification, || SessionError::ClassificationRefused(classification.clone()))?;
+fn require_classification(
+    runtime_manager: &RuntimeManager,
+    classification: &Classification,
+) -> Result<()> {
+    runtime_manager.confidentiality().require_classifiable(classification, || {
+        SessionError::ClassificationRefused(classification.clone())
+    })?;
     Ok(())
 }
 
@@ -142,8 +158,12 @@ pub(crate) type Listed = (Arc<Channel>, ChannelRun);
 impl ChannelEntry {
     fn listed(&self) -> Listed {
         match self {
-            Self::Running { channel, .. } => (Arc::clone(&channel.channel()), ChannelRun::Running(Arc::clone(channel))),
-            Self::Unavailable { channel, cause } => (Arc::clone(channel), ChannelRun::Unavailable(Arc::clone(cause))),
+            Self::Running { channel, .. } => {
+                (Arc::clone(&channel.channel()), ChannelRun::Running(Arc::clone(channel)))
+            }
+            Self::Unavailable { channel, cause } => {
+                (Arc::clone(channel), ChannelRun::Unavailable(Arc::clone(cause)))
+            }
         }
     }
 
@@ -213,7 +233,11 @@ async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) ->
 /// # Errors
 /// Whatever the store reports.
 async fn load_own(stores: &EntityStores, id: SessionId) -> StoreResult<Option<Project>> {
-    stores.projects.find_by_name(&SecurityContext::system(), &Project::own_name(id)).await.optional()
+    stores
+        .projects
+        .find_by_name(&SecurityContext::system(), &Project::own_name(id))
+        .await
+        .optional()
 }
 
 /// Makes `own`, a session's own project, with the group of its members, in the runtime's name
@@ -244,12 +268,24 @@ async fn make_own(stores: &EntityStores, own: &Project) -> StoreResult<()> {
 /// `WorkspaceError::NotFound` if there is no workspace they may read or
 /// are cleared for, `SessionError::WorkspaceOutOfScope`,
 /// `StoreError::PermissionDenied` if they may not share it.
-async fn require_attachable(workspaces: &WorkspaceManager, access_policy: &dyn AccessPolicy, context: &SecurityContext, id: WorkspaceId, session_id: SessionId) -> Result<()> {
+async fn require_attachable(
+    workspaces: &WorkspaceManager,
+    access_policy: &dyn AccessPolicy,
+    context: &SecurityContext,
+    id: WorkspaceId,
+    session_id: SessionId,
+) -> Result<()> {
     let shared = workspaces.reached(context, id).await?;
     if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
         return Err(SessionError::WorkspaceOutOfScope(id).into());
     }
-    access_policy.require(context, ActionType::update(Workspace::KIND, &shared.security_attributes), StoreError::PermissionDenied).await?;
+    access_policy
+        .require(
+            context,
+            ActionType::update(Workspace::KIND, &shared.security_attributes),
+            StoreError::PermissionDenied,
+        )
+        .await?;
     Ok(())
 }
 
@@ -259,7 +295,11 @@ async fn require_attachable(workspaces: &WorkspaceManager, access_policy: &dyn A
 ///
 /// # Errors
 /// Whatever else the store reports.
-async fn held_workspace(controllers: &ControllerManager, session_id: SessionId, id: Option<WorkspaceId>) -> StoreResult<Option<Arc<WorkspaceController>>> {
+async fn held_workspace(
+    controllers: &ControllerManager,
+    session_id: SessionId,
+    id: Option<WorkspaceId>,
+) -> StoreResult<Option<Arc<WorkspaceController>>> {
     let Some(id) = id else { return Ok(None) };
     let held = controllers.workspace_controller(id).await.optional()?;
     if held.is_none() {
@@ -273,7 +313,13 @@ impl SessionLoop {
     /// given everything of its session, and its own controller, as it is built (issues 361, 374).
     fn channel_runtime(self: &Arc<Self>, channel: Channel) -> ChannelRuntime {
         let channel = self.controllers.new_channel_controller(channel);
-        ChannelRuntime::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.commands), Arc::clone(&self.session_controller), channel, Arc::downgrade(self))
+        ChannelRuntime::new(
+            Arc::clone(&self.runtime_manager),
+            Arc::clone(&self.commands),
+            Arc::clone(&self.session_controller),
+            channel,
+            Arc::downgrade(self),
+        )
     }
 
     /// The loop of `session`, with its `channels` - documents of their own
@@ -287,11 +333,17 @@ impl SessionLoop {
     /// Whatever building a channel reports otherwise - a store that failed
     /// among it -, and whatever making the session's commands or reading its
     /// workspace reports.
-    pub(crate) async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Arc<Self>> {
+    pub(crate) async fn new(
+        session: Session,
+        channels: Vec<Channel>,
+        runtime_manager: Arc<RuntimeManager>,
+    ) -> Result<Arc<Self>> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
-        let workspace = held_workspace(runtime_manager.controller_manager(), id, session.workspace).await?;
-        let session_controller = runtime_manager.controller_manager().new_session_controller(session);
+        let workspace =
+            held_workspace(runtime_manager.controller_manager(), id, session.workspace).await?;
+        let session_controller =
+            runtime_manager.controller_manager().new_session_controller(session);
         let (start_tx, start_rx) = mpsc::unbounded_channel();
 
         let session_loop = Arc::new(Self {
@@ -357,8 +409,7 @@ impl SessionLoop {
     /// agent deleted or restored, and of every agent as it starts and after
     /// it lost events - so that nothing that happened meanwhile is missed.
     pub async fn run(&self) -> Result<()> {
-        let mut start_rx = self.start_rx.try_lock()
-            .map_err(|_| anyhow!("Already running"))?;
+        let mut start_rx = self.start_rx.try_lock().map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
         // The session's own events, and those about its agents' lifecycle;
@@ -426,14 +477,20 @@ impl SessionLoop {
     fn agent_taken_in(&self, global_event: &GlobalEvent) -> Option<AgentId> {
         let (id, change) = global_event.about::<Session>()?;
         match change.update::<SessionUpdateEvent>() {
-            Some(SessionUpdateEvent::ParticipantJoined(Participant::Agent(agent))) if id == self.id => Some(agent),
+            Some(SessionUpdateEvent::ParticipantJoined(Participant::Agent(agent)))
+                if id == self.id =>
+            {
+                Some(agent)
+            }
             _ => None,
         }
     }
 
     async fn handle_global_event(&self, global_event: &GlobalEvent) {
         match global_event.about::<Agent>() {
-            Some((id, EntityChange::Deleted | EntityChange::Restored)) => self.follow_agents(Some(id)).await,
+            Some((id, EntityChange::Deleted | EntityChange::Restored)) => {
+                self.follow_agents(Some(id)).await
+            }
             _ => self.session_controller.process_global_event(global_event),
         }
     }
@@ -445,7 +502,10 @@ impl SessionLoop {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let ChannelEntry::Running { channel, task } = &mut *entry else { return };
         let channel = Arc::clone(channel);
-        self.events.announce(GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()), &**channel.channel());
+        self.events.announce(
+            GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()),
+            &**channel.channel(),
+        );
         *task = Some(join_set.spawn(async move {
             let _ = channel.run().await;
             channel.id()
@@ -456,21 +516,13 @@ impl SessionLoop {
 #[cfg(test)]
 mod tests {
 
-    
-
-    
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::security::SecurityContext;
 
-    
     use std::sync::Arc;
 
-    
-
-    
-
-    use crate::session::SessionManager;
     use crate::session::testing::*;
+    use crate::session::SessionManager;
     use caelumora_model::user::User;
     use std::time::Duration;
     use tokio::time;
@@ -492,17 +544,31 @@ mod tests {
         // session takes it into the one controller both actors share.
         let renamed = async {
             loop {
-                runtime.event_bus().publish(GlobalEvent::updated::<User>(&owner, &UserUpdateEvent::NameChanged("renamed".to_string())), Default::default());
-                let names: Vec<String> = [&first, &second].iter().map(|c| c.user_actor(owner).expect("takes part").name().to_string()).collect();
+                runtime.event_bus().publish(
+                    GlobalEvent::updated::<User>(
+                        &owner,
+                        &UserUpdateEvent::NameChanged("renamed".to_string()),
+                    ),
+                    Default::default(),
+                );
+                let names: Vec<String> = [&first, &second]
+                    .iter()
+                    .map(|c| c.user_actor(owner).expect("takes part").name().to_string())
+                    .collect();
                 if names.iter().all(|n| n == "renamed") {
                     break;
                 }
                 time::sleep(Duration::from_millis(10)).await;
             }
         };
-        time::timeout(Duration::from_secs(2), renamed).await.expect("both channels show the new name");
-        assert_eq!(first.user_actor(other.as_user_id().unwrap()).unwrap().name(), "other", "nobody else is renamed");
+        time::timeout(Duration::from_secs(2), renamed)
+            .await
+            .expect("both channels show the new name");
+        assert_eq!(
+            first.user_actor(other.as_user_id().unwrap()).unwrap().name(),
+            "other",
+            "nobody else is renamed"
+        );
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
-
 }

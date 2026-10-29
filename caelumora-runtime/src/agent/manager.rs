@@ -16,17 +16,20 @@
 
 use super::{store_error, AgentError, AgentResult};
 use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_unless_refused, restored_unless_refused};
+use crate::scoped::{deleted_unless_refused, restored_unless_refused, ScopeMember};
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
+use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{Deleted, EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{
+    Deleted, EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult,
+    StoreResultExt, Stored,
+};
 use caelumora_model::value::name::ScopedName;
 use std::fmt;
 use std::sync::Arc;
@@ -51,7 +54,12 @@ impl fmt::Debug for AgentManager {
 }
 
 impl AgentManager {
-    pub(crate) fn new(stores: &EntityStores, states: Arc<dyn StateStore>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>) -> Self {
+    pub(crate) fn new(
+        stores: &EntityStores,
+        states: Arc<dyn StateStore>,
+        events: Arc<EventBus>,
+        access_policy: Arc<dyn AccessPolicy>,
+    ) -> Self {
         Self {
             agents: Arc::clone(&stores.agents),
             personalities: Arc::clone(&stores.personalities),
@@ -84,17 +92,29 @@ impl AgentManager {
     /// session, channel or personality they may read, `NameTaken` if an
     /// agent of `name` lies in its scope already (issue 250), `Validation`
     /// for a scope no agent lies in - a project's.
-    pub async fn create(&self, context: &SecurityContext, name: &str, scope: Scope, personality_id: PersonalityId) -> AgentResult<Agent> {
+    pub async fn create(
+        &self,
+        context: &SecurityContext,
+        name: &str,
+        scope: Scope,
+        personality_id: PersonalityId,
+    ) -> AgentResult<Agent> {
         let agent = Agent::new(ScopedName::new(name, scope)?, personality_id, context.principal_id);
         self.access_policy
-            .require(context, ActionType::create(Agent::KIND, &agent.security_attributes), StoreError::PermissionDenied).await?;
+            .require(
+                context,
+                ActionType::create(Agent::KIND, &agent.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         self.require_holder(context, &agent.name.scope).await?;
         let personality = self.personalities.get(context, personality_id).await?;
         if !personality.name.scope.admits(&agent.name.scope) {
             return Err(AgentError::PersonalityOutOfScope(personality.name.name));
         }
         self.agents.create(context, &agent).await?;
-        self.events.publish(GlobalEvent::created::<Agent>(&agent.id), agent.security_attributes.clone());
+        self.events
+            .publish(GlobalEvent::created::<Agent>(&agent.id), agent.security_attributes.clone());
         info!("Agent {} created by {}", agent.id, context.caller_id);
         Ok(agent)
     }
@@ -115,11 +135,18 @@ impl AgentManager {
             // names is none.
             Scope::ChannelScope { session_id, channel_id } => {
                 if self.channels.get(context, *channel_id).await?.session_id != *session_id {
-                    return Err(StoreError::NotFound { entity: Channel::KIND.name(), id: channel_id.to_string() }.into());
+                    return Err(StoreError::NotFound {
+                        entity: Channel::KIND.name(),
+                        id: channel_id.to_string(),
+                    }
+                    .into());
                 }
             }
             // An agent lies in no project's scope: the store refuses it (`Agent::validate`).
-            Scope::ProjectScope { .. } | Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => {}
+            Scope::ProjectScope { .. }
+            | Scope::UserScope { .. }
+            | Scope::GroupScope { .. }
+            | Scope::GlobalScope => {}
         }
         Ok(())
     }
@@ -141,7 +168,12 @@ impl AgentManager {
     pub async fn delete(&self, context: &SecurityContext, id: AgentId) -> AgentResult<bool> {
         let Some(agent) = self.agents.get(context, id).await.optional()? else { return Ok(false) };
         self.access_policy
-            .require(context, ActionType::delete(Agent::KIND, &agent.security_attributes), StoreError::PermissionDenied).await?;
+            .require(
+                context,
+                ActionType::delete(Agent::KIND, &agent.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         if !self.agents.delete(context, id, &Removal::now(context.caller_id)).await? {
             return Ok(false);
         }
@@ -201,12 +233,20 @@ impl ScopeMember for AgentManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
+    async fn delete_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let mut left = 0;
-        for agent in self.agents.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for agent in
+            self.agents.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items
+        {
             if deleted_unless_refused(self.agents.delete(ctx, agent.id, removal).await)? {
-                self.events.publish(GlobalEvent::deleted::<Agent>(&agent.id), agent.security_attributes);
+                self.events
+                    .publish(GlobalEvent::deleted::<Agent>(&agent.id), agent.security_attributes);
             } else {
                 left += 1;
             }
@@ -221,11 +261,26 @@ impl ScopeMember for AgentManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
+    async fn restore_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for agent in self.agents.list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)? {
-                self.events.publish(GlobalEvent::restored::<Agent>(&restored.id), restored.security_attributes);
+        for agent in self
+            .agents
+            .list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
+            if let Some(restored) =
+                restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)?
+            {
+                self.events.publish(
+                    GlobalEvent::restored::<Agent>(&restored.id),
+                    restored.security_attributes,
+                );
             }
         }
         Ok(())
@@ -238,7 +293,12 @@ impl ScopeMember for AgentManager {
     /// Whatever the stores report; what was purged before stays purged.
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for Deleted { entity: agent, .. } in self.agents.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity: agent, .. } in self
+            .agents
+            .list_deleted(&system, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
             self.agents.purge(&system, agent.id).await?;
             self.states.delete_agent_state(agent.id).await?;
         }

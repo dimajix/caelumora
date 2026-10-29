@@ -49,8 +49,15 @@ impl Document {
     /// # Errors
     /// `StoreError::Backend` if `value` cannot be serialized.
     pub(crate) fn of<T: Stored>(value: &T) -> StoreResult<Self> {
-        let body = serde_json::to_value(value).map_err(|e| StoreError::Backend(format!("a {} cannot be serialized: {e}", T::KIND)))?;
-        Ok(Self { id: value.id().into(), name: value.unique_name(), removal_id: value.deleted().map(|removal| removal.id), security_attributes: value.security_attributes().clone(), body })
+        let body = serde_json::to_value(value)
+            .map_err(|e| StoreError::Backend(format!("a {} cannot be serialized: {e}", T::KIND)))?;
+        Ok(Self {
+            id: value.id().into(),
+            name: value.unique_name(),
+            removal_id: value.deleted().map(|removal| removal.id),
+            security_attributes: value.security_attributes().clone(),
+            body,
+        })
     }
 
     /// The document of `body`, read as a `T`: what a storage that keeps
@@ -61,7 +68,13 @@ impl Document {
     /// `StoreError::Backend` if `body` is no `T`.
     pub(crate) fn read<T: Stored>(body: Value) -> StoreResult<Self> {
         let value: T = read_as(body.clone())?;
-        Ok(Self { id: value.id().into(), name: value.unique_name(), removal_id: value.deleted().map(|removal| removal.id), security_attributes: value.security_attributes().clone(), body })
+        Ok(Self {
+            id: value.id().into(),
+            name: value.unique_name(),
+            removal_id: value.deleted().map(|removal| removal.id),
+            security_attributes: value.security_attributes().clone(),
+            body,
+        })
     }
 }
 
@@ -87,7 +100,14 @@ pub trait DocumentStorage: Debug + Send + Sync {
     /// the store judges every document again. It
     /// hands out fewer than `limit` only where none follow. A document a storage cannot read as it
     /// is kept is left out and logged; any other failure fails the scan.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>>;
+    async fn scan(
+        &self,
+        filter: Option<&Filter<FieldPath>>,
+        admission: Option<&Admission>,
+        presence: Presence,
+        after: Option<Uuid>,
+        limit: usize,
+    ) -> StoreResult<Vec<(Uuid, Value)>>;
 
     /// The body of the document of `name` that is not marked deleted, if
     /// there is one - there is at most one (issue 250).
@@ -117,7 +137,8 @@ const SCAN_BATCH: usize = 100;
 
 /// `body` read as a `T`.
 fn read_as<T: Stored>(body: Value) -> StoreResult<T> {
-    serde_json::from_value(body).map_err(|e| StoreError::Backend(format!("a stored {} cannot be read: {e}", T::KIND)))
+    serde_json::from_value(body)
+        .map_err(|e| StoreError::Backend(format!("a stored {} cannot be read: {e}", T::KIND)))
 }
 
 /// The entities of one kind over the storage of a backend (issue 446):
@@ -132,7 +153,10 @@ pub(crate) struct CheckedStore<T> {
 
 impl<T: Stored> Debug for CheckedStore<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CheckedStore").field("kind", &T::KIND).field("storage", &self.storage).finish_non_exhaustive()
+        f.debug_struct("CheckedStore")
+            .field("kind", &T::KIND)
+            .field("storage", &self.storage)
+            .finish_non_exhaustive()
     }
 }
 
@@ -140,7 +164,11 @@ impl<T: Stored> CheckedStore<T> {
     /// The store of the documents of `storage`, asking the `AccessPolicy`
     /// and the `ConfidentialityPolicy` of `policies`.
     pub(crate) fn new(storage: Arc<dyn DocumentStorage>, policies: &Policies) -> Self {
-        Self { storage, policies: (Arc::clone(&policies.0), Arc::clone(&policies.1)), kind: PhantomData }
+        Self {
+            storage,
+            policies: (Arc::clone(&policies.0), Arc::clone(&policies.1)),
+            kind: PhantomData,
+        }
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
@@ -193,7 +221,12 @@ impl<T: Stored> CheckedStore<T> {
     /// may read (issue 293). A page that stops at its limit hands out the
     /// cursor after its last entity unless the storage showed that nothing
     /// follows.
-    async fn page(&self, ctx: &SecurityContext, query: &Query<T::Field>, presence: Presence) -> StoreResult<Page<T>> {
+    async fn page(
+        &self,
+        ctx: &SecurityContext,
+        query: &Query<T::Field>,
+        presence: Presence,
+    ) -> StoreResult<Page<T>> {
         let access = self.access(ctx);
         access.allow(ActionType::List(T::KIND)).await?;
         let filter = query.filter.as_ref();
@@ -202,7 +235,10 @@ impl<T: Stored> CheckedStore<T> {
         let mut after = query.after.as_ref().map(Cursor::id);
         let mut items = Vec::new();
         loop {
-            let batch = self.storage.scan(by_path.as_ref(), admission.as_ref(), presence, after, SCAN_BATCH).await?;
+            let batch = self
+                .storage
+                .scan(by_path.as_ref(), admission.as_ref(), presence, after, SCAN_BATCH)
+                .await?;
             let more = batch.len() == SCAN_BATCH;
             let mut rest = batch.into_iter().peekable();
             while let Some((id, body)) = rest.next() {
@@ -239,7 +275,12 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
     }
 
     /// Marks the entity deleted with `removal` (issues 164, 469).
-    async fn delete(&self, ctx: &SecurityContext, id: T::Id, removal: &Removal) -> StoreResult<bool> {
+    async fn delete(
+        &self,
+        ctx: &SecurityContext,
+        id: T::Id,
+        removal: &Removal,
+    ) -> StoreResult<bool> {
         let stored = self.stored(&id).await?;
         if !self.access(ctx).delete(stored.as_ref(), removal).await? {
             return Ok(false);
@@ -276,15 +317,25 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>> {
         let found = self.stored(&id).await?;
         let entity = self.access(ctx).read(found, id.to_string(), Presence::Deleted).await?;
-        Deleted::of(entity).ok_or_else(|| StoreError::NotFound { entity: T::KIND.name(), id: id.to_string() })
+        Deleted::of(entity)
+            .ok_or_else(|| StoreError::NotFound { entity: T::KIND.name(), id: id.to_string() })
     }
 
-    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<Deleted<T>>> {
+    async fn list_deleted(
+        &self,
+        ctx: &SecurityContext,
+        query: &Query<T::Field>,
+    ) -> StoreResult<Page<Deleted<T>>> {
         let Page { items, next } = self.page(ctx, query, Presence::Deleted).await?;
         Ok(Page { items: items.into_iter().filter_map(Deleted::of).collect(), next })
     }
 
-    async fn list_deleted_with(&self, ctx: &SecurityContext, removal_id: RemovalId, query: &Query<T::Field>) -> StoreResult<Page<T>> {
+    async fn list_deleted_with(
+        &self,
+        ctx: &SecurityContext,
+        removal_id: RemovalId,
+        query: &Query<T::Field>,
+    ) -> StoreResult<Page<T>> {
         self.page(ctx, query, Presence::DeletedWith(removal_id)).await
     }
 
@@ -309,8 +360,8 @@ mod tests {
     use crate::confidentiality::ConfidentialityRules;
     use crate::group::{Group, GroupField};
     use crate::scope::Scope;
-    use crate::store::query::ordered_after;
     use crate::security::AllowAllPolicy;
+    use crate::store::query::ordered_after;
     use crate::user::UserId;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -326,10 +377,23 @@ mod tests {
     #[async_trait]
     impl DocumentStorage for Careless {
         async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
-            Ok(self.documents.lock().unwrap().iter().find(|(found, _)| *found == id).map(|(_, body)| body.clone()))
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(found, _)| *found == id)
+                .map(|(_, body)| body.clone()))
         }
 
-        async fn scan(&self, _filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, _presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+        async fn scan(
+            &self,
+            _filter: Option<&Filter<FieldPath>>,
+            _admission: Option<&Admission>,
+            _presence: Presence,
+            after: Option<Uuid>,
+            limit: usize,
+        ) -> StoreResult<Vec<(Uuid, Value)>> {
             self.scans.fetch_add(1, Ordering::SeqCst);
             let documents = self.documents.lock().unwrap().clone();
             Ok(ordered_after(documents, after).take(limit).collect())
@@ -359,11 +423,18 @@ mod tests {
     #[tokio::test]
     async fn a_list_judges_what_a_storage_hands_out_and_reads_on_in_batches() {
         let storage = Arc::new(Careless::default());
-        let policies: Policies = (Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let policies: Policies =
+            (Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let groups = CheckedStore::<Group>::new(Arc::<Careless>::clone(&storage), &policies);
         let system = SecurityContext::system();
         let (alice, bob) = (UserId::new(), UserId::new());
-        let team = |index: usize, owner: UserId| Group::team(ScopedName::new(format!("team {index}"), Scope::UserScope { user_id: owner }).unwrap(), owner);
+        let team = |index: usize, owner: UserId| {
+            Group::team(
+                ScopedName::new(format!("team {index}"), Scope::UserScope { user_id: owner })
+                    .unwrap(),
+                owner,
+            )
+        };
         let mut hers = Vec::new();
         for index in 0..2 * SCAN_BATCH {
             let owner = if index % 4 == 0 { alice } else { bob };
@@ -381,12 +452,24 @@ mod tests {
 
         let theirs = Query::filtered(Filter::eq(GroupField::Owner, ActorId::User(alice)));
         let page = groups.list(&system, &theirs).await.unwrap();
-        assert_eq!(page.items.iter().map(|group| group.id).collect::<Vec<_>>(), hers, "hers alone, not the deleted one, in the order of their ids");
-        assert_eq!((page.next, storage.scans.swap(0, Ordering::SeqCst)), (None, 3), "every batch read, the last one short");
+        assert_eq!(
+            page.items.iter().map(|group| group.id).collect::<Vec<_>>(),
+            hers,
+            "hers alone, not the deleted one, in the order of their ids"
+        );
+        assert_eq!(
+            (page.next, storage.scans.swap(0, Ordering::SeqCst)),
+            (None, 3),
+            "every batch read, the last one short"
+        );
 
         let first = groups.list(&system, &theirs.clone().limited(1)).await.unwrap();
         assert_eq!(first.items.iter().map(|group| group.id).collect::<Vec<_>>(), hers[..1]);
         assert!(first.next.is_some(), "more may follow");
-        assert_eq!(storage.scans.load(Ordering::SeqCst), 1, "nothing read past what the page needed");
+        assert_eq!(
+            storage.scans.load(Ordering::SeqCst),
+            1,
+            "nothing read past what the page needed"
+        );
     }
 }

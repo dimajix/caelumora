@@ -9,15 +9,15 @@
 
 use crate::agent::AgentError;
 use crate::attachment::AttachmentError;
+use crate::channel::ChannelError;
 use crate::command::CommandError;
-use crate::content::ContentError;
 use crate::component::ComponentError;
+use crate::content::ContentError;
 use crate::project::ProjectError;
 use crate::scoped::ScopeNotEmpty;
 use crate::session::SessionError;
-use crate::view::{AgentContextError, ViewError};
-use crate::channel::ChannelError;
 use crate::terminal::TerminalError;
+use crate::view::{AgentContextError, ViewError};
 use crate::workspace::WorkspaceError;
 use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
@@ -41,7 +41,10 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
 /// through the chain, so the outermost error that may be shown is shown,
 /// whoever knows its type: the agents' logic judges its own errors so
 /// (`caelumora_agents::error::user_message`, issue 370).
-pub fn user_message_with(error: &anyhow::Error, judge: impl Fn(&(dyn Error + 'static)) -> Option<String>) -> Option<String> {
+pub fn user_message_with(
+    error: &anyhow::Error,
+    judge: impl Fn(&(dyn Error + 'static)) -> Option<String>,
+) -> Option<String> {
     error.chain().find_map(|e| judge(e).or_else(|| judged(e)))
 }
 
@@ -61,8 +64,12 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
     } else if let Some(e) = e.downcast_ref::<SessionError>() {
         // As a component error, whose message it repeats.
         match e {
-            SessionError::InvalidComponents(cause) => component_message(cause).map(|_| e.to_string()),
-            SessionError::ChannelUnavailable { cause, .. } => component_message(cause).map(|_| e.to_string()),
+            SessionError::InvalidComponents(cause) => {
+                component_message(cause).map(|_| e.to_string())
+            }
+            SessionError::ChannelUnavailable { cause, .. } => {
+                component_message(cause).map(|_| e.to_string())
+            }
             _ => Some(e.to_string()),
         }
     } else if let Some(e) = e.downcast_ref::<ScopeNotEmpty>() {
@@ -133,7 +140,9 @@ fn attachment_message(error: &AttachmentError) -> Option<String> {
 /// log.
 fn content_message(error: &ContentError) -> Option<String> {
     match error {
-        ContentError::TooLarge { .. } | ContentError::Changed | ContentError::Unavailable(_) => Some(error.to_string()),
+        ContentError::TooLarge { .. } | ContentError::Changed | ContentError::Unavailable(_) => {
+            Some(error.to_string())
+        }
         ContentError::InvalidKey(_) | ContentError::NotFound(_) => None,
     }
 }
@@ -144,7 +153,9 @@ fn content_message(error: &ContentError) -> Option<String> {
 pub(crate) fn component_message(error: &ComponentError) -> Option<String> {
     match error {
         ComponentError::Bundle { cause, .. } => store_message(cause).map(|_| error.to_string()),
-        ComponentError::Build { cause, .. } | ComponentError::Backend { cause, .. } => component_message(cause).map(|_| error.to_string()),
+        ComponentError::Build { cause, .. } | ComponentError::Backend { cause, .. } => {
+            component_message(cause).map(|_| error.to_string())
+        }
         _ => Some(error.to_string()),
     }
 }
@@ -191,7 +202,10 @@ mod tests {
 
     #[test]
     fn finds_the_disclosable_error_inside_a_context_chain() {
-        let channel = ChannelError::NotAParticipant { participant: ActorId::System, channel: ChannelId::new() };
+        let channel = ChannelError::NotAParticipant {
+            participant: ActorId::System,
+            channel: ChannelId::new(),
+        };
         let shown = channel.to_string();
         let error = anyhow::Error::new(channel).context("removing a participant");
         assert_eq!(user_message(&error), Some(shown));
@@ -201,13 +215,24 @@ mod tests {
     /// error that may be shown is shown, whoever knows its type (issue 370).
     #[test]
     fn another_crate_judges_its_own_types_and_the_outermost_is_shown() {
-        let inner = ChannelError::NotAParticipant { participant: ActorId::System, channel: ChannelId::new() };
+        let inner = ChannelError::NotAParticipant {
+            participant: ActorId::System,
+            channel: ChannelId::new(),
+        };
         let shown = inner.to_string();
         let error = anyhow::Error::new(Others(inner));
 
-        assert_eq!(user_message(&error), Some(shown.clone()), "unknown to the runtime: what it holds");
+        assert_eq!(
+            user_message(&error),
+            Some(shown.clone()),
+            "unknown to the runtime: what it holds"
+        );
         let knows = |e: &(dyn Error + 'static)| e.downcast_ref::<Others>().map(ToString::to_string);
-        assert_eq!(user_message_with(&error, knows).as_deref(), Some("the other crate's"), "the outermost");
+        assert_eq!(
+            user_message_with(&error, knows).as_deref(),
+            Some("the other crate's"),
+            "the outermost"
+        );
         assert_eq!(user_message_with(&error, |_| None), Some(shown), "the runtime's still");
     }
 
@@ -216,53 +241,114 @@ mod tests {
         let error = anyhow::Error::new(ComponentError::Build {
             component: "github-mcp".to_string(),
             kind: "mcp_tool".to_string(),
-            cause: Box::new(ComponentError::InvalidConfig("invalid parameters: missing field `url`".to_string())),
+            cause: Box::new(ComponentError::InvalidConfig(
+                "invalid parameters: missing field `url`".to_string(),
+            )),
         });
 
         let message = user_message(&error).unwrap();
-        assert!(message.contains("'github-mcp'") && message.contains("mcp_tool") && message.contains("missing field `url`"), "{message}");
+        assert!(
+            message.contains("'github-mcp'")
+                && message.contains("mcp_tool")
+                && message.contains("missing field `url`"),
+            "{message}"
+        );
     }
 
     /// A bundle looked for in a store that failed is not shown, nor what
     /// wraps it; one that is gone is (issue 457).
     #[test]
     fn a_bundle_whose_store_failed_is_not_disclosed() {
-        let built = |cause| ComponentError::Build { component: "tools".to_string(), kind: "ref".to_string(), cause: Box::new(ComponentError::Bundle { name: "tools".to_string(), cause }) };
-        let failed = || built(StoreError::Backend("/srv/data/component_bundle: permission denied".to_string()));
+        let built = |cause| ComponentError::Build {
+            component: "tools".to_string(),
+            kind: "ref".to_string(),
+            cause: Box::new(ComponentError::Bundle { name: "tools".to_string(), cause }),
+        };
+        let failed = || {
+            built(StoreError::Backend("/srv/data/component_bundle: permission denied".to_string()))
+        };
         assert_eq!(user_message(&anyhow::Error::new(failed())), None);
-        assert_eq!(user_message(&anyhow::Error::new(SessionError::InvalidComponents(failed()))), None, "nor by the session that repeats it");
-        let gone = built(StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() });
-        assert!(user_message(&anyhow::Error::new(gone)).is_some_and(|message| message.contains("'tools'")));
+        assert_eq!(
+            user_message(&anyhow::Error::new(SessionError::InvalidComponents(failed()))),
+            None,
+            "nor by the session that repeats it"
+        );
+        let gone =
+            built(StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() });
+        assert!(user_message(&anyhow::Error::new(gone))
+            .is_some_and(|message| message.contains("'tools'")));
     }
 
     /// What is left in a scope is shown as its holder raises it, and alone: by kind and count.
     #[test]
     fn what_is_left_in_a_scope_is_shown_however_it_travels() {
         let session_id = SessionId::new();
-        let left = || ScopeNotEmpty { holder: Scope::SessionScope { session_id }, left: vec![(Agent::KIND, 1)] };
+        let left = || ScopeNotEmpty {
+            holder: Scope::SessionScope { session_id },
+            left: vec![(Agent::KIND, 1)],
+        };
         let shown = left().to_string();
         assert!(shown.contains("1 agent"), "{shown}");
-        assert_eq!(user_message(&anyhow::Error::new(SessionError::from(left()))).as_deref(), Some(shown.as_str()), "as the session raises it");
-        assert_eq!(user_message(&anyhow::Error::new(left())).as_deref(), Some(shown.as_str()), "and alone");
+        assert_eq!(
+            user_message(&anyhow::Error::new(SessionError::from(left()))).as_deref(),
+            Some(shown.as_str()),
+            "as the session raises it"
+        );
+        assert_eq!(
+            user_message(&anyhow::Error::new(left())).as_deref(),
+            Some(shown.as_str()),
+            "and alone"
+        );
     }
 
     #[test]
     fn a_storage_no_longer_configured_is_not_disclosed() {
         let gone = || AttachmentError::StorageGone(StorageGone("old".to_string()));
         assert_eq!(user_message(&anyhow::Error::new(gone())), None);
-        assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(gone()))), None, "nor read through a view, which repeats its text");
-        assert_eq!(user_message(&anyhow::Error::new(WorkspaceError::StorageGone(StorageGone("old".to_string())))), None, "nor a workspace's");
-        assert!(user_message(&anyhow::Error::new(WorkspaceError::UnknownStorage("nfs".to_string()))).is_some(), "where the caller named it");
-        let failed = AttachmentError::Content(ContentError::Unavailable("permission denied".to_string()));
-        assert_eq!(user_message(&anyhow::Error::new(failed)).as_deref(), Some("the storage of content failed: permission denied"), "what happened, as a workspace's storage tells it");
+        assert_eq!(
+            user_message(&anyhow::Error::new(ViewError::Attachment(gone()))),
+            None,
+            "nor read through a view, which repeats its text"
+        );
+        assert_eq!(
+            user_message(&anyhow::Error::new(WorkspaceError::StorageGone(StorageGone(
+                "old".to_string()
+            )))),
+            None,
+            "nor a workspace's"
+        );
+        assert!(
+            user_message(&anyhow::Error::new(WorkspaceError::UnknownStorage("nfs".to_string())))
+                .is_some(),
+            "where the caller named it"
+        );
+        let failed =
+            AttachmentError::Content(ContentError::Unavailable("permission denied".to_string()));
+        assert_eq!(
+            user_message(&anyhow::Error::new(failed)).as_deref(),
+            Some("the storage of content failed: permission denied"),
+            "what happened, as a workspace's storage tells it"
+        );
         let key = AttachmentError::Content(ContentError::NotFound("attachments/a/b".to_string()));
-        assert_eq!(user_message(&anyhow::Error::new(ViewError::Attachment(key))), None, "a key is its owner's");
-        assert!(user_message(&anyhow::Error::new(ViewError::Attachment(AttachmentError::NotFound(ContentId::new())))).is_some(), "what it names is safe");
+        assert_eq!(
+            user_message(&anyhow::Error::new(ViewError::Attachment(key))),
+            None,
+            "a key is its owner's"
+        );
+        assert!(
+            user_message(&anyhow::Error::new(ViewError::Attachment(AttachmentError::NotFound(
+                ContentId::new()
+            ))))
+            .is_some(),
+            "what it names is safe"
+        );
     }
 
     #[test]
     fn store_backend_errors_are_not_disclosed() {
-        let error = anyhow::Error::new(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string()));
+        let error = anyhow::Error::new(StoreError::Backend(
+            "/home/someone/local/entity_store: permission denied".to_string(),
+        ));
         assert_eq!(user_message(&error), None);
         assert_eq!(user_message(&anyhow::anyhow!("something internal")), None);
     }
@@ -272,7 +358,10 @@ mod tests {
         let refused = Refused { subject: "workspace", action: "UpdateWorkspace".to_string() };
         // Transparent around the store's error, which holds the refusal as
         // its source - as a plugin's error does, in the core's `anyhow`.
-        let error = anyhow::Error::new(WorkspaceError::Store(StoreError::PermissionDenied(refused.clone()))).context("deleting what lies in the scope");
+        let error = anyhow::Error::new(WorkspaceError::Store(StoreError::PermissionDenied(
+            refused.clone(),
+        )))
+        .context("deleting what lies in the scope");
         assert_eq!(refusal(&error), Some(&refused));
         assert!(!is_forbidden(&anyhow::Error::new(StoreError::Backend("x".to_string()))));
     }

@@ -50,7 +50,9 @@ impl Language {
         }
         let mut canonical = primary.to_ascii_lowercase();
         for subtag in subtags {
-            if !(1..=8).contains(&subtag.len()) || !subtag.chars().all(|c| c.is_ascii_alphanumeric()) {
+            if !(1..=8).contains(&subtag.len())
+                || !subtag.chars().all(|c| c.is_ascii_alphanumeric())
+            {
                 return Err(ValueError::Malformed { field: Self::FIELD, expected: EXPECTED });
             }
             canonical.push('-');
@@ -185,11 +187,23 @@ mod tests {
     #[test]
     fn only_a_tag_is_a_language() {
         assert_eq!(Language::new(""), Err(ValueError::Empty { field: "language" }));
-        for text in ["d", "deut", "de-", "de--CH", "de CH", " de", "dé", "1de", "de-toolongsubtag"] {
-            assert_eq!(Language::new(text), Err(ValueError::Malformed { field: "language", expected: EXPECTED }), "{text:?}");
+        for text in ["d", "deut", "de-", "de--CH", "de CH", " de", "dé", "1de", "de-toolongsubtag"]
+        {
+            assert_eq!(
+                Language::new(text),
+                Err(ValueError::Malformed { field: "language", expected: EXPECTED }),
+                "{text:?}"
+            );
         }
-        assert_eq!(Language::new(format!("de{}", "-a".repeat(MAX_LANGUAGE_CHARS))), Err(ValueError::TooLong { field: "language", max_chars: MAX_LANGUAGE_CHARS }));
-        assert_eq!(Language::new("Deutsch").unwrap_err().to_string(), "the language must be a tag such as \"de\" or \"en-GB\"", "naming the field");
+        assert_eq!(
+            Language::new(format!("de{}", "-a".repeat(MAX_LANGUAGE_CHARS))),
+            Err(ValueError::TooLong { field: "language", max_chars: MAX_LANGUAGE_CHARS })
+        );
+        assert_eq!(
+            Language::new("Deutsch").unwrap_err().to_string(),
+            "the language must be a tag such as \"de\" or \"en-GB\"",
+            "naming the field"
+        );
         assert_eq!(Language::optional(Some("")), Ok(None), "empty is none");
         assert!(Language::optional(Some(" ")).is_err(), "whitespace is no language");
     }
@@ -198,10 +212,22 @@ mod tests {
     fn a_language_is_named_by_its_tag_or_what_is_left_of_it() {
         let names = |text: &str| Language::new(text).unwrap().names();
         assert_eq!(names("de"), Some(("German", "Deutsch")));
-        assert_eq!(names("de-CH-1996"), Some(("German", "Deutsch")), "without its region and variant");
-        assert_eq!(names("zh-Hant-TW"), Some(("Traditional Chinese", "繁體中文")), "as far as the table knows it");
+        assert_eq!(
+            names("de-CH-1996"),
+            Some(("German", "Deutsch")),
+            "without its region and variant"
+        );
+        assert_eq!(
+            names("zh-Hant-TW"),
+            Some(("Traditional Chinese", "繁體中文")),
+            "as far as the table knows it"
+        );
         assert_eq!(names("pt-BR"), Some(("Brazilian Portuguese", "português do Brasil")));
-        assert_eq!(names("PT_br"), Some(("Brazilian Portuguese", "português do Brasil")), "by the tag in the usual case");
+        assert_eq!(
+            names("PT_br"),
+            Some(("Brazilian Portuguese", "português do Brasil")),
+            "by the tag in the usual case"
+        );
         assert_eq!(names("tlh"), None, "a language the table does not know");
         assert!(NAMES.iter().all(|(tag, ..)| Language::new(tag).is_ok_and(|language| language.as_str() == *tag)), "every tag of the table as a language keeps it");
     }
@@ -210,7 +236,10 @@ mod tests {
     fn a_language_is_written_as_its_tag_and_checked_when_read() {
         let language = Language::new("en-gb").unwrap();
         assert_eq!(serde_json::to_string(&language).unwrap(), "\"en-gb\"", "as written");
-        assert_eq!(serde_json::from_str::<Language>("\"pt_br\"").unwrap(), Language::new("pt-BR").unwrap());
+        assert_eq!(
+            serde_json::from_str::<Language>("\"pt_br\"").unwrap(),
+            Language::new("pt-BR").unwrap()
+        );
         assert!(serde_json::from_str::<Language>("\"Deutsch\"").is_err());
     }
 }

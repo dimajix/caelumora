@@ -4,7 +4,6 @@
 use crate::channel::ChannelResponse;
 use crate::project::ProjectResponse;
 use crate::workspace::WorkspaceResponse;
-use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::HistoryAccess;
@@ -15,9 +14,10 @@ use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::project::ProjectId;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::snapshot;
 use caelumora_model::value::language::Language;
-use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::value::text::{Briefing, Summary};
+use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -70,9 +70,13 @@ impl From<SessionWorkspaceRequest> for WorkspaceChoice {
     fn from(request: SessionWorkspaceRequest) -> Self {
         match request {
             SessionWorkspaceRequest::None => Self::None,
-            SessionWorkspaceRequest::Existing { workspace_id, share } => Self::Existing { id: workspace_id, share },
-            SessionWorkspaceRequest::New { storage, classification } =>
-                Self::New { storage, classification: classification.unwrap_or(Classification::CHANNEL_DEFAULT) },
+            SessionWorkspaceRequest::Existing { workspace_id, share } => {
+                Self::Existing { id: workspace_id, share }
+            }
+            SessionWorkspaceRequest::New { storage, classification } => Self::New {
+                storage,
+                classification: classification.unwrap_or(Classification::CHANNEL_DEFAULT),
+            },
         }
     }
 }
@@ -100,7 +104,15 @@ pub struct SessionResponse {
 
 impl From<snapshot::SessionSnapshot> for SessionResponse {
     fn from(view: snapshot::SessionSnapshot) -> Self {
-        Self { id: view.id, name: view.name, summary: view.summary, language: view.language, time_zone: view.time_zone, privacy: view.privacy, project_id: view.project.map(|project| project.id) }
+        Self {
+            id: view.id,
+            name: view.name,
+            summary: view.summary,
+            language: view.language,
+            time_zone: view.time_zone,
+            privacy: view.privacy,
+            project_id: view.project.map(|project| project.id),
+        }
     }
 }
 
@@ -146,7 +158,14 @@ pub struct CandidateResponse {
 impl CandidateResponse {
     /// `view` as the API shows it; `None` for an id that is no participant.
     pub fn of(view: snapshot::CandidateSnapshot) -> Option<Self> {
-        Some(Self { kind: ParticipantKind::of(view.id)?, id: view.id, name: view.name, in_session: view.in_session, in_channel: view.in_channel, refusal: view.refusal })
+        Some(Self {
+            kind: ParticipantKind::of(view.id)?,
+            id: view.id,
+            name: view.name,
+            in_session: view.in_session,
+            in_channel: view.in_channel,
+            refusal: view.refusal,
+        })
     }
 }
 
@@ -244,7 +263,11 @@ impl From<snapshot::SessionSnapshot> for SessionSnapshot {
             can_change: view.can_change,
             channels: view.channels.into_iter().map(Into::into).collect(),
             // Every participant is a user or an agent.
-            participants: view.participants.into_iter().filter_map(ParticipantResponse::of).collect(),
+            participants: view
+                .participants
+                .into_iter()
+                .filter_map(ParticipantResponse::of)
+                .collect(),
             workspace: view.workspace.map(Into::into),
             project: view.project.map(Into::into),
         }
@@ -262,7 +285,11 @@ pub struct ParticipantResponse {
 impl ParticipantResponse {
     /// `view` as the API shows it; `None` for an id that is no participant.
     fn of(view: snapshot::ParticipantSnapshot) -> Option<Self> {
-        Some(Self { id: view.id, kind: ParticipantKind::of(view.id)?, name: view.name.unwrap_or_else(|| UNKNOWN.to_string()) })
+        Some(Self {
+            id: view.id,
+            kind: ParticipantKind::of(view.id)?,
+            name: view.name.unwrap_or_else(|| UNKNOWN.to_string()),
+        })
     }
 }
 
@@ -291,24 +318,44 @@ pub struct SessionPrivacyRequest {
 mod tests {
     use super::*;
     use serde_json::Value;
-    
-    
-    
 
     #[test]
     fn a_new_session_s_workspace_is_chosen_by_its_kind_and_otherwise_the_template_s() {
-        let parse = |json: Value| serde_json::from_value::<CreateSessionRequest>(json).unwrap().workspace.map(WorkspaceChoice::from);
+        let parse = |json: Value| {
+            serde_json::from_value::<CreateSessionRequest>(json)
+                .unwrap()
+                .workspace
+                .map(WorkspaceChoice::from)
+        };
         let template = Uuid::new_v4();
         assert_eq!(parse(serde_json::json!({ "template_id": template })), None, "the template's");
-        assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "none" } })), Some(WorkspaceChoice::None));
-        let id = WorkspaceId::new();
-        assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "existing", "workspace_id": id } })), Some(WorkspaceChoice::Existing { id, share: None }));
-        assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "existing", "workspace_id": id, "share": "write" } })), Some(WorkspaceChoice::Existing { id, share: Some(Grant::Write) }), "shared with its members");
         assert_eq!(
-            parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "new", "storage": "sandbox" } })),
-            Some(WorkspaceChoice::New { storage: "sandbox".to_string(), classification: Classification::CHANNEL_DEFAULT }),
+            parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "none" } })),
+            Some(WorkspaceChoice::None)
+        );
+        let id = WorkspaceId::new();
+        assert_eq!(
+            parse(
+                serde_json::json!({ "template_id": template, "workspace": { "kind": "existing", "workspace_id": id } })
+            ),
+            Some(WorkspaceChoice::Existing { id, share: None })
+        );
+        assert_eq!(
+            parse(
+                serde_json::json!({ "template_id": template, "workspace": { "kind": "existing", "workspace_id": id, "share": "write" } })
+            ),
+            Some(WorkspaceChoice::Existing { id, share: Some(Grant::Write) }),
+            "shared with its members"
+        );
+        assert_eq!(
+            parse(
+                serde_json::json!({ "template_id": template, "workspace": { "kind": "new", "storage": "sandbox" } })
+            ),
+            Some(WorkspaceChoice::New {
+                storage: "sandbox".to_string(),
+                classification: Classification::CHANNEL_DEFAULT
+            }),
             "internal unless classified",
         );
     }
-
 }

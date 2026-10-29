@@ -65,9 +65,24 @@ impl Work {
     /// session's as it began (issue 424). How its model is given its
     /// context is the default until it is given as a profile says
     /// (`given_as`).
-    pub fn new(event_context: EventContext, asked: Option<RequestReason>, security_context: SecurityContext, classification: Classification, time_zone: TimeZone) -> Self {
-        let context = ContextRef { transcript: None, frame: FrameRef { time_zone, ..FrameRef::default() } };
-        Self { turn_id: TurnId::new(), event_context, asked, security_context, classification, seen: Some(Classification::PUBLIC), context }
+    pub fn new(
+        event_context: EventContext,
+        asked: Option<RequestReason>,
+        security_context: SecurityContext,
+        classification: Classification,
+        time_zone: TimeZone,
+    ) -> Self {
+        let context =
+            ContextRef { transcript: None, frame: FrameRef { time_zone, ..FrameRef::default() } };
+        Self {
+            turn_id: TurnId::new(),
+            event_context,
+            asked,
+            security_context,
+            classification,
+            seen: Some(Classification::PUBLIC),
+            context,
+        }
     }
 
     /// This work, its model given its context as `profile` says (issues 49,
@@ -152,8 +167,20 @@ mod tests {
     fn work_takes_in_the_knowledge_and_every_part_of_its_context() {
         let internal = Classification::general(Confidentiality::Internal);
         let confidential = Classification::general(Confidentiality::Confidential);
-        let mut work = Work::new(EventContext::default(), None, SecurityContext::default(), confidential.clone(), Default::default());
-        let part = |classification: Option<Classification>| PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification, source: None };
+        let mut work = Work::new(
+            EventContext::default(),
+            None,
+            SecurityContext::default(),
+            confidential.clone(),
+            Default::default(),
+        );
+        let part = |classification: Option<Classification>| PromptPart {
+            role: MessageRole::System,
+            text: "Be brief.".to_string(),
+            after: None,
+            classification,
+            source: None,
+        };
         let read = KnowledgeRef {
             channel: Default::default(),
             session: Default::default(),
@@ -171,7 +198,13 @@ mod tests {
     #[test]
     fn work_may_see_what_flows_into_its_classification() {
         let internal = Classification::general(Confidentiality::Internal);
-        let work = Work::new(EventContext::default(), None, SecurityContext::default(), internal.clone(), Default::default());
+        let work = Work::new(
+            EventContext::default(),
+            None,
+            SecurityContext::default(),
+            internal.clone(),
+            Default::default(),
+        );
         assert!(work.may_see(&Classification::PUBLIC), "below its classification");
         assert!(work.may_see(&internal), "at it");
         assert!(!work.may_see(&Classification::general(Confidentiality::Confidential)), "above it");
@@ -179,25 +212,47 @@ mod tests {
 
     #[test]
     fn work_writes_as_what_it_has_seen_never_above_its_channel() {
-        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
+        let classified = |level, compartments: &[&str]| {
+            Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
+        };
         let channel = classified(Confidentiality::Confidential, &["hr"]);
-        let mut work = Work::new(EventContext::default(), None, SecurityContext::default(), channel.clone(), Default::default());
+        let mut work = Work::new(
+            EventContext::default(),
+            None,
+            SecurityContext::default(),
+            channel.clone(),
+            Default::default(),
+        );
         assert_eq!(work.label(), Classification::PUBLIC, "nothing seen");
 
         work.see(&Classification::general(Confidentiality::Internal));
         assert_eq!(work.label(), Classification::general(Confidentiality::Internal));
         work.see(&classified(Confidentiality::Internal, &["hr", "sales"]));
-        assert_eq!(work.label(), classified(Confidentiality::Internal, &["hr", "sales"]), "a wider audience than the channel's");
+        assert_eq!(
+            work.label(),
+            classified(Confidentiality::Internal, &["hr", "sales"]),
+            "a wider audience than the channel's"
+        );
         work.see(&classified(Confidentiality::Internal, &["sales"]));
         assert_eq!(work.label(), channel, "not known to flow into the channel: the channel");
         work.see(&Classification::PUBLIC);
         assert_eq!(work.label(), channel, "it never falls");
 
-        let mut unknown = Work::new(EventContext::default(), None, SecurityContext::default(), channel.clone(), Default::default());
+        let mut unknown = Work::new(
+            EventContext::default(),
+            None,
+            SecurityContext::default(),
+            channel.clone(),
+            Default::default(),
+        );
         unknown.see_classified(None);
         assert_eq!(unknown.label(), channel, "what is not known counts as the channel");
         let stored_before = Work { classification: channel.clone(), ..Work::default() };
-        assert_eq!(stored_before.label(), channel, "work stored before it was kept has seen its channel");
+        assert_eq!(
+            stored_before.label(),
+            channel,
+            "work stored before it was kept has seen its channel"
+        );
     }
 
     #[test]
@@ -218,8 +273,25 @@ mod tests {
 
     #[test]
     fn work_keeps_its_id_when_stored() {
-        let work = Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default());
-        assert_ne!(work.turn_id, Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()).turn_id, "each its own");
+        let work = Work::new(
+            EventContext::default(),
+            None,
+            SecurityContext::default(),
+            Classification::CHANNEL_DEFAULT,
+            Default::default(),
+        );
+        assert_ne!(
+            work.turn_id,
+            Work::new(
+                EventContext::default(),
+                None,
+                SecurityContext::default(),
+                Classification::CHANNEL_DEFAULT,
+                Default::default()
+            )
+            .turn_id,
+            "each its own"
+        );
         let stored: Work = serde_json::from_value(serde_json::to_value(&work).unwrap()).unwrap();
         assert_eq!(stored.turn_id, work.turn_id);
     }

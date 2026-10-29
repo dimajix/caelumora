@@ -14,10 +14,11 @@
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
+use caelumora_model::agent;
 use caelumora_model::agent::{Agent, AgentId, AgentState};
+use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::message::MessageId;
-use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::store::StateStore;
 use std::collections::HashMap;
@@ -25,7 +26,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
 use tracing::debug;
-use caelumora_model::agent;
 
 /// The state of one agent, shared by all its actors.
 #[derive(Debug)]
@@ -48,9 +48,23 @@ pub struct AgentStateHandle {
 }
 
 impl AgentStateHandle {
-    fn new(agent_id: AgentId, state: AgentState, state_store: Arc<dyn StateStore>, events: Arc<dyn EventPublisher>, attributes: SecurityAttributes) -> Self {
+    fn new(
+        agent_id: AgentId,
+        state: AgentState,
+        state_store: Arc<dyn StateStore>,
+        events: Arc<dyn EventPublisher>,
+        attributes: SecurityAttributes,
+    ) -> Self {
         let next_memory_id = AtomicU32::new(state.memory.next_id().0);
-        Self { agent_id, current: ArcSwap::from_pointee(state), write: Mutex::new(()), next_memory_id, state_store, events, attributes }
+        Self {
+            agent_id,
+            current: ArcSwap::from_pointee(state),
+            write: Mutex::new(()),
+            next_memory_id,
+            state_store,
+            events,
+            attributes,
+        }
     }
 
     /// A handle of an empty state, stored in a store of its own and
@@ -59,7 +73,13 @@ impl AgentStateHandle {
     pub fn detached() -> Arc<Self> {
         use caelumora_model::store::memory::MemoryStore;
         let state_store = Arc::new(MemoryStore::new());
-        Arc::new(Self::new(AgentId::default(), AgentState::default(), state_store, Arc::new(()), SecurityAttributes::default()))
+        Arc::new(Self::new(
+            AgentId::default(),
+            AgentState::default(),
+            state_store,
+            Arc::new(()),
+            SecurityAttributes::default(),
+        ))
     }
 
     /// The state as it is now. A snapshot: changes applied afterwards do not
@@ -80,7 +100,11 @@ impl AgentStateHandle {
     ///
     /// # Errors
     /// Whatever the `StateStore` reports.
-    pub async fn apply(&self, changes: Vec<(MemoryChange, MemoryOrigin)>, after: MessageId) -> Result<()> {
+    pub async fn apply(
+        &self,
+        changes: Vec<(MemoryChange, MemoryOrigin)>,
+        after: MessageId,
+    ) -> Result<()> {
         if changes.is_empty() {
             return Ok(());
         }
@@ -90,10 +114,15 @@ impl AgentStateHandle {
         for (change, origin) in changes {
             state.memory.push(change, origin, after);
         }
-        self.state_store.put_agent_state(self.agent_id, &mut state).await
+        self.state_store
+            .put_agent_state(self.agent_id, &mut state)
+            .await
             .with_context(|| format!("Cannot store the state of agent {}", self.agent_id))?;
         self.current.store(Arc::new(state));
-        self.events.publish(GlobalEvent::custom::<Agent>(&self.agent_id, agent::STATE_CHANGED, &()), self.attributes.clone());
+        self.events.publish(
+            GlobalEvent::custom::<Agent>(&self.agent_id, agent::STATE_CHANGED, &()),
+            self.attributes.clone(),
+        );
         debug!("Applied {} changes to the state of agent {}", count, self.agent_id);
         Ok(())
     }
@@ -120,14 +149,27 @@ impl AgentStates {
     ///
     /// # Errors
     /// Whatever the `StateStore` reports when loading.
-    pub async fn get(&self, agent_id: AgentId, attributes: SecurityAttributes) -> Result<Arc<AgentStateHandle>> {
+    pub async fn get(
+        &self,
+        agent_id: AgentId,
+        attributes: SecurityAttributes,
+    ) -> Result<Arc<AgentStateHandle>> {
         let mut handles = self.handles.lock().await;
         if let Some(handle) = handles.get(&agent_id).and_then(Weak::upgrade) {
             return Ok(handle);
         }
-        let state = self.state_store.get_agent_state(agent_id).await
+        let state = self
+            .state_store
+            .get_agent_state(agent_id)
+            .await
             .with_context(|| format!("Cannot load the state of agent {}", agent_id))?;
-        let handle = Arc::new(AgentStateHandle::new(agent_id, state, Arc::clone(&self.state_store), Arc::clone(&self.events), attributes));
+        let handle = Arc::new(AgentStateHandle::new(
+            agent_id,
+            state,
+            Arc::clone(&self.state_store),
+            Arc::clone(&self.events),
+            attributes,
+        ));
         handles.retain(|_, h| h.strong_count() > 0);
         handles.insert(agent_id, Arc::downgrade(&handle));
         Ok(handle)
@@ -137,14 +179,21 @@ impl AgentStates {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::event::EntityChange;
     use caelumora_model::agent;
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::event::EntityChange;
+    use caelumora_model::store::memory::MemoryStore;
     use std::sync::Mutex;
 
     fn remember(id: MemoryId, text: &str) -> (MemoryChange, MemoryOrigin) {
-        (MemoryChange::Add { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, MemoryOrigin::default())
+        (
+            MemoryChange::Add {
+                id,
+                text: text.to_string(),
+                classification: Classification::CHANNEL_DEFAULT,
+            },
+            MemoryOrigin::default(),
+        )
     }
 
     #[tokio::test]
@@ -163,7 +212,8 @@ mod tests {
         in_main.apply(vec![remember(a, "from main")], MessageId::new()).await.unwrap();
         in_research.apply(vec![remember(b, "from research")], MessageId::new()).await.unwrap();
 
-        let texts: Vec<_> = in_main.current().memory.current().into_iter().map(|m| m.text).collect();
+        let texts: Vec<_> =
+            in_main.current().memory.current().into_iter().map(|m| m.text).collect();
         assert_eq!(texts, ["from main", "from research"], "neither overwrote the other");
         assert!(before.memory.current().is_empty(), "a snapshot does not change under its reader");
         let stored = store.get_agent_state(agent).await.unwrap();
@@ -182,7 +232,11 @@ mod tests {
 
         let again = states.get(agent, Default::default()).await.unwrap();
         assert_eq!(again.current().memory.current()[0].text, "kept");
-        assert_eq!(again.reserve_memory_id(), MemoryId(id.0 + 1), "numbering continues after what was stored");
+        assert_eq!(
+            again.reserve_memory_id(),
+            MemoryId(id.0 + 1),
+            "numbering continues after what was stored"
+        );
     }
 
     #[derive(Debug, Default)]
@@ -193,7 +247,12 @@ mod tests {
             self.0.lock().unwrap().push(event);
         }
 
-        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[Classification]) {
+        fn publish_classified(
+            &self,
+            event: GlobalEvent,
+            attributes: SecurityAttributes,
+            _classifications: &[Classification],
+        ) {
             self.publish(event, attributes);
         }
     }
@@ -211,6 +270,9 @@ mod tests {
         let id = handle.reserve_memory_id();
         handle.apply(vec![remember(id, "secret")], MessageId::new()).await.unwrap();
         let events = announced.0.lock().unwrap();
-        assert!(matches!(events.as_slice(), [event] if matches!(event.about::<Agent>(), Some((a, EntityChange::Custom { name: agent::STATE_CHANGED, .. })) if a == agent)), "{events:?}");
+        assert!(
+            matches!(events.as_slice(), [event] if matches!(event.about::<Agent>(), Some((a, EntityChange::Custom { name: agent::STATE_CHANGED, .. })) if a == agent)),
+            "{events:?}"
+        );
     }
 }

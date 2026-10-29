@@ -2,9 +2,9 @@
 //! their component kinds alone.
 
 use crate::{terminal_tool, workspace_prompt_provider, NAMESPACE, PROMPTS};
+use anyhow::Result;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
-use anyhow::Result;
 
 /// The tools of the workspace and its prompt part, as a plugin.
 #[derive(Debug, Default)]

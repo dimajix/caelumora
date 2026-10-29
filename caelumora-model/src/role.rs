@@ -41,7 +41,9 @@ pub enum RoleError {
     DuplicateRole(String),
     #[error("Role '{0}' is not configured")]
     UnknownRole(String),
-    #[error("Role '{role}' grants a clearance for compartment '{compartment}', which is not configured")]
+    #[error(
+        "Role '{role}' grants a clearance for compartment '{compartment}', which is not configured"
+    )]
     UnknownCompartment { role: String, compartment: Compartment },
 }
 
@@ -54,7 +56,8 @@ impl TryFrom<Vec<RoleDefinition>> for Roles {
             if definition.name.is_empty() {
                 return Err(RoleError::UnnamedRole);
             }
-            if roles.ids.contains_key(&definition.name) || roles.grants.contains_key(&definition.id) {
+            if roles.ids.contains_key(&definition.name) || roles.grants.contains_key(&definition.id)
+            {
                 return Err(RoleError::DuplicateRole(definition.name));
             }
             roles.ids.insert(definition.name, definition.id);
@@ -67,8 +70,15 @@ impl TryFrom<Vec<RoleDefinition>> for Roles {
 impl Roles {
     /// The roles `definitions` name - an id, a name, the clearances it
     /// grants.
-    pub fn new(definitions: impl IntoIterator<Item = (RoleId, String, Vec<Clearance>)>) -> Result<Self, RoleError> {
-        Self::try_from(definitions.into_iter().map(|(id, name, clearances)| RoleDefinition { id, name, clearances }).collect::<Vec<_>>())
+    pub fn new(
+        definitions: impl IntoIterator<Item = (RoleId, String, Vec<Clearance>)>,
+    ) -> Result<Self, RoleError> {
+        Self::try_from(
+            definitions
+                .into_iter()
+                .map(|(id, name, clearances)| RoleDefinition { id, name, clearances })
+                .collect::<Vec<_>>(),
+        )
     }
 
     /// Nothing if every compartment the roles grant is configured.
@@ -77,7 +87,10 @@ impl Roles {
             let clearances = self.grants.get(id).into_iter().flatten();
             for compartment in clearances.filter_map(|c| c.compartment.as_ref()) {
                 if !compartments.names().any(|known| known == compartment) {
-                    return Err(RoleError::UnknownCompartment { role: name.clone(), compartment: compartment.clone() });
+                    return Err(RoleError::UnknownCompartment {
+                        role: name.clone(),
+                        compartment: compartment.clone(),
+                    });
                 }
             }
         }
@@ -108,7 +121,9 @@ impl Roles {
     /// Everything someone with `roles` is cleared for. A role that is not
     /// configured grants nothing.
     pub fn clearances_of(&self, roles: &[RoleId]) -> Clearances {
-        Clearances::new(roles.iter().filter_map(|r| self.grants.get(r)).flatten().cloned().collect())
+        Clearances::new(
+            roles.iter().filter_map(|r| self.grants.get(r)).flatten().cloned().collect(),
+        )
     }
 }
 
@@ -125,27 +140,44 @@ mod tests {
     fn roles_grant_clearances_and_name_only_configured_compartments() {
         let (hr, staff) = (RoleId::new(), RoleId::new());
         let roles = Roles::new([
-            (hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(Compartment::new("hr")) }]),
+            (
+                hr,
+                "hr".to_string(),
+                vec![Clearance { level: Confidential, compartment: Some(Compartment::new("hr")) }],
+            ),
             (staff, "staff".to_string(), vec![Clearance { level: Internal, compartment: None }]),
-        ]).unwrap();
+        ])
+        .unwrap();
         let compartments = organisation();
         assert_eq!(roles.check(&compartments), Ok(()));
         let both = roles.clearances_of(&[hr, staff, RoleId::new()]);
         let hr_only = Classification::new(Confidential, [Compartment::new("hr")]).unwrap();
-        assert!(both.admits(&hr_only, &compartments) && both.admits(&Classification::general(Internal), &compartments));
-        let typo = Roles::new([(RoleId::new(), "x".to_string(), vec![Clearance { level: Internal, compartment: Some(Compartment::new("hrr")) }])]).unwrap();
+        assert!(
+            both.admits(&hr_only, &compartments)
+                && both.admits(&Classification::general(Internal), &compartments)
+        );
+        let typo = Roles::new([(
+            RoleId::new(),
+            "x".to_string(),
+            vec![Clearance { level: Internal, compartment: Some(Compartment::new("hrr")) }],
+        )])
+        .unwrap();
         assert!(matches!(typo.check(&compartments), Err(RoleError::UnknownCompartment { .. })));
         let id = RoleId::new();
         let written: Roles = serde_json::from_value(serde_json::json!([
             {"id": id, "name": "hr", "clearances": [{"level": "confidential", "compartment": "hr"}, {"level": "internal"}]}
         ])).unwrap();
-        assert!(written.clearances_of(&[id]).admits(&Classification::general(Internal), &compartments));
+        assert!(written
+            .clearances_of(&[id])
+            .admits(&Classification::general(Internal), &compartments));
     }
 
     #[test]
     fn a_role_is_stored_by_its_id_and_written_by_its_name() {
         let (hr, staff) = (RoleId::new(), RoleId::new());
-        let roles = Roles::new([(hr, "hr".to_string(), vec![]), (staff, "staff".to_string(), vec![])]).unwrap();
+        let roles =
+            Roles::new([(hr, "hr".to_string(), vec![]), (staff, "staff".to_string(), vec![])])
+                .unwrap();
         assert_eq!(roles.id_of("hr"), Ok(hr));
         assert_eq!(roles.ids_of(&["staff", "hr"]), Ok(vec![staff, hr]));
         assert_eq!(roles.name_of(staff), Some("staff"));
@@ -153,7 +185,12 @@ mod tests {
         assert_eq!(roles.name_of(RoleId::new()), None);
         let twice = Roles::new([(hr, "hr".to_string(), vec![]), (hr, "other".to_string(), vec![])]);
         assert_eq!(twice, Err(RoleError::DuplicateRole("other".to_string())), "an id is one role");
-        let named_twice = Roles::new([(hr, "hr".to_string(), vec![]), (staff, "hr".to_string(), vec![])]);
-        assert_eq!(named_twice, Err(RoleError::DuplicateRole("hr".to_string())), "and so is a name");
+        let named_twice =
+            Roles::new([(hr, "hr".to_string(), vec![]), (staff, "hr".to_string(), vec![])]);
+        assert_eq!(
+            named_twice,
+            Err(RoleError::DuplicateRole("hr".to_string())),
+            "and so is a name"
+        );
     }
 }

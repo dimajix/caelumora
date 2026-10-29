@@ -15,21 +15,21 @@
 use super::context::AgentContextView;
 use super::{ViewError, ViewResult, Views};
 use async_trait::async_trait;
-use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::{ActorDescription, ActorId};
-use caelumora_model::value::name::Name;
-use caelumora_model::value::text::Introduction;
 use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality};
 use caelumora_model::channel::Participant;
 use caelumora_model::digest::Digest;
 use caelumora_model::mention::handle_of;
 use caelumora_model::note::Note;
+use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
-use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
+use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::{UserId, UserProfile};
+use caelumora_model::value::name::Name;
+use caelumora_model::value::text::Introduction;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -93,19 +93,37 @@ pub(super) trait ParticipantState: Send + Sync + Debug {
 /// name known to everybody in it (issue 120), introductions are public,
 /// and an agent's kind decides how its state is read, not what the viewer
 /// may see.
-pub(super) async fn participant_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn ParticipantState> {
+pub(super) async fn participant_state(
+    views: &Views,
+    participant: &Participant,
+    channel: ChannelId,
+) -> Arc<dyn ParticipantState> {
     match participant {
-        Participant::User(id) => match views.stores().users.get(&SecurityContext::system(), *id).await {
-            Ok(user) => Arc::new(UserParticipant { id: *id, name: user.username, profiles: Arc::clone(&views.stores().user_profiles), introduction: OnceCell::new() }),
-            Err(StoreError::NotFound { .. }) => Arc::new(GoneParticipant { name: None }),
-            Err(e) => {
-                warn!("Cannot read user {}: {:#}", id, e);
-                Arc::new(GoneParticipant { name: None })
+        Participant::User(id) => {
+            match views.stores().users.get(&SecurityContext::system(), *id).await {
+                Ok(user) => Arc::new(UserParticipant {
+                    id: *id,
+                    name: user.username,
+                    profiles: Arc::clone(&views.stores().user_profiles),
+                    introduction: OnceCell::new(),
+                }),
+                Err(StoreError::NotFound { .. }) => Arc::new(GoneParticipant { name: None }),
+                Err(e) => {
+                    warn!("Cannot read user {}: {:#}", id, e);
+                    Arc::new(GoneParticipant { name: None })
+                }
             }
-        },
+        }
         Participant::Agent(id) => match views.agent_of(*id).await {
             Some(agent) => Arc::new(AgentParticipantState {
-                participant: AgentParticipant(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()), transcripts: Arc::clone(views.transcripts()), prompts: Arc::clone(views.prompts()) }),
+                participant: AgentParticipant(StateRef {
+                    agent: agent.id,
+                    channel,
+                    store: Arc::clone(views.states()),
+                    histories: Arc::clone(views.histories()),
+                    transcripts: Arc::clone(views.transcripts()),
+                    prompts: Arc::clone(views.prompts()),
+                }),
                 agent,
                 personalities: Arc::clone(&views.stores().personalities),
                 personality: OnceCell::new(),
@@ -133,16 +151,32 @@ impl ParticipantState for UserParticipant {
     }
 
     async fn introduction(&self) -> ViewResult<Option<Introduction>> {
-        let introduction = self.introduction.get_or_try_init(|| async {
-            let profile = self.profiles.get(&SecurityContext::system(), self.id).await.optional()
-                .map_err(|e| ViewError::failed(e, format!("reading the introduction of {}", ActorId::User(self.id))))?;
-            Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction))
-        }).await?;
+        let introduction = self
+            .introduction
+            .get_or_try_init(|| async {
+                let profile = self
+                    .profiles
+                    .get(&SecurityContext::system(), self.id)
+                    .await
+                    .optional()
+                    .map_err(|e| {
+                        ViewError::failed(
+                            e,
+                            format!("reading the introduction of {}", ActorId::User(self.id)),
+                        )
+                    })?;
+                Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction))
+            })
+            .await?;
         Ok(introduction.clone())
     }
 
     async fn describe(&self, id: ActorId) -> ViewResult<Option<ActorDescription>> {
-        Ok(Some(ActorDescription { id, name: self.name.clone(), introduction: self.introduction().await? }))
+        Ok(Some(ActorDescription {
+            id,
+            name: self.name.clone(),
+            introduction: self.introduction().await?,
+        }))
     }
 }
 
@@ -183,7 +217,14 @@ impl StateRef {
     /// The error for a state that cannot be read, logged.
     fn failed(&self, e: StoreError) -> ViewError {
         warn!("Cannot read the state of agent {} in channel {}: {}", self.agent, self.channel, e);
-        ViewError::failed(e, format!("reading the state of {} in channel {}", ActorId::Agent(self.agent), self.channel))
+        ViewError::failed(
+            e,
+            format!(
+                "reading the state of {} in channel {}",
+                ActorId::Agent(self.agent),
+                self.channel
+            ),
+        )
     }
 }
 
@@ -212,14 +253,29 @@ impl ParticipantState for AgentParticipantState {
     }
 
     async fn describe(&self, id: ActorId) -> ViewResult<Option<ActorDescription>> {
-        Ok(Some(ActorDescription { id, name: self.agent.name.name.clone(), introduction: self.introduction().await? }))
+        Ok(Some(ActorDescription {
+            id,
+            name: self.agent.name.name.clone(),
+            introduction: self.introduction().await?,
+        }))
     }
 
     async fn personality(&self) -> ViewResult<Option<&Personality>> {
-        let personality = self.personality.get_or_try_init(|| async {
-            self.personalities.get(&SecurityContext::system(), self.agent.personality_id).await.optional()
-                .map_err(|e| ViewError::failed(e, format!("reading the personality of agent {}", self.agent.id)))
-        }).await?;
+        let personality = self
+            .personality
+            .get_or_try_init(|| async {
+                self.personalities
+                    .get(&SecurityContext::system(), self.agent.personality_id)
+                    .await
+                    .optional()
+                    .map_err(|e| {
+                        ViewError::failed(
+                            e,
+                            format!("reading the personality of agent {}", self.agent.id),
+                        )
+                    })
+            })
+            .await?;
         Ok(personality.as_ref())
     }
 
@@ -243,7 +299,11 @@ impl AgentParticipant {
     /// a participant's details are taken from, read once for all of them.
     pub(super) async fn stored(&self) -> ViewResult<AgentChannelState> {
         let place = &self.0;
-        place.store.get_agent_channel_state(place.agent, place.channel).await.map_err(|e| place.failed(e))
+        place
+            .store
+            .get_agent_channel_state(place.agent, place.channel)
+            .await
+            .map_err(|e| place.failed(e))
     }
 
     /// The notes only it reads (issue 51), with the digest of their chain.
@@ -256,6 +316,13 @@ impl AgentParticipant {
     /// at the position `from`.
     pub(super) async fn context(&self) -> ViewResult<AgentContextView> {
         let place = &self.0;
-        Ok(AgentContextView::of(place.agent, place.channel, self.stored().await?, Arc::clone(&place.histories), Arc::clone(&place.transcripts), Arc::clone(&place.prompts)))
+        Ok(AgentContextView::of(
+            place.agent,
+            place.channel,
+            self.stored().await?,
+            Arc::clone(&place.histories),
+            Arc::clone(&place.transcripts),
+            Arc::clone(&place.prompts),
+        ))
     }
 }

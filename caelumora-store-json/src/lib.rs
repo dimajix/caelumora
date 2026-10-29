@@ -2,33 +2,35 @@
 //! document and every state in files below a directory (`JsonFileStore`),
 //! registered as the backend `json` by its plugin (`JsonStorePlugin`).
 
+use async_trait::async_trait;
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::channel::{ChannelId, ChannelState};
-use caelumora_model::user::{UserChannelState, UserId};
-use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_model::security::Admission;
-use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
-use caelumora_model::value::name::ScopedName;
+use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
 use caelumora_model::store::transcript::{load_named_by_turn, TranscriptStore};
-use caelumora_model::store::{EntityKind, Journaled, PersistenceBackend, Presence, StateStore, StoreError, StoreResult};
-use async_trait::async_trait;
+use caelumora_model::store::{
+    EntityKind, Journaled, PersistenceBackend, Presence, StateStore, StoreError, StoreResult,
+};
+use caelumora_model::user::{UserChannelState, UserId};
+use caelumora_model::value::name::ScopedName;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt::{self, Debug, Display};
 use std::fs as std_fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
+use tokio::fs;
+use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, warn};
-use serde_json::Value;
-use std::io::ErrorKind;
-use tokio::fs::OpenOptions;
 use uuid::Uuid;
-use tokio::fs;
 
 mod chains;
 mod histories;
@@ -92,7 +94,8 @@ impl JsonFileStore {
     pub fn new(root: impl Into<PathBuf>) -> StoreResult<Self> {
         let root = root.into();
         info!("Creating JSON file store at {:?}", root);
-        let store = Self { journal_floor: DEFAULT_JOURNAL_FLOOR, documents: Default::default(), root };
+        let store =
+            Self { journal_floor: DEFAULT_JOURNAL_FLOOR, documents: Default::default(), root };
         store.ensure_layout()?;
         Ok(store)
     }
@@ -105,7 +108,13 @@ impl JsonFileStore {
     }
 
     fn ensure_layout(&self) -> StoreResult<()> {
-        for dir in [self.agent_states_dir(), self.agent_channel_states_dir(), self.channel_states_dir(), self.user_channel_states_dir(), self.under_way_dir()] {
+        for dir in [
+            self.agent_states_dir(),
+            self.agent_channel_states_dir(),
+            self.channel_states_dir(),
+            self.user_channel_states_dir(),
+            self.under_way_dir(),
+        ] {
             std_fs::create_dir_all(dir).map_err(to_backend_error)?;
         }
         Ok(())
@@ -119,14 +128,12 @@ impl JsonFileStore {
         self.root.join("runtime").join("agent_channel_state")
     }
 
-
     fn channel_states_dir(&self) -> PathBuf {
         self.root.join("runtime").join("channel_state")
     }
 
     fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
-        self.agent_channel_state_dir(channel_id)
-            .join(format!("{}.json", agent_id))
+        self.agent_channel_state_dir(channel_id).join(format!("{}.json", agent_id))
     }
 
     fn agent_channel_state_dir(&self, channel_id: ChannelId) -> PathBuf {
@@ -147,8 +154,6 @@ impl JsonFileStore {
         self.user_channel_state_dir(channel_id).join(format!("{user_id}.json"))
     }
 
-
-
     /// The index of the work under way (issue 388): an empty file
     /// `<channel_id>.<agent_id>` for each agent whose state in that channel
     /// has work under way. In one directory, so that adding a file never
@@ -168,7 +173,6 @@ impl JsonFileStore {
     fn channel_state_path(&self, id: ChannelId) -> PathBuf {
         self.channel_states_dir().join(format!("{id}.json"))
     }
-
 }
 
 /// Writes `value` to `path` atomically: into a temporary file beside it,
@@ -316,13 +320,27 @@ async fn load_state<T: Journaled>(path: &Path) -> StoreResult<Option<T>> {
         let changes: Vec<T::Change> = match serde_json::from_str(line) {
             Ok(changes) => changes,
             Err(err) if torn && i + 1 == lines.len() => {
-                warn!("The journal {} ends in a torn line, left by a crash; it is dropped: {}", journal.display(), err);
+                warn!(
+                    "The journal {} ends in a torn line, left by a crash; it is dropped: {}",
+                    journal.display(),
+                    err
+                );
                 break;
             }
-            Err(err) => return Err(StoreError::Backend(format!("line {} of the journal of a stored state is corrupt: {err}", i + 1))),
+            Err(err) => {
+                return Err(StoreError::Backend(format!(
+                    "line {} of the journal of a stored state is corrupt: {err}",
+                    i + 1
+                )))
+            }
         };
         for change in changes {
-            state.apply(change).map_err(|e| StoreError::Backend(format!("line {} of the journal does not fit the stored state: {e}", i + 1)))?;
+            state.apply(change).map_err(|e| {
+                StoreError::Backend(format!(
+                    "line {} of the journal does not fit the stored state: {e}",
+                    i + 1
+                ))
+            })?;
         }
     }
     Ok(Some(state))
@@ -331,10 +349,19 @@ async fn load_state<T: Journaled>(path: &Path) -> StoreResult<Option<T>> {
 /// Appends `changes` as one line to the journal at `journal`, which is
 /// `len_before` bytes long. Should the write fail, the journal is cut back
 /// to what it was, so that a torn line is never followed by a good one.
-async fn append_changes<C: Serialize>(journal: &Path, len_before: u64, changes: &[C]) -> StoreResult<()> {
+async fn append_changes<C: Serialize>(
+    journal: &Path,
+    len_before: u64,
+    changes: &[C],
+) -> StoreResult<()> {
     let mut line = serde_json::to_vec(changes).map_err(to_backend_error)?;
     line.push(b'\n');
-    let mut file = OpenOptions::new().append(true).create(true).open(journal).await.map_err(to_backend_error)?;
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(journal)
+        .await
+        .map_err(to_backend_error)?;
     // A tokio file hands the write to a blocking task: flushed, it is done
     // before the put returns, and the next put sees the journal's size.
     let written = match file.write_all(&line).await {
@@ -355,7 +382,11 @@ fn to_backend_error(err: impl Display) -> StoreError {
 /// Opens a kind in the directory of its name, `entities/<kind>`. The store of
 /// the states is the JSON file store itself.
 impl PersistenceBackend for JsonFileStore {
-    fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
+    fn documents(
+        &self,
+        kind: EntityKind,
+        document_of: DocumentOf,
+    ) -> StoreResult<Arc<dyn DocumentStorage>> {
         let mut all = self.documents.write().unwrap_or_else(PoisonError::into_inner);
         if let Some(storage) = all.get(&kind) {
             return Ok(Arc::<JsonDocuments>::clone(storage));
@@ -395,7 +426,10 @@ struct JsonDocuments {
 
 impl Debug for JsonDocuments {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("JsonDocuments").field("kind", &self.kind).field("dir", &self.dir).finish_non_exhaustive()
+        f.debug_struct("JsonDocuments")
+            .field("kind", &self.kind)
+            .field("dir", &self.dir)
+            .finish_non_exhaustive()
     }
 }
 
@@ -473,7 +507,14 @@ impl DocumentStorage for JsonDocuments {
     /// deleted, and whether it is admitted, it leaves to the store, which
     /// would read it as its type to tell. A file that is not JSON is left
     /// out and logged.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, _admission: Option<&Admission>, _presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    async fn scan(
+        &self,
+        filter: Option<&Filter<FieldPath>>,
+        _admission: Option<&Admission>,
+        _presence: Presence,
+        after: Option<Uuid>,
+        limit: usize,
+    ) -> StoreResult<Vec<(Uuid, Value)>> {
         let mut found = Vec::new();
         for (id, path) in ordered_after(documents_in_dir(&self.dir).await?, after) {
             if found.len() >= limit {
@@ -502,7 +543,10 @@ impl DocumentStorage for JsonDocuments {
         let path = self.path(document.id);
         let _names = self.names_lock(&document).await;
         if fs::try_exists(&path).await.map_err(to_backend_error)? {
-            return Err(StoreError::Conflict(format!("{} {} already exists", self.kind, document.id)));
+            return Err(StoreError::Conflict(format!(
+                "{} {} already exists",
+                self.kind, document.id
+            )));
         }
         self.name_free(&document).await?;
         debug!("Writing {} {} to {}", self.kind, document.id, path.display());
@@ -550,7 +594,11 @@ impl JsonFileStore {
         };
         while let Some(entry) = entries.next_entry().await.map_err(to_backend_error)? {
             let name = entry.file_name();
-            if name.to_str().and_then(|name| name.split_once('.')).is_some_and(|(channel, agent)| matches(channel, agent)) {
+            if name
+                .to_str()
+                .and_then(|name| name.split_once('.'))
+                .is_some_and(|(channel, agent)| matches(channel, agent))
+            {
                 delete_if_exists(&entry.path()).await?;
             }
         }
@@ -586,11 +634,16 @@ impl JsonFileStore {
 
 #[async_trait]
 impl StateStore for JsonFileStore {
-    async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
+    async fn get_agent_channel_state(
+        &self,
+        agent_id: AgentId,
+        channel_id: ChannelId,
+    ) -> StoreResult<AgentChannelState> {
         let path = self.agent_channel_state_path(agent_id, channel_id);
         debug!("Reading agent channel state from {}", path.display());
         let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
-        state.transcript = self.load_transcript(agent_id, channel_id, state.transcript_from).await?;
+        state.transcript =
+            self.load_transcript(agent_id, channel_id, state.transcript_from).await?;
         load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
@@ -600,7 +653,12 @@ impl StateStore for JsonFileStore {
     /// loaded. The index of the work under way is entered before the
     /// document and left after it: what a crash leaves between the two is a
     /// session started for nothing, never work that is not started.
-    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
+    async fn put_agent_channel_state(
+        &self,
+        agent_id: AgentId,
+        channel_id: ChannelId,
+        state: &mut AgentChannelState,
+    ) -> StoreResult<()> {
         self.append_given(agent_id, channel_id, state).await?;
         self.append_transcript(agent_id, channel_id, &mut state.transcript).await?;
         let under_way = self.under_way_path(agent_id, channel_id);
@@ -622,9 +680,18 @@ impl StateStore for JsonFileStore {
         let mut channels = HashSet::new();
         while let Some(entry) = entries.next_entry().await.map_err(to_backend_error)? {
             let name = entry.file_name();
-            match name.to_str().and_then(|name| name.split_once('.')).and_then(|(channel, _)| channel.parse::<ChannelId>().ok()) {
-                Some(channel_id) => { channels.insert(channel_id); }
-                None => warn!("The index of the work under way holds a file that names no channel: {}", name.to_string_lossy()),
+            match name
+                .to_str()
+                .and_then(|name| name.split_once('.'))
+                .and_then(|(channel, _)| channel.parse::<ChannelId>().ok())
+            {
+                Some(channel_id) => {
+                    channels.insert(channel_id);
+                }
+                None => warn!(
+                    "The index of the work under way holds a file that names no channel: {}",
+                    name.to_string_lossy()
+                ),
             }
         }
         Ok(channels.into_iter().collect())
@@ -643,28 +710,40 @@ impl StateStore for JsonFileStore {
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let path = self.channel_state_path(channel_id);
         debug!("Reading channel state from {}", path.display());
-        let mut state: ChannelState = load_state(&path).await?.ok_or(StoreError::NotFound {
-            entity: "channel_state",
-            id: channel_id.to_string(),
-        })?;
+        let mut state: ChannelState = load_state(&path)
+            .await?
+            .ok_or(StoreError::NotFound { entity: "channel_state", id: channel_id.to_string() })?;
         state.history = self.load_history(channel_id, state.history_from).await?;
         Ok(state)
     }
 
     /// The history first, then the document, which says from where it is
     /// loaded.
-    async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()> {
+    async fn put_channel_state(
+        &self,
+        channel_id: ChannelId,
+        state: &mut ChannelState,
+    ) -> StoreResult<()> {
         self.append_history(channel_id, &mut state.history).await?;
         self.store_state(&self.channel_state_path(channel_id), state).await
     }
 
-    async fn get_user_channel_state(&self, user_id: UserId, channel_id: ChannelId) -> StoreResult<UserChannelState> {
+    async fn get_user_channel_state(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+    ) -> StoreResult<UserChannelState> {
         let path = self.user_channel_state_path(user_id, channel_id);
         debug!("Reading user channel state from {}", path.display());
         Ok(load_state(&path).await?.unwrap_or_default())
     }
 
-    async fn put_user_channel_state(&self, user_id: UserId, channel_id: ChannelId, state: &mut UserChannelState) -> StoreResult<()> {
+    async fn put_user_channel_state(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+        state: &mut UserChannelState,
+    ) -> StoreResult<()> {
         self.store_state(&self.user_channel_state_path(user_id, channel_id), state).await
     }
 
@@ -704,28 +783,28 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
-    use caelumora_model::chain::Position;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::turn::TurnState;
-    use caelumora_model::project::ProjectId;
-    use caelumora_model::session::{Session, SessionId};
     use super::*;
-    use chrono::Utc;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::store::suite;
-    use caelumora_model::store::{EntityStore, EntityStoreFactory, Persistence, Stored};
-    use caelumora_model::store::query::Query;
-    use caelumora_model::security::{AccessPolicy, SecurityContext};
-    use tempfile::tempdir;
-    use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
-    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::actor::ActorState;
+    use caelumora_model::chain::Position;
+    use caelumora_model::channel::moderation_components;
+    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::history::Reader;
     use caelumora_model::message::testing::{id, make_message};
     use caelumora_model::note::{NoteChange, NoteId};
-    use caelumora_model::actor::ActorState;
-    use caelumora_model::channel::moderation_components;
+    use caelumora_model::project::ProjectId;
+    use caelumora_model::removal::Removal;
+    use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::security::{AccessPolicy, SecurityContext};
+    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::session::{Session, SessionId};
+    use caelumora_model::store::query::Query;
+    use caelumora_model::store::suite;
+    use caelumora_model::store::{EntityStore, EntityStoreFactory, Persistence, Stored};
+    use caelumora_model::turn::TurnState;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Description;
+    use chrono::Utc;
+    use tempfile::tempdir;
     use tokio::task::JoinSet;
 
     fn store(dir: &Path) -> JsonFileStore {
@@ -734,19 +813,30 @@ mod tests {
 
     /// The stores of the files under `dir`, checked by `policy`.
     fn checked(dir: &Path, policy: Arc<dyn AccessPolicy>) -> Persistence {
-        Persistence::over(Arc::new(store(dir)), policy, Arc::new(ConfidentialityRules::default())).unwrap()
+        Persistence::over(Arc::new(store(dir)), policy, Arc::new(ConfidentialityRules::default()))
+            .unwrap()
     }
 
     /// A new session of `name`, of nobody, with nothing in it.
     fn session(name: &str) -> Session {
         Session {
-            summary: None, briefing: None, language: None, time_zone: None,
+            summary: None,
+            briefing: None,
+            language: None,
+            time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             project: ProjectId::new(),
-            id: SessionId(Uuid::new_v4()), name: Name::new(name).unwrap(), participants: Vec::new(), channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(), deleted: None,
+            id: SessionId(Uuid::new_v4()),
+            name: Name::new(name).unwrap(),
+            participants: Vec::new(),
+            channels: Vec::new(),
+            commands: Default::default(),
+            privacy: Default::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            security_attributes: SecurityAttributes::default(),
+            deleted: None,
         }
     }
 
@@ -765,7 +855,10 @@ mod tests {
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
         let dir = tempdir().unwrap();
-        suite::entity_store_behaves(&checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap()).await;
+        suite::entity_store_behaves(
+            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -774,7 +867,13 @@ mod tests {
         let (memberships, access_policy) = suite::admitting_policy();
         let store = checked(dir.path(), Arc::clone(&access_policy));
         let folders = store.entity_store::<suite::Folder>().unwrap();
-        suite::lists_admit_what_check_decides(&store.entity_stores().unwrap(), folders.as_ref(), &memberships, access_policy.as_ref()).await;
+        suite::lists_admit_what_check_decides(
+            &store.entity_stores().unwrap(),
+            folders.as_ref(),
+            &memberships,
+            access_policy.as_ref(),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -799,7 +898,11 @@ mod tests {
         // Read from the files: a store opened anew over them, as after a
         // restart, finds what was under way.
         let (agent, channel) = (AgentId::new(), ChannelId::new());
-        let mut planning = AgentChannelState { processing_state: ActorState::Planning, turn: Some(TurnState::default()), ..AgentChannelState::default() };
+        let mut planning = AgentChannelState {
+            processing_state: ActorState::Planning,
+            turn: Some(TurnState::default()),
+            ..AgentChannelState::default()
+        };
         store(dir.path()).put_agent_channel_state(agent, channel, &mut planning).await.unwrap();
         assert_eq!(store(dir.path()).channels_with_work_under_way().await.unwrap(), [channel]);
     }
@@ -816,15 +919,24 @@ mod tests {
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
         let dir = tempdir().unwrap();
-        suite::deleting_marks(&checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap()).await;
+        suite::deleting_marks(
+            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn keeps_names_unique() {
         let dir = tempdir().unwrap();
-        suite::names_are_unique(&checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap()).await;
+        suite::names_are_unique(
+            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+        )
+        .await;
         let dir = tempdir().unwrap();
-        suite::names_are_unique_beyond_what_is_read(&checked(dir.path(), Arc::new(OwnershipPolicy::new())).entity_stores().unwrap()).await;
+        suite::names_are_unique_beyond_what_is_read(
+            &checked(dir.path(), Arc::new(OwnershipPolicy::new())).entity_stores().unwrap(),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -853,7 +965,11 @@ mod tests {
         fs::copy(path_of::<Session>(dir.path(), &session.id), &stray).await.unwrap();
 
         let listed = sessions.list(&system, &Query::all()).await.unwrap();
-        assert_eq!(listed.items.iter().map(|s| s.id).collect::<Vec<_>>(), [session.id], "the stray file is no session");
+        assert_eq!(
+            listed.items.iter().map(|s| s.id).collect::<Vec<_>>(),
+            [session.id],
+            "the stray file is no session"
+        );
     }
 
     #[tokio::test]
@@ -865,9 +981,16 @@ mod tests {
         let personalities = of_kind::<Personality>(dir.path());
         let system = SecurityContext::system();
         let personality = Personality {
-            id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(), roles: None, description: None, introduction: None,
-            components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
+            id: PersonalityId::new(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(),
+            roles: None,
+            description: None,
+            introduction: None,
+            components: Default::default(),
+            security_attributes: Default::default(),
+            reasoning_visibility: Default::default(),
+            hears_during_turn: Default::default(),
             deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
@@ -875,7 +998,10 @@ mod tests {
         let mut writes = JoinSet::new();
         for i in 0..16 {
             let (personalities, system) = (Arc::clone(&personalities), system.clone());
-            let changed = Personality { description: Some(Description::new(format!("version {i}")).unwrap()), ..personality.clone() };
+            let changed = Personality {
+                description: Some(Description::new(format!("version {i}")).unwrap()),
+                ..personality.clone()
+            };
             writes.spawn(async move { personalities.update(&system, &changed).await });
         }
         while let Some(result) = writes.join_next().await {
@@ -883,12 +1009,25 @@ mod tests {
         }
 
         let path = path_of::<Personality>(dir.path(), &personality.id);
-        let names: Vec<String> = std_fs::read_dir(path.parent().unwrap()).unwrap()
+        let names: Vec<String> = std_fs::read_dir(path.parent().unwrap())
+            .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(names, [path.file_name().unwrap().to_string_lossy().into_owned()], "only the file itself");
+        assert_eq!(
+            names,
+            [path.file_name().unwrap().to_string_lossy().into_owned()],
+            "only the file itself"
+        );
         let stored = personalities.get(&system, personality.id).await.expect("readable");
-        assert!(stored.description.as_ref().map(|d| d.as_str()).unwrap_or_default().starts_with("version "), "one of the writes, whole");
+        assert!(
+            stored
+                .description
+                .as_ref()
+                .map(|d| d.as_str())
+                .unwrap_or_default()
+                .starts_with("version "),
+            "one of the writes, whole"
+        );
     }
 
     #[tokio::test]
@@ -901,31 +1040,49 @@ mod tests {
         let agents = of_kind::<Agent>(dir.path());
         let system = SecurityContext::system();
         let personality = Personality {
-            id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(), roles: None, description: None, introduction: None,
-            components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
+            id: PersonalityId::new(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(),
+            roles: None,
+            description: None,
+            introduction: None,
+            components: Default::default(),
+            security_attributes: Default::default(),
+            reasoning_visibility: Default::default(),
+            hears_during_turn: Default::default(),
             deleted: None,
         };
 
         let mut writes = JoinSet::new();
         for _ in 0..16 {
             let (agents, system) = (Arc::clone(&agents), system.clone());
-            let agent = Agent::new(ScopedName::new("Helper", Default::default()).unwrap(), personality.id, ActorId::None);
+            let agent = Agent::new(
+                ScopedName::new("Helper", Default::default()).unwrap(),
+                personality.id,
+                ActorId::None,
+            );
             writes.spawn(async move { agents.create(&system, &agent).await });
         }
         let mut made = 0;
         while let Some(result) = writes.join_next().await {
             match result.unwrap() {
                 Ok(()) => made += 1,
-                Err(e) => assert!(matches!(e, StoreError::NameTaken { entity: "agent" }), "refused for its name: {e:?}"),
+                Err(e) => assert!(
+                    matches!(e, StoreError::NameTaken { entity: "agent" }),
+                    "refused for its name: {e:?}"
+                ),
             }
         }
         assert_eq!(made, 1);
-        assert_eq!(agents.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
+        assert_eq!(
+            agents.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(),
+            1
+        );
     }
 
     #[tokio::test]
-    async fn deleting_a_session_marks_its_file_and_purging_removes_it_leaving_its_state_to_the_state_store() {
+    async fn deleting_a_session_marks_its_file_and_purging_removes_it_leaving_its_state_to_the_state_store(
+    ) {
         use caelumora_model::channel::{Channel, ChannelId};
 
         let dir = tempdir().unwrap();
@@ -935,7 +1092,8 @@ mod tests {
 
         let session_id = SessionId(Uuid::new_v4());
         let channel = Channel {
-            summary: None, briefing: None,
+            summary: None,
+            briefing: None,
             approval_rules: Vec::new(),
             uses_workspace: true,
             id: ChannelId(Uuid::new_v4()),
@@ -951,7 +1109,8 @@ mod tests {
             deleted: None,
         };
         let channel_id = channel.id;
-        let session = Session { id: session_id, channels: vec![channel.id], ..session("to-delete") };
+        let session =
+            Session { id: session_id, channels: vec![channel.id], ..session("to-delete") };
         sessions.create(&ctx, &session).await.unwrap();
 
         // Write out channel state so we can assert it gets removed.
@@ -966,7 +1125,10 @@ mod tests {
 
         assert!(sessions.delete(&ctx, session_id, &Removal::now(ctx.caller_id)).await.unwrap());
         assert!(path_of::<Session>(dir.path(), &session_id).exists(), "deleting marks the file");
-        assert!(store.agent_channel_state_dir(channel_id).exists(), "the state is the state store's");
+        assert!(
+            store.agent_channel_state_dir(channel_id).exists(),
+            "the state is the state store's"
+        );
         assert!(sessions.purge(&ctx, session_id).await.unwrap());
         assert!(!path_of::<Session>(dir.path(), &session_id).exists(), "purging removes it");
 
@@ -1005,7 +1167,9 @@ mod tests {
     /// The lines of the journal of the agent channel state of `agent` in
     /// `channel`, `None` if there is no journal.
     fn journal_lines(store: &JsonFileStore, agent: AgentId, channel: ChannelId) -> Option<usize> {
-        std_fs::read_to_string(journal_path(&store.agent_channel_state_path(agent, channel))).ok().map(|text| text.lines().count())
+        std_fs::read_to_string(journal_path(&store.agent_channel_state_path(agent, channel)))
+            .ok()
+            .map(|text| text.lines().count())
     }
 
     fn journal_file(store: &JsonFileStore, agent: AgentId, channel: ChannelId) -> PathBuf {
@@ -1021,7 +1185,11 @@ mod tests {
             state.transcript.push(make_message(id(n)));
             state.last_message = Some(id(n));
             state.heard.took(Position::new(n as u64));
-            let note = NoteChange::Add { id: NoteId(n as u32), text: format!("note {n}"), classification: Classification::CHANNEL_DEFAULT };
+            let note = NoteChange::Add {
+                id: NoteId(n as u32),
+                text: format!("note {n}"),
+                classification: Classification::CHANNEL_DEFAULT,
+            };
             state.notes.push(note, Default::default(), id(n));
         }
     }
@@ -1039,20 +1207,29 @@ mod tests {
         said(&mut state, 1, 3);
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&opened, agent, channel), None, "the first put is the snapshot");
-        let snapshot = std_fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len();
+        let snapshot =
+            std_fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len();
 
         said(&mut state, 3, 5);
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         state.processing_state = ActorState::WaitingForUser;
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&opened, agent, channel), Some(2), "one line per put");
-        assert_eq!(std_fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len(), snapshot, "the snapshot is untouched");
+        assert_eq!(
+            std_fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len(),
+            snapshot,
+            "the snapshot is untouched"
+        );
 
         // Read from the files, by a store opened anew, as after a restart.
         let loaded = store(dir.path()).get_agent_channel_state(agent, channel).await.unwrap();
         assert!(same(&loaded, &state), "{loaded:?}");
         assert_eq!(loaded.transcript.messages().len(), 4);
-        assert_eq!((loaded.last_message, loaded.heard.next()), (Some(id(4)), Position::new(5)), "where it stands in its channel's history (issue 440)");
+        assert_eq!(
+            (loaded.last_message, loaded.heard.next()),
+            (Some(id(4)), Position::new(5)),
+            "where it stands in its channel's history (issue 440)"
+        );
     }
 
     #[tokio::test]
@@ -1075,13 +1252,24 @@ mod tests {
             assert!(puts < 1000, "the journal is never folded");
         }
         assert!(puts > 1, "the journal was used first");
-        assert_eq!(std_fs::metadata(&path).unwrap().len(), snapshot, "the snapshot is the same state again");
+        assert_eq!(
+            std_fs::metadata(&path).unwrap().len(),
+            snapshot,
+            "the snapshot is the same state again"
+        );
 
         said(&mut state, 2, 40);
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        assert!(journal_lines(&store, agent, channel).is_some(), "a large put still goes to the journal");
+        assert!(
+            journal_lines(&store, agent, channel).is_some(),
+            "a large put still goes to the journal"
+        );
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        assert_eq!(journal_lines(&store, agent, channel), None, "and the next one folds it, the journal being larger than the snapshot");
+        assert_eq!(
+            journal_lines(&store, agent, channel),
+            None,
+            "and the next one folds it, the journal being larger than the snapshot"
+        );
         assert!(std_fs::metadata(&path).unwrap().len() > snapshot);
         assert!(same(&store.get_agent_channel_state(agent, channel).await.unwrap(), &state));
     }
@@ -1106,7 +1294,10 @@ mod tests {
 
         std_fs::write(&journal, format!("not json\n{good}")).unwrap();
         let corrupt = store.get_agent_channel_state(agent, channel).await.unwrap_err();
-        assert!(matches!(corrupt, StoreError::Backend(ref m) if m.contains("line 1") && !m.contains("not json")), "{corrupt}");
+        assert!(
+            matches!(corrupt, StoreError::Backend(ref m) if m.contains("line 1") && !m.contains("not json")),
+            "{corrupt}"
+        );
     }
 
     #[tokio::test]
@@ -1132,7 +1323,10 @@ mod tests {
         assert!(same(&loaded, &state), "{loaded:?}");
         said(&mut state, 4, 5);
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        assert!(same(&store.get_agent_channel_state(agent, channel).await.unwrap(), &state), "and what comes after it is applied");
+        assert!(
+            same(&store.get_agent_channel_state(agent, channel).await.unwrap(), &state),
+            "and what comes after it is applied"
+        );
     }
 
     #[tokio::test]
@@ -1146,8 +1340,15 @@ mod tests {
         state.history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
         store.put_channel_state(channel, &mut state).await.unwrap();
         let history = store.history_dir(key);
-        let read = |file: &str| serde_json::from_str::<serde_json::Value>(&std_fs::read_to_string(history.join(file)).unwrap()).unwrap();
-        let write = |file: &str, value: &serde_json::Value| std_fs::write(history.join(file), value.to_string()).unwrap();
+        let read = |file: &str| {
+            serde_json::from_str::<serde_json::Value>(
+                &std_fs::read_to_string(history.join(file)).unwrap(),
+            )
+            .unwrap()
+        };
+        let write = |file: &str, value: &serde_json::Value| {
+            std_fs::write(history.join(file), value.to_string()).unwrap()
+        };
 
         // As if the crash came after the chain and its head, before the items.
         let mut items = read("items-0.json");
@@ -1156,7 +1357,16 @@ mod tests {
         write("items-head.json", &serde_json::json!({ "end": 1 }));
         let loaded = store.get_channel_state(channel).await.unwrap();
         assert_eq!(loaded.history.end().get(), 3);
-        assert_eq!(store.page(key, &Reader::Channel, Position::START, None, 10, None).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
+        assert_eq!(
+            store
+                .page(key, &Reader::Channel, Position::START, None, 10, None)
+                .await
+                .unwrap()
+                .items
+                .len(),
+            3,
+            "the items are derived anew from the chain"
+        );
         assert_eq!(read("items-head.json")["end"], serde_json::json!(3));
 
         // As if the crash came after the chain, before its head.
@@ -1169,8 +1379,15 @@ mod tests {
         assert_eq!(loaded.history.end().get(), 3, "what lies past the head is not there");
         loaded.history.push(make_message(id(4)));
         store.put_channel_state(channel, &mut loaded).await.unwrap();
-        assert_eq!(store.said(key, &Reader::Channel, id(4)).await.unwrap().map(|(at, _)| at.get()), Some(3), "and the next entry takes its place");
-        assert_eq!(store.get_channel_state(channel).await.unwrap().history.digest(), loaded.history.digest());
+        assert_eq!(
+            store.said(key, &Reader::Channel, id(4)).await.unwrap().map(|(at, _)| at.get()),
+            Some(3),
+            "and the next entry takes its place"
+        );
+        assert_eq!(
+            store.get_channel_state(channel).await.unwrap().history.digest(),
+            loaded.history.digest()
+        );
     }
 
     #[tokio::test]

@@ -2,22 +2,28 @@
 //! themselves to the agents of every channel they take part in, and their
 //! answers to tool calls given in advance (issue 13).
 
-use std::sync::Arc;
+use crate::auth::AuthenticatedUser;
+use crate::error::{ApiError, Json, Path};
+use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::store::{StoreError, StoreResultExt};
-use caelumora_runtime::controller::UserController;
-use crate::auth::AuthenticatedUser;
-use crate::error::{ApiError, Json, Path};
 use caelumora_rest_api::profile::{ApprovalRuleRequest, ProfileRequest, ProfileResponse};
+use caelumora_runtime::controller::UserController;
+use std::sync::Arc;
 use uuid::Uuid;
-use crate::state::AppState;
 
 /// The user's profile; one without an introduction if they never wrote one.
-pub(super) async fn get_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<ProfileResponse>, ApiError> {
+pub(super) async fn get_profile(
+    State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
+) -> Result<Json<ProfileResponse>, ApiError> {
     let profiles = &state.runtime_manager.entity_stores().user_profiles;
-    let profile = profiles.get(&user.security_context(), user.id).await.optional()
+    let profile = profiles
+        .get(&user.security_context(), user.id)
+        .await
+        .optional()
         .map_err(|e| ApiError::internal("profile_failed", "reading the profile", &e.into()))?;
     Ok(Json(ProfileResponse::of(profile)))
 }
@@ -26,9 +32,19 @@ pub(super) async fn get_profile(State(state): State<Arc<AppState>>, user: Authen
 /// it - and the language they prefer (issue 56), `null` or empty for none.
 /// Answers `400 invalid_value` for either that does not fit. Changed
 /// through the user's controller, the profile's one writer (issue 13).
-pub(super) async fn update_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ProfileRequest>) -> Result<Json<ProfileResponse>, ApiError> {
+pub(super) async fn update_profile(
+    State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
+    Json(payload): Json<ProfileRequest>,
+) -> Result<Json<ProfileResponse>, ApiError> {
     let controller = controller_of(&state, &user).await?;
-    let profile = controller.update_profile(&user.security_context(), payload.introduction.as_deref(), payload.preferred_language.as_deref()).await
+    let profile = controller
+        .update_profile(
+            &user.security_context(),
+            payload.introduction.as_deref(),
+            payload.preferred_language.as_deref(),
+        )
+        .await
         .map_err(|e| match e {
             StoreError::Invalid(e) => ApiError::invalid_value(&e),
             e => ApiError::internal("profile_failed", "saving the profile", &e.into()),
@@ -36,37 +52,57 @@ pub(super) async fn update_profile(State(state): State<Arc<AppState>>, user: Aut
     Ok(Json(ProfileResponse::of(Some(profile))))
 }
 
-
 /// Adds a rule to the user's answers to tool calls given in advance (issue
 /// 13): `201` with the rule and its id. Answers `400 invalid_rule` for one
 /// that asks - a person allows or denies - whose pattern cannot be matched,
 /// or one too many.
-pub(super) async fn add_approval_rule(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ApprovalRuleRequest>) -> Result<(StatusCode, Json<ApprovalRule>), ApiError> {
+pub(super) async fn add_approval_rule(
+    State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
+    Json(payload): Json<ApprovalRuleRequest>,
+) -> Result<(StatusCode, Json<ApprovalRule>), ApiError> {
     let invalid = |reason: String| ApiError::new(StatusCode::BAD_REQUEST, "invalid_rule", reason);
-    let rule = ApprovalRule::new(payload.matcher, payload.decision, payload.reach, payload.expires_at).map_err(|e| invalid(e.to_string()))?;
+    let rule =
+        ApprovalRule::new(payload.matcher, payload.decision, payload.reach, payload.expires_at)
+            .map_err(|e| invalid(e.to_string()))?;
     let controller = controller_of(&state, &user).await?;
-    controller.add_approval_rule(&user.security_context(), rule.clone()).await
-        .map_err(|e| match e {
+    controller.add_approval_rule(&user.security_context(), rule.clone()).await.map_err(
+        |e| match e {
             StoreError::Validation(reason) => invalid(reason),
             e => ApiError::internal("profile_failed", "saving the profile", &e.into()),
-        })?;
+        },
+    )?;
     Ok((StatusCode::CREATED, Json(rule)))
 }
 
 /// Takes one of the user's rules back (issue 13): `204`, or `404
 /// rule_not_found` if they have no such rule.
-pub(super) async fn remove_approval_rule(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn remove_approval_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
     let controller = controller_of(&state, &user).await?;
-    controller.remove_approval_rule(&user.security_context(), ApprovalRuleId(id)).await
-        .map_err(|e| match e {
-            StoreError::NotFound { .. } => ApiError::not_found("rule_not_found", "You have no such rule"),
+    controller.remove_approval_rule(&user.security_context(), ApprovalRuleId(id)).await.map_err(
+        |e| match e {
+            StoreError::NotFound { .. } => {
+                ApiError::not_found("rule_not_found", "You have no such rule")
+            }
             e => ApiError::internal("profile_failed", "saving the profile", &e.into()),
-        })?;
+        },
+    )?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// The controller of the user's profile, its one writer (issue 13).
-async fn controller_of(state: &AppState, user: &AuthenticatedUser) -> Result<Arc<UserController>, ApiError> {
-    state.runtime_manager.controller_manager().user_controller(user.id).await
+async fn controller_of(
+    state: &AppState,
+    user: &AuthenticatedUser,
+) -> Result<Arc<UserController>, ApiError> {
+    state
+        .runtime_manager
+        .controller_manager()
+        .user_controller(user.id)
+        .await
         .map_err(|e| ApiError::internal("profile_failed", "reading the profile", &e.into()))
 }

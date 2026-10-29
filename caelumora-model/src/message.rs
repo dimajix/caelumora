@@ -3,21 +3,20 @@
 //! reclassified, fitted into its channel and taken back, and what a model's calls used
 //! (`TokenUsage`).
 use crate::actor::ActorId;
-use crate::content::ContentRef;
 use crate::confidentiality::{Classification, Visibility};
+use crate::content::ContentRef;
 use crate::digest::Digest;
 use crate::store::query::FieldValue;
 use crate::tool::{ToolCall, ToolCallResult};
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::iter;
-use serde_json::Value;
 
 define_id!(MessageId);
-
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MessageRole {
@@ -100,11 +99,11 @@ pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_duration: Option<u64>,        // ns
+    pub prompt_duration: Option<u64>, // ns
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_duration: Option<u64>,    // ns
+    pub completion_duration: Option<u64>, // ns
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_duration: Option<u64>,         // ns
+    pub total_duration: Option<u64>, // ns
     /// How many tokens the model's context held in the call that produced
     /// the message (issue 209): what `prompt_tokens` and
     /// `completion_tokens` fill. `None` where it is not known.
@@ -194,7 +193,11 @@ impl Message {
     pub fn estimated_tokens(&self) -> u64 {
         let bytes = self.content.as_deref().map_or(0, str::len)
             + self.reasoning.as_deref().map_or(0, str::len)
-            + self.tool_calls.iter().map(|call| call.function_name.len() + call.arguments.to_string().len()).sum::<usize>()
+            + self
+                .tool_calls
+                .iter()
+                .map(|call| call.function_name.len() + call.arguments.to_string().len())
+                .sum::<usize>()
             + self.tool_results.iter().map(|result| result.content.len()).sum::<usize>();
         estimated_tokens(bytes)
     }
@@ -257,7 +260,15 @@ impl Message {
         if self.tool_calls.is_empty() && self.tool_results.is_empty() {
             return None;
         }
-        let mut message = Message { content: None, reasoning: None, attachments: Vec::new(), context_transcript: None, context_frame: None, classification: classification.clone(), ..self.clone() };
+        let mut message = Message {
+            content: None,
+            reasoning: None,
+            attachments: Vec::new(),
+            context_transcript: None,
+            context_frame: None,
+            classification: classification.clone(),
+            ..self.clone()
+        };
         for call in &mut message.tool_calls {
             call.arguments = Value::Null;
         }
@@ -279,7 +290,9 @@ impl Message {
 
     /// The same, to change: the copy a transcript numbers, or a model is given with content.
     pub fn carried_mut(&mut self) -> impl Iterator<Item = &mut ContentRef> {
-        self.attachments.iter_mut().chain(self.tool_results.iter_mut().flat_map(|result| &mut result.shown))
+        self.attachments
+            .iter_mut()
+            .chain(self.tool_results.iter_mut().flat_map(|result| &mut result.shown))
     }
 
     /// Whether a participant hears anything of the message when someone else said it (issue 224):
@@ -289,7 +302,8 @@ impl Message {
     pub fn is_heard(&self) -> bool {
         matches!(self.role, MessageRole::User | MessageRole::Assistant)
             && !self.internal
-            && (self.content.as_deref().is_some_and(|c| !c.is_empty()) || !self.attachments.is_empty())
+            && (self.content.as_deref().is_some_and(|c| !c.is_empty())
+                || !self.attachments.is_empty())
     }
 
     /// What a participant hears of the message when someone else said it (`is_heard`), the same
@@ -297,7 +311,12 @@ impl Message {
     /// message without its tool calls and results, which were the sender's. `None` if there is
     /// nothing to hear.
     pub fn as_heard(&self) -> Option<Message> {
-        self.is_heard().then(|| Message { role: MessageRole::User, tool_calls: Vec::new(), tool_results: Vec::new(), ..self.clone() })
+        self.is_heard().then(|| Message {
+            role: MessageRole::User,
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            ..self.clone()
+        })
     }
     /// Modifies the message as it stands by `modified`, the same message as it reads from now on
     /// (issue 234), and returns whether it did: only one not taken back, by the same sender in the
@@ -307,7 +326,10 @@ impl Message {
     /// `timestamp`). Its tool calls and results stay those it was said with: a call and its result
     /// would come apart.
     pub fn modify(&mut self, modified: &Message) -> bool {
-        let applies = modified.id == self.id && self.revoked.is_none() && modified.sender_id == self.sender_id && modified.role == self.role;
+        let applies = modified.id == self.id
+            && self.revoked.is_none()
+            && modified.sender_id == self.sender_id
+            && modified.role == self.role;
         if applies {
             self.content = modified.content.clone();
             self.reasoning = modified.reasoning.clone();
@@ -336,7 +358,9 @@ impl Message {
     /// that of each of its attachments, which its channel bounds alike (issue 282).
     pub fn fit_into(&mut self, channel: &Classification) -> bool {
         let mut changed = false;
-        for classification in iter::once(&mut self.classification).chain(self.attachments.iter_mut().map(|a| &mut a.classification)) {
+        for classification in iter::once(&mut self.classification)
+            .chain(self.attachments.iter_mut().map(|a| &mut a.classification))
+        {
             let fitted = classification.fitted_into(channel);
             changed |= fitted != *classification;
             *classification = fitted;
@@ -400,7 +424,13 @@ impl TokenUsage {
         }
         let prompt = message.prompt_tokens.unwrap_or(0);
         let completion = message.completion_tokens.unwrap_or(0);
-        let usage = usage.unwrap_or(Self { calls: 0, prompt_tokens: 0, completion_tokens: 0, context_size: None, context_tokens: 0 });
+        let usage = usage.unwrap_or(Self {
+            calls: 0,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            context_size: None,
+            context_tokens: 0,
+        });
         Some(Self {
             calls: usage.calls + 1,
             prompt_tokens: usage.prompt_tokens + prompt,
@@ -421,19 +451,20 @@ pub enum MessageEvent {
     EndOfTurn(Vec<Message>),
 }
 
-
 /// The tool calls among `messages` that ran - their results have a start
 /// (issue 145) - each with its result and the call as the model made it, if
 /// it is there. What a turn given up is told to have done.
-pub fn executed_calls<'a>(messages: &[&'a Message]) -> Vec<(Option<&'a ToolCall>, &'a ToolCallResult)> {
+pub fn executed_calls<'a>(
+    messages: &[&'a Message],
+) -> Vec<(Option<&'a ToolCall>, &'a ToolCallResult)> {
     let calls: Vec<&ToolCall> = messages.iter().flat_map(|m| &m.tool_calls).collect();
-    messages.iter()
+    messages
+        .iter()
         .flat_map(|m| &m.tool_results)
         .filter(|result| result.started_at.is_some())
         .map(|result| (calls.iter().copied().find(|c| c.id.is_some() && c.id == result.id), result))
         .collect()
 }
-
 
 /// Messages for the tests of this crate and of others (issue 446): the
 /// store suite, which every backend's crate runs, writes them.
@@ -463,28 +494,49 @@ pub mod testing {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::*;
     use super::testing::{id, make_message};
+    use super::*;
+    use crate::confidentiality::Confidentiality;
     use crate::content::testing::make_content_ref;
+    use crate::store::query::meets_exactly_its_equals;
     use crate::tool::ToolVisibility;
     use chrono::Duration;
-    use crate::confidentiality::Confidentiality;
-    use crate::store::query::meets_exactly_its_equals;
 
     #[test]
     fn a_role_meets_exactly_its_serialized_form() {
-        meets_exactly_its_equals(&[MessageRole::User, MessageRole::Assistant, MessageRole::System, MessageRole::Tool]);
+        meets_exactly_its_equals(&[
+            MessageRole::User,
+            MessageRole::Assistant,
+            MessageRole::System,
+            MessageRole::Tool,
+        ]);
     }
 
     fn call(id: &str, visibility: ToolVisibility) -> ToolCall {
-        ToolCall { id: Some(id.to_string()), function_name: "f".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility, presentation: Default::default() }
+        ToolCall {
+            id: Some(id.to_string()),
+            function_name: "f".to_string(),
+            arguments: serde_json::json!({"text": "secret"}),
+            visibility,
+            presentation: Default::default(),
+        }
     }
 
     fn result(id: &str, visibility: ToolVisibility) -> ToolCallResult {
         let started_at = Utc::now();
         ToolCallResult {
-            id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility, classification: Classification::CHANNEL_DEFAULT,
-            started_at: Some(started_at), finished_at: Some(started_at + Duration::milliseconds(250)), answers: None, approval: Vec::new(), media: Vec::new(), shown: Vec::new(),
+            id: Some(id.to_string()),
+            tool_name: "f".to_string(),
+            content: "secret".to_string(),
+            status: Default::default(),
+            visibility,
+            classification: Classification::CHANNEL_DEFAULT,
+            started_at: Some(started_at),
+            finished_at: Some(started_at + Duration::milliseconds(250)),
+            answers: None,
+            approval: Vec::new(),
+            media: Vec::new(),
+            shown: Vec::new(),
         }
     }
 
@@ -495,11 +547,22 @@ pub(crate) mod tests {
     #[test]
     fn what_is_attached_goes_with_what_was_said() {
         let screenshot = make_content_ref("screen.png", b"png");
-        let alone = Message { content: None, attachments: vec![screenshot.clone()], ..make_message(id(1)) };
+        let alone =
+            Message { content: None, attachments: vec![screenshot.clone()], ..make_message(id(1)) };
         assert!(alone.is_heard(), "an attachment alone is something to hear");
-        assert_eq!(alone.as_heard().expect("heard").attachments, alone.attachments, "heard with what was attached");
-        assert_eq!(alone.published().expect("an attachment alone is something to show").attachments, alone.attachments);
-        assert!(alone.names_only(&Classification::PUBLIC).is_none(), "nothing of it where what was said may not be given");
+        assert_eq!(
+            alone.as_heard().expect("heard").attachments,
+            alone.attachments,
+            "heard with what was attached"
+        );
+        assert_eq!(
+            alone.published().expect("an attachment alone is something to show").attachments,
+            alone.attachments
+        );
+        assert!(
+            alone.names_only(&Classification::PUBLIC).is_none(),
+            "nothing of it where what was said may not be given"
+        );
 
         let other = make_content_ref("better.png", b"better");
         let mut message = alone.clone();
@@ -508,38 +571,96 @@ pub(crate) mod tests {
         let lowered = Classification::PUBLIC;
         let mut fitted = message.clone();
         assert!(fitted.fit_into(&lowered), "a lowered channel fits it");
-        assert_eq!((&fitted.classification, &fitted.attachments[0].classification), (&lowered, &lowered), "and what is attached to it, which the channel bounds alike");
+        assert_eq!(
+            (&fitted.classification, &fitted.attachments[0].classification),
+            (&lowered, &lowered),
+            "and what is attached to it, which the channel bounds alike"
+        );
         assert!(!fitted.fit_into(&lowered), "fitted once");
 
         assert!(message.revoke(Utc::now()));
-        assert!(message.attachments.is_empty() && !message.is_heard(), "taken back with what was said");
+        assert!(
+            message.attachments.is_empty() && !message.is_heard(),
+            "taken back with what was said"
+        );
 
-        let seen = |visibility| ToolCallResult { media: vec![make_content_ref("chart.png", b"chart")], shown: vec![screenshot.clone()], ..result("1", visibility) };
-        let results = Message { role: MessageRole::Tool, content: None, tool_results: vec![seen(ToolVisibility::SHOWN), seen(ToolVisibility::WITHOUT_RESULT)], ..make_message(id(2)) };
+        let seen = |visibility| ToolCallResult {
+            media: vec![make_content_ref("chart.png", b"chart")],
+            shown: vec![screenshot.clone()],
+            ..result("1", visibility)
+        };
+        let results = Message {
+            role: MessageRole::Tool,
+            content: None,
+            tool_results: vec![seen(ToolVisibility::SHOWN), seen(ToolVisibility::WITHOUT_RESULT)],
+            ..make_message(id(2))
+        };
         let published = results.published().expect("both calls are public");
-        assert_eq!((published.tool_results[0].media.len(), published.tool_results[0].shown.len()), (1, 1), "a public result with what it gave and showed");
-        assert!(published.tool_results[1].media.is_empty() && published.tool_results[1].shown.is_empty(), "withheld with the result");
+        assert_eq!(
+            (published.tool_results[0].media.len(), published.tool_results[0].shown.len()),
+            (1, 1),
+            "a public result with what it gave and showed"
+        );
+        assert!(
+            published.tool_results[1].media.is_empty()
+                && published.tool_results[1].shown.is_empty(),
+            "withheld with the result"
+        );
         let given = results.names_only(&Classification::PUBLIC).expect("results");
-        assert!(given.tool_results.iter().all(|r| r.media.is_empty() && r.shown.is_empty()), "how the calls ended, not what they gave");
+        assert!(
+            given.tool_results.iter().all(|r| r.media.is_empty() && r.shown.is_empty()),
+            "how the calls ended, not what they gave"
+        );
         let for_the_model = results.tool_results[0].for_the_model();
-        assert!(for_the_model.media.is_empty() && for_the_model.shown.is_empty(), "a model is given them as what they are, not as text");
+        assert!(
+            for_the_model.media.is_empty() && for_the_model.shown.is_empty(),
+            "a model is given them as what they are, not as text"
+        );
     }
 
     #[test]
     fn a_message_is_heard_as_what_was_said_in_words_without_the_tool_traffic() {
-        let text = |role: MessageRole, content: Option<&str>| Message { role, content: content.map(str::to_string), ..make_message(MessageId::new()) };
-        let answer = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN)], ..text(MessageRole::Assistant, Some("Let me check.")) };
+        let text = |role: MessageRole, content: Option<&str>| Message {
+            role,
+            content: content.map(str::to_string),
+            ..make_message(MessageId::new())
+        };
+        let answer = Message {
+            tool_calls: vec![call("1", ToolVisibility::SHOWN)],
+            ..text(MessageRole::Assistant, Some("Let me check."))
+        };
 
         assert!(answer.is_heard());
         let heard = answer.as_heard().expect("an answer in words is heard");
-        assert_eq!((heard.role, heard.content.as_deref()), (MessageRole::User, Some("Let me check.")), "as a user's");
+        assert_eq!(
+            (heard.role, heard.content.as_deref()),
+            (MessageRole::User, Some("Let me check.")),
+            "as a user's"
+        );
         assert!(heard.tool_calls.is_empty(), "without the sender's call");
-        assert_eq!((heard.id, heard.sender_id), (answer.id, answer.sender_id), "the same message, of the same sender");
+        assert_eq!(
+            (heard.id, heard.sender_id),
+            (answer.id, answer.sender_id),
+            "the same message, of the same sender"
+        );
 
-        let tool = Message { tool_results: vec![result("1", ToolVisibility::SHOWN)], ..text(MessageRole::Tool, Some("done")) };
+        let tool = Message {
+            tool_results: vec![result("1", ToolVisibility::SHOWN)],
+            ..text(MessageRole::Tool, Some("done"))
+        };
         let internal = Message { internal: true, ..text(MessageRole::Assistant, Some("step")) };
-        for unheard in [tool, internal, text(MessageRole::Assistant, Some("")), text(MessageRole::Assistant, None), text(MessageRole::System, Some("note"))] {
-            assert!(!unheard.is_heard() && unheard.as_heard().is_none(), "nothing to hear in {:?}", unheard.role);
+        for unheard in [
+            tool,
+            internal,
+            text(MessageRole::Assistant, Some("")),
+            text(MessageRole::Assistant, None),
+            text(MessageRole::System, Some("note")),
+        ] {
+            assert!(
+                !unheard.is_heard() && unheard.as_heard().is_none(),
+                "nothing to hear in {:?}",
+                unheard.role
+            );
         }
     }
 
@@ -547,53 +668,116 @@ pub(crate) mod tests {
     fn a_message_is_published_without_what_only_its_owner_sees() {
         let message = Message {
             content: None,
-            tool_calls: vec![call("1", ToolVisibility::SHOWN), call("2", ToolVisibility::CALL_ONLY), call("3", ToolVisibility::HIDDEN), call("4", ToolVisibility::WITHOUT_RESULT)],
+            tool_calls: vec![
+                call("1", ToolVisibility::SHOWN),
+                call("2", ToolVisibility::CALL_ONLY),
+                call("3", ToolVisibility::HIDDEN),
+                call("4", ToolVisibility::WITHOUT_RESULT),
+            ],
             ..make_message(MessageId::new())
         };
         let published = message.published().expect("public and call-only calls are left");
         let ids: Vec<_> = published.tool_calls.iter().map(|c| c.id.clone().unwrap()).collect();
         assert_eq!(ids, ["1", "2", "4"], "the hidden call is gone");
-        assert_eq!(published.tool_calls[0].arguments, message.tool_calls[0].arguments, "public as it is");
+        assert_eq!(
+            published.tool_calls[0].arguments, message.tool_calls[0].arguments,
+            "public as it is"
+        );
         assert_eq!(published.tool_calls[1].arguments, Value::Null, "call-only without arguments");
-        assert_eq!(published.tool_calls[2].arguments, message.tool_calls[3].arguments, "with its arguments where only its result is the owner's");
+        assert_eq!(
+            published.tool_calls[2].arguments, message.tool_calls[3].arguments,
+            "with its arguments where only its result is the owner's"
+        );
         assert_eq!(published.id, message.id, "the same message, for the context panel to find");
 
         use crate::approval::ApprovalDecision;
         use crate::question::{Addressee, Answers, Question, Questions};
         let answered = |result: ToolCallResult| {
-            let questions = Questions { questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }], ask: vec![Addressee::Owner], sensitive: false };
-            let approval = vec![ApprovalDecision { by: ActorId::None, name: "alice".to_string(), by_rule: None, at: Utc::now() }];
-            ToolCallResult { answers: Some(Answers::declined(questions, ActorId::None, "alice".to_string())), approval, ..result }
+            let questions = Questions {
+                questions: vec![Question {
+                    header: "Name".to_string(),
+                    question: "Who?".to_string(),
+                    choices: Vec::new(),
+                    multi_select: false,
+                }],
+                ask: vec![Addressee::Owner],
+                sensitive: false,
+            };
+            let approval = vec![ApprovalDecision {
+                by: ActorId::None,
+                name: "alice".to_string(),
+                by_rule: None,
+                at: Utc::now(),
+            }];
+            ToolCallResult {
+                answers: Some(Answers::declined(questions, ActorId::None, "alice".to_string())),
+                approval,
+                ..result
+            }
         };
         let results = Message {
             role: MessageRole::Tool,
             content: None,
-            tool_results: vec![answered(result("1", ToolVisibility::SHOWN)), answered(result("2", ToolVisibility::CALL_ONLY)), answered(result("3", ToolVisibility::HIDDEN)), answered(result("4", ToolVisibility::WITHOUT_RESULT))],
+            tool_results: vec![
+                answered(result("1", ToolVisibility::SHOWN)),
+                answered(result("2", ToolVisibility::CALL_ONLY)),
+                answered(result("3", ToolVisibility::HIDDEN)),
+                answered(result("4", ToolVisibility::WITHOUT_RESULT)),
+            ],
             ..make_message(MessageId::new())
         };
         let published = results.published().expect("public and call-only results are left");
-        let contents: Vec<_> = published.tool_results.iter().map(|r| (r.content.as_str(), r.answers.is_some())).collect();
+        let contents: Vec<_> = published
+            .tool_results
+            .iter()
+            .map(|r| (r.content.as_str(), r.answers.is_some()))
+            .collect();
         assert_eq!(contents, [("secret", true), ("", false), ("", false)], "the hidden result is gone, the call-only one and the one without its result empty, the record of its answers with it");
         assert!(published.tool_results.iter().all(|r| r.approval.len() == 1), "who approved the call stays with it, its result withheld or not: every user was told (issue 419)");
         let for_the_model = results.tool_results[0].for_the_model();
-        assert!(for_the_model.answers.is_none() && for_the_model.approval.is_empty(), "a model is never given the record");
+        assert!(
+            for_the_model.answers.is_none() && for_the_model.approval.is_empty(),
+            "a model is never given the record"
+        );
         let ran = |r: &ToolCallResult| (r.started_at, r.finished_at);
-        assert_eq!(ran(&published.tool_results[1]), ran(&results.tool_results[1]), "when it ran is the call's, not the result's");
+        assert_eq!(
+            ran(&published.tool_results[1]),
+            ran(&results.tool_results[1]),
+            "when it ran is the call's, not the result's"
+        );
     }
 
     #[test]
     fn only_calls_that_started_count_as_executed() {
-        let calls = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN), call("2", ToolVisibility::SHOWN)], ..make_message(MessageId::new()) };
-        let never_ran = ToolCallResult { started_at: None, finished_at: None, ..result("2", ToolVisibility::SHOWN) };
-        let results = Message { tool_results: vec![result("1", ToolVisibility::SHOWN), never_ran], ..make_message(MessageId::new()) };
+        let calls = Message {
+            tool_calls: vec![call("1", ToolVisibility::SHOWN), call("2", ToolVisibility::SHOWN)],
+            ..make_message(MessageId::new())
+        };
+        let never_ran = ToolCallResult {
+            started_at: None,
+            finished_at: None,
+            ..result("2", ToolVisibility::SHOWN)
+        };
+        let results = Message {
+            tool_results: vec![result("1", ToolVisibility::SHOWN), never_ran],
+            ..make_message(MessageId::new())
+        };
         let executed = executed_calls(&[&calls, &results]);
         assert_eq!(executed.len(), 1);
-        assert_eq!((executed[0].0.and_then(|c| c.id.as_deref()), executed[0].1.id.as_deref()), (Some("1"), Some("1")), "with the call it answers");
+        assert_eq!(
+            (executed[0].0.and_then(|c| c.id.as_deref()), executed[0].1.id.as_deref()),
+            (Some("1"), Some("1")),
+            "with the call it answers"
+        );
     }
 
     #[test]
     fn a_message_with_nothing_left_to_show_is_not_published() {
-        let hidden_only = Message { content: None, tool_calls: vec![call("1", ToolVisibility::HIDDEN)], ..make_message(MessageId::new()) };
+        let hidden_only = Message {
+            content: None,
+            tool_calls: vec![call("1", ToolVisibility::HIDDEN)],
+            ..make_message(MessageId::new())
+        };
         assert!(hidden_only.published().is_none());
         let private_reasoning = Message {
             content: None,
@@ -601,8 +785,14 @@ pub(crate) mod tests {
             reasoning_visibility: Visibility::Owner,
             ..make_message(MessageId::new())
         };
-        assert!(private_reasoning.published().is_none(), "private reasoning alone is nothing to show");
-        let with_text = Message { tool_calls: vec![call("1", ToolVisibility::HIDDEN)], ..make_message(MessageId::new()) };
+        assert!(
+            private_reasoning.published().is_none(),
+            "private reasoning alone is nothing to show"
+        );
+        let with_text = Message {
+            tool_calls: vec![call("1", ToolVisibility::HIDDEN)],
+            ..make_message(MessageId::new())
+        };
         let published = with_text.published().expect("the text is left");
         assert!(published.tool_calls.is_empty());
         assert_eq!(published.content.as_deref(), Some("hello"));
@@ -612,16 +802,46 @@ pub(crate) mod tests {
     fn of_a_message_withheld_only_which_tools_it_called_is_given() {
         use crate::tool::{ToolCall, ToolCallResult, ToolResultStatus};
         let secret = Classification::general(Confidentiality::Confidential);
-        let call = ToolCall { id: Some("1".to_string()), function_name: "read".to_string(), arguments: serde_json::json!({ "file": "plans" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
-        let calling = Message { content: Some("let me look".to_string()), reasoning: Some("hm".to_string()), tool_calls: vec![call.clone()], ..Message::new(secret.clone()) };
-        let result = ToolCallResult::of(&call, ToolResultStatus::Ok, "the plans".to_string(), secret.clone());
-        let answered = Message { role: MessageRole::Tool, tool_results: vec![result], ..Message::new(secret.clone()) };
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            function_name: "read".to_string(),
+            arguments: serde_json::json!({ "file": "plans" }),
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        };
+        let calling = Message {
+            content: Some("let me look".to_string()),
+            reasoning: Some("hm".to_string()),
+            tool_calls: vec![call.clone()],
+            ..Message::new(secret.clone())
+        };
+        let result = ToolCallResult::of(
+            &call,
+            ToolResultStatus::Ok,
+            "the plans".to_string(),
+            secret.clone(),
+        );
+        let answered = Message {
+            role: MessageRole::Tool,
+            tool_results: vec![result],
+            ..Message::new(secret.clone())
+        };
 
         let given = calling.names_only(&Classification::PUBLIC).expect("it called a tool");
-        assert_eq!((given.content, given.reasoning, given.classification), (None, None, Classification::PUBLIC));
-        assert_eq!((given.tool_calls[0].function_name.as_str(), &given.tool_calls[0].arguments), ("read", &Value::Null));
+        assert_eq!(
+            (given.content, given.reasoning, given.classification),
+            (None, None, Classification::PUBLIC)
+        );
+        assert_eq!(
+            (given.tool_calls[0].function_name.as_str(), &given.tool_calls[0].arguments),
+            ("read", &Value::Null)
+        );
         let given = answered.names_only(&Classification::PUBLIC).expect("a result");
-        assert_eq!((given.tool_results[0].status, given.tool_results[0].content.as_str()), (ToolResultStatus::Ok, ""), "how it ended, not what it returned");
+        assert_eq!(
+            (given.tool_results[0].status, given.tool_results[0].content.as_str()),
+            (ToolResultStatus::Ok, ""),
+            "how it ended, not what it returned"
+        );
         assert_eq!(given.tool_results[0].classification, Classification::PUBLIC);
         let words = Message { content: Some("said".to_string()), ..Message::new(secret) };
         assert!(words.names_only(&Classification::PUBLIC).is_none(), "nothing left of words alone");
@@ -632,8 +852,14 @@ pub(crate) mod tests {
         let public = serde_json::to_value(call("1", ToolVisibility::SHOWN)).unwrap();
         assert!(public.get("visibility").is_none());
         let hidden = serde_json::to_value(call("1", ToolVisibility::HIDDEN)).unwrap();
-        assert_eq!(hidden["visibility"], serde_json::json!({"call": "owner", "arguments": "owner", "result": "owner"}));
-        let stored: ToolCall = serde_json::from_value(serde_json::json!({"id": "1", "function_name": "f", "arguments": {}})).unwrap();
+        assert_eq!(
+            hidden["visibility"],
+            serde_json::json!({"call": "owner", "arguments": "owner", "result": "owner"})
+        );
+        let stored: ToolCall = serde_json::from_value(
+            serde_json::json!({"id": "1", "function_name": "f", "arguments": {}}),
+        )
+        .unwrap();
         assert!(stored.visibility.is_shown(), "a call without labels is public");
         let plain = serde_json::to_value(make_message(MessageId::new())).unwrap();
         assert!(plain.get("reasoning_visibility").is_none());
@@ -644,36 +870,71 @@ pub(crate) mod tests {
     #[test]
     fn a_message_is_modified_and_taken_back_as_it_stands() {
         let turn = TurnId::new();
-        let said = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN)], turn_id: Some(turn), ..make_message(id(1)) };
+        let said = Message {
+            tool_calls: vec![call("1", ToolVisibility::SHOWN)],
+            turn_id: Some(turn),
+            ..make_message(id(1))
+        };
         let public = Classification::general(Confidentiality::Public);
         let when = said.timestamp + Duration::minutes(5);
-        let modified = Message { content: Some("hello, corrected".to_string()), classification: public.clone(), timestamp: when, tool_calls: Vec::new(), turn_id: None, ..said.clone() };
+        let modified = Message {
+            content: Some("hello, corrected".to_string()),
+            classification: public.clone(),
+            timestamp: when,
+            tool_calls: Vec::new(),
+            turn_id: None,
+            ..said.clone()
+        };
 
         let mut message = said.clone();
         assert!(message.modify(&modified));
         assert_eq!(message.content.as_deref(), Some("hello, corrected"));
         assert_eq!(message.classification, public, "how it is classified, too");
-        assert_eq!((message.timestamp, message.modified), (said.timestamp, Some(when)), "said when it was, modified when it was changed");
+        assert_eq!(
+            (message.timestamp, message.modified),
+            (said.timestamp, Some(when)),
+            "said when it was, modified when it was changed"
+        );
         assert_eq!(message.tool_calls.len(), 1, "its calls are not taken over");
-        assert_eq!(message.turn_id, Some(turn), "nor its turn: it stays in the one it was produced in");
+        assert_eq!(
+            message.turn_id,
+            Some(turn),
+            "nor its turn: it stays in the one it was produced in"
+        );
 
         let mut other = said.clone();
-        assert!(!other.modify(&Message { sender_id: ActorId::System, ..modified.clone() }), "by another sender");
-        assert!(!other.modify(&Message { role: MessageRole::Assistant, ..modified.clone() }), "in another role");
+        assert!(
+            !other.modify(&Message { sender_id: ActorId::System, ..modified.clone() }),
+            "by another sender"
+        );
+        assert!(
+            !other.modify(&Message { role: MessageRole::Assistant, ..modified.clone() }),
+            "in another role"
+        );
         assert!(!other.modify(&Message { id: id(2), ..modified.clone() }), "another message");
         assert_eq!(other.content, said.content, "left as it was");
 
         let released = Classification::PUBLIC;
         let mut other = said.clone();
         assert!(other.reclassify(&released));
-        assert_eq!((other.classification, other.modified), (released.clone(), None), "reclassified, not modified");
+        assert_eq!(
+            (other.classification, other.modified),
+            (released.clone(), None),
+            "reclassified, not modified"
+        );
 
         assert!(message.revoke(when));
         assert_eq!(message.revoked, Some(when));
-        assert!(message.content.is_none() && message.tool_calls.is_empty(), "nothing of what it said");
+        assert!(
+            message.content.is_none() && message.tool_calls.is_empty(),
+            "nothing of what it said"
+        );
         assert!(!message.is_heard(), "nobody hears it");
         let before = serde_json::to_value(&message).unwrap();
-        assert!(!message.modify(&modified) && !message.revoke(when) && !message.reclassify(&released), "nothing changes it any more");
+        assert!(
+            !message.modify(&modified) && !message.revoke(when) && !message.reclassify(&released),
+            "nothing changes it any more"
+        );
         assert_eq!(serde_json::to_value(&message).unwrap(), before);
     }
 }

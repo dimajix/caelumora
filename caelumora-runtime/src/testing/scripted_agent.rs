@@ -52,7 +52,10 @@ impl Plugin for ScriptedAgents {
             let script = self.0.clone();
             kinds.register(kind, &[], move |agent, personality, runtime| {
                 let script = script.clone();
-                async move { Ok(Box::new(ScriptedAgent::new(&agent, &personality.load(), runtime, script)) as Box<dyn Actor>) }
+                async move {
+                    Ok(Box::new(ScriptedAgent::new(&agent, &personality.load(), runtime, script))
+                        as Box<dyn Actor>)
+                }
             });
         }
         Ok(())
@@ -92,12 +95,21 @@ pub struct ScriptedAgent {
 }
 
 impl ScriptedAgent {
-    fn new(agent: &AgentController, personality: &Personality, runtime: ActorRuntime, script: Script) -> Self {
+    fn new(
+        agent: &AgentController,
+        personality: &Personality,
+        runtime: ActorRuntime,
+        script: Script,
+    ) -> Self {
         let channel = runtime.channel_controller().load();
         Self {
             id: ActorId::Agent(agent.id()),
             name: agent.load().name.name.clone(),
-            security: agent.security_context(channel.session_id, channel.id, personality.limiting_roles()),
+            security: agent.security_context(
+                channel.session_id,
+                channel.id,
+                personality.limiting_roles(),
+            ),
             runtime,
             script,
             state: Mutex::new(ActorState::Idle),
@@ -131,13 +143,26 @@ impl ScriptedAgent {
         let (events, ended) = match &self.script {
             Script::Answers(text) => {
                 let message = self.message(text, turn_id);
-                (vec![ActorEvent::CompleteMessageGenerated(message.clone()), ActorEvent::TurnFinished { turn_id, messages: vec![message] }], false)
+                (
+                    vec![
+                        ActorEvent::CompleteMessageGenerated(message.clone()),
+                        ActorEvent::TurnFinished { turn_id, messages: vec![message] },
+                    ],
+                    false,
+                )
             }
             Script::Hangs => match self.interrupted().await {
-                Interrupt::Cancel => (vec![ActorEvent::TurnFinished { turn_id, messages: Vec::new() }], false),
-                Interrupt::Retry => (vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Retried }], false),
+                Interrupt::Cancel => {
+                    (vec![ActorEvent::TurnFinished { turn_id, messages: Vec::new() }], false)
+                }
+                Interrupt::Retry => (
+                    vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Retried }],
+                    false,
+                ),
                 Interrupt::Stop => return true,
-                Interrupt::Leave => (vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left }], true),
+                Interrupt::Leave => {
+                    (vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left }], true)
+                }
             },
         };
         self.set_turn(None);
@@ -192,7 +217,9 @@ impl ScriptedAgent {
         if let Ok(mut current) = self.state.lock() {
             *current = state;
         }
-        Answering::own(self.id, self.name.clone(), &self.security).send_all(vec![ActorEvent::StateChanged(state)], output).await;
+        Answering::own(self.id, self.name.clone(), &self.security)
+            .send_all(vec![ActorEvent::StateChanged(state)], output)
+            .await;
     }
 }
 
@@ -226,7 +253,9 @@ impl Actor for ScriptedAgent {
             if let Ok(mut heard) = self.heard.lock() {
                 heard.push(envelope.clone());
             }
-            if matches!(envelope.event, ActorEvent::ResponseRequested { .. }) && self.respond(&envelope, &*tx).await {
+            if matches!(envelope.event, ActorEvent::ResponseRequested { .. })
+                && self.respond(&envelope, &*tx).await
+            {
                 break;
             }
         }

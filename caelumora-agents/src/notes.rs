@@ -10,18 +10,18 @@
 //! components use it; anything else that works with an agent's notes in a
 //! turn uses it too.
 
-use crate::turn::Turn;
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
+use crate::turn::Turn;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentChannelState;
-use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::security::{ActionType, Enforcement, Reclassified, AccessPolicy};
 use caelumora_model::digest::Digest;
 use caelumora_model::ledger::Staged;
 use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId, NoteOrigin, Notes};
+use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, Reclassified};
+use caelumora_model::turn::TurnState;
 
 /// Which of an agent's note chains in a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,16 +124,34 @@ impl AgentNotes {
     /// # Errors
     /// `InvalidParameter` if there is no such note, `PermissionDenied` if
     /// the policy refuses.
-    pub(crate) async fn reclassify(turn: &mut Turn<'_>, kind: NoteKind, id: NoteId, classification: Classification, access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
+    pub(crate) async fn reclassify(
+        turn: &mut Turn<'_>,
+        kind: NoteKind,
+        id: NoteId,
+        classification: Classification,
+        access_policy: &dyn AccessPolicy,
+        confidentiality: &dyn ConfidentialityPolicy,
+    ) -> ToolResult<()> {
         if Self::effective(turn, kind).get(id).is_none() {
-            return Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be reclassified")));
+            return Err(ToolError::InvalidParameter(format!(
+                "you have no note #{id}; only your own current notes can be reclassified"
+            )));
         }
         let channel = turn.situation().classification();
-        let refused = || ToolError::PermissionDenied(format!("reclassifying note #{id} as {classification}"));
+        let refused =
+            || ToolError::PermissionDenied(format!("reclassifying note #{id} as {classification}"));
         let attributes = turn.situation().channel_attributes();
-        let action = ActionType::Reclassify(Reclassified::Note { author: ActorId::Agent(turn.situation().agent_id()), attributes: &attributes });
+        let action = ActionType::Reclassify(Reclassified::Note {
+            author: ActorId::Agent(turn.situation().agent_id()),
+            attributes: &attributes,
+        });
         access_policy.require(turn.situation().security_context(), action, |_| refused()).await?;
-        confidentiality.require_publish(turn.situation().security_context(), &classification, &channel, refused)?;
+        confidentiality.require_publish(
+            turn.situation().security_context(),
+            &classification,
+            &channel,
+            refused,
+        )?;
         turn.stage_note(kind, NoteChange::Reclassify { id, classification });
         Ok(())
     }

@@ -97,7 +97,10 @@ impl RemoteState {
     /// Whether nothing is kept: so for an agent run here, and an external
     /// one before it was first asked.
     pub fn is_empty(&self) -> bool {
-        self.conversation.is_none() && self.open_tasks.is_empty() && self.given_prompts.is_empty() && self.given_classifications.is_empty()
+        self.conversation.is_none()
+            && self.open_tasks.is_empty()
+            && self.given_prompts.is_empty()
+            && self.given_classifications.is_empty()
     }
 
     /// Whether the remote agent works on a task it was given (issue 388):
@@ -161,7 +164,13 @@ impl RemoteState {
     pub fn open(&mut self, task: &TaskId, state: OpenTaskState) {
         match self.find_mut(task) {
             Some(open) => open.state = state,
-            None => self.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None, work: None }),
+            None => self.open_tasks.push(OpenTask {
+                task: task.clone(),
+                since: Utc::now(),
+                state,
+                unsaid: None,
+                work: None,
+            }),
         }
     }
 
@@ -200,10 +209,10 @@ impl RemoteState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::{EventContext, ActorId};
+    use crate::actor::{ActorId, EventContext};
     use crate::confidentiality::Classification;
-    use crate::security::SecurityContext;
     use crate::digest;
+    use crate::security::SecurityContext;
     use crate::user::UserId;
 
     #[test]
@@ -220,17 +229,37 @@ mod tests {
         remote.set_unsaid(&two, Some("so far".to_string()));
         assert_eq!(remote.unsaid_of(&two).as_deref(), Some("so far"));
         assert_eq!(remote.unsaid_of(&one), None);
-        let bob = SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default());
-        remote.begin(&one, &Work::new(EventContext::default(), None, bob.clone(), Classification::CHANNEL_DEFAULT, Default::default()));
+        let bob = SecurityContext::new(
+            ActorId::User(UserId::new()),
+            Default::default(),
+            Default::default(),
+        );
+        remote.begin(
+            &one,
+            &Work::new(
+                EventContext::default(),
+                None,
+                bob.clone(),
+                Classification::CHANNEL_DEFAULT,
+                Default::default(),
+            ),
+        );
         assert_eq!(remote.working().collect::<Vec<_>>(), [&one, &two], "taken up again, it works");
-        assert_eq!(remote.work_of(&one).map(|w| w.security_context.initiator_id), Some(bob.initiator_id), "in the contexts of the request");
+        assert_eq!(
+            remote.work_of(&one).map(|w| w.security_context.initiator_id),
+            Some(bob.initiator_id),
+            "in the contexts of the request"
+        );
         assert!(remote.work_of(&two).is_none(), "none kept");
         remote.open(&one, OpenTaskState::InputRequired);
 
         remote.give("members".to_string(), digest::prompt("[Who is in this channel]"));
         assert!(remote.has_given("members", &digest::prompt("[Who is in this channel]")));
         remote.converse_in(ConversationId("c-1".to_string()));
-        assert!(remote.has_given("members", &digest::prompt("[Who is in this channel]")), "the first conversation keeps what it was given");
+        assert!(
+            remote.has_given("members", &digest::prompt("[Who is in this channel]")),
+            "the first conversation keeps what it was given"
+        );
         remote.converse_in(ConversationId("c-2".to_string()));
         assert!(remote.given_prompts.is_empty(), "another one has none of it");
 

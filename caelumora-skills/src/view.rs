@@ -87,7 +87,11 @@ impl SkillViews for Views {
     }
 
     async fn deleted_skills(&self) -> SkillResult<Vec<DeletedSnapshot<SkillId>>> {
-        Ok(self.deleted_of(self.skill_manager()?.store().as_ref(), &Query::all(), |skill| skill.name.to_string()).await?)
+        Ok(self
+            .deleted_of(self.skill_manager()?.store().as_ref(), &Query::all(), |skill| {
+                skill.name.to_string()
+            })
+            .await?)
     }
 
     async fn usable_skills(&self) -> SkillResult<Vec<SkillView>> {
@@ -101,18 +105,29 @@ impl SkillViews for Views {
         let mut usable = Vec::with_capacity(skills.len());
         for skill in skills {
             if self.access_policy().may_use_skill(context, &skill.security_attributes).await
-                && self.confidentiality().may_publish(context, &skill.classification, &place.classification)
+                && self.confidentiality().may_publish(
+                    context,
+                    &skill.classification,
+                    &place.classification,
+                )
             {
                 usable.push(skill);
             }
         }
-        Ok(found_from(&usable, &here, owner).into_iter().map(|skill| SkillView::of(self.clone(), skill.clone())).collect())
+        Ok(found_from(&usable, &here, owner)
+            .into_iter()
+            .map(|skill| SkillView::of(self.clone(), skill.clone()))
+            .collect())
     }
 
     async fn usable_skill_named(&self, name: &str) -> SkillResult<SkillView> {
         let not_found = || SkillError::NoSkillNamed(name.to_string());
         let wanted = Name::new(name).map_err(|_| not_found())?;
-        self.usable_skills().await?.into_iter().find(|skill| skill.scoped_name().name == wanted).ok_or_else(not_found)
+        self.usable_skills()
+            .await?
+            .into_iter()
+            .find(|skill| skill.scoped_name().name == wanted)
+            .ok_or_else(not_found)
     }
 
     fn skill_manager(&self) -> SkillResult<&Arc<SkillManager>> {
@@ -163,7 +178,10 @@ impl SkillView {
         KnowledgeRef {
             channel,
             session,
-            source: KnowledgeSource::entity::<Skill>(self.skill.id, Some(skill::digest(self.skill.body.as_str()))),
+            source: KnowledgeSource::entity::<Skill>(
+                self.skill.id,
+                Some(skill::digest(self.skill.body.as_str())),
+            ),
             classification: Some(self.skill.classification.clone()),
         }
     }
@@ -171,7 +189,10 @@ impl SkillView {
     /// Whether the viewer may change it and delete it (`UpdateSkill`): its
     /// owner.
     pub async fn may_change(&self) -> bool {
-        self.views.access_policy().may_change_skill(self.views.context(), &self.skill.security_attributes).await
+        self.views
+            .access_policy()
+            .may_change_skill(self.views.context(), &self.skill.security_attributes)
+            .await
     }
 
     pub async fn snapshot(&self) -> SkillSnapshot {

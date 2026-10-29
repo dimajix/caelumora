@@ -4,19 +4,19 @@
 //! branch ends (issue 387) and who joined or left its channel (issue 408), as
 //! what happened (issue 197).
 
-use crate::chain::{Chain, Node};
 use crate::actor::ActorId;
-use crate::history::HistoryEntry;
+use crate::chain::{Chain, Node};
 use crate::confidentiality::Classification;
 use crate::context::KnowledgeSource;
+use crate::digest;
 use crate::digest::Digest;
+use crate::history::HistoryEntry;
 use crate::message::{Message, MessageId};
 use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::digest;
 
 /// What happened in a `Transcript`; its node carries the digest of the
 /// transcript up to and including it (issue 06).
@@ -60,9 +60,21 @@ pub enum TranscriptEntry {
     /// it (`HistoryEntry::ParticipantJoined`, issue 408), noted by the agent
     /// where it was told of it. No message: the model is told of it in the
     /// words its `ContextResolver` gives it.
-    ParticipantJoined { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
+    ParticipantJoined {
+        participant: ActorId,
+        name: String,
+        by: ActorId,
+        by_name: String,
+        at: DateTime<Utc>,
+    },
     /// `participant` left the channel, as `ParticipantJoined` says.
-    ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
+    ParticipantLeft {
+        participant: ActorId,
+        name: String,
+        by: ActorId,
+        by_name: String,
+        at: DateTime<Utc>,
+    },
 }
 
 /// An agent's transcript (issue 50): the sequence of messages its context is
@@ -92,7 +104,9 @@ pub type Transcript = Chain<TranscriptEntry>;
 /// reads them by (issue 234); what has to consider every entry ever added -
 /// the tokens used, whether a message reached the transcript at all - reads
 /// `all_entries` instead.
-pub fn as_they_stand<'a, P>(path: P) -> impl Iterator<Item = (&'a Node<TranscriptEntry>, Option<Message>)>
+pub fn as_they_stand<'a, P>(
+    path: P,
+) -> impl Iterator<Item = (&'a Node<TranscriptEntry>, Option<Message>)>
 where
     P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
     P::IntoIter: Clone,
@@ -124,9 +138,15 @@ where
 /// by a store, which holds every branch (`TranscriptStore::message`, issue
 /// 380); on the active path, what a change of it is checked against
 /// (`Transcript::standing`).
-pub fn known<'a>(mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>, id: MessageId) -> Option<Message> {
-    let mut message = nodes.by_ref().find_map(|node| node.entry.message().filter(|m| m.id == id)).cloned()?;
-    nodes.filter(|node| node.entry.changed() == Some(id)).for_each(|node| node.entry.apply_to(&mut message));
+pub fn known<'a>(
+    mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>,
+    id: MessageId,
+) -> Option<Message> {
+    let mut message =
+        nodes.by_ref().find_map(|node| node.entry.message().filter(|m| m.id == id)).cloned()?;
+    nodes
+        .filter(|node| node.entry.changed() == Some(id))
+        .for_each(|node| node.entry.apply_to(&mut message));
     Some(message)
 }
 
@@ -169,7 +189,11 @@ impl Chain<TranscriptEntry> {
     /// of a message, which is in its copy. `None`, and nothing changes, if
     /// the active path is empty, if `keep_from` is not on it, or if the new
     /// branch would be empty.
-    pub fn compact(&mut self, replacement: Vec<(Message, Option<KnowledgeSource>)>, keep_from: Option<Digest>) -> Option<HashMap<Digest, Option<Digest>>> {
+    pub fn compact(
+        &mut self,
+        replacement: Vec<(Message, Option<KnowledgeSource>)>,
+        keep_from: Option<Digest>,
+    ) -> Option<HashMap<Digest, Option<Digest>>> {
         let path: Vec<_> = self.entries().collect();
         if path.is_empty() {
             return None;
@@ -180,9 +204,10 @@ impl Chain<TranscriptEntry> {
         };
         let replaced: Vec<Digest> = path[..start].iter().map(|node| node.digest).collect();
         // Each entry kept with its copy as it stands, `None` if none is made.
-        let kept: Vec<(Digest, Option<TranscriptEntry>)> = as_they_stand(path[start..].iter().copied())
-            .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
-            .collect();
+        let kept: Vec<(Digest, Option<TranscriptEntry>)> =
+            as_they_stand(path[start..].iter().copied())
+                .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
+                .collect();
         if replacement.is_empty() && kept.iter().all(|(_, copy)| copy.is_none()) {
             return None;
         }
@@ -191,7 +216,8 @@ impl Chain<TranscriptEntry> {
             self.give(message, source);
         }
         let replacement_end = self.digest();
-        let mut moved: HashMap<Digest, Option<Digest>> = replaced.into_iter().map(|old| (old, replacement_end)).collect();
+        let mut moved: HashMap<Digest, Option<Digest>> =
+            replaced.into_iter().map(|old| (old, replacement_end)).collect();
         for (old, copy) in kept {
             if let Some(copy) = copy {
                 self.record(copy);
@@ -301,10 +327,22 @@ impl TranscriptEntry {
     pub fn of_announced(entry: &HistoryEntry) -> Option<Self> {
         match entry {
             HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => {
-                Some(TranscriptEntry::ParticipantJoined { participant: *participant, name: name.clone(), by: *by, by_name: by_name.clone(), at: *at })
+                Some(TranscriptEntry::ParticipantJoined {
+                    participant: *participant,
+                    name: name.clone(),
+                    by: *by,
+                    by_name: by_name.clone(),
+                    at: *at,
+                })
             }
             HistoryEntry::ParticipantLeft { participant, name, by, by_name, at, .. } => {
-                Some(TranscriptEntry::ParticipantLeft { participant: *participant, name: name.clone(), by: *by, by_name: by_name.clone(), at: *at })
+                Some(TranscriptEntry::ParticipantLeft {
+                    participant: *participant,
+                    name: name.clone(),
+                    by: *by,
+                    by_name: by_name.clone(),
+                    at: *at,
+                })
             }
             _ => None,
         }
@@ -313,10 +351,17 @@ impl TranscriptEntry {
     /// The message, if this is one.
     pub fn message(&self) -> Option<&Message> {
         match self {
-            TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => Some(message),
-            TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }
-            | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. }
-            | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => None,
+            TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => {
+                Some(message)
+            }
+            TranscriptEntry::Modified { .. }
+            | TranscriptEntry::Revoked { .. }
+            | TranscriptEntry::Reclassified { .. }
+            | TranscriptEntry::TurnFinished { .. }
+            | TranscriptEntry::TurnGivenUp { .. }
+            | TranscriptEntry::Compacted { .. }
+            | TranscriptEntry::ParticipantJoined { .. }
+            | TranscriptEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -330,19 +375,40 @@ impl TranscriptEntry {
     fn copy_standing(&self, standing: Option<Message>) -> Option<TranscriptEntry> {
         match (self, standing) {
             (TranscriptEntry::Message(_), Some(message)) => Some(TranscriptEntry::Message(message)),
-            (TranscriptEntry::Given { source, .. }, Some(message)) => Some(TranscriptEntry::Given { message, source: *source }),
-            (TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. }, _) => Some(self.clone()),
+            (TranscriptEntry::Given { source, .. }, Some(message)) => {
+                Some(TranscriptEntry::Given { message, source: *source })
+            }
+            (
+                TranscriptEntry::TurnFinished { .. }
+                | TranscriptEntry::TurnGivenUp { .. }
+                | TranscriptEntry::ParticipantJoined { .. }
+                | TranscriptEntry::ParticipantLeft { .. },
+                _,
+            ) => Some(self.clone()),
             (TranscriptEntry::Message(_) | TranscriptEntry::Given { .. }, None)
-            | (TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. } | TranscriptEntry::Compacted { .. }, _) => None,
+            | (
+                TranscriptEntry::Modified { .. }
+                | TranscriptEntry::Revoked { .. }
+                | TranscriptEntry::Reclassified { .. }
+                | TranscriptEntry::Compacted { .. },
+                _,
+            ) => None,
         }
     }
 
     /// The turn whose end this is, if it is one.
     pub fn ended_turn(&self) -> Option<TurnId> {
         match self {
-            TranscriptEntry::TurnFinished { turn_id, .. } | TranscriptEntry::TurnGivenUp { turn_id, .. } => Some(*turn_id),
-            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }
-            | TranscriptEntry::Compacted { .. } | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => None,
+            TranscriptEntry::TurnFinished { turn_id, .. }
+            | TranscriptEntry::TurnGivenUp { turn_id, .. } => Some(*turn_id),
+            TranscriptEntry::Message(_)
+            | TranscriptEntry::Given { .. }
+            | TranscriptEntry::Modified { .. }
+            | TranscriptEntry::Revoked { .. }
+            | TranscriptEntry::Reclassified { .. }
+            | TranscriptEntry::Compacted { .. }
+            | TranscriptEntry::ParticipantJoined { .. }
+            | TranscriptEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -351,10 +417,16 @@ impl TranscriptEntry {
     /// given every entry has seen all of them (issue 236): they only add.
     pub fn classification(&self) -> Option<&Classification> {
         match self {
-            TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } | TranscriptEntry::Modified { message } => Some(&message.classification),
+            TranscriptEntry::Message(message)
+            | TranscriptEntry::Given { message, .. }
+            | TranscriptEntry::Modified { message } => Some(&message.classification),
             TranscriptEntry::Reclassified { classification, .. } => Some(classification),
-            TranscriptEntry::Revoked { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. }
-            | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => None,
+            TranscriptEntry::Revoked { .. }
+            | TranscriptEntry::TurnFinished { .. }
+            | TranscriptEntry::TurnGivenUp { .. }
+            | TranscriptEntry::Compacted { .. }
+            | TranscriptEntry::ParticipantJoined { .. }
+            | TranscriptEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -362,9 +434,15 @@ impl TranscriptEntry {
     pub fn changed(&self) -> Option<MessageId> {
         match self {
             TranscriptEntry::Modified { message } => Some(message.id),
-            TranscriptEntry::Revoked { message, .. } | TranscriptEntry::Reclassified { message, .. } => Some(*message),
-            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }
-            | TranscriptEntry::Compacted { .. } | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => None,
+            TranscriptEntry::Revoked { message, .. }
+            | TranscriptEntry::Reclassified { message, .. } => Some(*message),
+            TranscriptEntry::Message(_)
+            | TranscriptEntry::Given { .. }
+            | TranscriptEntry::TurnFinished { .. }
+            | TranscriptEntry::TurnGivenUp { .. }
+            | TranscriptEntry::Compacted { .. }
+            | TranscriptEntry::ParticipantJoined { .. }
+            | TranscriptEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -380,8 +458,13 @@ impl TranscriptEntry {
             TranscriptEntry::Reclassified { classification, .. } => {
                 message.reclassify(classification);
             }
-            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }
-            | TranscriptEntry::Compacted { .. } | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => {}
+            TranscriptEntry::Message(_)
+            | TranscriptEntry::Given { .. }
+            | TranscriptEntry::TurnFinished { .. }
+            | TranscriptEntry::TurnGivenUp { .. }
+            | TranscriptEntry::Compacted { .. }
+            | TranscriptEntry::ParticipantJoined { .. }
+            | TranscriptEntry::ParticipantLeft { .. } => {}
         }
     }
 }
@@ -389,18 +472,20 @@ impl TranscriptEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::digest::{self, message_chain};
-    use crate::workspace::{Workspace, WorkspaceId};
-    use crate::message::testing::{id, make_message};
-    use chrono::Duration;
     use crate::confidentiality::Confidentiality;
+    use crate::digest::{self, message_chain};
+    use crate::message::testing::{id, make_message};
+    use crate::workspace::{Workspace, WorkspaceId};
+    use chrono::Duration;
     use serde_json::Value;
     use std::slice;
 
     #[test]
     fn a_transcript_started_anew_holds_what_comes_after_and_keeps_what_it_held_as_a_branch() {
         let mut transcript = Transcript::default();
-        let ids = |entries: Vec<&Node<TranscriptEntry>>| entries.into_iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>();
+        let ids = |entries: Vec<&Node<TranscriptEntry>>| {
+            entries.into_iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>()
+        };
         assert_eq!(transcript.start_anew(), None, "it held nothing");
         transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
         let first = transcript.start_anew().expect("what it held");
@@ -408,13 +493,22 @@ mod tests {
         transcript.extend(vec![make_message(id(3))]);
         let second = transcript.start_anew().expect("what it held since");
         assert_eq!(ids(transcript.prefix(&first).unwrap()), vec![id(1), id(2)]);
-        assert_eq!(ids(transcript.prefix(&second).unwrap()), vec![id(3)], "only what came after the first");
-        assert_eq!(ids(transcript.all_entries().collect()), vec![id(1), id(2), id(3)], "all it ever held, in order");
+        assert_eq!(
+            ids(transcript.prefix(&second).unwrap()),
+            vec![id(3)],
+            "only what came after the first"
+        );
+        assert_eq!(
+            ids(transcript.all_entries().collect()),
+            vec![id(1), id(2), id(3)],
+            "all it ever held, in order"
+        );
     }
 
     #[test]
     fn a_message_given_is_read_as_its_message_and_hashed_as_one() {
-        let source = KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
+        let source =
+            KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
         let (mut given, mut said) = (Transcript::default(), Transcript::default());
         given.push(make_message(id(1)));
         said.push(make_message(id(1)));
@@ -424,7 +518,10 @@ mod tests {
         assert_eq!(given.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2)]);
         assert_eq!(known(given.all_entries(), id(2)).map(|m| m.id), Some(id(2)));
         let entry = &given.last().unwrap().entry;
-        assert!(matches!(entry, TranscriptEntry::Given { source: Some(s), .. } if *s == source), "and keeps what it is");
+        assert!(
+            matches!(entry, TranscriptEntry::Given { source: Some(s), .. } if *s == source),
+            "and keeps what it is"
+        );
         assert_eq!(entry.classification(), Some(&make_message(id(2)).classification));
     }
 
@@ -447,8 +544,15 @@ mod tests {
         let d2 = message_chain(Some(&d1), &m2);
         let d3 = message_chain(Some(&d2), &m3);
         assert_eq!(context.digest(), Some(d3));
-        assert_eq!(before, vec![None, Some(d1), Some(d2)], "each message with the context it came after");
-        assert_eq!(context.messages().iter().map(|m| m.id).collect::<Vec<_>>(), vec![m1.id, m2.id, m3.id]);
+        assert_eq!(
+            before,
+            vec![None, Some(d1), Some(d2)],
+            "each message with the context it came after"
+        );
+        assert_eq!(
+            context.messages().iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![m1.id, m2.id, m3.id]
+        );
     }
 
     #[test]
@@ -474,7 +578,10 @@ mod tests {
         context.push(make_message(id(3)));
 
         let prefix = context.prefix(&at_two).expect("an earlier digest names a prefix");
-        assert_eq!(prefix.iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
+        assert_eq!(
+            prefix.iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>(),
+            vec![id(1), id(2)]
+        );
         assert!(context.prefix(&digest::prompt("elsewhere")).is_none());
     }
 
@@ -513,7 +620,11 @@ mod tests {
         let mut transcript = Transcript::default();
         transcript.push(make_message(id(1)));
         transcript.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
-        transcript.record(given_up(turn, GivenUpReason::Failed { message: "boom".to_string() }, Utc::now()));
+        transcript.record(given_up(
+            turn,
+            GivenUpReason::Failed { message: "boom".to_string() },
+            Utc::now(),
+        ));
         transcript.push(make_message(id(4)));
         (transcript, turn)
     }
@@ -527,11 +638,23 @@ mod tests {
     #[test]
     fn a_turn_given_up_keeps_what_it_said_and_is_recorded_after_it() {
         let (transcript, turn) = with_a_turn_given_up();
-        let loaded: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
-        assert!(matches!(end_of(&loaded, turn), Some(TranscriptEntry::TurnGivenUp { reason: GivenUpReason::Failed { .. }, .. })));
-        assert_eq!(loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2), id(3), id(4)], "what it said is not unsaid");
+        let loaded: Transcript =
+            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        assert!(matches!(
+            end_of(&loaded, turn),
+            Some(TranscriptEntry::TurnGivenUp { reason: GivenUpReason::Failed { .. }, .. })
+        ));
+        assert_eq!(
+            loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(),
+            [id(1), id(2), id(3), id(4)],
+            "what it said is not unsaid"
+        );
         let entries: Vec<_> = loaded.entries().map(|n| n.entry.ended_turn().is_some()).collect();
-        assert_eq!(entries, [false, false, false, true, false], "its end on the active path, after its messages");
+        assert_eq!(
+            entries,
+            [false, false, false, true, false],
+            "its end on the active path, after its messages"
+        );
         assert_eq!(loaded.all_entries().count(), 5, "and nothing branches");
     }
 
@@ -548,17 +671,34 @@ mod tests {
         };
         let boom = GivenUpReason::Failed { message: "boom".to_string() };
         let earlier = Utc::now() - Duration::hours(1);
-        assert_eq!(ended(given_up(turn, boom.clone(), earlier)), transcript.digest(), "the same end at another time");
-        assert_ne!(ended(given_up(turn, GivenUpReason::Left, earlier)), transcript.digest(), "another reason");
-        assert_ne!(ended(given_up(TurnId::new(), boom, earlier)), transcript.digest(), "another turn");
-        assert_ne!(ended(TranscriptEntry::TurnFinished { turn_id: turn, at: earlier }), transcript.digest(), "taken over");
+        assert_eq!(
+            ended(given_up(turn, boom.clone(), earlier)),
+            transcript.digest(),
+            "the same end at another time"
+        );
+        assert_ne!(
+            ended(given_up(turn, GivenUpReason::Left, earlier)),
+            transcript.digest(),
+            "another reason"
+        );
+        assert_ne!(
+            ended(given_up(TurnId::new(), boom, earlier)),
+            transcript.digest(),
+            "another turn"
+        );
+        assert_ne!(
+            ended(TranscriptEntry::TurnFinished { turn_id: turn, at: earlier }),
+            transcript.digest(),
+            "taken over"
+        );
     }
 
     #[test]
     fn a_turn_given_up_reaches_the_stored_transcript_as_changes() {
         let mut transcript = Transcript::default();
         transcript.push(make_message(id(1)));
-        let mut stored: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        let mut stored: Transcript =
+            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
         transcript.mark_stored();
 
         let turn = TurnId::new();
@@ -568,32 +708,66 @@ mod tests {
 
         stored.apply(transcript.changes().expect("changed")).unwrap();
         assert_eq!(stored.digest(), transcript.digest());
-        assert_eq!(stored.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2), id(3), id(4)]);
-        assert!(matches!(end_of(&stored, turn), Some(TranscriptEntry::TurnGivenUp { .. })), "the end came along");
+        assert_eq!(
+            stored.messages().iter().map(|m| m.id).collect::<Vec<_>>(),
+            [id(1), id(2), id(3), id(4)]
+        );
+        assert!(
+            matches!(end_of(&stored, turn), Some(TranscriptEntry::TurnGivenUp { .. })),
+            "the end came along"
+        );
     }
 
     #[test]
     fn a_change_is_given_to_the_model_from_where_it_was_recorded() {
         let at = Utc::now();
-        let texts = |messages: Vec<Message>| messages.into_iter().map(|m| m.content.unwrap_or_default()).collect::<Vec<_>>();
+        let texts = |messages: Vec<Message>| {
+            messages.into_iter().map(|m| m.content.unwrap_or_default()).collect::<Vec<_>>()
+        };
         let mut transcript = Transcript::default();
-        transcript.extend(vec![make_message(id(1)), Message { content: Some("second".to_string()), ..make_message(id(2)) }]);
+        transcript.extend(vec![
+            make_message(id(1)),
+            Message { content: Some("second".to_string()), ..make_message(id(2)) },
+        ]);
         let before = transcript.digest().unwrap();
 
-        assert!(transcript.modify(Message { content: Some("corrected".to_string()), timestamp: at, ..make_message(id(1)) }));
+        assert!(transcript.modify(Message {
+            content: Some("corrected".to_string()),
+            timestamp: at,
+            ..make_message(id(1))
+        }));
         assert!(transcript.revoke(id(2), at));
         assert!(!transcript.revoke(id(2), at), "taken back already");
-        assert!(!transcript.modify(Message { content: Some("too late".to_string()), ..make_message(id(2)) }), "taken back already");
+        assert!(
+            !transcript
+                .modify(Message { content: Some("too late".to_string()), ..make_message(id(2)) }),
+            "taken back already"
+        );
         assert!(!transcript.revoke(id(9), at), "never given");
         transcript.push(make_message(id(3)));
 
-        assert_eq!(texts(transcript.messages()), ["corrected", "hello"], "as it stands, without what was taken back");
-        let then: Vec<Message> = as_they_stand(transcript.prefix(&before).unwrap()).filter_map(|(_, m)| m).collect();
-        assert_eq!(texts(then), ["hello", "second"], "a digest taken before names what was given then");
-        let entries = as_they_stand(transcript.entries()).map(|(_, m)| m.map(|m| m.id)).collect::<Vec<_>>();
-        assert_eq!(entries, [Some(id(1)), None, None, None, Some(id(3))], "every entry stays, in its place");
+        assert_eq!(
+            texts(transcript.messages()),
+            ["corrected", "hello"],
+            "as it stands, without what was taken back"
+        );
+        let then: Vec<Message> =
+            as_they_stand(transcript.prefix(&before).unwrap()).filter_map(|(_, m)| m).collect();
+        assert_eq!(
+            texts(then),
+            ["hello", "second"],
+            "a digest taken before names what was given then"
+        );
+        let entries =
+            as_they_stand(transcript.entries()).map(|(_, m)| m.map(|m| m.id)).collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            [Some(id(1)), None, None, None, Some(id(3))],
+            "every entry stays, in its place"
+        );
 
-        let loaded: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        let loaded: Transcript =
+            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
         assert_eq!(texts(loaded.messages()), ["corrected", "hello"]);
         assert_eq!(loaded.digest(), transcript.digest());
     }
@@ -601,10 +775,13 @@ mod tests {
     #[test]
     fn a_reclassification_is_given_from_where_it_was_recorded_and_reaches_the_stored_transcript() {
         let public = Classification::PUBLIC;
-        let classifications = |messages: Vec<Message>| messages.into_iter().map(|m| m.classification).collect::<Vec<_>>();
+        let classifications = |messages: Vec<Message>| {
+            messages.into_iter().map(|m| m.classification).collect::<Vec<_>>()
+        };
         let mut transcript = Transcript::default();
         transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        let mut stored: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        let mut stored: Transcript =
+            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
         transcript.mark_stored();
         let before = transcript.digest().unwrap();
 
@@ -615,9 +792,18 @@ mod tests {
         assert!(!transcript.reclassify(id(9), public.clone()), "never given");
 
         let internal = make_message(id(1)).classification;
-        assert_eq!(classifications(transcript.messages()), slice::from_ref(&public), "as it stands");
-        let then: Vec<Message> = as_they_stand(transcript.prefix(&before).unwrap()).filter_map(|(_, m)| m).collect();
-        assert_eq!(classifications(then), [internal.clone(), internal], "a digest taken before names what was given then");
+        assert_eq!(
+            classifications(transcript.messages()),
+            slice::from_ref(&public),
+            "as it stands"
+        );
+        let then: Vec<Message> =
+            as_they_stand(transcript.prefix(&before).unwrap()).filter_map(|(_, m)| m).collect();
+        assert_eq!(
+            classifications(then),
+            [internal.clone(), internal],
+            "a digest taken before names what was given then"
+        );
 
         stored.apply(transcript.changes().expect("changed")).unwrap();
         assert_eq!(stored.digest(), transcript.digest());
@@ -629,25 +815,49 @@ mod tests {
         let at = Utc::now();
         let mut transcript = Transcript::default();
         transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        assert!(transcript.modify(Message { content: Some("corrected".to_string()), timestamp: at, ..make_message(id(1)) }));
+        assert!(transcript.modify(Message {
+            content: Some("corrected".to_string()),
+            timestamp: at,
+            ..make_message(id(1))
+        }));
         transcript.revoke(id(2), at);
         transcript.start_anew();
         transcript.push(make_message(id(3)));
 
-        assert_eq!(known(transcript.all_entries(), id(1)).and_then(|m| m.content).as_deref(), Some("corrected"), "off the active path, with its change");
-        assert!(known(transcript.all_entries(), id(2)).is_some_and(|m| m.revoked.is_some()), "taken back");
-        assert_eq!(known(transcript.all_entries(), id(3)).map(|m| m.id), Some(id(3)), "on the active path");
+        assert_eq!(
+            known(transcript.all_entries(), id(1)).and_then(|m| m.content).as_deref(),
+            Some("corrected"),
+            "off the active path, with its change"
+        );
+        assert!(
+            known(transcript.all_entries(), id(2)).is_some_and(|m| m.revoked.is_some()),
+            "taken back"
+        );
+        assert_eq!(
+            known(transcript.all_entries(), id(3)).map(|m| m.id),
+            Some(id(3)),
+            "on the active path"
+        );
         assert!(known(transcript.all_entries(), id(9)).is_none(), "never held");
     }
 
     #[test]
     fn what_an_entry_records_of_a_message_says_how_it_is_classified() {
         let confidential = Classification::general(Confidentiality::Confidential);
-        let modified = TranscriptEntry::Modified { message: Message { classification: confidential.clone(), ..make_message(id(1)) } };
+        let modified = TranscriptEntry::Modified {
+            message: Message { classification: confidential.clone(), ..make_message(id(1)) },
+        };
         assert_eq!(modified.classification(), Some(&confidential), "a modification may raise it");
-        let released = TranscriptEntry::Reclassified { message: id(1), classification: Classification::PUBLIC };
+        let released = TranscriptEntry::Reclassified {
+            message: id(1),
+            classification: Classification::PUBLIC,
+        };
         assert_eq!(released.classification(), Some(&Classification::PUBLIC));
-        assert_eq!(TranscriptEntry::Revoked { message: id(1), at: Utc::now() }.classification(), None, "says nothing");
+        assert_eq!(
+            TranscriptEntry::Revoked { message: id(1), at: Utc::now() }.classification(),
+            None,
+            "says nothing"
+        );
     }
 
     #[test]
@@ -667,7 +877,11 @@ mod tests {
     #[test]
     fn a_compaction_begins_a_branch_of_its_own_and_says_where_the_old_entries_stand_on_it() {
         let mut transcript = Transcript::default();
-        assert_eq!(transcript.compact(vec![(make_message(id(9)), None)], None), None, "not an empty transcript");
+        assert_eq!(
+            transcript.compact(vec![(make_message(id(9)), None)], None),
+            None,
+            "not an empty transcript"
+        );
         let turn = TurnId::new();
         transcript.push(make_message(id(1)));
         transcript.push(make_message(id(2)));
@@ -680,30 +894,65 @@ mod tests {
         let head = transcript.digest();
 
         assert_eq!(transcript.compact(Vec::new(), None), None, "not to nothing");
-        assert_eq!(transcript.compact(Vec::new(), old.last().copied()), None, "nor to an earlier compaction's end alone");
-        assert_eq!(transcript.compact(vec![(make_message(id(9)), None)], Some(digest::prompt("elsewhere"))), None, "not from what is not on the active path");
-        assert_eq!((transcript.digest(), transcript.all_entries().len()), (head, old.len()), "nothing changed");
+        assert_eq!(
+            transcript.compact(Vec::new(), old.last().copied()),
+            None,
+            "nor to an earlier compaction's end alone"
+        );
+        assert_eq!(
+            transcript
+                .compact(vec![(make_message(id(9)), None)], Some(digest::prompt("elsewhere"))),
+            None,
+            "not from what is not on the active path"
+        );
+        assert_eq!(
+            (transcript.digest(), transcript.all_entries().len()),
+            (head, old.len()),
+            "nothing changed"
+        );
 
-        let source = KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
-        let moved = transcript.compact(vec![(make_message(id(10)), None), (make_message(id(11)), Some(source))], Some(old[1])).expect("compacted");
+        let source =
+            KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
+        let moved = transcript
+            .compact(
+                vec![(make_message(id(10)), None), (make_message(id(11)), Some(source))],
+                Some(old[1]),
+            )
+            .expect("compacted");
 
         let new: Vec<_> = transcript.entries().collect();
-        let entries: Vec<(&str, Option<MessageId>)> = new.iter().map(|n| match &n.entry {
-            TranscriptEntry::Message(m) => ("said", Some(m.id)),
-            TranscriptEntry::Given { message, .. } => ("given", Some(message.id)),
-            TranscriptEntry::TurnFinished { turn_id, .. } if *turn_id == turn => ("finished", None),
-            TranscriptEntry::Compacted { .. } => ("compacted", None),
-            _ => ("other", None),
-        }).collect();
+        let entries: Vec<(&str, Option<MessageId>)> = new
+            .iter()
+            .map(|n| match &n.entry {
+                TranscriptEntry::Message(m) => ("said", Some(m.id)),
+                TranscriptEntry::Given { message, .. } => ("given", Some(message.id)),
+                TranscriptEntry::TurnFinished { turn_id, .. } if *turn_id == turn => {
+                    ("finished", None)
+                }
+                TranscriptEntry::Compacted { .. } => ("compacted", None),
+                _ => ("other", None),
+            })
+            .collect();
         assert_eq!(entries, [("given", Some(id(10))), ("given", Some(id(11))), ("said", Some(id(2))), ("finished", None), ("said", Some(id(3))), ("compacted", None)],
             "the replacement given, what was kept as it stands - the message taken back, the changes and the earlier end left out -, then its end");
-        assert_eq!(new[4].entry.message().and_then(|m| m.content.as_deref()), Some("changed"), "a change is in its message's copy");
-        let sources: Vec<_> = new[..2].iter().map(|n| match &n.entry { TranscriptEntry::Given { source, .. } => *source, _ => None }).collect();
+        assert_eq!(
+            new[4].entry.message().and_then(|m| m.content.as_deref()),
+            Some("changed"),
+            "a change is in its message's copy"
+        );
+        let sources: Vec<_> = new[..2]
+            .iter()
+            .map(|n| match &n.entry {
+                TranscriptEntry::Given { source, .. } => *source,
+                _ => None,
+            })
+            .collect();
         assert_eq!(sources, [None, Some(source)], "each as it was given, knowledge or not");
         assert!(transcript.prefix(&head.unwrap()).is_some(), "the old branch stays");
 
         let at = |i: usize| Some(new[i].digest);
-        let stands: Vec<Option<Digest>> = old.iter().map(|digest| moved.get(digest).copied().flatten()).collect();
+        let stands: Vec<Option<Digest>> =
+            old.iter().map(|digest| moved.get(digest).copied().flatten()).collect();
         assert_eq!(stands, [at(1), at(2), at(3), at(4), at(4), at(4), at(4), at(4)],
             "a replaced entry at the replacement's end, a kept one at its copy, or the copy before it");
         assert_eq!(moved.len(), old.len(), "every entry of the old path");

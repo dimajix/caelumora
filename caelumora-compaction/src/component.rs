@@ -13,15 +13,17 @@
 //! size gives nothing to measure against: its agent does not compact on its own, which the
 //! component says once.
 
+use crate::{CompactionError, CompactionStrategy};
+use async_trait::async_trait;
 use caelumora_agents::activity::{ActivityError, ActivityProvider};
 use caelumora_agents::command::AgentCommandProvider;
-use crate::{CompactionError, CompactionStrategy};
 use caelumora_agents::situation::Situation;
 use caelumora_agents::turn::Turn;
-use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput};
+use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_runtime::component::{
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+};
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -72,13 +74,19 @@ impl CompactionComponent {
     /// Compacts the context of `turn`'s agent as its strategy does: what it did, in words for its
     /// channel, or `None` if there was nothing to compact.
     async fn compact(&self, turn: &mut Turn<'_>) -> Result<Option<String>, CompactionError> {
-        Ok(self.strategy.compact(turn).await?.map(|compaction| compaction.describe(turn.agent_name())))
+        Ok(self
+            .strategy
+            .compact(turn)
+            .await?
+            .map(|compaction| compaction.describe(turn.agent_name())))
     }
 }
 
 /// What the agent `agent_name`'s channel is told when there was nothing to compact.
 fn nothing_to_compact(agent_name: &str) -> String {
-    format!("{agent_name} found nothing to compact: it keeps the newest part of its context as it is")
+    format!(
+        "{agent_name} found nothing to compact: it keeps the newest part of its context as it is"
+    )
 }
 
 impl ProvidesCommands for CompactionComponent {
@@ -95,15 +103,25 @@ impl ProvidesCommands for CompactionComponent {
 
 #[async_trait]
 impl AgentCommandProvider for CompactionComponent {
-    async fn execute(&self, name: &str, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
+    async fn execute(
+        &self,
+        name: &str,
+        args: &str,
+        turn: &mut Turn<'_>,
+    ) -> CommandResult<CommandOutput> {
         if name != COMPACT_COMMAND_NAME {
             return Err(CommandError::Unknown(name.to_string()));
         }
-        let invalid = |reason: &str| CommandError::InvalidArguments { command: name.to_string(), reason: reason.to_string() };
+        let invalid = |reason: &str| CommandError::InvalidArguments {
+            command: name.to_string(),
+            reason: reason.to_string(),
+        };
         if !args.trim().is_empty() {
             return Err(invalid("it takes no arguments"));
         }
-        let compacted = self.compact(turn).await
+        let compacted = self
+            .compact(turn)
+            .await
             .map_err(|e| CommandError::Failed { command: name.to_string(), reason: e.to_string() })?
             .ok_or_else(|| invalid(&nothing_to_compact(turn.agent_name())))?;
 
@@ -133,8 +151,12 @@ impl ActivityProvider for CompactionComponent {
     }
 
     async fn carry_out(&self, turn: &mut Turn<'_>) -> Result<String, ActivityError> {
-        let compacted = self.compact(turn).await
-            .map_err(|e| ActivityError::Failed(format!("{} could not compact its context: {e}", turn.agent_name())))?;
+        let compacted = self.compact(turn).await.map_err(|e| {
+            ActivityError::Failed(format!(
+                "{} could not compact its context: {e}",
+                turn.agent_name()
+            ))
+        })?;
         Ok(compacted.unwrap_or_else(|| nothing_to_compact(turn.agent_name())))
     }
 }
@@ -161,14 +183,14 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_agents::testing::workspace_turn;
     use crate::Compaction;
-    use caelumora_runtime::workspace::testing::session_with_workspace;
+    use caelumora_agents::testing::workspace_turn;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::command::CommandVisibility;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId, MessageRole};
+    use caelumora_runtime::workspace::testing::session_with_workspace;
     use serde_json::Value;
     use std::sync::atomic::AtomicUsize;
 
@@ -189,12 +211,17 @@ mod tests {
     }
 
     /// The component with a strategy that answers with what `answer` returns, and that strategy.
-    fn answering(answer: fn() -> Result<Option<Compaction>, CompactionError>) -> (CompactionComponent, Arc<Answering>) {
+    fn answering(
+        answer: fn() -> Result<Option<Compaction>, CompactionError>,
+    ) -> (CompactionComponent, Arc<Answering>) {
         let strategy = Arc::new(Answering { answer, asked: AtomicUsize::new(0) });
         (CompactionComponent::new(Arc::<Answering>::clone(&strategy), DEFAULT_THRESHOLD), strategy)
     }
 
-    async fn compact(answer: fn() -> Result<Option<Compaction>, CompactionError>, args: &str) -> (CommandResult<CommandOutput>, usize) {
+    async fn compact(
+        answer: fn() -> Result<Option<Compaction>, CompactionError>,
+        args: &str,
+    ) -> (CommandResult<CommandOutput>, usize) {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let (component, strategy) = answering(answer);
@@ -203,7 +230,9 @@ mod tests {
         (result, strategy.asked.load(Ordering::SeqCst))
     }
 
-    async fn carry_out(answer: fn() -> Result<Option<Compaction>, CompactionError>) -> Result<String, ActivityError> {
+    async fn carry_out(
+        answer: fn() -> Result<Option<Compaction>, CompactionError>,
+    ) -> Result<String, ActivityError> {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let (component, _) = answering(answer);
@@ -212,7 +241,18 @@ mod tests {
 
     #[tokio::test]
     async fn compact_tells_the_channel_what_its_strategy_did() {
-        let (answer, _) = compact(|| Ok(Some(Compaction { replaced: 3, kept: 1, given_again: vec!["skill release-notes".to_string()], lost: 1 })), "").await;
+        let (answer, _) = compact(
+            || {
+                Ok(Some(Compaction {
+                    replaced: 3,
+                    kept: 1,
+                    given_again: vec!["skill release-notes".to_string()],
+                    lost: 1,
+                }))
+            },
+            "",
+        )
+        .await;
         let answer = answer.expect("compacted");
         assert_eq!(answer.text, "Jonathan compacted its context: 3 messages replaced, 1 kept as they were. Given again: skill release-notes. \
             1 of what it had been given can no longer be given here and was not given again.");
@@ -222,33 +262,55 @@ mod tests {
     #[tokio::test]
     async fn compact_refuses_what_its_strategy_cannot_shorten_and_takes_no_arguments() {
         let (refused, _) = compact(|| Ok(None), "").await;
-        assert!(matches!(refused, Err(CommandError::InvalidArguments { ref reason, .. }) if reason.contains("nothing to compact")), "{refused:?}");
+        assert!(
+            matches!(refused, Err(CommandError::InvalidArguments { ref reason, .. }) if reason.contains("nothing to compact")),
+            "{refused:?}"
+        );
         let (refused, asked) = compact(|| Ok(None), "hard").await;
-        assert!(matches!(refused, Err(CommandError::InvalidArguments { ref reason, .. }) if reason.contains("no arguments")), "{refused:?}");
+        assert!(
+            matches!(refused, Err(CommandError::InvalidArguments { ref reason, .. }) if reason.contains("no arguments")),
+            "{refused:?}"
+        );
         assert_eq!(asked, 0, "its strategy was not asked");
     }
 
     #[tokio::test]
     async fn compact_fails_with_the_reason_its_strategy_failed() {
         let (failed, _) = compact(|| Err(CompactionError::ModelUnreachable), "").await;
-        assert!(matches!(failed, Err(CommandError::Failed { ref reason, .. }) if reason == "its model could not be asked"), "{failed:?}");
+        assert!(
+            matches!(failed, Err(CommandError::Failed { ref reason, .. }) if reason == "its model could not be asked"),
+            "{failed:?}"
+        );
     }
 
     #[tokio::test]
     async fn compacting_on_its_own_tells_what_its_strategy_did_and_why_it_failed() {
-        let compacted = carry_out(|| Ok(Some(Compaction { replaced: 2, kept: 3, given_again: Vec::new(), lost: 0 }))).await;
-        assert_eq!(compacted.ok().as_deref(), Some("Jonathan compacted its context: 2 messages replaced, 3 kept as they were."));
+        let compacted = carry_out(|| {
+            Ok(Some(Compaction { replaced: 2, kept: 3, given_again: Vec::new(), lost: 0 }))
+        })
+        .await;
+        assert_eq!(
+            compacted.ok().as_deref(),
+            Some("Jonathan compacted its context: 2 messages replaced, 3 kept as they were.")
+        );
         let nothing = carry_out(|| Ok(None)).await;
-        assert!(matches!(nothing, Ok(ref said) if said.contains("found nothing to compact")), "{nothing:?}");
+        assert!(
+            matches!(nothing, Ok(ref said) if said.contains("found nothing to compact")),
+            "{nothing:?}"
+        );
         let failed = carry_out(|| Err(CompactionError::ModelUnreachable)).await;
-        assert!(matches!(failed, Err(ActivityError::Failed(ref reason)) if reason == "Jonathan could not compact its context: its model could not be asked"), "{failed:?}");
+        assert!(
+            matches!(failed, Err(ActivityError::Failed(ref reason)) if reason == "Jonathan could not compact its context: its model could not be asked"),
+            "{failed:?}"
+        );
     }
 
     #[tokio::test]
     async fn it_is_due_once_a_call_measured_the_context_that_full() {
         let world = session_with_workspace().await;
         let (component, _) = answering(|| Ok(None));
-        let heard = Message { content: Some("hello".to_string()), ..Message::new(Classification::PUBLIC) };
+        let heard =
+            Message { content: Some("hello".to_string()), ..Message::new(Classification::PUBLIC) };
         let mut state = AgentChannelState::default();
         state.perceive(vec![heard]);
         let mut turn = workspace_turn(&world, &mut state);
@@ -277,6 +339,9 @@ mod tests {
         let config = |params| config_of_params::<CompactionConfig>(&params).map(|c| c.threshold);
         assert_eq!(config(Value::Null).ok(), Some(DEFAULT_THRESHOLD));
         assert_eq!(config(serde_json::json!({ "threshold": 0.5 })).ok(), Some(0.5));
-        assert!(config(serde_json::json!({ "keep": 0.5 })).is_err(), "what it keeps is its strategy's");
+        assert!(
+            config(serde_json::json!({ "keep": 0.5 })).is_err(),
+            "what it keeps is its strategy's"
+        );
     }
 }

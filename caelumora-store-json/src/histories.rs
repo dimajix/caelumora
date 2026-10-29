@@ -12,15 +12,17 @@
 
 use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
 use super::{delete_if_exists, read_json_opt, write_json_atomic, JsonFileStore};
+use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::chain::{Node, Position};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
+use caelumora_model::store::history::{
+    answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems,
+};
 use caelumora_model::store::query::Filter;
 use caelumora_model::store::{StoreError, StoreResult};
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
@@ -75,7 +77,9 @@ impl<'a> ItemSegments<'a> {
             let items = read_items(self.dir, from).await?;
             self.read.insert(from, items);
         }
-        self.read.get_mut(&from).ok_or_else(|| StoreError::Backend(format!("the items from position {from} were not read")))
+        self.read.get_mut(&from).ok_or_else(|| {
+            StoreError::Backend(format!("the items from position {from} were not read"))
+        })
     }
 
     /// Takes `node`, the next entry of a chain that ends at `end`, in: an
@@ -121,7 +125,12 @@ impl<'a> ItemSegments<'a> {
 /// into the items and the memberships, and records that it did: after a
 /// put, what it added; after a crash, what was not derived yet. Taking an
 /// entry in twice changes nothing.
-async fn derive_items(dir: &Path, items_end: Position, end: Position, added: &[Node<Recorded>]) -> StoreResult<()> {
+async fn derive_items(
+    dir: &Path,
+    items_end: Position,
+    end: Position,
+    added: &[Node<Recorded>],
+) -> StoreResult<()> {
     let mut segments = ItemSegments::new(dir);
     let mut memberships = read_memberships(dir).await?;
     for node in added.iter().filter(|node| node.seq >= items_end && node.seq < end) {
@@ -162,7 +171,11 @@ impl JsonFileStore {
     /// Appends what `history`, that of `channel` as its state holds it,
     /// added since it was last stored, derives the items of it, and marks it
     /// stored.
-    pub(super) async fn append_history(&self, channel: ChannelId, history: &mut History) -> StoreResult<()> {
+    pub(super) async fn append_history(
+        &self,
+        channel: ChannelId,
+        history: &mut History,
+    ) -> StoreResult<()> {
         let Some(changes) = history.changes() else { return Ok(()) };
         let dir = self.history_dir(channel);
         let items_end = derive_missing(&dir, channel).await?;
@@ -174,7 +187,11 @@ impl JsonFileStore {
 
     /// The history of `channel` from the position `from` on, as a holder
     /// keeps it; empty if none is kept.
-    pub(super) async fn load_history(&self, channel: ChannelId, from: Position) -> StoreResult<History> {
+    pub(super) async fn load_history(
+        &self,
+        channel: ChannelId,
+        from: Position,
+    ) -> StoreResult<History> {
         let dir = self.history_dir(channel);
         derive_missing(&dir, channel).await?;
         chains::load(&dir, history_of(channel), from).await
@@ -183,7 +200,15 @@ impl JsonFileStore {
 
 #[async_trait]
 impl HistoryStore for JsonFileStore {
-    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, filter: Option<&Filter<HistoryField>>) -> StoreResult<HistoryPage> {
+    async fn page(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        from: Position,
+        before: Option<Position>,
+        limit: usize,
+        filter: Option<&Filter<HistoryField>>,
+    ) -> StoreResult<HistoryPage> {
         let dir = self.history_dir(channel);
         let head = read_head(&dir).await?;
         let items_end = read_items_end(&dir).await?;
@@ -195,7 +220,11 @@ impl HistoryStore for JsonFileStore {
         let ranges = read_memberships(&dir).await?.of_reader(reader);
         let mut segment = before.previous().map(segment_of);
         while let Some(from_here) = segment {
-            for item in read_items(&dir, from_here).await?.newest_before(before).take_while(|(seq, _)| *seq >= from) {
+            for item in read_items(&dir, from_here)
+                .await?
+                .newest_before(before)
+                .take_while(|(seq, _)| *seq >= from)
+            {
                 newest.extend(seen(reader, &ranges, filter, item)?);
             }
             if newest.len() > limit || from_here <= from {
@@ -206,7 +235,12 @@ impl HistoryStore for JsonFileStore {
         page_of(newest.into_iter().map(|item| Ok(Some(item))), from, limit, head.head)
     }
 
-    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(Position, HistoryEntry)>> {
+    async fn said(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        id: MessageId,
+    ) -> StoreResult<Option<(Position, HistoryEntry)>> {
         let dir = self.history_dir(channel);
         let mut segment = read_items_end(&dir).await?.previous().map(segment_of);
         while let Some(from) = segment {
@@ -219,20 +253,35 @@ impl HistoryStore for JsonFileStore {
         Ok(None)
     }
 
-    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<Recorded>>> {
+    async fn entries(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        range: Range<Position>,
+    ) -> StoreResult<Vec<Node<Recorded>>> {
         let dir = self.history_dir(channel);
         let head = read_head(&dir).await?;
-        let chain: Vec<Node<Recorded>> = read_chain(&dir, range.start, head.end.min(range.end)).await?;
+        let chain: Vec<Node<Recorded>> =
+            read_chain(&dir, range.start, head.end.min(range.end)).await?;
         let ranges = read_memberships(&dir).await?.of_reader(reader);
         Ok(seen_nodes(reader, &ranges, &chain))
     }
 
     /// Reads the chain backwards a segment at a time, until a segment holds
     /// the end of the turn before.
-    async fn answer(&self, channel: ChannelId, reader: &Reader, end: Position) -> StoreResult<Vec<Message>> {
+    async fn answer(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        end: Position,
+    ) -> StoreResult<Vec<Message>> {
         let dir = self.history_dir(channel);
-        let Some(ended) = read_chain::<Recorded>(&dir, end, end.next()).await?.pop() else { return Ok(Vec::new()) };
-        let HistoryEntry::TurnFinished { actor, .. } = ended.entry.entry else { return Ok(Vec::new()) };
+        let Some(ended) = read_chain::<Recorded>(&dir, end, end.next()).await?.pop() else {
+            return Ok(Vec::new());
+        };
+        let HistoryEntry::TurnFinished { actor, .. } = ended.entry.entry else {
+            return Ok(Vec::new());
+        };
         let mut older: Vec<Node<Recorded>> = Vec::new();
         let mut before = end;
         while before > Position::START {
@@ -250,7 +299,11 @@ impl HistoryStore for JsonFileStore {
         Ok(answer_of(&ended.entry.entry, older.iter().rev(), reader, &ranges))
     }
 
-    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<Position>>> {
+    async fn memberships(
+        &self,
+        channel: ChannelId,
+        actor: ActorId,
+    ) -> StoreResult<Vec<Range<Position>>> {
         let dir = self.history_dir(channel);
         derive_missing(&dir, channel).await?;
         Ok(read_memberships(&dir).await?.of_member(actor))

@@ -27,12 +27,18 @@ impl AgentView {
 
     /// Whether the viewer may rename it (`UpdateAgent`).
     pub async fn may_change(&self) -> bool {
-        self.views.access_policy().may_change_agent(self.views.context(), &self.agent.security_attributes).await
+        self.views
+            .access_policy()
+            .may_change_agent(self.views.context(), &self.agent.security_attributes)
+            .await
     }
 
     /// Whether the viewer may delete it (`DeleteAgent`).
     pub async fn may_delete(&self) -> bool {
-        self.views.access_policy().may_delete_agent(self.views.context(), &self.agent.security_attributes).await
+        self.views
+            .access_policy()
+            .may_delete_agent(self.views.context(), &self.agent.security_attributes)
+            .await
     }
 
     /// The channels it takes part in - resting in them included - that the
@@ -47,8 +53,12 @@ impl AgentView {
     pub async fn channels(&self) -> ViewResult<Vec<ChannelView>> {
         let actor = ActorId::Agent(self.agent.id);
         let mut channels = Vec::new();
-        for session in self.views.sessions_of(&Query::filtered(Filter::with_participant(actor))).await? {
-            channels.extend(session.channels().await.into_iter().filter(|channel| channel.lists(actor)));
+        for session in
+            self.views.sessions_of(&Query::filtered(Filter::with_participant(actor))).await?
+        {
+            channels.extend(
+                session.channels().await.into_iter().filter(|channel| channel.lists(actor)),
+            );
         }
         Ok(channels)
     }
@@ -61,8 +71,16 @@ impl AgentView {
     /// `Failed` if its personality cannot be read; one that is gone is
     /// `None`.
     pub async fn snapshot(&self) -> ViewResult<AgentSnapshot> {
-        let personality = self.views.stores().personalities.get(&SecurityContext::system(), self.agent.personality_id).await.optional()
-            .map_err(|e| ViewError::failed(e, format!("reading the personality of agent {}", self.agent.id)))?;
+        let personality = self
+            .views
+            .stores()
+            .personalities
+            .get(&SecurityContext::system(), self.agent.personality_id)
+            .await
+            .optional()
+            .map_err(|e| {
+                ViewError::failed(e, format!("reading the personality of agent {}", self.agent.id))
+            })?;
         Ok(AgentSnapshot {
             id: self.agent.id,
             name: self.agent.name.to_string(),

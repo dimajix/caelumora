@@ -1,39 +1,39 @@
-use crate::channel::Participation;
-use crate::command::{CommandExecutor, ChannelCommandProvider};
+use super::{RuntimeBuilder, Services};
+use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
-use crate::plugin::Plugin;
+use crate::agent::state::AgentStates;
+use crate::agent::AgentManager;
+use crate::attachment::AttachmentManager;
+use crate::backend::Backends;
+use crate::channel::Participation;
+use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
+use crate::group::GroupManager;
+use crate::plugin::Plugin;
+use crate::scoped::ScopedEntities;
+use crate::seed::{self, SeedSection};
+use crate::workspace::reaper::CommandReaper;
+use crate::workspace::WorkspaceManager;
 use anyhow::Result;
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::channel::ChannelId;
-use crate::agent::state::AgentStates;
 use caelumora_model::component::ComponentConfig;
+use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::AppConfig;
+use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::AccessPolicy;
-use caelumora_model::user_provider::UserManager;
-use crate::backend::Backends;
 use caelumora_model::session::Session;
-use caelumora_model::store::{EntityStores, StateStore, Persistence};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
+use caelumora_model::store::{EntityStores, Persistence, StateStore};
 use caelumora_model::type_map::TypeKey;
-use crate::seed::{self, SeedSection};
+use caelumora_model::user_provider::UserManager;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::Arc;
-use crate::agent::AgentManager;
-use crate::group::GroupManager;
-use crate::scoped::ScopedEntities;
-use crate::workspace::WorkspaceManager;
-use crate::actor::ActorManager;
-use crate::attachment::AttachmentManager;
-use crate::workspace::reaper::CommandReaper;
-use super::{RuntimeBuilder, Services};
 
 #[derive(Debug)]
 pub struct RuntimeManager {
@@ -109,7 +109,15 @@ impl RuntimeManager {
         component_registry: ComponentRegistry,
         plugins: &[&dyn Plugin],
     ) -> Result<Self> {
-        let mut builder = RuntimeBuilder::new(persistence, secret_manager, access_policy, confidentiality, config, component_registry, Backends::with_plugins(plugins))?;
+        let mut builder = RuntimeBuilder::new(
+            persistence,
+            secret_manager,
+            access_policy,
+            confidentiality,
+            config,
+            component_registry,
+            Backends::with_plugins(plugins),
+        )?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
@@ -122,7 +130,8 @@ impl RuntimeManager {
     /// # Errors
     /// As `seed::load`.
     pub async fn seed(&self, paths: &[PathBuf]) -> Result<()> {
-        seed::load(&self.entity_stores, self.confidentiality.as_ref(), &self.seed_sections, paths).await
+        seed::load(&self.entity_stores, self.confidentiality.as_ref(), &self.seed_sections, paths)
+            .await
     }
 
     /// The executor for the user commands of `session`: the global ones and
@@ -134,14 +143,26 @@ impl RuntimeManager {
     /// A `ComponentError` if a command component cannot be built or two
     /// provide the same command - the session does not start then; whatever
     /// the store reports reading its owner.
-    pub async fn new_command_executor(&self, session: &Session) -> Result<CommandExecutor<dyn ChannelCommandProvider>> {
-        let security = self.controller_manager.owner_context(session.security_attributes.owner_id, session.id, ChannelId::default()).await?;
+    pub async fn new_command_executor(
+        &self,
+        session: &Session,
+    ) -> Result<CommandExecutor<dyn ChannelCommandProvider>> {
+        let security = self
+            .controller_manager
+            .owner_context(session.security_attributes.owner_id, session.id, ChannelId::default())
+            .await?;
         let context = ComponentContext::new(security, self.services().clone());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.
         for config in [&self.commands, &session.commands] {
-            let container = ComponentContainer::from_config(config, &[TypeKey::of::<dyn ChannelCommandProvider>()], &self.component_registry, &context).await?;
+            let container = ComponentContainer::from_config(
+                config,
+                &[TypeKey::of::<dyn ChannelCommandProvider>()],
+                &self.component_registry,
+                &context,
+            )
+            .await?;
             providers.extend(container.get_all::<dyn ChannelCommandProvider>(None)?);
         }
         Ok(CommandExecutor::new(Arc::clone(self.access_policy()), providers)?)
@@ -151,32 +172,52 @@ impl RuntimeManager {
         &self.event_bus
     }
 
-    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> { &self.access_policy }
+    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        &self.access_policy
+    }
 
     /// What may flow where, and who is cleared for what (issue 304).
-    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { &self.confidentiality }
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+        &self.confidentiality
+    }
 
-    pub fn state_store(&self) -> &Arc<dyn StateStore> { &self.state_store }
+    pub fn state_store(&self) -> &Arc<dyn StateStore> {
+        &self.state_store
+    }
 
     /// The read side of the histories the states hold (issue 379).
-    pub fn history_store(&self) -> &Arc<dyn HistoryStore> { &self.history_store }
+    pub fn history_store(&self) -> &Arc<dyn HistoryStore> {
+        &self.history_store
+    }
 
     /// The read side of the agents' transcripts the states hold (issue 380).
-    pub fn transcript_store(&self) -> &Arc<dyn TranscriptStore> { &self.transcript_store }
+    pub fn transcript_store(&self) -> &Arc<dyn TranscriptStore> {
+        &self.transcript_store
+    }
 
     /// The stores of the entities, one per kind (issue 323).
-    pub fn entity_stores(&self) -> &EntityStores { &self.entity_stores }
+    pub fn entity_stores(&self) -> &EntityStores {
+        &self.entity_stores
+    }
 
-    pub fn secret_manager(&self) -> &Arc<SecretManager> { &self.secret_manager }
+    pub fn secret_manager(&self) -> &Arc<SecretManager> {
+        &self.secret_manager
+    }
 
     /// The one writer of user records, which authenticates a login against
     /// the configured user providers (issues 306, 324).
-    pub fn user_manager(&self) -> &Arc<UserManager> { &self.user_manager }
+    pub fn user_manager(&self) -> &Arc<UserManager> {
+        &self.user_manager
+    }
 
-    pub fn services(&self) -> &Services { &self.services }
+    pub fn services(&self) -> &Services {
+        &self.services
+    }
 
     /// The texts given to models (issue 57).
-    pub fn prompts(&self) -> &Arc<PromptCatalogue> { &self.prompts }
+    pub fn prompts(&self) -> &Arc<PromptCatalogue> {
+        &self.prompts
+    }
 
     /// The kinds of agent it runs (issue 370): how an agent's actor is
     /// built, and which facets its components are asked for.

@@ -6,9 +6,9 @@
 //! `CAELUMORA_BUILD_UI=1` it builds it itself, as a release build does.
 //! Without the feature `web-ui` there is nothing to check.
 
+use std::env;
 use std::path::Path;
 use std::process::{exit, Command};
-use std::env;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CAELUMORA_BUILD_UI");
@@ -27,7 +27,9 @@ fn main() {
         for args in [&["ci"][..], &["run", "build"]] {
             match Command::new("npm").args(args).current_dir(&ui).status() {
                 Ok(status) if status.success() => {}
-                Ok(status) => fail(&format!("`npm {}` in caelumora-web-ui failed: {status}", args.join(" "))),
+                Ok(status) => {
+                    fail(&format!("`npm {}` in caelumora-web-ui failed: {status}", args.join(" ")))
+                }
                 Err(e) => fail(&format!("Cannot run npm to build the web UI: {e}")),
             }
         }

@@ -41,8 +41,11 @@ pub(crate) fn prompts() -> PromptTexts {
 #[cfg(test)]
 pub(crate) fn catalogue() -> Arc<PromptCatalogue> {
     let mut catalogue = PromptCatalogue::new();
-    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)] {
-        catalogue.add(namespace, texts).unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
+    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)]
+    {
+        catalogue
+            .add(namespace, texts)
+            .unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
     }
     Arc::new(catalogue)
 }

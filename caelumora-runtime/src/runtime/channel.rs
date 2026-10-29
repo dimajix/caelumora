@@ -1,24 +1,24 @@
+use super::{ActorRuntime, RuntimeManager, Services};
 use crate::actor::AgentKinds;
 use crate::attachment::AttachmentManager;
 use crate::channel::{ChannelLoop, Participation};
-use crate::command::{CommandExecutor, ChannelCommandProvider};
+use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
 use crate::session::SessionLoop;
-#[cfg(any(test, feature = "test-support"))]
-use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::channel::Channel;
+use caelumora_model::confidentiality::ConfidentialityPolicy;
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_model::prompt_catalogue::PromptCatalogue;
+use caelumora_model::security::AccessPolicy;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::session::Session;
-use caelumora_model::security::AccessPolicy;
-use caelumora_model::store::StateStore;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::confidentiality::ConfidentialityPolicy;
+use caelumora_model::store::StateStore;
 use std::sync::{Arc, OnceLock, Weak};
-use super::{ActorRuntime, RuntimeManager, Services};
 
 /// What a channel runs with, made by its session (`SessionLoop::channel_runtime`) as the channel
 /// is built: the process-wide services of the `RuntimeManager` - among them the controllers of its
@@ -64,14 +64,32 @@ impl ChannelHandle {
 impl ChannelRuntime {
     /// A runtime for the channel `channel` holds, of the session `session` holds and
     /// `session_loop` runs, whose user commands are `command_executor`.
-    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session: Arc<SessionController>, channel: Arc<ChannelController>, session_loop: Weak<SessionLoop>) -> Self {
-        Self { runtime_manager, command_executor, session, session_loop, channel, channel_loop: ChannelHandle::default() }
+    pub fn new(
+        runtime_manager: Arc<RuntimeManager>,
+        command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
+        session: Arc<SessionController>,
+        channel: Arc<ChannelController>,
+        session_loop: Weak<SessionLoop>,
+    ) -> Self {
+        Self {
+            runtime_manager,
+            command_executor,
+            session,
+            session_loop,
+            channel,
+            channel_loop: ChannelHandle::default(),
+        }
     }
 
     /// The runtime of `actor` in the channel this runtime is for, whose loop
     /// is not attached yet while its actors are built.
     pub fn new_actor_runtime(&self, actor: ActorId) -> ActorRuntime {
-        ActorRuntime { runtime: self.clone(), actor, session_id: self.session.id(), channel_id: self.channel.id() }
+        ActorRuntime {
+            runtime: self.clone(),
+            actor,
+            session_id: self.session.id(),
+            channel_id: self.channel.id(),
+        }
     }
 
     /// Makes `channel` reachable from the runtimes of its actors. Called once
@@ -81,10 +99,14 @@ impl ChannelRuntime {
     }
 
     /// The controller of the channel's session.
-    pub(crate) fn session_controller(&self) -> &Arc<SessionController> { &self.session }
+    pub(crate) fn session_controller(&self) -> &Arc<SessionController> {
+        &self.session
+    }
 
     /// The controller of the channel (issue 374).
-    pub(crate) fn channel_controller(&self) -> &Arc<ChannelController> { &self.channel }
+    pub(crate) fn channel_controller(&self) -> &Arc<ChannelController> {
+        &self.channel
+    }
 
     /// The loop of the channel this runtime is for, once it exists and while
     /// it does: what its actors' inboxes read its history through (issue
@@ -95,7 +117,9 @@ impl ChannelRuntime {
 
     /// The loop of the channel's session, for the channel (`ChannelLoop::session_loop`); `None`
     /// once the session is gone, or for a channel of none, in tests.
-    pub(crate) fn session_loop(&self) -> Option<Arc<SessionLoop>> { self.session_loop.upgrade() }
+    pub(crate) fn session_loop(&self) -> Option<Arc<SessionLoop>> {
+        self.session_loop.upgrade()
+    }
 }
 
 /// What a channel is built with (`ChannelLoop::new`), each read once there into what the channel
@@ -103,29 +127,53 @@ impl ChannelRuntime {
 /// handing out the `RuntimeManager` behind it (issue 191), and `ChannelLoop::new` takes no service
 /// beside it.
 impl ChannelRuntime {
-    pub(crate) fn access_policy(&self) -> &Arc<dyn AccessPolicy> { self.runtime_manager.access_policy() }
+    pub(crate) fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        self.runtime_manager.access_policy()
+    }
 
-    pub(crate) fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { self.runtime_manager.confidentiality() }
+    pub(crate) fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+        self.runtime_manager.confidentiality()
+    }
 
-    pub(crate) fn services(&self) -> &Services { self.runtime_manager.services() }
+    pub(crate) fn services(&self) -> &Services {
+        self.runtime_manager.services()
+    }
 
-    pub(crate) fn component_registry(&self) -> &Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
+    pub(crate) fn component_registry(&self) -> &Arc<ComponentRegistry> {
+        self.runtime_manager.component_registry()
+    }
 
-    pub(crate) fn agent_kinds(&self) -> &Arc<AgentKinds> { self.runtime_manager.agent_kinds() }
+    pub(crate) fn agent_kinds(&self) -> &Arc<AgentKinds> {
+        self.runtime_manager.agent_kinds()
+    }
 
-    pub(crate) fn state_store(&self) -> &Arc<dyn StateStore> { self.runtime_manager.state_store() }
-    pub(crate) fn history_store(&self) -> &Arc<dyn HistoryStore> { self.runtime_manager.history_store() }
-    pub(crate) fn transcript_store(&self) -> &Arc<dyn TranscriptStore> { self.runtime_manager.transcript_store() }
+    pub(crate) fn state_store(&self) -> &Arc<dyn StateStore> {
+        self.runtime_manager.state_store()
+    }
+    pub(crate) fn history_store(&self) -> &Arc<dyn HistoryStore> {
+        self.runtime_manager.history_store()
+    }
+    pub(crate) fn transcript_store(&self) -> &Arc<dyn TranscriptStore> {
+        self.runtime_manager.transcript_store()
+    }
 
     /// The texts given to models (issue 57), for the tests' views.
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn prompts(&self) -> &Arc<PromptCatalogue> { self.runtime_manager.prompts() }
+    pub(crate) fn prompts(&self) -> &Arc<PromptCatalogue> {
+        self.runtime_manager.prompts()
+    }
 
-    pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
+    pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> {
+        self.runtime_manager.controller_manager()
+    }
 
-    pub(crate) fn participation(&self) -> &Arc<Participation> { self.runtime_manager.participation() }
+    pub(crate) fn participation(&self) -> &Arc<Participation> {
+        self.runtime_manager.participation()
+    }
 
-    pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> { self.runtime_manager.attachment_manager() }
+    pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> {
+        self.runtime_manager.attachment_manager()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -133,8 +181,13 @@ impl ChannelRuntime {
     /// A runtime for `channel` of `session`, which is not running - in
     /// tests: it has no loop and no user commands (`bare_session` and
     /// `bare_channel` for ones that hold nothing but their ids).
-    pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, session: Session, channel: Channel) -> Self {
-        let command_executor = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
+    pub fn outside_a_session(
+        runtime_manager: Arc<RuntimeManager>,
+        session: Session,
+        channel: Channel,
+    ) -> Self {
+        let command_executor =
+            Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
         let session = runtime_manager.controller_manager().new_session_controller(session);
         let channel = runtime_manager.controller_manager().new_channel_controller(channel);
         Self::new(runtime_manager, command_executor, session, channel, Weak::new())
@@ -144,7 +197,16 @@ impl ChannelRuntime {
     /// in tests: the same services, commands and session, the channel as it
     /// is stored now in a controller of its own, and no loop attached yet.
     pub fn restarted(&self) -> Self {
-        let channel = self.runtime_manager.controller_manager().new_channel_controller(Channel::clone(&self.channel.load()));
-        Self::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.command_executor), Arc::clone(&self.session), channel, Weak::clone(&self.session_loop))
+        let channel = self
+            .runtime_manager
+            .controller_manager()
+            .new_channel_controller(Channel::clone(&self.channel.load()));
+        Self::new(
+            Arc::clone(&self.runtime_manager),
+            Arc::clone(&self.command_executor),
+            Arc::clone(&self.session),
+            channel,
+            Weak::clone(&self.session_loop),
+        )
     }
 }

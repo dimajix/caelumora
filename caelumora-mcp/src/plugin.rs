@@ -2,9 +2,9 @@
 //! their component kind alone.
 
 use crate::tool;
+use anyhow::Result;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
-use anyhow::Result;
 
 /// The tools of MCP servers, as a plugin.
 #[derive(Debug, Default)]

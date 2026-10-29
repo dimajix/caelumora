@@ -5,14 +5,19 @@
 //! prompt catalogue, issue 57). It has none unless it names one: the text
 //! may carry its own.
 
-use caelumora_runtime::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, NAMESPACE, texts_of, writing_for_the_model};
-use caelumora_model::prompt_catalogue::{context, PromptTexts};
+use crate::prompt::{
+    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    NAMESPACE,
+};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use std::sync::Arc;
+use caelumora_model::prompt_catalogue::{context, PromptTexts};
+use caelumora_runtime::component::{
+    ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+};
 use serde_json::Value;
+use std::sync::Arc;
 
 pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
 
@@ -46,23 +51,35 @@ impl StaticSystemPromptProvider {
     /// is not what it should be; `ComponentError::Prompt` if the form of a
     /// titled part cannot be had.
     fn of_params(params: &Value, prompts: &PromptTexts) -> Result<Self, ComponentError> {
-        let prompt = params.get("prompt")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| ComponentError::InvalidConfig("parameter 'prompt' is missing".to_string()))?;
+        let prompt =
+            params.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else(
+                || ComponentError::InvalidConfig("parameter 'prompt' is missing".to_string()),
+            )?;
         let prompt = match params.get("title") {
             None => prompt,
             Some(title) => {
-                let title = title.as_str().ok_or_else(|| ComponentError::InvalidConfig("parameter 'title' must be a string".to_string()))?;
+                let title = title.as_str().ok_or_else(|| {
+                    ComponentError::InvalidConfig("parameter 'title' must be a string".to_string())
+                })?;
                 // A part that says nothing is no part.
-                if prompt.is_empty() { prompt } else { prompts.render(&format!("{NAMESPACE}.titled"), context! { title, text => prompt })? }
+                if prompt.is_empty() {
+                    prompt
+                } else {
+                    prompts.render(
+                        &format!("{NAMESPACE}.titled"),
+                        context! { title, text => prompt },
+                    )?
+                }
             }
         };
         let position = PromptPosition::of_params(params)?;
         let classification = match params.get("classification") {
             None => Classification::PUBLIC,
-            Some(value) => serde_json::from_value(value.clone())
-                .map_err(|e| ComponentError::InvalidConfig(format!("parameter 'classification' is not a classification: {e}")))?,
+            Some(value) => serde_json::from_value(value.clone()).map_err(|e| {
+                ComponentError::InvalidConfig(format!(
+                    "parameter 'classification' is not a classification: {e}"
+                ))
+            })?,
         };
         Ok(Self { prompt, position, classification })
     }
@@ -70,11 +87,16 @@ impl StaticSystemPromptProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+        ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(StaticSystemPromptProvider::of_params(&descriptor.params, &texts)?));
+            facets.insert::<dyn PromptProvider>(Arc::new(StaticSystemPromptProvider::of_params(
+                &descriptor.params,
+                &texts,
+            )?));
             Ok(facets)
         },
     );
@@ -89,14 +111,36 @@ mod tests {
     #[test]
     fn the_prompt_is_titled_only_where_a_title_is_named() {
         let prompts = testing::prompts();
-        let titled = StaticSystemPromptProvider::of_params(&json!({ "prompt": "You quiz.", "title": "Who you are" }), &prompts).unwrap();
+        let titled = StaticSystemPromptProvider::of_params(
+            &json!({ "prompt": "You quiz.", "title": "Who you are" }),
+            &prompts,
+        )
+        .unwrap();
         assert_eq!(titled.prompt, "[Who you are]\nYou quiz.\n");
-        let ended = StaticSystemPromptProvider::of_params(&json!({ "prompt": "You quiz.\n", "title": "Who you are" }), &prompts).unwrap();
+        let ended = StaticSystemPromptProvider::of_params(
+            &json!({ "prompt": "You quiz.\n", "title": "Who you are" }),
+            &prompts,
+        )
+        .unwrap();
         assert_eq!(ended.prompt, "[Who you are]\nYou quiz.\n", "one line break at the end");
-        let empty = StaticSystemPromptProvider::of_params(&json!({ "prompt": "", "title": "Who you are" }), &prompts).unwrap();
+        let empty = StaticSystemPromptProvider::of_params(
+            &json!({ "prompt": "", "title": "Who you are" }),
+            &prompts,
+        )
+        .unwrap();
         assert_eq!(empty.prompt, "", "a part that says nothing is no part");
-        let plain = StaticSystemPromptProvider::of_params(&json!({ "prompt": "[Frame]\nBe brief." }), &prompts).unwrap();
-        assert_eq!(plain.prompt, "[Frame]\nBe brief.", "as written: it may carry a title of its own");
-        assert!(matches!(StaticSystemPromptProvider::of_params(&json!({ "prompt": "x", "title": 1 }), &prompts), Err(ComponentError::InvalidConfig(_))));
+        let plain = StaticSystemPromptProvider::of_params(
+            &json!({ "prompt": "[Frame]\nBe brief." }),
+            &prompts,
+        )
+        .unwrap();
+        assert_eq!(
+            plain.prompt, "[Frame]\nBe brief.",
+            "as written: it may carry a title of its own"
+        );
+        assert!(matches!(
+            StaticSystemPromptProvider::of_params(&json!({ "prompt": "x", "title": 1 }), &prompts),
+            Err(ComponentError::InvalidConfig(_))
+        ));
     }
 }

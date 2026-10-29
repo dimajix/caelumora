@@ -1,8 +1,10 @@
 //! The built-in `/help` command (issue 28).
 
 use crate::actor::Actor;
-use crate::command::{CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
-use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
+use crate::command::{
+    ChannelCommandProvider, CommandContext, CommandError, CommandResult, ProvidesCommands,
+};
+use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, HELP_COMMAND_KIND};
 use std::collections::BTreeMap;
@@ -45,10 +47,16 @@ fn agent_signature(command: &Command) -> String {
 /// see (issue 269), by name, each with the handles of the agents that do.
 async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Command, Vec<String>)> {
     let mut by_name: BTreeMap<String, (Command, Vec<String>)> = BTreeMap::new();
-    for (agent, commands) in context.channel.agent_commands(&context.issuer.security_context()).await {
+    for (agent, commands) in
+        context.channel.agent_commands(&context.issuer.security_context()).await
+    {
         let Some(handle) = agent.handle else { continue };
         for command in commands {
-            by_name.entry(command.name.clone()).or_insert_with(|| (command, Vec::new())).1.push(format!("@{handle}"));
+            by_name
+                .entry(command.name.clone())
+                .or_insert_with(|| (command, Vec::new()))
+                .1
+                .push(format!("@{handle}"));
         }
     }
     by_name
@@ -56,17 +64,35 @@ async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Comm
 
 #[async_trait]
 impl ChannelCommandProvider for HelpCommandProvider {
-    async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        let visible = context.executor.visible(&context.issuer.security_context(), &context.channel.security_attributes()).await;
+    async fn execute(
+        &self,
+        _name: &str,
+        args: &str,
+        context: &CommandContext<'_>,
+    ) -> CommandResult<CommandOutput> {
+        let visible = context
+            .executor
+            .visible(&context.issuer.security_context(), &context.channel.security_attributes())
+            .await;
         let of_agents = agents_commands(context).await;
         let wanted = args.trim().trim_start_matches('/');
         if !wanted.is_empty() {
             // Unknown and invisible alike, as for running a command.
             if let Some(command) = visible.iter().find(|c| c.name == wanted) {
-                return Ok(CommandOutput::private(format!("`{}` — {}", signature(command), command.description)));
+                return Ok(CommandOutput::private(format!(
+                    "`{}` — {}",
+                    signature(command),
+                    command.description
+                )));
             }
-            let (command, handles) = of_agents.get(wanted).ok_or_else(|| CommandError::Unknown(wanted.to_string()))?;
-            return Ok(CommandOutput::private(format!("`{}` — {} Carried out by {}.", agent_signature(command), command.description, handles.join(", "))));
+            let (command, handles) =
+                of_agents.get(wanted).ok_or_else(|| CommandError::Unknown(wanted.to_string()))?;
+            return Ok(CommandOutput::private(format!(
+                "`{}` — {} Carried out by {}.",
+                agent_signature(command),
+                command.description,
+                handles.join(", ")
+            )));
         }
 
         let mut text = String::from("Commands:\n\n");
@@ -76,7 +102,12 @@ impl ChannelCommandProvider for HelpCommandProvider {
         if !of_agents.is_empty() {
             text.push_str("\nCommands the agents here carry out - name the agent, or `@all`:\n\n");
             for (command, handles) in of_agents.values() {
-                text.push_str(&format!("- `{}` — {} ({})\n", agent_signature(command), command.description, handles.join(", ")));
+                text.push_str(&format!(
+                    "- `{}` — {} ({})\n",
+                    agent_signature(command),
+                    command.description,
+                    handles.join(", ")
+                ));
             }
         }
         text.push_str("\nStart a message with `//` to send it with a leading slash.");

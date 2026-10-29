@@ -13,12 +13,14 @@
 //! did it distract from what was asked (finding 6). A personality without
 //! the component leaves its agents to the times of the messages.
 
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
+use crate::prompt::{
+    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -51,7 +53,10 @@ impl PromptProvider for CurrentTimePromptProvider {
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         let zone = situation.time_zone();
-        let text = self.prompts.render(TEXT, context! { time => zone.format_long((self.clock)()), zone => zone.to_string() })?;
+        let text = self.prompts.render(
+            TEXT,
+            context! { time => zone.format_long((self.clock)()), zone => zone.to_string() },
+        )?;
         // What time it is is no secret of anything.
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
@@ -59,12 +64,17 @@ impl PromptProvider for CurrentTimePromptProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(CURRENT_TIME_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(CURRENT_TIME_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+        ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let position = PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+            let position =
+                PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(CurrentTimePromptProvider::new(position, texts)));
+            facets.insert::<dyn PromptProvider>(Arc::new(CurrentTimePromptProvider::new(
+                position, texts,
+            )));
             Ok(facets)
         },
     );
@@ -74,11 +84,11 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::testing;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::work::Work;
+    use caelumora_runtime::agent::state::AgentStateHandle;
     use chrono::TimeZone as _;
 
     fn sunday() -> DateTime<Utc> {
@@ -90,23 +100,59 @@ mod tests {
         let mut work = Work::default();
         work.context.frame.time_zone = zone;
         let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
-        provider.get_prompt(&Situation::new(AgentId::new(), &work, &state, &agent_state, &detached_actor_runtime())).await.unwrap()
+        provider
+            .get_prompt(&Situation::new(
+                AgentId::new(),
+                &work,
+                &state,
+                &agent_state,
+                &detached_actor_runtime(),
+            ))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
     async fn the_agent_is_told_the_time_in_the_time_zone_its_turn_records() {
-        let provider = CurrentTimePromptProvider { position: PromptPosition::BeforeTurnInput, clock: sunday, prompts: testing::prompts() };
+        let provider = CurrentTimePromptProvider {
+            position: PromptPosition::BeforeTurnInput,
+            clock: sunday,
+            prompts: testing::prompts(),
+        };
         let prompt = told(&provider, TimeZone::new("Europe/Berlin").unwrap()).await;
-        assert_eq!(prompt.text, "[Current date and time]\nIt is Sunday, 18 October 2026, 14:33 (Europe/Berlin).\n");
+        assert_eq!(
+            prompt.text,
+            "[Current date and time]\nIt is Sunday, 18 October 2026, 14:33 (Europe/Berlin).\n"
+        );
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
-        assert!(told(&provider, TimeZone::UTC).await.text.contains("It is Sunday, 18 October 2026, 12:33 (UTC)."), "UTC where the session names none");
+        assert!(
+            told(&provider, TimeZone::UTC)
+                .await
+                .text
+                .contains("It is Sunday, 18 October 2026, 12:33 (UTC)."),
+            "UTC where the session names none"
+        );
     }
 
     #[test]
     fn it_goes_before_the_turns_input_unless_configured_otherwise() {
-        let position = |params| PromptPosition::of_params_or(&params, PromptPosition::BeforeTurnInput).unwrap();
-        assert_eq!(position(serde_json::json!({})), PromptPosition::BeforeTurnInput, "it changes with every turn");
-        assert_eq!(position(serde_json::json!({ "position": "start" })), PromptPosition::Start, "as configured");
-        assert!(PromptPosition::of_params_or(&serde_json::json!({ "position": "end" }), PromptPosition::BeforeTurnInput).is_err());
+        let position = |params| {
+            PromptPosition::of_params_or(&params, PromptPosition::BeforeTurnInput).unwrap()
+        };
+        assert_eq!(
+            position(serde_json::json!({})),
+            PromptPosition::BeforeTurnInput,
+            "it changes with every turn"
+        );
+        assert_eq!(
+            position(serde_json::json!({ "position": "start" })),
+            PromptPosition::Start,
+            "as configured"
+        );
+        assert!(PromptPosition::of_params_or(
+            &serde_json::json!({ "position": "end" }),
+            PromptPosition::BeforeTurnInput
+        )
+        .is_err());
     }
 }

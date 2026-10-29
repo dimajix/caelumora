@@ -3,21 +3,23 @@
 //! in its storage.
 
 use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
-use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_unless_refused, restored_unless_refused};
 use crate::backend::NamedBackends;
+use crate::event::EventBus;
+use crate::scoped::{deleted_unless_refused, restored_unless_refused, ScopeMember};
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
+use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
+use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{Deleted, EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{
+    Deleted, EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
+};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
@@ -54,8 +56,24 @@ impl WorkspaceManager {
     /// `storages`, by their names - the storages its configuration names,
     /// made as backends (issue 324) -, and of which a person may put files
     /// as large as `config` says.
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn TerminalProvider>>, config: &WorkspacesConfig) -> Self {
-        Self { workspaces: Arc::clone(&stores.workspaces), sessions: Arc::clone(&stores.sessions), events, access_policy, confidentiality, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) }
+    pub(crate) fn new(
+        stores: &EntityStores,
+        events: Arc<EventBus>,
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        storages: Arc<NamedBackends<dyn TerminalProvider>>,
+        config: &WorkspacesConfig,
+    ) -> Self {
+        Self {
+            workspaces: Arc::clone(&stores.workspaces),
+            sessions: Arc::clone(&stores.sessions),
+            events,
+            access_policy,
+            confidentiality,
+            storages,
+            max_file_bytes: config.max_file_bytes,
+            writing: Mutex::new(()),
+        }
     }
 
     /// The largest file a person may put into a workspace.
@@ -90,14 +108,40 @@ impl WorkspaceManager {
     /// `NotFound` if there is no such session they may read, `NameTaken`,
     /// and `Validation` for a scope a workspace does not lie in - or a
     /// `TerminalError` of making the place.
-    pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, storage: &str, description: Option<&str>, classification: Classification) -> WorkspaceResult<Workspace> {
-        let ActorId::User(owner) = ctx.principal_id else { return Err(WorkspaceError::OwnerNotAUser) };
-        let provider = self.storages.get(storage).ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
-        let mut workspace = Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
+    pub async fn create(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        scope: Scope,
+        storage: &str,
+        description: Option<&str>,
+        classification: Classification,
+    ) -> WorkspaceResult<Workspace> {
+        let ActorId::User(owner) = ctx.principal_id else {
+            return Err(WorkspaceError::OwnerNotAUser);
+        };
+        let provider = self
+            .storages
+            .get(storage)
+            .ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
+        let mut workspace =
+            Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
-        require_classification(self.confidentiality.as_ref(), ctx, storage, provider.as_ref(), &workspace.classification)?;
+        require_classification(
+            self.confidentiality.as_ref(),
+            ctx,
+            storage,
+            provider.as_ref(),
+            &workspace.classification,
+        )?;
         if let Scope::SessionScope { session_id } = workspace.name.scope {
-            self.access_policy.require(ctx, ActionType::create(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
+            self.access_policy
+                .require(
+                    ctx,
+                    ActionType::create(Workspace::KIND, &workspace.security_attributes),
+                    StoreError::PermissionDenied,
+                )
+                .await?;
             self.sessions.get(ctx, session_id).await?;
         }
 
@@ -107,9 +151,13 @@ impl WorkspaceManager {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
             let system = SecurityContext::system();
             if let Err(cleanup) = async {
-                self.workspaces.delete(&system, workspace.id, &Removal::now(ActorId::System)).await?;
+                self.workspaces
+                    .delete(&system, workspace.id, &Removal::now(ActorId::System))
+                    .await?;
                 self.workspaces.purge(&system, workspace.id).await
-            }.await {
+            }
+            .await
+            {
                 warn!(workspace = %workspace.id, "A workspace whose place could not be made is left deleted: {cleanup}");
             }
             return Err(e.into());
@@ -146,7 +194,11 @@ impl WorkspaceManager {
     /// # Errors
     /// `NotFound` if it is not deleted or not the caller's to restore, or
     /// whatever else the store reports - `NameTaken` among it.
-    pub async fn restore(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
+    pub async fn restore(
+        &self,
+        ctx: &SecurityContext,
+        id: WorkspaceId,
+    ) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
         let workspace = self.workspaces.restore(ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Workspace>(&id), &workspace);
@@ -165,8 +217,18 @@ impl WorkspaceManager {
     /// of removing the place, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(Deleted { entity: workspace, .. }) = self.workspaces.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
-        self.access_policy.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
+        let Some(Deleted { entity: workspace, .. }) =
+            self.workspaces.get_deleted(ctx, id).await.optional()?
+        else {
+            return Ok(false);
+        };
+        self.access_policy
+            .require(
+                ctx,
+                ActionType::purge(Workspace::KIND, &workspace.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         self.storages.kept_in(&workspace.storage)?.remove(id).await?;
         let purged = self.workspaces.purge(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
@@ -180,7 +242,11 @@ impl WorkspaceManager {
     /// # Errors
     /// `StoreError::NotFound` if there is none; whatever else the store
     /// reports.
-    pub(crate) async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
+    pub(crate) async fn find_by_name(
+        &self,
+        ctx: &SecurityContext,
+        name: &ScopedName,
+    ) -> StoreResult<Workspace> {
         self.workspaces.find_by_name(ctx, name).await
     }
 
@@ -191,7 +257,11 @@ impl WorkspaceManager {
     /// # Errors
     /// `NotFound` if there is none they may read or are cleared for, so
     /// that nothing can be probed; or whatever else the store reports.
-    pub(crate) async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
+    pub(crate) async fn reached(
+        &self,
+        ctx: &SecurityContext,
+        id: WorkspaceId,
+    ) -> WorkspaceResult<Workspace> {
         self.workspaces.get(ctx, id).await.map_err(store_error(id))
     }
 }
@@ -209,11 +279,21 @@ impl ScopeMember for WorkspaceManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
+    async fn delete_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for workspace in self.workspaces.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for workspace in self
+            .workspaces
+            .list(&system, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
             if deleted_unless_refused(self.workspaces.delete(ctx, workspace.id, removal).await)? {
                 self.events.announce(GlobalEvent::deleted::<Workspace>(&workspace.id), &workspace);
             } else {
@@ -230,11 +310,24 @@ impl ScopeMember for WorkspaceManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
+    async fn restore_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in self.workspaces.list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if let Some(restored) = restored_unless_refused(self.workspaces.restore(ctx, workspace.id).await, &workspace)? {
+        for workspace in self
+            .workspaces
+            .list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
+            if let Some(restored) = restored_unless_refused(
+                self.workspaces.restore(ctx, workspace.id).await,
+                &workspace,
+            )? {
                 self.events.announce(GlobalEvent::restored::<Workspace>(&restored.id), &restored);
             }
         }
@@ -250,10 +343,25 @@ impl ScopeMember for WorkspaceManager {
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for Deleted { entity: workspace, .. } in self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity: workspace, .. } in self
+            .workspaces
+            .list_deleted(&system, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
             // Its place is its storage too.
-            let unremoved = |e: &dyn fmt::Display| StoreError::Backend(format!("the place of workspace {} cannot be removed: {e}", workspace.id));
-            self.storages.kept_in(&workspace.storage).map_err(|e| unremoved(&e))?.remove(workspace.id).await.map_err(|e| unremoved(&e))?;
+            let unremoved = |e: &dyn fmt::Display| {
+                StoreError::Backend(format!(
+                    "the place of workspace {} cannot be removed: {e}",
+                    workspace.id
+                ))
+            };
+            self.storages
+                .kept_in(&workspace.storage)
+                .map_err(|e| unremoved(&e))?
+                .remove(workspace.id)
+                .await
+                .map_err(|e| unremoved(&e))?;
             self.workspaces.purge(&system, workspace.id).await?;
         }
         Ok(())

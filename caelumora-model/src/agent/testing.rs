@@ -22,5 +22,9 @@ pub(crate) fn replayed<T: Journaled>(state: &T, copy: &mut T) {
     // The small parts are told whole every time; the growing ones must
     // have recorded nothing: as a copy loaded afresh.
     let reloaded: T = serde_json::from_value(serde_json::to_value(&*copy).unwrap()).unwrap();
-    assert_eq!(serde_json::to_value(copy.changes()).unwrap(), serde_json::to_value(reloaded.changes()).unwrap(), "replaying records nothing");
+    assert_eq!(
+        serde_json::to_value(copy.changes()).unwrap(),
+        serde_json::to_value(reloaded.changes()).unwrap(),
+        "replaying records nothing"
+    );
 }

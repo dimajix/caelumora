@@ -15,7 +15,8 @@ static NAMES: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
 /// now on. A set of names that grows only with names never read before -
 /// the kinds and changes the instances of a deployment define.
 pub(crate) fn intern(name: &str) -> &'static str {
-    let mut names = NAMES.get_or_init(Mutex::default).lock().unwrap_or_else(PoisonError::into_inner);
+    let mut names =
+        NAMES.get_or_init(Mutex::default).lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(kept) = names.get(name) {
         return kept;
     }

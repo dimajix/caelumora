@@ -18,10 +18,10 @@ use caelumora_model::actor::{ActorId, Envelope, Pick};
 use caelumora_model::chain::Position;
 use caelumora_model::history::Heard;
 use std::collections::VecDeque;
+use std::mem;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use tokio::sync::Notify;
 use tracing::{debug, warn};
-use std::mem;
 
 /// How many envelopes an inbox's queue holds at most, and how many entries
 /// of the history are read at once.
@@ -40,7 +40,11 @@ pub(crate) trait Behind: Send + Sync {
     ///
     /// # Errors
     /// If the history cannot be read.
-    async fn recorded_for(&self, actor: ActorId, from: Position) -> Result<(Vec<Envelope>, Position)>;
+    async fn recorded_for(
+        &self,
+        actor: ActorId,
+        from: Position,
+    ) -> Result<(Vec<Envelope>, Position)>;
 }
 
 /// What both halves of an inbox share, under one lock.
@@ -109,11 +113,24 @@ impl Inbox {
     /// `heard` in a history that ends at `end`: behind from the start if
     /// `heard` lies before it - the actor joins, or starts again - and read
     /// on through `channel` from there.
-    pub(crate) fn open(actor: ActorId, filter: fn(&Envelope) -> bool, heard: Heard, end: Position, channel: Weak<dyn Behind>) -> (Inbox, InboxReceiver) {
+    pub(crate) fn open(
+        actor: ActorId,
+        filter: fn(&Envelope) -> bool,
+        heard: Heard,
+        end: Position,
+        channel: Weak<dyn Behind>,
+    ) -> (Inbox, InboxReceiver) {
         let behind = (heard.next() < end).then_some(end);
-        let queue = Queue { envelopes: VecDeque::new(), behind, read_to: heard.next(), closed: false };
+        let queue =
+            Queue { envelopes: VecDeque::new(), behind, read_to: heard.next(), closed: false };
         let shared = Arc::new(Shared { queue: Mutex::new(queue), arrived: Notify::new(), filter });
-        let receiver = InboxReceiver { actor, shared: Arc::clone(&shared), channel, heard, read: VecDeque::new() };
+        let receiver = InboxReceiver {
+            actor,
+            shared: Arc::clone(&shared),
+            channel,
+            heard,
+            read: VecDeque::new(),
+        };
         (Inbox { actor, shared }, receiver)
     }
 
@@ -137,7 +154,8 @@ impl Inbox {
                     if queue.behind.is_none() {
                         debug!("The inbox of {} is full: what is delivered to it from position {} on is read from the history", self.actor, seq);
                     }
-                    queue.behind = Some(queue.behind.map_or(seq.next(), |behind| behind.max(seq.next())));
+                    queue.behind =
+                        Some(queue.behind.map_or(seq.next(), |behind| behind.max(seq.next())));
                 }
                 None if envelope.event.is_transient() && (full || queue.behind.is_some()) => {
                     debug!("Dropped {} for {}: its inbox is full", envelope.describe(), self.actor);
@@ -176,7 +194,8 @@ impl InboxReceiver {
 
     /// Whether `envelope` is for the actor and was not handed out already.
     fn fresh(&self, envelope: &Envelope) -> bool {
-        (self.shared.filter)(envelope) && !envelope.context.position.is_some_and(|seq| self.heard.has(seq))
+        (self.shared.filter)(envelope)
+            && !envelope.context.position.is_some_and(|seq| self.heard.has(seq))
     }
 
     /// Reads the history on until an envelope for the actor is there to be
@@ -197,11 +216,15 @@ impl InboxReceiver {
             Ok(read) => read,
             Err(e) => {
                 // Read again once something arrives.
-                warn!("Cannot read the history of the channel of {} from position {}: {:#}", self.actor, from, e);
+                warn!(
+                    "Cannot read the history of the channel of {} from position {}: {:#}",
+                    self.actor, from, e
+                );
                 return Read::Done;
             }
         };
-        let fresh: Vec<Envelope> = envelopes.into_iter().filter(|envelope| self.fresh(envelope)).collect();
+        let fresh: Vec<Envelope> =
+            envelopes.into_iter().filter(|envelope| self.fresh(envelope)).collect();
         self.read.extend(fresh);
         let mut queue = self.shared.queue();
         queue.read_to = queue.read_to.max(to);
@@ -233,7 +256,11 @@ impl InboxReceiver {
                     Found::Taken(at) => {
                         let envelope = queue.envelopes.remove(at)?;
                         drop(queue);
-                        return Some(if at == 0 { self.took(envelope) } else { self.took_ahead(envelope) });
+                        return Some(if at == 0 {
+                            self.took(envelope)
+                        } else {
+                            self.took_ahead(envelope)
+                        });
                     }
                     Found::Stopped => return None,
                     Found::Passed => {}
@@ -262,12 +289,17 @@ impl InboxReceiver {
                 match Self::first(self.read.iter(), pick) {
                     Found::Taken(at) => {
                         let envelope = self.read.remove(at)?;
-                        return Some(if !passed && at == 0 { self.took(envelope) } else { self.took_ahead(envelope) });
+                        return Some(if !passed && at == 0 {
+                            self.took(envelope)
+                        } else {
+                            self.took_ahead(envelope)
+                        });
                     }
                     Found::Stopped => return None,
                     Found::Passed => {}
                 }
-                let from = searched.unwrap_or_else(|| self.shared.queue().read_to.max(self.heard.next()));
+                let from =
+                    searched.unwrap_or_else(|| self.shared.queue().read_to.max(self.heard.next()));
                 match self.search(from, pick).await {
                     Searched::Taken(envelope) => return Some(self.took_ahead(*envelope)),
                     Searched::Stopped => return None,
@@ -305,11 +337,15 @@ impl InboxReceiver {
             let (envelopes, to) = match channel.recorded_for(self.actor, from).await {
                 Ok(read) => read,
                 Err(e) => {
-                    warn!("Cannot search the history of the channel of {} from position {}: {:#}", self.actor, from, e);
+                    warn!(
+                        "Cannot search the history of the channel of {} from position {}: {:#}",
+                        self.actor, from, e
+                    );
                     return Searched::Passed(from);
                 }
             };
-            let mut fresh: Vec<Envelope> = envelopes.into_iter().filter(|envelope| self.fresh(envelope)).collect();
+            let mut fresh: Vec<Envelope> =
+                envelopes.into_iter().filter(|envelope| self.fresh(envelope)).collect();
             match Self::first(fresh.iter(), pick) {
                 Found::Taken(at) => return Searched::Taken(Box::new(fresh.swap_remove(at))),
                 Found::Stopped => return Searched::Stopped,
@@ -355,7 +391,8 @@ impl EventReceiver for InboxReceiver {
     /// history itself, without keeping what it passes over: that stays
     /// where it is, to be read again in order.
     async fn recv_matching(&mut self, predicate: EventPredicate) -> Option<Envelope> {
-        self.next(true, &|envelope| if predicate(envelope) { Pick::Take } else { Pick::PassOver }).await
+        self.next(true, &|envelope| if predicate(envelope) { Pick::Take } else { Pick::PassOver })
+            .await
     }
 
     async fn try_recv(&mut self) -> Option<Envelope> {
@@ -376,13 +413,13 @@ mod tests {
     use super::*;
     use caelumora_model::actor::{ActorEvent, EventContext, RequestReason};
     use caelumora_model::approval::ApprovalResponse;
-    use caelumora_model::message::Message;
     use caelumora_model::confidentiality::Classification;
+    use caelumora_model::message::Message;
     use caelumora_model::question::QuestionId;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::work::TurnId;
-    use std::time::Duration;
     use std::ops::Range;
+    use std::time::Duration;
     use tokio::time;
 
     /// A history of envelopes, each at its index, as the actor is delivered
@@ -394,7 +431,14 @@ mod tests {
         /// Records `event` and returns it as it is delivered live.
         fn record(&self, event: ActorEvent) -> Envelope {
             let mut all = self.0.lock().unwrap();
-            let envelope = Envelope::new(SecurityContext::default(), EventContext { position: Some(Position::new(all.len() as u64)), ..EventContext::default() }, event);
+            let envelope = Envelope::new(
+                SecurityContext::default(),
+                EventContext {
+                    position: Some(Position::new(all.len() as u64)),
+                    ..EventContext::default()
+                },
+                event,
+            );
             all.push(envelope.clone());
             envelope
         }
@@ -406,7 +450,11 @@ mod tests {
 
     #[async_trait]
     impl Behind for History {
-        async fn recorded_for(&self, _actor: ActorId, from: Position) -> Result<(Vec<Envelope>, Position)> {
+        async fn recorded_for(
+            &self,
+            _actor: ActorId,
+            from: Position,
+        ) -> Result<(Vec<Envelope>, Position)> {
             let all = self.0.lock().unwrap();
             let start = usize::try_from(from.get()).unwrap().min(all.len());
             let end = (start + CAPACITY).min(all.len());
@@ -415,12 +463,17 @@ mod tests {
     }
 
     fn said(n: usize) -> ActorEvent {
-        ActorEvent::CompleteMessageGenerated(Message { content: Some(n.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) })
+        ActorEvent::CompleteMessageGenerated(Message {
+            content: Some(n.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        })
     }
 
     fn content(envelope: &Envelope) -> String {
         match &envelope.event {
-            ActorEvent::CompleteMessageGenerated(message) => message.content.clone().unwrap_or_default(),
+            ActorEvent::CompleteMessageGenerated(message) => {
+                message.content.clone().unwrap_or_default()
+            }
             other => other.kind().to_string(),
         }
     }
@@ -484,10 +537,18 @@ mod tests {
         let history = Arc::new(History::default());
         history.record(said(0));
         let (inbox, mut rx) = open(&history, Heard::default());
-        let live = |event| Envelope::new(SecurityContext::default(), EventContext::default(), event);
+        let live =
+            |event| Envelope::new(SecurityContext::default(), EventContext::default(), event);
         inbox.deliver(live(ActorEvent::ResponseStarted { turn_id: TurnId::new() }));
-        inbox.deliver(live(ActorEvent::QuestionDeclined { id: QuestionId::new(), agent_id: Default::default() }));
-        assert_eq!(all_of(&mut rx).await, ["QuestionDeclined", "0"], "the answer, queued, comes first");
+        inbox.deliver(live(ActorEvent::QuestionDeclined {
+            id: QuestionId::new(),
+            agent_id: Default::default(),
+        }));
+        assert_eq!(
+            all_of(&mut rx).await,
+            ["QuestionDeclined", "0"],
+            "the answer, queued, comes first"
+        );
     }
 
     /// Issue 223: a search takes what it looks for from the queue or the
@@ -499,21 +560,36 @@ mod tests {
         let (inbox, mut rx) = open(&history, Heard::default());
         let response = ApprovalResponse::new(Default::default(), Default::default());
         for n in 0..CAPACITY + 50 {
-            let event = if n == CAPACITY + 20 { ActorEvent::ApprovalGranted(response.clone()) } else { said(n) };
+            let event = if n == CAPACITY + 20 {
+                ActorEvent::ApprovalGranted(response.clone())
+            } else {
+                said(n)
+            };
             inbox.deliver(history.record(event));
         }
-        let found = rx.recv_matching(|e| matches!(e.event, ActorEvent::ApprovalGranted(_))).await.expect("in the history");
+        let found = rx
+            .recv_matching(|e| matches!(e.event, ActorEvent::ApprovalGranted(_)))
+            .await
+            .expect("in the history");
         assert_eq!(found.context.position, Some(Position::new((CAPACITY + 20) as u64)));
         let rest = all_of(&mut rx).await;
         assert_eq!(rest.len(), CAPACITY + 49, "the rest");
         assert!(!rest.contains(&"ApprovalGranted".to_string()), "without what was taken");
         assert_eq!(rx.heard(), Heard::at(history.end()));
 
-        let waiting = tokio::spawn(async move { rx.recv_matching(|e| matches!(e.event, ActorEvent::ApprovalDenied(_))).await.map(|e| e.event.kind()) });
+        let waiting = tokio::spawn(async move {
+            rx.recv_matching(|e| matches!(e.event, ActorEvent::ApprovalDenied(_)))
+                .await
+                .map(|e| e.event.kind())
+        });
         time::sleep(Duration::from_millis(20)).await;
         inbox.deliver(history.record(said(1)));
         inbox.deliver(history.record(ActorEvent::ApprovalDenied(response)));
-        assert_eq!(time::timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap(), Some("ApprovalDenied"), "what arrives meanwhile");
+        assert_eq!(
+            time::timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap(),
+            Some("ApprovalDenied"),
+            "what arrives meanwhile"
+        );
     }
 
     /// Issue 431: the next envelope is taken only if it may be, and stays
@@ -524,7 +600,13 @@ mod tests {
         history.record(said(0));
         history.record(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned });
         let (_inbox, mut rx) = open(&history, Heard::default());
-        let heard = |e: &Envelope| if matches!(e.event, ActorEvent::CompleteMessageGenerated(_)) { Pick::Take } else { Pick::Stop };
+        let heard = |e: &Envelope| {
+            if matches!(e.event, ActorEvent::CompleteMessageGenerated(_)) {
+                Pick::Take
+            } else {
+                Pick::Stop
+            }
+        };
         assert!(rx.try_recv_if(&heard).await.is_some());
         assert!(rx.try_recv_if(&heard).await.is_none(), "a request waits");
         assert_eq!(all_of(&mut rx).await, ["ResponseRequested"], "and is still the next");
@@ -541,7 +623,11 @@ mod tests {
     }
 
     fn command() -> ActorEvent {
-        ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None }
+        ActorEvent::CommandRequested {
+            command: "mark".to_string(),
+            args: String::new(),
+            agent: ActorId::None,
+        }
     }
 
     /// Issue 435: what is passed over stays where it is, in the queue as in
@@ -554,20 +640,38 @@ mod tests {
         let (queued, read, stop) = (30, CAPACITY + 20, CAPACITY + 40);
         for n in 0..CAPACITY + 50 {
             let event = match n {
-                n if n == queued || n == read => ActorEvent::ResponseRequested { reason: RequestReason::Mentioned },
+                n if n == queued || n == read => {
+                    ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }
+                }
                 n if n == stop => command(),
                 n => said(n),
             };
             inbox.deliver(history.record(event));
         }
-        let position = |envelope: Option<Envelope>| envelope.and_then(|e| e.context.position).map(|seq| seq.get() as usize);
-        assert_eq!(position(rx.try_recv_if(&requests_past_what_was_said).await), Some(queued), "from the queue");
-        assert_eq!(position(rx.try_recv_if(&requests_past_what_was_said).await), Some(read), "from the history behind it");
+        let position = |envelope: Option<Envelope>| {
+            envelope.and_then(|e| e.context.position).map(|seq| seq.get() as usize)
+        };
+        assert_eq!(
+            position(rx.try_recv_if(&requests_past_what_was_said).await),
+            Some(queued),
+            "from the queue"
+        );
+        assert_eq!(
+            position(rx.try_recv_if(&requests_past_what_was_said).await),
+            Some(read),
+            "from the history behind it"
+        );
         assert!(rx.try_recv_if(&requests_past_what_was_said).await.is_none(), "never past a stop");
-        assert!(rx.heard().has(Position::new(read as u64)) && !rx.heard().has(Position::START), "taken ahead");
+        assert!(
+            rx.heard().has(Position::new(read as u64)) && !rx.heard().has(Position::START),
+            "taken ahead"
+        );
 
         let rest = all_of(&mut rx).await;
-        let mut expected: Vec<String> = (0..CAPACITY + 50).filter(|n| *n != queued && *n != read).map(|n| n.to_string()).collect();
+        let mut expected: Vec<String> = (0..CAPACITY + 50)
+            .filter(|n| *n != queued && *n != read)
+            .map(|n| n.to_string())
+            .collect();
         expected[stop - 2] = "CommandRequested".to_string();
         assert_eq!(rest, expected, "the rest, in order, once");
         assert_eq!(rx.heard(), Heard::at(history.end()));
@@ -578,7 +682,13 @@ mod tests {
     #[tokio::test]
     async fn what_was_read_of_the_history_is_passed_over_as_the_queue_is() {
         let history = Arc::new(History::default());
-        for event in [said(0), said(1), ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }, command(), ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }] {
+        for event in [
+            said(0),
+            said(1),
+            ActorEvent::ResponseRequested { reason: RequestReason::Mentioned },
+            command(),
+            ActorEvent::ResponseRequested { reason: RequestReason::Mentioned },
+        ] {
             history.record(event);
         }
         let (_inbox, mut rx) = open(&history, Heard::default());

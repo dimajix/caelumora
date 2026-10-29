@@ -9,9 +9,13 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupField, GroupId, GroupUpdateEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, AccessPolicy, Subject};
+use caelumora_model::security::{
+    AccessPolicy, ActionType, Enforcement, Grant, SecurityContext, Subject,
+};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{
+    Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
+};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
 use chrono::Utc;
@@ -40,8 +44,18 @@ impl fmt::Debug for GroupManager {
 }
 
 impl GroupManager {
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>) -> Self {
-        Self { users: Arc::clone(&stores.users), groups: Arc::clone(&stores.groups), access_policy, events, writing: Mutex::new(()) }
+    pub(crate) fn new(
+        stores: &EntityStores,
+        events: Arc<EventBus>,
+        access_policy: Arc<dyn AccessPolicy>,
+    ) -> Self {
+        Self {
+            users: Arc::clone(&stores.users),
+            groups: Arc::clone(&stores.groups),
+            access_policy,
+            events,
+            writing: Mutex::new(()),
+        }
     }
 
     /// Makes a team of the user `ctx` acts for, of `name` in `scope` - the
@@ -51,12 +65,18 @@ impl GroupManager {
     /// `OwnerNotAUser`, `Invalid` for a name that does not fit, or a
     /// `StoreError` - `NameTaken` among them, and `Validation` for a scope a
     /// team does not lie in.
-    pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope) -> GroupResult<Group> {
+    pub async fn create(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        scope: Scope,
+    ) -> GroupResult<Group> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(GroupError::OwnerNotAUser) };
         let group = Group::team(ScopedName::new(name, scope)?, owner);
         let _writing = self.writing.lock().await;
         self.groups.create(ctx, &group).await?;
-        self.events.publish(GlobalEvent::created::<Group>(&group.id), group.security_attributes.clone());
+        self.events
+            .publish(GlobalEvent::created::<Group>(&group.id), group.security_attributes.clone());
         info!(group = %group.id, by = %ctx.caller_id, "Group created");
         Ok(group)
     }
@@ -65,7 +85,12 @@ impl GroupManager {
     ///
     /// # Errors
     /// As [`Self::update`].
-    pub async fn rename(&self, ctx: &SecurityContext, id: GroupId, name: &str) -> GroupResult<Group> {
+    pub async fn rename(
+        &self,
+        ctx: &SecurityContext,
+        id: GroupId,
+        name: &str,
+    ) -> GroupResult<Group> {
         self.update(ctx, id, GroupUpdateEvent::NameChanged(name.to_string()), None).await
     }
 
@@ -76,7 +101,12 @@ impl GroupManager {
     /// # Errors
     /// `UnknownMember` for a user that does not exist, otherwise as
     /// [`Self::update`].
-    pub async fn set_members(&self, ctx: &SecurityContext, id: GroupId, members: Vec<UserId>) -> GroupResult<Group> {
+    pub async fn set_members(
+        &self,
+        ctx: &SecurityContext,
+        id: GroupId,
+        members: Vec<UserId>,
+    ) -> GroupResult<Group> {
         self.update(ctx, id, GroupUpdateEvent::MembersChanged, Some(members)).await
     }
 
@@ -92,7 +122,13 @@ impl GroupManager {
     /// group that is no team, `Invalid` if a name does
     /// not fit, `UnknownMember` for a user that does not exist, or whatever
     /// the store reports.
-    async fn update(&self, ctx: &SecurityContext, id: GroupId, event: GroupUpdateEvent, members: Option<Vec<UserId>>) -> GroupResult<Group> {
+    async fn update(
+        &self,
+        ctx: &SecurityContext,
+        id: GroupId,
+        event: GroupUpdateEvent,
+        members: Option<Vec<UserId>>,
+    ) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
         let mut group = self.groups.get(ctx, id).await.map_err(store_error(id))?;
         if !group.is_team() {
@@ -101,11 +137,19 @@ impl GroupManager {
         let before = group.security_attributes.clone();
         let mut told: Vec<ActorId> = group.members.clone();
         match &event {
-            GroupUpdateEvent::NameChanged(name) => group.name = ScopedName::new(name, group.name.scope.clone())?,
+            GroupUpdateEvent::NameChanged(name) => {
+                group.name = ScopedName::new(name, group.name.scope.clone())?
+            }
             GroupUpdateEvent::MembersChanged => {}
         }
         if let Some(members) = members {
-            self.access_policy.require(ctx, ActionType::update(Group::KIND, &group.security_attributes), StoreError::PermissionDenied).await?;
+            self.access_policy
+                .require(
+                    ctx,
+                    ActionType::update(Group::KIND, &group.security_attributes),
+                    StoreError::PermissionDenied,
+                )
+                .await?;
             let system = SecurityContext::system();
             let mut actors = Vec::with_capacity(members.len());
             for user in members {
@@ -122,7 +166,9 @@ impl GroupManager {
         self.groups.update(ctx, &group).await.map_err(store_error(id))?;
         // Who left is told too: they read it no longer once it is stored.
         told.retain(|actor| !group.has_member(*actor));
-        let attributes = told.into_iter().fold(before, |attributes, actor| attributes.granting(Subject::Actor(actor), Grant::Read));
+        let attributes = told.into_iter().fold(before, |attributes, actor| {
+            attributes.granting(Subject::Actor(actor), Grant::Read)
+        });
         self.events.publish(GlobalEvent::updated::<Group>(&id, &event), attributes);
         info!(group = %id, by = %ctx.caller_id, "Group changed");
         Ok(group)
@@ -159,7 +205,8 @@ impl GroupManager {
     /// among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
-        let Deleted { entity: deleted, .. } = self.groups.get_deleted(ctx, id).await.map_err(store_error(id))?;
+        let Deleted { entity: deleted, .. } =
+            self.groups.get_deleted(ctx, id).await.map_err(store_error(id))?;
         if !deleted.is_team() {
             return Err(GroupError::NotATeam(id));
         }
@@ -178,7 +225,11 @@ impl GroupManager {
     /// belongs to, `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(Deleted { entity: deleted, .. }) = self.groups.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(Deleted { entity: deleted, .. }) =
+            self.groups.get_deleted(ctx, id).await.optional()?
+        else {
+            return Ok(false);
+        };
         if !deleted.is_team() {
             return Err(GroupError::NotATeam(id));
         }
@@ -203,7 +254,11 @@ impl GroupManager {
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn delete_participants(&self, holders: &[Scope], removal: &Removal) -> StoreResult<()> {
+    pub(crate) async fn delete_participants(
+        &self,
+        holders: &[Scope],
+        removal: &Removal,
+    ) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut deleted: Vec<Group> = Vec::new();
@@ -219,7 +274,8 @@ impl GroupManager {
             deleted.push(group);
         }
         for group in deleted {
-            self.events.publish(GlobalEvent::deleted::<Group>(&group.id), group.security_attributes);
+            self.events
+                .publish(GlobalEvent::deleted::<Group>(&group.id), group.security_attributes);
         }
         Ok(())
     }
@@ -232,11 +288,17 @@ impl GroupManager {
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn restore_participants(&self, holders: &[Scope], removal: &Removal) -> StoreResult<()> {
+    pub(crate) async fn restore_participants(
+        &self,
+        holders: &[Scope],
+        removal: &Removal,
+    ) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut restored = Vec::new();
-        for group in self.groups.list_deleted_with(&system, removal.id, &lying_in(holders)).await?.items {
+        for group in
+            self.groups.list_deleted_with(&system, removal.id, &lying_in(holders)).await?.items
+        {
             match self.groups.restore(&system, group.id).await {
                 Ok(group) => restored.push(group),
                 Err(e) => {
@@ -250,7 +312,8 @@ impl GroupManager {
             }
         }
         for group in restored {
-            self.events.publish(GlobalEvent::restored::<Group>(&group.id), group.security_attributes);
+            self.events
+                .publish(GlobalEvent::restored::<Group>(&group.id), group.security_attributes);
         }
         Ok(())
     }

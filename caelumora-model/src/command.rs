@@ -120,7 +120,10 @@ mod tests {
 
     #[test]
     fn a_double_slash_escapes_a_literal_slash() {
-        assert_eq!(parse_input("//etc/hosts is missing"), UserInput::Message("/etc/hosts is missing".to_string()));
+        assert_eq!(
+            parse_input("//etc/hosts is missing"),
+            UserInput::Message("/etc/hosts is missing".to_string())
+        );
         assert_eq!(parse_input("//"), UserInput::Message("/".to_string()));
     }
 
@@ -138,7 +141,8 @@ mod tests {
 
     #[test]
     fn the_default_commands_are_help_wakeup_and_nudge() {
-        let kinds: Vec<String> = default_commands().component_nodes.into_iter().map(|n| n.kind).collect();
+        let kinds: Vec<String> =
+            default_commands().component_nodes.into_iter().map(|n| n.kind).collect();
         assert_eq!(kinds, vec![HELP_COMMAND_KIND, WAKEUP_COMMAND_KIND, NUDGE_COMMAND_KIND]);
     }
 }

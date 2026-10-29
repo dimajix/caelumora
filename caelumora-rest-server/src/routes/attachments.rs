@@ -31,12 +31,24 @@ pub(super) async fn upload_attachment(
     headers: HeaderMap,
     body: Body,
 ) -> Result<(StatusCode, Json<ContentRef>), ApiError> {
-    let size = headers.get(header::CONTENT_LENGTH).and_then(|length| length.to_str().ok()?.parse::<u64>().ok())
-        .ok_or_else(|| ApiError::new(StatusCode::LENGTH_REQUIRED, "length_required", "An attachment is uploaded with its Content-Length"))?;
+    let size = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|length| length.to_str().ok()?.parse::<u64>().ok())
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::LENGTH_REQUIRED,
+                "length_required",
+                "An attachment is uploaded with its Content-Length",
+            )
+        })?;
     let classification = classification_of(&query)?;
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let content = Box::pin(body.into_data_stream().map_err(Error::other));
-    let uploaded = state.runtime_manager.attachment_manager().create(&channel, &query.name, classification, (size, content)).await?;
+    let uploaded = state
+        .runtime_manager
+        .attachment_manager()
+        .create(&channel, &query.name, classification, (size, content))
+        .await?;
     Ok((StatusCode::CREATED, Json(uploaded)))
 }
 
@@ -48,8 +60,14 @@ pub(super) async fn download_attachment(
     user: AuthenticatedUser,
 ) -> Result<Response, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let (attachment, size, content) = channel.attachment_content(MessageId(mid), ContentId(aid)).await?;
-    Ok(content_response(size, content, attachment.name.as_str(), attachment.is_image().then_some(attachment.media_type.as_str())))
+    let (attachment, size, content) =
+        channel.attachment_content(MessageId(mid), ContentId(aid)).await?;
+    Ok(content_response(
+        size,
+        content,
+        attachment.name.as_str(),
+        attachment.is_image().then_some(attachment.media_type.as_str()),
+    ))
 }
 
 /// How the upload `query` describes is classified, its compartments separated by commas; `None`
@@ -57,7 +75,9 @@ pub(super) async fn download_attachment(
 ///
 /// # Errors
 /// `ClassificationError` if `Classification::given` refuses it.
-fn classification_of(query: &AttachmentQuery) -> Result<Option<Classification>, ClassificationError> {
+fn classification_of(
+    query: &AttachmentQuery,
+) -> Result<Option<Classification>, ClassificationError> {
     let compartments: Vec<Compartment> = match query.compartments.as_str() {
         "" => Vec::new(),
         names => names.split(',').map(Compartment::new).collect(),
@@ -87,14 +107,26 @@ mod tests {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\nand the rest of it";
 
     #[tokio::test]
+    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_file_uploaded_for_a_message_is_downloaded_from_it_an_image_shown_inline() {
         let files = tempfile::tempdir().unwrap();
-        let content = ContentConfig { storage: [("kept".to_string(), BackendConfig::new("local", json!({ "root": files.path() })))].into() };
+        let content = ContentConfig {
+            storage: [(
+                "kept".to_string(),
+                BackendConfig::new("local", json!({ "root": files.path() })),
+            )]
+            .into(),
+        };
         let state = state_with(AppConfig { content, ..Default::default() });
         let api = api(Arc::clone(&state), &[]);
         let cookie = login(&api, "alice").await;
-        let me = api.clone().oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
-        let me: Value = serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let me = api
+            .clone()
+            .oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let me: Value =
+            serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
         let alice = UserId(me["id"].as_str().unwrap().parse().unwrap());
         let mut talk = make_session("talk", alice);
         talk.participants = vec![Participant::User(alice)];
@@ -103,43 +135,98 @@ mod tests {
         let channel_uri = format!("/sessions/{}/channels/{}", session.0, channel.0);
 
         let upload = |name: &str, content: &'static [u8], length: bool| {
-            let request = Request::post(format!("{channel_uri}/attachments?name={name}")).header(COOKIE, &cookie);
-            let request = if length { request.header(header::CONTENT_LENGTH, content.len()) } else { request };
+            let request = Request::post(format!("{channel_uri}/attachments?name={name}"))
+                .header(COOKIE, &cookie);
+            let request = if length {
+                request.header(header::CONTENT_LENGTH, content.len())
+            } else {
+                request
+            };
             api.clone().oneshot(request.body(Body::from(content)).unwrap())
         };
         let unsized_upload = upload("chart.png", PNG, false).await.unwrap();
         assert_eq!(unsized_upload.status(), StatusCode::LENGTH_REQUIRED);
         let uploaded = |response: Response| async move {
             assert_eq!(response.status(), StatusCode::CREATED);
-            serde_json::from_slice::<ContentRef>(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
+            serde_json::from_slice::<ContentRef>(
+                &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            )
+            .unwrap()
         };
         let chart = uploaded(upload("chart.png", PNG, true).await.unwrap()).await;
-        let notes = uploaded(upload("notes.html", b"<script>alert(1)</script>", true).await.unwrap()).await;
-        assert_eq!((chart.media_type.as_str(), notes.media_type.as_str()), ("image/png", "text/plain"), "as their bytes say");
+        let notes =
+            uploaded(upload("notes.html", b"<script>alert(1)</script>", true).await.unwrap()).await;
+        assert_eq!(
+            (chart.media_type.as_str(), notes.media_type.as_str()),
+            ("image/png", "text/plain"),
+            "as their bytes say"
+        );
 
         let body = json!({ "attachments": [chart.id, notes.id] }).to_string();
-        let sent = api.clone().oneshot(Request::post(format!("{channel_uri}/messages")).header(COOKIE, &cookie).header(CONTENT_TYPE, "application/json").body(Body::from(body)).unwrap()).await.unwrap();
+        let sent = api
+            .clone()
+            .oneshot(
+                Request::post(format!("{channel_uri}/messages"))
+                    .header(COOKIE, &cookie)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(sent.status(), StatusCode::OK, "a message of attachments alone");
-        let message = time::timeout(Duration::from_secs(5), async {
-            loop {
-                let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
-                let history = views.session(session).await.unwrap().channel(channel).await.unwrap().history_page(None, 10).await.unwrap();
-                if let Some(message) = history.items.iter().find_map(|(_, entry)| entry.said().filter(|said| !said.attachments.is_empty())) {
-                    break message.id;
+        let message =
+            time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
+                    let history = views
+                        .session(session)
+                        .await
+                        .unwrap()
+                        .channel(channel)
+                        .await
+                        .unwrap()
+                        .history_page(None, 10)
+                        .await
+                        .unwrap();
+                    if let Some(message) = history.items.iter().find_map(|(_, entry)| {
+                        entry.said().filter(|said| !said.attachments.is_empty())
+                    }) {
+                        break message.id;
+                    }
+                    time::sleep(Duration::from_millis(10)).await;
                 }
-                time::sleep(Duration::from_millis(10)).await;
-            }
-        }).await.expect("said");
+            })
+            .await
+            .expect("said");
 
-        let download = |id: ContentId| api.clone().oneshot(Request::get(format!("{channel_uri}/messages/{}/attachments/{}", message.0, id.0)).header(COOKIE, &cookie).body(Body::empty()).unwrap());
+        let download = |id: ContentId| {
+            api.clone().oneshot(
+                Request::get(format!("{channel_uri}/messages/{}/attachments/{}", message.0, id.0))
+                    .header(COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+        };
         let shown = download(chart.id).await.unwrap();
         assert_eq!(shown.status(), StatusCode::OK);
         assert_eq!(shown.headers()[CONTENT_TYPE], "image/png");
         assert!(shown.headers()[CONTENT_DISPOSITION].to_str().unwrap().starts_with("inline;"));
         assert_eq!(to_bytes(shown.into_body(), usize::MAX).await.unwrap(), PNG);
         let downloaded = download(notes.id).await.unwrap();
-        assert_eq!(downloaded.headers()[CONTENT_TYPE], "application/octet-stream", "never run in the web UI's origin");
-        assert!(downloaded.headers()[CONTENT_DISPOSITION].to_str().unwrap().starts_with("attachment;"));
-        assert_eq!(download(ContentId::new()).await.unwrap().status(), StatusCode::NOT_FOUND, "none the message carries");
+        assert_eq!(
+            downloaded.headers()[CONTENT_TYPE],
+            "application/octet-stream",
+            "never run in the web UI's origin"
+        );
+        assert!(downloaded.headers()[CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment;"));
+        assert_eq!(
+            download(ContentId::new()).await.unwrap().status(),
+            StatusCode::NOT_FOUND,
+            "none the message carries"
+        );
     }
 }

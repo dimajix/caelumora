@@ -17,25 +17,25 @@
 
 use super::commands::{locked, Commands, Kept};
 use super::{CommandKey, CommandState, Shell, TerminalError, TerminalResult};
-use caelumora_model::workspace::CommandStatus;
 use async_trait::async_trait;
+use caelumora_model::workspace::CommandStatus;
 use caelumora_model::workspace::WorkspaceId;
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
+use std::env;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::str;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process;
 use tokio::sync::watch;
+use tokio::time;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::info;
 use uuid::Uuid;
-use std::env;
-use std::str;
-use tokio::process;
-use tokio::time;
 
 /// How much of a command's output is kept; older output is dropped.
 const KEPT_OUTPUT: usize = 1024 * 1024;
@@ -174,7 +174,10 @@ impl Shell for LocalShell {
             .arg(command)
             .current_dir(&self.dir)
             .env_clear()
-            .env("PATH", env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into()))
+            .env(
+                "PATH",
+                env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into()),
+            )
             .env("HOME", &self.dir)
             .env("LANG", "C.UTF-8")
             .env("TERM", "dumb")
@@ -186,9 +189,15 @@ impl Shell for LocalShell {
             .process_group(0)
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| TerminalError::Unavailable(format!("the shell could not be started: {}", e.kind())))?;
+            .map_err(|e| {
+                TerminalError::Unavailable(format!("the shell could not be started: {}", e.kind()))
+            })?;
         let group = child.id().and_then(|pid| i32::try_from(pid).ok()).map(Pid::from_raw);
-        let running = Arc::new(Running { output: Mutex::default(), end: watch::channel(None).0, killed: AtomicBool::new(false) });
+        let running = Arc::new(Running {
+            output: Mutex::default(),
+            end: watch::channel(None).0,
+            killed: AtomicBool::new(false),
+        });
 
         let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
         let shared = Arc::clone(&running);
@@ -244,14 +253,20 @@ impl Shell for LocalShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
     use std::process::Command;
-    use std::fs;
 
     /// The shell of a workspace in `dir`, as the scope "channel" sees it,
     /// whose commands may run for `max_run`.
     fn bounded(dir: &Path, max_run: Duration) -> LocalShell {
-        LocalShell { dir: dir.to_path_buf(), workspace: WorkspaceId::new(), scope: "channel".to_string(), commands: Arc::default(), max_run }
+        LocalShell {
+            dir: dir.to_path_buf(),
+            workspace: WorkspaceId::new(),
+            scope: "channel".to_string(),
+            commands: Arc::default(),
+            max_run,
+        }
     }
 
     fn shell(dir: &Path) -> LocalShell {
@@ -260,7 +275,13 @@ mod tests {
 
     /// The shell of the same workspace as `scope` sees it.
     fn seen_from(shell: &LocalShell, scope: &str) -> LocalShell {
-        LocalShell { dir: shell.dir.clone(), workspace: shell.workspace, scope: scope.to_string(), commands: Arc::clone(&shell.commands), max_run: shell.max_run }
+        LocalShell {
+            dir: shell.dir.clone(),
+            workspace: shell.workspace,
+            scope: scope.to_string(),
+            commands: Arc::clone(&shell.commands),
+            max_run: shell.max_run,
+        }
     }
 
     /// Whether anything of the process group of command `id` still runs.
@@ -279,7 +300,13 @@ mod tests {
         let done = shell.output(&id, 0, LONG).await.unwrap();
         assert_eq!((done.status, done.exit_code), (CommandStatus::Completed, Some(3)));
         let real = fs::canonicalize(dir.path()).unwrap();
-        assert!(done.output.contains("hello") && done.output.contains(&real.display().to_string()) && done.output.contains("oops"), "{:?}", done.output);
+        assert!(
+            done.output.contains("hello")
+                && done.output.contains(&real.display().to_string())
+                && done.output.contains("oops"),
+            "{:?}",
+            done.output
+        );
         let again = shell.output(&id, done.next_offset, Duration::ZERO).await.unwrap();
         assert_eq!(again.output, "", "nothing new past the offset");
     }
@@ -290,8 +317,18 @@ mod tests {
         let shell = shell(dir.path());
         let id = shell.start("env | sort").await.unwrap();
         let done = shell.output(&id, 0, LONG).await.unwrap();
-        let names: Vec<&str> = done.output.lines().filter_map(|line| line.split('=').next()).filter(|name| !["PWD", "SHLVL", "_"].contains(name)).collect();
-        assert_eq!(names, ["CAELUMORA_WORKSPACE", "HOME", "LANG", "NO_COLOR", "PATH", "TERM"], "{}", done.output);
+        let names: Vec<&str> = done
+            .output
+            .lines()
+            .filter_map(|line| line.split('=').next())
+            .filter(|name| !["PWD", "SHLVL", "_"].contains(name))
+            .collect();
+        assert_eq!(
+            names,
+            ["CAELUMORA_WORKSPACE", "HOME", "LANG", "NO_COLOR", "PATH", "TERM"],
+            "{}",
+            done.output
+        );
     }
 
     #[tokio::test]
@@ -331,12 +368,20 @@ mod tests {
 
     #[test]
     fn output_is_given_from_the_offset_and_says_what_was_dropped() {
-        let running = Running { output: Mutex::new(Output { bytes: "héllo".as_bytes().to_vec(), dropped: 10 }), end: watch::channel(None).0, killed: AtomicBool::new(false) };
+        let running = Running {
+            output: Mutex::new(Output { bytes: "héllo".as_bytes().to_vec(), dropped: 10 }),
+            end: watch::channel(None).0,
+            killed: AtomicBool::new(false),
+        };
         let all = state("x", &running, 10);
         assert_eq!((all.output.as_str(), all.next_offset, all.truncated), ("héllo", 16, false));
         assert!(state("x", &running, 4).truncated, "what was before the kept output is dropped");
         locked(&running.output).bytes.extend_from_slice(&[0xc3]);
         let cut = state("x", &running, 10);
-        assert_eq!((cut.output.as_str(), cut.next_offset), ("héllo", 16), "a character cut off waits to be whole");
+        assert_eq!(
+            (cut.output.as_str(), cut.next_offset),
+            ("héllo", 16),
+            "a character cut off waits to be whole"
+        );
     }
 }

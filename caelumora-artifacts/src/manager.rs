@@ -15,21 +15,29 @@ use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
+use caelumora_model::confidentiality::{
+    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
+};
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::scope::Scope;
-use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, WRITE};
-use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
-use caelumora_model::store::{Address, Deleted, EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::scope::Scope;
+use caelumora_model::security::{
+    AccessPolicy, AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, Subject,
+    WRITE,
+};
+use caelumora_model::store::query::{Filter, Query};
+use caelumora_model::store::{
+    Address, Deleted, EntityKind, EntityStore, EntityStores, StoreError, StoreResult,
+    StoreResultExt, Stored,
+};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
-use caelumora_runtime::component::{ComponentError, ComponentResult};
 use caelumora_runtime::backend::{NamedBackends, StorageGone};
+use caelumora_runtime::component::{ComponentError, ComponentResult};
 use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
@@ -38,10 +46,10 @@ use caelumora_runtime::terminal::ByteStream;
 use chrono::Utc;
 use serde::Deserialize;
 use std::fmt;
+use std::slice;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-use std::slice;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
@@ -139,7 +147,9 @@ pub struct ArtifactManager {
 
 impl fmt::Debug for ArtifactManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ArtifactManager").field("keep_in", &self.keep_in.as_ref().map(|(name, _)| name)).finish_non_exhaustive()
+        f.debug_struct("ArtifactManager")
+            .field("keep_in", &self.keep_in.as_ref().map(|(name, _)| name))
+            .finish_non_exhaustive()
     }
 }
 
@@ -151,11 +161,32 @@ impl ArtifactManager {
     /// # Errors
     /// `ComponentError::InvalidConfig` where `config` names no storage of `storages`, or none among
     /// several.
-    pub fn new(stores: &EntityStores, artifacts: Arc<dyn EntityStore<Artifact>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn ContentStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
-        let keep_in = storages.chosen(config.keep_in.as_deref()).map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?
+    pub fn new(
+        stores: &EntityStores,
+        artifacts: Arc<dyn EntityStore<Artifact>>,
+        events: Arc<EventBus>,
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        storages: Arc<NamedBackends<dyn ContentStorage>>,
+        config: &ArtifactsConfig,
+    ) -> ComponentResult<Self> {
+        let keep_in = storages
+            .chosen(config.keep_in.as_deref())
+            .map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?
             .map(|(name, storage)| (name.to_string(), Arc::clone(storage)));
         let (projects, groups) = (Arc::clone(&stores.projects), Arc::clone(&stores.groups));
-        Ok(Self { artifacts, projects, groups, events, access_policy, confidentiality, storages, keep_in, max_bytes: config.max_bytes, writing: Mutex::new(()) })
+        Ok(Self {
+            artifacts,
+            projects,
+            groups,
+            events,
+            access_policy,
+            confidentiality,
+            storages,
+            keep_in,
+            max_bytes: config.max_bytes,
+            writing: Mutex::new(()),
+        })
     }
 
     /// The store of artifacts, which the views read in the viewer's name.
@@ -194,33 +225,75 @@ impl ArtifactManager {
     /// `Content` for a version too large, other than said, or a storage that failed, or whatever
     /// the store reports - `NotFound` for a project the caller does not read, `PermissionDenied`
     /// and `NameTaken` among it.
-    pub async fn publish(&self, ctx: &SecurityContext, (session, channel): Address<Channel>, (size, content): (u64, ByteStream), classification: &Classification, name: &ScopedName, description: Option<&str>) -> ArtifactResult<(Artifact, u32)> {
-        let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
-        let Scope::ProjectScope { project_id } = name.scope else { return Err(ArtifactError::InvalidScope) };
+    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
+    pub async fn publish(
+        &self,
+        ctx: &SecurityContext,
+        (session, channel): Address<Channel>,
+        (size, content): (u64, ByteStream),
+        classification: &Classification,
+        name: &ScopedName,
+        description: Option<&str>,
+    ) -> ArtifactResult<(Artifact, u32)> {
+        let ActorId::User(owner) = ctx.principal_id else {
+            return Err(ArtifactError::OwnerNotAUser);
+        };
+        let Scope::ProjectScope { project_id } = name.scope else {
+            return Err(ArtifactError::InvalidScope);
+        };
         let description = Description::optional(description)?;
         self.projects.get(ctx, project_id).await?;
         let _writing = self.writing.lock().await;
         // Found whoever's it is, so that one not the caller's to add to is
         // refused as such rather than taken for a name to make anew.
-        let existing = self.artifacts.find_by_name(&SecurityContext::system(), name).await.optional()?;
+        let existing =
+            self.artifacts.find_by_name(&SecurityContext::system(), name).await.optional()?;
         let (id, number, (storage_name, storage)) = match &existing {
             Some(artifact) => {
-                self.access_policy.require(ctx, ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes), StoreError::PermissionDenied).await?;
+                self.access_policy
+                    .require(
+                        ctx,
+                        ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes),
+                        StoreError::PermissionDenied,
+                    )
+                    .await?;
                 if artifact.classification != *classification {
                     return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
                 }
-                (artifact.id, artifact.latest().map_or(1, |latest| latest.number + 1), (&artifact.storage, self.storages.kept_in(&artifact.storage)?))
+                (
+                    artifact.id,
+                    artifact.latest().map_or(1, |latest| latest.number + 1),
+                    (&artifact.storage, self.storages.kept_in(&artifact.storage)?),
+                )
             }
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
-                self.access_policy.require(ctx, ActionType::create(Artifact::KIND, &attributes), StoreError::PermissionDenied).await?;
+                self.access_policy
+                    .require(
+                        ctx,
+                        ActionType::create(Artifact::KIND, &attributes),
+                        StoreError::PermissionDenied,
+                    )
+                    .await?;
                 let (name, storage) = self.keep_in.as_ref().ok_or(ArtifactError::NotConfigured)?;
                 (ArtifactId::new(), 1, (name, storage))
             }
         };
-        self.confidentiality.require_storable(ctx, classification, storage.destination(), || ArtifactError::StorageNotCleared(storage_name.clone()))?;
+        self.confidentiality.require_storable(
+            ctx,
+            classification,
+            storage.destination(),
+            || ArtifactError::StorageNotCleared(storage_name.clone()),
+        )?;
 
-        let digest = keep_digested(storage.as_ref(), &version_key(id, number), size, content, self.max_bytes).await?;
+        let digest = keep_digested(
+            storage.as_ref(),
+            &version_key(id, number),
+            size,
+            content,
+            self.max_bytes,
+        )
+        .await?;
 
         // Read by the participants of the channel it is published in (issues 23, 316) - the group
         // of its participants (issue 286) -, who read the artifact for it: a draft published where
@@ -230,7 +303,18 @@ impl ArtifactManager {
         // so.
         let participants = Subject::Group(GroupId::of_channel(channel));
         let members = Subject::Group(GroupId::of_project(project_id));
-        let mut version = ArtifactVersion { number, size, digest, media_type: None, description, session_id: session, channel_id: channel, published_by: ctx.caller_id, published_at: Utc::now(), acl: Vec::new() };
+        let mut version = ArtifactVersion {
+            number,
+            size,
+            digest,
+            media_type: None,
+            description,
+            session_id: session,
+            channel_id: channel,
+            published_by: ctx.caller_id,
+            published_at: Utc::now(),
+            acl: Vec::new(),
+        };
         version.grant_reading(participants);
         let stored = match existing {
             Some(mut artifact) => {
@@ -242,7 +326,14 @@ impl ArtifactManager {
                 self.update(&SecurityContext::system(), &mut artifact).await.map(|()| artifact)
             }
             None => {
-                let mut artifact = Artifact::new(id, name.clone(), storage_name, classification.clone(), owner, version);
+                let mut artifact = Artifact::new(
+                    id,
+                    name.clone(),
+                    storage_name,
+                    classification.clone(),
+                    owner,
+                    version,
+                );
                 artifact.grant_reading(participants);
                 artifact.grant_reading(members);
                 self.artifacts.create(ctx, &artifact).await.map(|()| artifact)
@@ -256,9 +347,18 @@ impl ArtifactManager {
             }
         };
         // Heard by whoever reads the artifact and the version.
-        let event = if number == 1 { GlobalEvent::created::<Artifact>(&id) } else { GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::VersionPublished(number)) };
+        let event = if number == 1 {
+            GlobalEvent::created::<Artifact>(&id)
+        } else {
+            GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::VersionPublished(number))
+        };
         if let Some(version) = artifact.version(number) {
-            self.events.publish_classified_part(event, artifact.security_attributes.clone(), artifact.version_attributes(version), slice::from_ref(&artifact.classification));
+            self.events.publish_classified_part(
+                event,
+                artifact.security_attributes.clone(),
+                artifact.version_attributes(version),
+                slice::from_ref(&artifact.classification),
+            );
         }
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))
@@ -279,8 +379,18 @@ impl ArtifactManager {
     /// publication that failed after - all of it for an artifact that was
     /// to be made by it. Logged where it fails: the failure that led here
     /// is what the caller is told.
-    async fn forget(&self, storage: &Arc<dyn ContentStorage>, id: ArtifactId, number: u32, made: bool) {
-        let removed = if made { storage.remove_under(&versions_key(id)).await } else { storage.delete(&version_key(id, number)).await };
+    async fn forget(
+        &self,
+        storage: &Arc<dyn ContentStorage>,
+        id: ArtifactId,
+        number: u32,
+        made: bool,
+    ) {
+        let removed = if made {
+            storage.remove_under(&versions_key(id)).await
+        } else {
+            storage.delete(&version_key(id, number)).await
+        };
         if let Err(e) = removed {
             warn!(artifact = %id, version = number, "What was kept of a publication that failed stays: {e}");
         }
@@ -292,14 +402,24 @@ impl ArtifactManager {
     ///
     /// # Errors
     /// `VersionNotFound`, `StorageGone`, or `Content`.
-    pub(crate) async fn content_of(&self, artifact: &Artifact, number: u32) -> ArtifactResult<(u64, ByteStream)> {
+    pub(crate) async fn content_of(
+        &self,
+        artifact: &Artifact,
+        number: u32,
+    ) -> ArtifactResult<(u64, ByteStream)> {
         if artifact.version(number).is_none() {
             return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
         }
-        self.storages.kept_in(&artifact.storage)?.get(&version_key(artifact.id, number)).await.map_err(|e| match e {
-            ContentError::NotFound(_) => ArtifactError::VersionNotFound { artifact: artifact.id, version: number },
-            e => e.into(),
-        })
+        self.storages
+            .kept_in(&artifact.storage)?
+            .get(&version_key(artifact.id, number))
+            .await
+            .map_err(|e| match e {
+                ContentError::NotFound(_) => {
+                    ArtifactError::VersionNotFound { artifact: artifact.id, version: number }
+                }
+                e => e.into(),
+            })
     }
 
     /// Gives artifact `id` the access list `acl` (issues 23, 316) on behalf
@@ -317,12 +437,25 @@ impl ArtifactManager {
     /// `NotFound` if there is none the caller may reach, or what the store
     /// reports - `PermissionDenied`, `Validation` for an entry that names
     /// an agent, the system or nobody, or a group the caller cannot read.
-    pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>, versions: bool) -> ArtifactResult<Artifact> {
+    pub async fn set_access(
+        &self,
+        ctx: &SecurityContext,
+        id: ArtifactId,
+        acl: Vec<AclEntry>,
+        versions: bool,
+    ) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
-        require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
+        require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl)
+            .await?;
         if versions {
-            let named: Vec<Subject> = acl.iter().map(|entry| entry.subject).filter(|subject| !artifact.security_attributes.acl.iter().any(|entry| entry.subject == *subject)).collect();
+            let named: Vec<Subject> = acl
+                .iter()
+                .map(|entry| entry.subject)
+                .filter(|subject| {
+                    !artifact.security_attributes.acl.iter().any(|entry| entry.subject == *subject)
+                })
+                .collect();
             for version in &mut artifact.versions {
                 for subject in &named {
                     version.grant_reading(*subject);
@@ -332,7 +465,10 @@ impl ArtifactManager {
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
         self.update(ctx, &mut artifact).await?;
-        self.events.announce(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged), &artifact);
+        self.events.announce(
+            GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged),
+            &artifact,
+        );
         info!(artifact = %id, by = %ctx.caller_id, "Artifact's access changed");
         Ok(artifact)
     }
@@ -343,13 +479,26 @@ impl ArtifactManager {
     /// # Errors
     /// `NotFound`, `Invalid` for a description that does not fit, or
     /// whatever the store reports - `PermissionDenied` among it.
-    pub async fn describe(&self, ctx: &SecurityContext, id: ArtifactId, description: Option<&str>) -> ArtifactResult<Artifact> {
+    pub async fn describe(
+        &self,
+        ctx: &SecurityContext,
+        id: ArtifactId,
+        description: Option<&str>,
+    ) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
         self.update(ctx, &mut artifact).await?;
-        self.events.announce(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::DescriptionChanged(artifact.description.as_ref().map(ToString::to_string))), &artifact);
+        self.events.announce(
+            GlobalEvent::updated::<Artifact>(
+                &id,
+                &ArtifactUpdateEvent::DescriptionChanged(
+                    artifact.description.as_ref().map(ToString::to_string),
+                ),
+            ),
+            &artifact,
+        );
         Ok(artifact)
     }
 
@@ -360,7 +509,9 @@ impl ArtifactManager {
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(artifact) = self.artifacts.get(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(artifact) = self.artifacts.get(ctx, id).await.optional()? else {
+            return Ok(false);
+        };
         if !self.artifacts.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
@@ -392,8 +543,18 @@ impl ArtifactManager {
     /// `PermissionDenied`, `StorageGone`, `Content`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(Deleted { entity: artifact, .. }) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
-        self.access_policy.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), StoreError::PermissionDenied).await?;
+        let Some(Deleted { entity: artifact, .. }) =
+            self.artifacts.get_deleted(ctx, id).await.optional()?
+        else {
+            return Ok(false);
+        };
+        self.access_policy
+            .require(
+                ctx,
+                ActionType::purge(Artifact::KIND, &artifact.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key(id)).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
@@ -414,11 +575,21 @@ impl ScopeMember for ArtifactManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
+    async fn delete_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for artifact in self.artifacts.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for artifact in self
+            .artifacts
+            .list(&system, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
             if deleted_unless_refused(self.artifacts.delete(ctx, artifact.id, removal).await)? {
                 self.events.announce(GlobalEvent::deleted::<Artifact>(&artifact.id), &artifact);
             } else {
@@ -435,11 +606,23 @@ impl ScopeMember for ArtifactManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
+    async fn restore_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in self.artifacts.list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)? {
+        for artifact in self
+            .artifacts
+            .list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
+            if let Some(restored) =
+                restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)?
+            {
                 self.events.announce(GlobalEvent::restored::<Artifact>(&restored.id), &restored);
             }
         }
@@ -455,10 +638,25 @@ impl ScopeMember for ArtifactManager {
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for Deleted { entity: artifact, .. } in self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity: artifact, .. } in self
+            .artifacts
+            .list_deleted(&system, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
             // Its content is its storage too.
-            let unremoved = |e: &dyn fmt::Display| StoreError::Backend(format!("the content of artifact {} cannot be removed: {e}", artifact.id));
-            self.storages.kept_in(&artifact.storage).map_err(|e| unremoved(&e))?.remove_under(&versions_key(artifact.id)).await.map_err(|e| unremoved(&e))?;
+            let unremoved = |e: &dyn fmt::Display| {
+                StoreError::Backend(format!(
+                    "the content of artifact {} cannot be removed: {e}",
+                    artifact.id
+                ))
+            };
+            self.storages
+                .kept_in(&artifact.storage)
+                .map_err(|e| unremoved(&e))?
+                .remove_under(&versions_key(artifact.id))
+                .await
+                .map_err(|e| unremoved(&e))?;
             self.artifacts.purge(&system, artifact.id).await?;
         }
         Ok(())

@@ -4,15 +4,15 @@
 //! (`ToolCallState`).
 use crate::actor::ActorEvent;
 use crate::approval::{ApprovalDecision, ApprovalId, ToolMatcher};
-use crate::content::ContentRef;
-use crate::question::{Answers, QuestionId, Questions};
 use crate::confidentiality::{Classification, Visibility};
+use crate::content::ContentRef;
 use crate::intern::intern;
+use crate::question::{Answers, QuestionId, Questions};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -86,10 +86,7 @@ impl ToolParameters {
         required: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         Self::Object {
-            properties: properties
-                .into_iter()
-                .map(|(k, v)| (k.into(), v))
-                .collect(),
+            properties: properties.into_iter().map(|(k, v)| (k.into(), v)).collect(),
             required: required.into_iter().map(|s| s.into()).collect(),
         }
     }
@@ -113,7 +110,11 @@ impl ToolParameters {
     ///
     /// # Errors
     /// The first error `text` answers.
-    pub fn describe<E>(&mut self, path: &str, text: &mut impl FnMut(&str) -> Result<String, E>) -> Result<(), E> {
+    pub fn describe<E>(
+        &mut self,
+        path: &str,
+        text: &mut impl FnMut(&str) -> Result<String, E>,
+    ) -> Result<(), E> {
         match self {
             ToolParameters::Object { properties, .. } => {
                 for (name, property) in properties {
@@ -132,7 +133,11 @@ impl ToolParameters {
 
     /// Describes this parameter by the text of `path` unless it is
     /// described, and what it holds below it.
-    fn describe_at<E>(&mut self, path: &str, text: &mut impl FnMut(&str) -> Result<String, E>) -> Result<(), E> {
+    fn describe_at<E>(
+        &mut self,
+        path: &str,
+        text: &mut impl FnMut(&str) -> Result<String, E>,
+    ) -> Result<(), E> {
         if let Some(description @ None) = self.description_mut() {
             *description = Some(text(path)?);
         }
@@ -178,15 +183,31 @@ pub struct ToolVisibility {
 
 impl ToolVisibility {
     /// Call, arguments and result are published to the channel.
-    pub const SHOWN: ToolVisibility = ToolVisibility { call: Visibility::Channel, arguments: Visibility::Channel, result: Visibility::Channel };
+    pub const SHOWN: ToolVisibility = ToolVisibility {
+        call: Visibility::Channel,
+        arguments: Visibility::Channel,
+        result: Visibility::Channel,
+    };
     /// Others may see that the tool was called and with what, but not what
     /// it returned.
-    pub const WITHOUT_RESULT: ToolVisibility = ToolVisibility { call: Visibility::Channel, arguments: Visibility::Channel, result: Visibility::Owner };
+    pub const WITHOUT_RESULT: ToolVisibility = ToolVisibility {
+        call: Visibility::Channel,
+        arguments: Visibility::Channel,
+        result: Visibility::Owner,
+    };
     /// Others may see that the tool was called, but not with what or what
     /// it returned.
-    pub const CALL_ONLY: ToolVisibility = ToolVisibility { call: Visibility::Channel, arguments: Visibility::Owner, result: Visibility::Owner };
+    pub const CALL_ONLY: ToolVisibility = ToolVisibility {
+        call: Visibility::Channel,
+        arguments: Visibility::Owner,
+        result: Visibility::Owner,
+    };
     /// Nothing of the call leaves the agent.
-    pub const HIDDEN: ToolVisibility = ToolVisibility { call: Visibility::Owner, arguments: Visibility::Owner, result: Visibility::Owner };
+    pub const HIDDEN: ToolVisibility = ToolVisibility {
+        call: Visibility::Owner,
+        arguments: Visibility::Owner,
+        result: Visibility::Owner,
+    };
 
     pub fn is_shown(&self) -> bool {
         *self == Self::SHOWN
@@ -301,13 +322,23 @@ pub struct ToolSet {
 impl ToolSet {
     /// The available set `name` of `tools`, for `description`.
     pub fn new(name: impl Into<String>, description: impl Into<String>, tools: Vec<Tool>) -> Self {
-        Self { name: name.into(), description: description.into(), tools, unavailable: None, destination: None }
+        Self {
+            name: name.into(),
+            description: description.into(),
+            tools,
+            unavailable: None,
+            destination: None,
+        }
     }
 
     /// It as it is offered in a channel its remote side is not cleared for
     /// (issue 180): unavailable, without its tools.
     pub fn withheld(self) -> Self {
-        Self { tools: Vec::new(), unavailable: Some("its remote side is not cleared for this channel".to_string()), ..self }
+        Self {
+            tools: Vec::new(),
+            unavailable: Some("its remote side is not cleared for this channel".to_string()),
+            ..self
+        }
     }
 }
 
@@ -422,7 +453,12 @@ impl ToolCallResult {
     /// How `call` ended: `status`, and `content` for the model, classified
     /// `classification`. Carries the call's id, tool and flags, so that the
     /// result is published by what applied to the call.
-    pub fn of(call: &ToolCall, status: ToolResultStatus, content: String, classification: Classification) -> Self {
+    pub fn of(
+        call: &ToolCall,
+        status: ToolResultStatus,
+        content: String,
+        classification: Classification,
+    ) -> Self {
         Self {
             id: call.id.clone(),
             tool_name: call.function_name.clone(),
@@ -443,7 +479,13 @@ impl ToolCallResult {
     /// questions and of who approved it, which are not the model's, and without what it gave and
     /// showed, which a model is given as what it is, not as text.
     pub fn for_the_model(&self) -> ToolCallResult {
-        ToolCallResult { answers: None, approval: Vec::new(), media: Vec::new(), shown: Vec::new(), ..self.clone() }
+        ToolCallResult {
+            answers: None,
+            approval: Vec::new(),
+            media: Vec::new(),
+            shown: Vec::new(),
+            ..self.clone()
+        }
     }
 }
 
@@ -498,13 +540,33 @@ pub enum ToolCallStatus {
 impl ToolCallState {
     /// `tool_call`, waiting for a person's decision (`ToolCallStatus::WaitingApproval`),
     /// and then to ask `questions`.
-    pub fn pending(tool_call: ToolCall, description: String, explicit: bool, suggested: Option<ToolMatcher>, questions: Option<Questions>) -> Self {
-        Self { tool_call, status: ToolCallStatus::WaitingApproval { id: ApprovalId::new(), description, explicit, suggested, questions }, approval: Vec::new() }
+    pub fn pending(
+        tool_call: ToolCall,
+        description: String,
+        explicit: bool,
+        suggested: Option<ToolMatcher>,
+        questions: Option<Questions>,
+    ) -> Self {
+        Self {
+            tool_call,
+            status: ToolCallStatus::WaitingApproval {
+                id: ApprovalId::new(),
+                description,
+                explicit,
+                suggested,
+                questions,
+            },
+            approval: Vec::new(),
+        }
     }
 
     /// `tool_call`, waiting for the answers to `questions` (`ToolCallStatus::WaitingUser`).
     pub fn asking(tool_call: ToolCall, questions: Questions) -> Self {
-        Self { tool_call, status: ToolCallStatus::WaitingUser { id: QuestionId::new(), questions }, approval: Vec::new() }
+        Self {
+            tool_call,
+            status: ToolCallStatus::WaitingUser { id: QuestionId::new(), questions },
+            approval: Vec::new(),
+        }
     }
 
     /// `tool_call`, to be run as it is.
@@ -551,8 +613,12 @@ impl ToolCallState {
     /// shown to.
     pub fn withdrawal(&self) -> Option<ActorEvent> {
         match &self.status {
-            ToolCallStatus::WaitingApproval { id, .. } => Some(ActorEvent::ApprovalRequestWithdrawn { id: *id }),
-            ToolCallStatus::WaitingUser { id, questions } => Some(ActorEvent::QuestionClosed { id: *id, shown_to: questions.shown_to() }),
+            ToolCallStatus::WaitingApproval { id, .. } => {
+                Some(ActorEvent::ApprovalRequestWithdrawn { id: *id })
+            }
+            ToolCallStatus::WaitingUser { id, questions } => {
+                Some(ActorEvent::QuestionClosed { id: *id, shown_to: questions.shown_to() })
+            }
             _ => None,
         }
     }
@@ -565,37 +631,67 @@ mod tests {
     #[test]
     fn every_parameter_is_described_by_its_path() {
         let choice = ToolParameters::object([("label", ToolParameters::string())], ["label"]);
-        let question = ToolParameters::object([("header", ToolParameters::string()), ("choices", ToolParameters::array(choice))], ["header"]);
+        let question = ToolParameters::object(
+            [("header", ToolParameters::string()), ("choices", ToolParameters::array(choice))],
+            ["header"],
+        );
         let mut parameters = ToolParameters::object(
-            [("questions", ToolParameters::array(question)), ("ask", ToolParameters::array(ToolParameters::string())), ("all", ToolParameters::boolean()), ("level", ToolParameters::string().described("shared"))],
+            [
+                ("questions", ToolParameters::array(question)),
+                ("ask", ToolParameters::array(ToolParameters::string())),
+                ("all", ToolParameters::boolean()),
+                ("level", ToolParameters::string().described("shared")),
+            ],
             ["questions"],
         );
         let mut asked = Vec::new();
-        parameters.describe("ask_user", &mut |path: &str| -> Result<String, ()> { asked.push(path.to_string()); Ok(format!("<{path}>")) }).unwrap();
+        parameters
+            .describe("ask_user", &mut |path: &str| -> Result<String, ()> {
+                asked.push(path.to_string());
+                Ok(format!("<{path}>"))
+            })
+            .unwrap();
         asked.sort();
         assert_eq!(asked, [
             "ask_user.all", "ask_user.ask", "ask_user.ask.item",
             "ask_user.questions", "ask_user.questions.choices", "ask_user.questions.choices.label", "ask_user.questions.header",
         ], "a list of objects is described by its own path and its entries' properties; of other entries by `.item`");
         let described = serde_json::to_value(&parameters).unwrap();
-        assert_eq!(described["properties"]["questions"]["items"]["properties"]["choices"]["items"]["properties"]["label"]["description"], "<ask_user.questions.choices.label>");
+        assert_eq!(
+            described["properties"]["questions"]["items"]["properties"]["choices"]["items"]
+                ["properties"]["label"]["description"],
+            "<ask_user.questions.choices.label>"
+        );
         assert_eq!(described["properties"]["ask"]["items"]["description"], "<ask_user.ask.item>");
-        assert_eq!(described["properties"]["level"]["description"], "shared", "one described already keeps its description");
+        assert_eq!(
+            described["properties"]["level"]["description"], "shared",
+            "one described already keeps its description"
+        );
 
-        let failed = ToolParameters::object([("a", ToolParameters::string())], ["a"]).describe("t", &mut |path: &str| Err(path.to_string()));
+        let failed = ToolParameters::object([("a", ToolParameters::string())], ["a"])
+            .describe("t", &mut |path: &str| Err(path.to_string()));
         assert_eq!(failed, Err("t.a".to_string()), "the first text that cannot be had");
     }
 
     #[test]
     fn a_parameter_is_described_one_by_one_and_an_object_has_no_description() {
-        assert_eq!(ToolParameters::string().described("a channel"), ToolParameters::String { description: Some("a channel".to_string()), language: None });
+        assert_eq!(
+            ToolParameters::string().described("a channel"),
+            ToolParameters::String { description: Some("a channel".to_string()), language: None }
+        );
         let object = ToolParameters::object([("a", ToolParameters::number())], ["a"]);
         assert_eq!(object.clone().described("ignored"), object);
     }
 
     #[test]
     fn parameters_without_required_ones_are_read_back_as_written() {
-        let parameters = ToolParameters::Object { properties: HashMap::from([("channel".to_string(), ToolParameters::string().described("a channel"))]), required: Vec::new() };
+        let parameters = ToolParameters::Object {
+            properties: HashMap::from([(
+                "channel".to_string(),
+                ToolParameters::string().described("a channel"),
+            )]),
+            required: Vec::new(),
+        };
         let json = serde_json::to_string(&parameters).unwrap();
         assert!(!json.contains("required"), "an empty list is left out");
         assert_eq!(serde_json::from_str::<ToolParameters>(&json).unwrap(), parameters);
@@ -606,7 +702,11 @@ mod tests {
         let params = ToolParameters::object(
             vec![
                 ("enabled", ToolParameters::boolean().described("Whether the feature is enabled")),
-                ("tags", ToolParameters::array(ToolParameters::string().described("A tag")).described("List of tags")),
+                (
+                    "tags",
+                    ToolParameters::array(ToolParameters::string().described("A tag"))
+                        .described("List of tags"),
+                ),
             ],
             vec!["enabled"],
         );
@@ -626,12 +726,30 @@ mod tests {
 
     #[test]
     fn a_call_state_is_read_back_as_written() {
-        let call = ToolCall { id: Some("1".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
-        let waiting = ToolCallState::pending(call.clone(), "Delete it?".to_string(), true, Some(ToolMatcher::exact(&call)), None);
-        let read: ToolCallState = serde_json::from_str(&serde_json::to_string(&waiting).unwrap()).unwrap();
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            function_name: "delete".to_string(),
+            arguments: serde_json::json!({}),
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        };
+        let waiting = ToolCallState::pending(
+            call.clone(),
+            "Delete it?".to_string(),
+            true,
+            Some(ToolMatcher::exact(&call)),
+            None,
+        );
+        let read: ToolCallState =
+            serde_json::from_str(&serde_json::to_string(&waiting).unwrap()).unwrap();
         assert_eq!(read.approval_id(), waiting.approval_id());
-        assert!(matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, ref description, .. } if description == "Delete it?"));
-        let ready: ToolCallState = serde_json::from_str(&serde_json::to_string(&ToolCallState::approved(call.clone())).unwrap()).unwrap();
+        assert!(
+            matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, ref description, .. } if description == "Delete it?")
+        );
+        let ready: ToolCallState = serde_json::from_str(
+            &serde_json::to_string(&ToolCallState::approved(call.clone())).unwrap(),
+        )
+        .unwrap();
         assert!(matches!(ready.status, ToolCallStatus::Ready { answers: None }));
     }
 }

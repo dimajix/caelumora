@@ -39,7 +39,10 @@ use crate::wire;
 use async_trait::async_trait;
 use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use caelumora_runtime::remote::describe_request_error;
-use caelumora_runtime::terminal::{ByteStream, CommandKey, CommandState, Commands, FileEntry, Kept, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
+use caelumora_runtime::terminal::{
+    ByteStream, CommandKey, CommandState, Commands, FileEntry, Kept, Shell, Terminal,
+    TerminalError, TerminalResult, WorkspacePath,
+};
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, TryStreamExt};
 use reqwest::multipart::{Form, Part};
@@ -105,21 +108,40 @@ impl OpenTerminal {
     }
 
     /// The entries of the directory `dir`; `None` where there is none.
-    pub(crate) async fn listing(&self, dir: &WorkspacePath) -> TerminalResult<Option<Vec<FileEntry>>> {
-        let answer = self.client.send(Method::GET, &["files", "list"], &[("directory", self.at(dir))], None, Duration::ZERO, |r| r).await?;
+    pub(crate) async fn listing(
+        &self,
+        dir: &WorkspacePath,
+    ) -> TerminalResult<Option<Vec<FileEntry>>> {
+        let answer = self
+            .client
+            .send(
+                Method::GET,
+                &["files", "list"],
+                &[("directory", self.at(dir))],
+                None,
+                Duration::ZERO,
+                |r| r,
+            )
+            .await?;
         if answer.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
         let listing: wire::Listing = self.client.parsed(answer).await?;
-        let mut entries: Vec<FileEntry> = listing.entries.into_iter().map(|listed| {
-            let is_dir = listed.kind == "directory";
-            FileEntry {
-                name: listed.name,
-                is_dir,
-                size: if is_dir { 0 } else { listed.size },
-                modified: listed.modified.and_then(|secs| DateTime::<Utc>::from_timestamp_millis((secs * 1000.0) as i64)),
-            }
-        }).collect();
+        let mut entries: Vec<FileEntry> = listing
+            .entries
+            .into_iter()
+            .map(|listed| {
+                let is_dir = listed.kind == "directory";
+                FileEntry {
+                    name: listed.name,
+                    is_dir,
+                    size: if is_dir { 0 } else { listed.size },
+                    modified: listed.modified.and_then(|secs| {
+                        DateTime::<Utc>::from_timestamp_millis((secs * 1000.0) as i64)
+                    }),
+                }
+            })
+            .collect();
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(Some(entries))
     }
@@ -128,12 +150,20 @@ impl OpenTerminal {
     async fn found(&self, path: &WorkspacePath) -> TerminalResult<Option<FileEntry>> {
         if path.is_root() {
             return match self.listing(path).await? {
-                Some(_) => Ok(Some(FileEntry { name: String::new(), is_dir: true, size: 0, modified: None })),
+                Some(_) => Ok(Some(FileEntry {
+                    name: String::new(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                })),
                 None => Err(TerminalError::Unavailable("its place is gone".to_string())),
             };
         }
         let name = path.file_name().unwrap_or_default();
-        Ok(self.listing(&path.parent()).await?.and_then(|entries| entries.into_iter().find(|entry| entry.name == name)))
+        Ok(self
+            .listing(&path.parent())
+            .await?
+            .and_then(|entries| entries.into_iter().find(|entry| entry.name == name)))
     }
 
     /// Why a request about `path` was refused with `status`, told as the
@@ -141,7 +171,9 @@ impl OpenTerminal {
     /// are, asked again.
     async fn why(&self, path: &WorkspacePath, status: StatusCode) -> TerminalError {
         match self.found(&path.parent()).await {
-            Ok(Some(parent)) if !parent.is_dir => TerminalError::NotADirectory(path.parent().to_string()),
+            Ok(Some(parent)) if !parent.is_dir => {
+                TerminalError::NotADirectory(path.parent().to_string())
+            }
             Ok(None) if !path.is_root() => TerminalError::NotFound(path.parent().to_string()),
             _ => self.client.refused(status),
         }
@@ -156,14 +188,27 @@ impl OpenTerminal {
             ("done", Some(code)) if code >= 0 => (CommandStatus::Completed, Some(code)),
             // A negative code is a signal the command was not sent here.
             ("done", _) => (CommandStatus::Failed, None),
-            (other, _) => return Err(TerminalError::Unavailable(format!("Open Terminal answered the unknown status '{other}' for a command"))),
+            (other, _) => {
+                return Err(TerminalError::Unavailable(format!(
+                    "Open Terminal answered the unknown status '{other}' for a command"
+                )))
+            }
         };
-        let output = process.output.into_iter()
+        let output = process
+            .output
+            .into_iter()
             .filter(|entry| matches!(entry.kind.as_str(), "output" | "stdout" | "stderr"))
             .map(|entry| entry.data)
             .collect::<String>()
             .replace('\r', "");
-        Ok(CommandState { id: id.to_string(), status, exit_code, output, next_offset: process.next_offset, truncated: process.truncated })
+        Ok(CommandState {
+            id: id.to_string(),
+            status,
+            exit_code,
+            output,
+            next_offset: process.next_offset,
+            truncated: process.truncated,
+        })
     }
 }
 
@@ -184,7 +229,17 @@ impl Terminal for OpenTerminal {
     }
 
     async fn read(&self, path: &WorkspacePath) -> TerminalResult<(u64, ByteStream)> {
-        let answer = self.client.send(Method::GET, &["files", "view"], &[("path", self.at(path))], None, Duration::ZERO, |r| r).await?;
+        let answer = self
+            .client
+            .send(
+                Method::GET,
+                &["files", "view"],
+                &[("path", self.at(path))],
+                None,
+                Duration::ZERO,
+                |r| r,
+            )
+            .await?;
         if answer.status() == StatusCode::NOT_FOUND {
             return Err(match self.found(path).await? {
                 Some(entry) if entry.is_dir => TerminalError::IsADirectory(path.to_string()),
@@ -200,14 +255,26 @@ impl Terminal for OpenTerminal {
         Ok((size, Box::pin(content)))
     }
 
-    async fn write(&self, path: &WorkspacePath, mut content: ByteStream, limit: u64) -> TerminalResult<u64> {
-        let Some(name) = path.file_name() else { return Err(TerminalError::IsADirectory(path.to_string())) };
+    async fn write(
+        &self,
+        path: &WorkspacePath,
+        mut content: ByteStream,
+        limit: u64,
+    ) -> TerminalResult<u64> {
+        let Some(name) = path.file_name() else {
+            return Err(TerminalError::IsADirectory(path.to_string()));
+        };
         if self.found(path).await?.is_some_and(|entry| entry.is_dir) {
             return Err(TerminalError::IsADirectory(path.to_string()));
         }
         let mut held = Vec::new();
         while let Some(chunk) = content.next().await {
-            let chunk = chunk.map_err(|e| TerminalError::Unavailable(format!("what was to be written broke off: {}", e.kind())))?;
+            let chunk = chunk.map_err(|e| {
+                TerminalError::Unavailable(format!(
+                    "what was to be written broke off: {}",
+                    e.kind()
+                ))
+            })?;
             if held.len() as u64 + chunk.len() as u64 > limit {
                 return Err(TerminalError::TooLarge { limit });
             }
@@ -216,7 +283,17 @@ impl Terminal for OpenTerminal {
         let written = held.len() as u64;
         let file = Part::bytes(held).file_name(name.to_string());
         let form = Form::new().part("file", file);
-        let answer = self.client.send(Method::POST, &["files", "upload"], &[("directory", self.at(&path.parent()))], None, Duration::ZERO, |r| r.multipart(form)).await?;
+        let answer = self
+            .client
+            .send(
+                Method::POST,
+                &["files", "upload"],
+                &[("directory", self.at(&path.parent()))],
+                None,
+                Duration::ZERO,
+                |r| r.multipart(form),
+            )
+            .await?;
         match answer.status() {
             status if status.is_success() => Ok(written),
             status => Err(self.why(path, status).await),
@@ -232,7 +309,17 @@ impl Terminal for OpenTerminal {
         if entry.is_dir && !self.list(path).await?.is_empty() {
             return Err(TerminalError::NotEmpty(path.to_string()));
         }
-        let answer = self.client.send(Method::DELETE, &["files", "delete"], &[("path", self.at(path))], None, Duration::ZERO, |r| r).await?;
+        let answer = self
+            .client
+            .send(
+                Method::DELETE,
+                &["files", "delete"],
+                &[("path", self.at(path))],
+                None,
+                Duration::ZERO,
+                |r| r,
+            )
+            .await?;
         match answer.status() {
             status if status.is_success() => Ok(()),
             StatusCode::NOT_FOUND => Err(TerminalError::NotFound(path.to_string())),
@@ -248,7 +335,12 @@ impl Terminal for OpenTerminal {
             };
         }
         let at = self.at(path);
-        let answer = self.client.send(Method::POST, &["files", "mkdir"], &[], None, Duration::ZERO, |r| r.json(&wire::PathRequest { path: &at })).await?;
+        let answer = self
+            .client
+            .send(Method::POST, &["files", "mkdir"], &[], None, Duration::ZERO, |r| {
+                r.json(&wire::PathRequest { path: &at })
+            })
+            .await?;
         match answer.status() {
             status if status.is_success() => Ok(()),
             status => Err(self.why(path, status).await),
@@ -257,7 +349,9 @@ impl Terminal for OpenTerminal {
 
     async fn move_entry(&self, from: &WorkspacePath, to: &WorkspacePath) -> TerminalResult<()> {
         if from.is_root() || to.is_root() {
-            return Err(TerminalError::InvalidPath(if from.is_root() { from } else { to }.to_string()));
+            return Err(TerminalError::InvalidPath(
+                if from.is_root() { from } else { to }.to_string(),
+            ));
         }
         self.stat(from).await?;
         if self.found(to).await?.is_some() {
@@ -267,7 +361,10 @@ impl Terminal for OpenTerminal {
         self.mkdir(&to.parent()).await?;
         let (source, destination) = (self.at(from), self.at(to));
         let request = wire::MoveRequest { source: &source, destination: &destination };
-        let answer = self.client.send(Method::POST, &["files", "move"], &[], None, Duration::ZERO, |r| r.json(&request)).await?;
+        let answer = self
+            .client
+            .send(Method::POST, &["files", "move"], &[], None, Duration::ZERO, |r| r.json(&request))
+            .await?;
         match answer.status() {
             status if status.is_success() => Ok(()),
             StatusCode::NOT_FOUND => Err(TerminalError::NotFound(from.to_string())),
@@ -309,7 +406,9 @@ impl OpenTerminalShell {
             started.ended.get_or_init(Instant::now);
         }
         asked.map(|mut state| {
-            if state.status == CommandStatus::Failed && started.is_some_and(|started| started.ran_out()) {
+            if state.status == CommandStatus::Failed
+                && started.is_some_and(|started| started.ran_out())
+            {
                 state.status = CommandStatus::Killed;
             }
             state
@@ -331,21 +430,43 @@ impl Shell for OpenTerminalShell {
         ]);
         // Bounded by the instance itself; the command from the environment,
         // so that nothing of it needs quoting.
-        let bounded = format!("exec timeout -s KILL {} bash -c \"$CAELUMORA_COMMAND\"", terminal.max_run.as_secs_f64());
+        let bounded = format!(
+            "exec timeout -s KILL {} bash -c \"$CAELUMORA_COMMAND\"",
+            terminal.max_run.as_secs_f64()
+        );
         let request = wire::ExecRequest { command: &bounded, cwd: &terminal.base, env };
         let at = Instant::now();
         // `wait=0` answers at once, whatever the instance's own default.
-        let answer = terminal.client.send(Method::POST, &["execute"], &[("wait", "0".to_string())], Some(scope), Duration::ZERO, |r| r.json(&request)).await?;
+        let answer = terminal
+            .client
+            .send(
+                Method::POST,
+                &["execute"],
+                &[("wait", "0".to_string())],
+                Some(scope),
+                Duration::ZERO,
+                |r| r.json(&request),
+            )
+            .await?;
         let process: wire::Process = terminal.client.parsed(answer).await?;
-        terminal.commands.insert(self.key(&process.id), Arc::new(Started { at, max_run: terminal.max_run, ended: OnceLock::new() }));
+        terminal.commands.insert(
+            self.key(&process.id),
+            Arc::new(Started { at, max_run: terminal.max_run, ended: OnceLock::new() }),
+        );
         Ok(process.id)
     }
 
     async fn output(&self, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState> {
         let client = &self.terminal.client;
         let wait = wait.min(MAX_WAIT);
-        let query = [("offset", offset.to_string()), ("wait", wait.as_secs_f64().to_string()), ("tail", KEPT_ENTRIES.to_string())];
-        let answer = client.send(Method::GET, &["execute", id, "status"], &query, Some(&self.scope), wait, |r| r).await?;
+        let query = [
+            ("offset", offset.to_string()),
+            ("wait", wait.as_secs_f64().to_string()),
+            ("tail", KEPT_ENTRIES.to_string()),
+        ];
+        let answer = client
+            .send(Method::GET, &["execute", id, "status"], &query, Some(&self.scope), wait, |r| r)
+            .await?;
         let asked = match answer.status() {
             StatusCode::NOT_FOUND => Err(TerminalError::UnknownCommand(id.to_string())),
             _ => client.parsed(answer).await.and_then(|process| OpenTerminal::state(id, process)),
@@ -356,7 +477,16 @@ impl Shell for OpenTerminalShell {
     async fn kill(&self, id: &str, offset: u64) -> TerminalResult<CommandState> {
         let client = &self.terminal.client;
         // SIGKILL to its process group, as the `local` shell sends.
-        let answer = client.send(Method::DELETE, &["execute", id], &[("force", "true".to_string())], Some(&self.scope), KILL_WAIT, |r| r).await?;
+        let answer = client
+            .send(
+                Method::DELETE,
+                &["execute", id],
+                &[("force", "true".to_string())],
+                Some(&self.scope),
+                KILL_WAIT,
+                |r| r,
+            )
+            .await?;
         if answer.status() == StatusCode::NOT_FOUND {
             return self.seen(id, Err(TerminalError::UnknownCommand(id.to_string())));
         }

@@ -1,7 +1,7 @@
 pub mod env;
 pub mod file;
 
-use crate::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy};
+use crate::security::{AccessPolicy, ActionType, Enforcement, Refused, SecurityContext};
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -11,7 +11,11 @@ pub enum SecretError {
     #[error("secret not found: {0}")]
     NotFound(String),
     #[error("access denied for secret: {key}")]
-    PermissionDenied { key: String, #[source] refused: Refused },
+    PermissionDenied {
+        key: String,
+        #[source]
+        refused: Refused,
+    },
     #[error("backend: {0}")]
     Backend(String),
 }
@@ -36,15 +40,19 @@ pub struct SecretManager {
 }
 
 impl SecretManager {
-    pub fn new(providers: Vec<Arc<dyn SecretProvider>>, access_policy: Arc<dyn AccessPolicy>) -> Self {
-        Self {
-            providers,
-            access_policy,
-        }
+    pub fn new(
+        providers: Vec<Arc<dyn SecretProvider>>,
+        access_policy: Arc<dyn AccessPolicy>,
+    ) -> Self {
+        Self { providers, access_policy }
     }
 
     pub async fn resolve(&self, context: &SecurityContext, key: &str) -> SecretResult<String> {
-        self.access_policy.require(context, ActionType::ReadSecret(key), |refused| SecretError::PermissionDenied { key: key.to_string(), refused }).await?;
+        self.access_policy
+            .require(context, ActionType::ReadSecret(key), |refused| {
+                SecretError::PermissionDenied { key: key.to_string(), refused }
+            })
+            .await?;
 
         for provider in &self.providers {
             match provider.get_secret(key).await {
@@ -128,10 +136,7 @@ mod tests {
         entries.insert("KEY".to_string(), "value".to_string());
 
         let manager = SecretManager::new(
-            vec![
-                Arc::new(FailingSecretProvider),
-                Arc::new(MapSecretProvider { entries }),
-            ],
+            vec![Arc::new(FailingSecretProvider), Arc::new(MapSecretProvider { entries })],
             Arc::new(AllowAllPolicy::new()),
         );
 

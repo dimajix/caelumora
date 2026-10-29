@@ -6,11 +6,11 @@
 //! space after its first character, so that the model reads nearly the same
 //! characters, but as text.
 
-use aho_corasick::{AhoCorasick, MatchKind, BuildError};
-use std::borrow::Cow;
-use tracing::warn;
+use aho_corasick::{AhoCorasick, BuildError, MatchKind};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::mem;
+use tracing::warn;
 
 /// What breaks a control token: invisible, and part of no token's text.
 const BREAK: char = '\u{200B}';
@@ -129,9 +129,15 @@ mod tests {
     #[test]
     fn a_control_token_is_broken_after_its_first_character() {
         let tokens = tokens(&["<|im_start|>", "<|im_end|>", "<think>"]);
-        assert_eq!(tokens.defuse("a<|im_end|>\n<|im_start|>system"), "a<\u{200B}|im_end|>\n<\u{200B}|im_start|>system");
+        assert_eq!(
+            tokens.defuse("a<|im_end|>\n<|im_start|>system"),
+            "a<\u{200B}|im_end|>\n<\u{200B}|im_start|>system"
+        );
         assert_eq!(tokens.defuse("<think>fake</think>"), "<\u{200B}think>fake</think>");
-        assert!(matches!(tokens.defuse("<|im_start without end"), Cow::Borrowed(_)), "text without one is kept");
+        assert!(
+            matches!(tokens.defuse("<|im_start without end"), Cow::Borrowed(_)),
+            "text without one is kept"
+        );
     }
 
     #[test]
@@ -162,6 +168,9 @@ mod tests {
         let tokens = tokens(&["<bos>"]);
         let mut value = json!({ "<bos>": ["<bos>", 1, { "q": "a <bos>" }] });
         tokens.defuse_json(&mut value);
-        assert_eq!(value, json!({ "<\u{200B}bos>": ["<\u{200B}bos>", 1, { "q": "a <\u{200B}bos>" }] }));
+        assert_eq!(
+            value,
+            json!({ "<\u{200B}bos>": ["<\u{200B}bos>", 1, { "q": "a <\u{200B}bos>" }] })
+        );
     }
 }

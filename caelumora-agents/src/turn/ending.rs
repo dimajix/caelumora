@@ -6,14 +6,14 @@
 //! abandoned.
 
 use super::Turn;
-use caelumora_runtime::actor::Answering;
 use crate::tool::TurnEnd;
 use crate::turn::tool_calls::ToolCalls;
-use caelumora_runtime::transport::EventSender;
-use caelumora_model::turn::TurnState;
 use caelumora_model::message::Message;
 use caelumora_model::tool::ToolCallState;
 use caelumora_model::turn::GivenUpReason;
+use caelumora_model::turn::TurnState;
+use caelumora_runtime::actor::Answering;
+use caelumora_runtime::transport::EventSender;
 use tracing::warn;
 
 /// What is still needed of a turn once it is taken over (`commit`).
@@ -53,8 +53,13 @@ impl Turn<'_> {
     ///
     /// The turn's working state is gone afterwards, so none of it is stored
     /// with the channel state. What is still needed is returned.
-    pub(crate) async fn commit(mut self, cancelled: bool, output: &dyn EventSender) -> CommittedTurn {
-        let abandoned_calls = self.abandon_tool_calls(TurnEnd::Committed { cancelled }, output).await;
+    pub(crate) async fn commit(
+        mut self,
+        cancelled: bool,
+        output: &dyn EventSender,
+    ) -> CommittedTurn {
+        let abandoned_calls =
+            self.abandon_tool_calls(TurnEnd::Committed { cancelled }, output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let turn_id = turn.work.turn_id;
@@ -62,9 +67,17 @@ impl Turn<'_> {
         // (issue 417), whatever a compaction left of it in the transcript
         // (issue 284).
         let TurnState { memory, notes, private_notes, answer: final_messages, .. } = turn;
-        let channel_state_changed = self.agent_channel_state.finish_turn(turn_id, notes, private_notes);
-        if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.last_message.unwrap_or_default()).await {
-            warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
+        let channel_state_changed =
+            self.agent_channel_state.finish_turn(turn_id, notes, private_notes);
+        if let Err(e) = self
+            .agent_state
+            .apply(memory, self.agent_channel_state.last_message.unwrap_or_default())
+            .await
+        {
+            warn!(
+                "Agent {}: the changes of its turn to its own state are lost: {:#}",
+                self.agent_id, e
+            );
         }
         CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls }
     }
@@ -83,7 +96,11 @@ impl Turn<'_> {
     ///
     /// Returns what its last events are sent with, and the calls it
     /// abandoned.
-    pub(crate) async fn give_up(mut self, reason: GivenUpReason, output: &dyn EventSender) -> (Answering, Vec<ToolCallState>) {
+    pub(crate) async fn give_up(
+        mut self,
+        reason: GivenUpReason,
+        output: &dyn EventSender,
+    ) -> (Answering, Vec<ToolCallState>) {
         let abandoned_calls = self.abandon_tool_calls(TurnEnd::GivenUp(&reason), output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
@@ -101,14 +118,22 @@ impl Turn<'_> {
     ///
     /// The turn is ending: a failed send is logged, not returned. The
     /// message is kept all the same (`Turn::say`).
-    async fn abandon_tool_calls(&mut self, end: TurnEnd<'_>, output: &dyn EventSender) -> Vec<ToolCallState> {
+    async fn abandon_tool_calls(
+        &mut self,
+        end: TurnEnd<'_>,
+        output: &dyn EventSender,
+    ) -> Vec<ToolCallState> {
         let internal = self.in_plan_step();
         let texts = self.situation().texts();
         let Some(turn) = self.agent_channel_state.turn.as_mut() else { return Vec::new() };
-        let (abandoned, message) = ToolCalls::new(turn, &self.agent_name, texts).abandon(end, internal);
+        let (abandoned, message) =
+            ToolCalls::new(turn, &self.agent_name, texts).abandon(end, internal);
         if let Some(message) = message {
             if let Err(e) = self.say(message, output).await {
-                warn!("Agent {}: the answers to the calls it abandoned were not published: {:#}", self.agent_id, e);
+                warn!(
+                    "Agent {}: the answers to the calls it abandoned were not published: {:#}",
+                    self.agent_id, e
+                );
             }
         }
         abandoned
@@ -118,19 +143,19 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::executor;
+    use crate::message::testing::given_up_turns;
     use crate::notes::NoteKind;
     use crate::turn::tests::message;
+    use caelumora_model::actor::ActorEvent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
-    use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::tool::{ToolCall, ToolCallResult};
-    use caelumora_runtime::transport::Discard;
-    use caelumora_model::actor::ActorEvent;
     use caelumora_runtime::transport::memory::InMemoryEventSender;
+    use caelumora_runtime::transport::Discard;
     use chrono::Utc;
-    use crate::message::testing::given_up_turns;
+    use futures::executor;
     use serde_json::Value;
     use tokio::sync::mpsc;
 
@@ -140,18 +165,51 @@ mod tests {
         use caelumora_model::note::{NoteChange, NoteId};
         use caelumora_model::tool::{ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), state);
-        let call = ToolCall { id: Some("1".to_string()), function_name: tool.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
-        let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            function_name: tool.to_string(),
+            arguments: serde_json::json!({ "to": "bob" }),
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        };
+        let mut result = ToolCallResult::of(
+            &call,
+            ToolResultStatus::Ok,
+            "sent".to_string(),
+            Classification::CHANNEL_DEFAULT,
+        );
         result.started_at = ran.then(Utc::now);
-        turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) });
-        turn.push_message(Message { id: MessageId::new(), role: MessageRole::Tool, tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) });
-        turn.stage_note(NoteKind::Public, NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT });
+        turn.push_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            tool_calls: vec![call],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        });
+        turn.push_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::Tool,
+            tool_results: vec![result],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        });
+        turn.stage_note(
+            NoteKind::Public,
+            NoteChange::Add {
+                id: NoteId(1),
+                text: "noted".to_string(),
+                classification: Classification::CHANNEL_DEFAULT,
+            },
+        );
         turn
     }
 
     fn a_state_with(content: &str) -> AgentChannelState {
         let mut state = AgentChannelState::default();
-        let message = Message { id: MessageId::new(), role: MessageRole::User, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let message = Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: Some(content.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
         state.transcript.push(message);
         state
     }
@@ -164,7 +222,11 @@ mod tests {
 
         assert!(state.turn.is_none(), "the turn is over");
         assert_eq!(state.transcript.messages().len(), 3, "what it said is not unsaid (issue 258)");
-        assert_eq!(state.transcript.all_entries().count(), 4, "followed by its end, and nothing branches");
+        assert_eq!(
+            state.transcript.all_entries().count(),
+            4,
+            "followed by its end, and nothing branches"
+        );
         let turns = given_up_turns(&state);
         assert_eq!(turns.len(), 1);
         assert_eq!((turns[0].1.clone(), turns[0].2.len()), (GivenUpReason::Left, 2));
@@ -178,27 +240,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_model_is_told_why_a_turn_was_given_up_and_of_a_lowered_one_only_which_tools_it_called() {
+    async fn the_model_is_told_why_a_turn_was_given_up_and_of_a_lowered_one_only_which_tools_it_called(
+    ) {
         let mut state = a_state_with("mail bob");
         let turn = a_turn_that_called(&mut state, "send_mail", true);
         turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;
         let given = given_next(&mut state);
-        assert_eq!(given[1].tool_calls[0].arguments, serde_json::json!({ "to": "bob" }), "its call in full");
+        assert_eq!(
+            given[1].tool_calls[0].arguments,
+            serde_json::json!({ "to": "bob" }),
+            "its call in full"
+        );
         assert_eq!(given[2].tool_results[0].content, "sent");
         let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
-        assert!(told.contains("because it failed") && !told.contains("boom"), "where its end stands, without what its users were told: {told}");
+        assert!(
+            told.contains("because it failed") && !told.contains("boom"),
+            "where its end stands, without what its users were told: {told}"
+        );
 
         let mut state = a_state_with("mail bob");
         let lowered = Classification::general(Confidentiality::Public);
         let turn = a_turn_that_called(&mut state, "send_mail", true);
         turn.give_up(GivenUpReason::Lowered { channel: lowered.clone() }, &Discard).await;
         let given = given_next(&mut state);
-        assert_eq!((given[1].tool_calls[0].function_name.as_str(), &given[1].tool_calls[0].arguments), ("send_mail", &Value::Null), "only which tool it called");
+        assert_eq!(
+            (given[1].tool_calls[0].function_name.as_str(), &given[1].tool_calls[0].arguments),
+            ("send_mail", &Value::Null),
+            "only which tool it called"
+        );
         assert!(given[2].tool_results[0].content.is_empty(), "nothing of what it returned");
         assert_eq!(given[1].classification, lowered, "as the channel is now");
         let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
         assert!(told.contains("withheld"), "{told}");
-        assert_eq!(state.transcript.messages()[1].tool_calls[0].arguments, serde_json::json!({ "to": "bob" }), "the record keeps it all");
+        assert_eq!(
+            state.transcript.messages()[1].tool_calls[0].arguments,
+            serde_json::json!({ "to": "bob" }),
+            "the record keeps it all"
+        );
     }
 
     /// A turn begun on `state`, whose model called `send_mail` and `delete`
@@ -207,16 +285,38 @@ mod tests {
         use caelumora_model::approval::ToolMatcher;
         use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), state);
-        let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+        let call = |id: &str, name: &str| ToolCall {
+            id: Some(id.to_string()),
+            function_name: name.to_string(),
+            arguments: serde_json::json!({ "to": "bob" }),
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
-        turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
+        turn.push_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            tool_calls: calls.clone(),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        });
         let states = vec![
             ToolCallState::approved(calls[0].clone()),
-            ToolCallState::pending(calls[1].clone(), String::new(), false, Some(ToolMatcher::exact(&calls[1])), None),
+            ToolCallState::pending(
+                calls[1].clone(),
+                String::new(),
+                false,
+                Some(ToolMatcher::exact(&calls[1])),
+                None,
+            ),
         ];
         turn.tool_calls().register(states);
         let (id, ran, _) = turn.tool_calls().to_run().remove(0);
-        let mut result = ToolCallResult::of(&ran, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
+        let mut result = ToolCallResult::of(
+            &ran,
+            ToolResultStatus::Ok,
+            "sent".to_string(),
+            Classification::CHANNEL_DEFAULT,
+        );
         result.started_at = Some(Utc::now());
         turn.tool_calls().record(id, result);
         turn
@@ -232,16 +332,42 @@ mod tests {
 
         let messages = state.transcript.messages();
         let roles: Vec<MessageRole> = messages.iter().map(|m| m.role).collect();
-        assert_eq!(roles, [MessageRole::User, MessageRole::Assistant, MessageRole::Tool], "the calls are answered right after they were made");
-        let results: Vec<_> = messages[2].tool_results.iter().map(|r| (r.tool_name.as_str(), r.status)).collect();
-        assert_eq!(results, [("send_mail", ToolResultStatus::Ok), ("delete", ToolResultStatus::NotExecuted)], "what ran is kept");
-        assert!(messages[2].tool_results[1].content.contains("cancelled"), "the model is told why: {}", messages[2].tool_results[1].content);
-        assert!(committed.final_messages.iter().any(|m| m.role == MessageRole::Tool), "observers learn of it too");
+        assert_eq!(
+            roles,
+            [MessageRole::User, MessageRole::Assistant, MessageRole::Tool],
+            "the calls are answered right after they were made"
+        );
+        let results: Vec<_> =
+            messages[2].tool_results.iter().map(|r| (r.tool_name.as_str(), r.status)).collect();
+        assert_eq!(
+            results,
+            [("send_mail", ToolResultStatus::Ok), ("delete", ToolResultStatus::NotExecuted)],
+            "what ran is kept"
+        );
+        assert!(
+            messages[2].tool_results[1].content.contains("cancelled"),
+            "the model is told why: {}",
+            messages[2].tool_results[1].content
+        );
+        assert!(
+            committed.final_messages.iter().any(|m| m.role == MessageRole::Tool),
+            "observers learn of it too"
+        );
         let said = rx.try_recv().expect("the answers are said as the turn ends (issue 258)");
-        let ActorEvent::CompleteMessageGenerated(said) = said.event else { panic!("said as a complete message: {said:?}") };
+        let ActorEvent::CompleteMessageGenerated(said) = said.event else {
+            panic!("said as a complete message: {said:?}")
+        };
         assert_eq!(said.id, messages[2].id, "the message the transcript keeps");
-        let abandoned: Vec<_> = committed.abandoned_calls.iter().map(|c| (c.tool_call.function_name.as_str(), c.approval_id().is_some())).collect();
-        assert_eq!(abandoned, [("delete", true)], "only the call without a result, as it stood: waiting for its approval");
+        let abandoned: Vec<_> = committed
+            .abandoned_calls
+            .iter()
+            .map(|c| (c.tool_call.function_name.as_str(), c.approval_id().is_some()))
+            .collect();
+        assert_eq!(
+            abandoned,
+            [("delete", true)],
+            "only the call without a result, as it stood: waiting for its approval"
+        );
     }
 
     #[tokio::test]
@@ -252,8 +378,13 @@ mod tests {
         turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;
 
         let turns = given_up_turns(&state);
-        let answered: Vec<_> = turns[0].2.last().unwrap().tool_results.iter().map(|r| r.status).collect();
-        assert_eq!(answered, [ToolResultStatus::Ok, ToolResultStatus::NotExecuted], "no call is left without a result");
+        let answered: Vec<_> =
+            turns[0].2.last().unwrap().tool_results.iter().map(|r| r.status).collect();
+        assert_eq!(
+            answered,
+            [ToolResultStatus::Ok, ToolResultStatus::NotExecuted],
+            "no call is left without a result"
+        );
     }
 
     #[tokio::test]
@@ -283,7 +414,10 @@ mod tests {
         assert_eq!(committed.final_messages.len(), 1, "internal steps are not part of the answer");
         assert_eq!(committed.final_messages[0].id, final_answer.id);
         assert_eq!(agent_channel_state.transcript.messages().len(), 2, "but of the transcript");
-        assert!(agent_channel_state.turn.is_none(), "nothing of the turn's work is stored with the state");
+        assert!(
+            agent_channel_state.turn.is_none(),
+            "nothing of the turn's work is stored with the state"
+        );
     }
 
     #[tokio::test]
@@ -301,6 +435,10 @@ mod tests {
 
         let committed = turn.commit(false, &Discard).await;
         let answer: Vec<MessageId> = committed.final_messages.iter().map(|m| m.id).collect();
-        assert_eq!(answer, [first.id, second.id, third.id], "what it said, the part summarised included, and not the summary (issue 284)");
+        assert_eq!(
+            answer,
+            [first.id, second.id, third.id],
+            "what it said, the part summarised included, and not the summary (issue 284)"
+        );
     }
 }

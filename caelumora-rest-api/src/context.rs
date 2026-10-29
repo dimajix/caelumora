@@ -1,8 +1,8 @@
 //! What an agent saw and has (issues 06, 47, 194, 270): the context of a message, the
 //! knowledge it was produced with, its tools and components.
 
-use caelumora_model::chain::Position;
 use caelumora_model::actor::ActorId;
+use caelumora_model::chain::Position;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, LabelCauses};
 use caelumora_model::context::{ContextItem, ModelProfile};
@@ -86,12 +86,14 @@ pub struct KnowledgeRefResponse {
     pub sets_label: bool,
 }
 
-
 /// One element of a `MessageContextResponse`, with whether it set the
 /// label of the message (issue 170).
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-#[expect(clippy::large_enum_variant, reason = "a message is the usual element, and boxing it would cost an allocation per element")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a message is the usual element, and boxing it would cost an allocation per element"
+)]
 pub enum SeenItemResponse {
     /// A prompt part - the system prompt, notes, ... - the role it was
     /// given as, and how it was classified, `null` if that is not known.
@@ -102,7 +104,10 @@ pub enum SeenItemResponse {
         classification: Option<Classification>,
         sets_label: bool,
     },
-    Message { message: Message, sets_label: bool },
+    Message {
+        message: Message,
+        sets_label: bool,
+    },
 }
 
 impl SeenItemResponse {

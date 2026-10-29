@@ -7,17 +7,17 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
+use crate::group::GroupId;
 use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
-use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
+use crate::store::{EntityKind, NoEntity, Stored, Updatable};
 use crate::user::UserId;
 use crate::value::name::ScopedName;
 use crate::value::text::Description;
+use crate::value::ValueError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::{EntityKind, NoEntity, Stored, Updatable};
-use crate::value::ValueError;
 
 define_id!(WorkspaceId);
 
@@ -72,18 +72,24 @@ pub struct Workspace {
     pub deleted: Option<Removal>,
 }
 
-
 impl Workspace {
     /// A new workspace of `owner`, of `name` where it lies, in `storage`,
     /// classified `classification`, without a description. One that lies
     /// in a session's scope is the session's to work on: its participants read
     /// and write it (issue 23) - the group of the session's participants
     /// (issue 304); any other grants nobody anything.
-    pub fn new(name: ScopedName, storage: impl Into<String>, classification: Classification, owner: UserId) -> Self {
+    pub fn new(
+        name: ScopedName,
+        storage: impl Into<String>,
+        classification: Classification,
+        owner: UserId,
+    ) -> Self {
         let now = Utc::now();
         let owned = SecurityAttributes::owned_by(ActorId::User(owner));
         let security_attributes = match name.scope {
-            Scope::SessionScope { session_id } => owned.granting(Subject::Group(GroupId::of_session(session_id)), Grant::Write),
+            Scope::SessionScope { session_id } => {
+                owned.granting(Subject::Group(GroupId::of_session(session_id)), Grant::Write)
+            }
             _ => owned,
         };
         Self {
@@ -126,12 +132,19 @@ impl Stored for Workspace {
     /// lies in a session's scope, its owner's or the global one: not in a
     /// channel's, since a session's channels share one.
     fn validate(&self) -> Result<(), String> {
-        let Some(owner) = self.owner() else { return Err("a workspace belongs to a user".to_string()) };
+        let Some(owner) = self.owner() else {
+            return Err("a workspace belongs to a user".to_string());
+        };
         match &self.name.scope {
             Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),
             Scope::UserScope { user_id } if *user_id == owner => Ok(()),
-            Scope::UserScope { .. } => Err("a workspace lies in no other user's scope than its owner's".to_string()),
-            Scope::ChannelScope { .. } | Scope::GroupScope { .. } | Scope::ProjectScope { .. } => Err("a workspace lies in a session's scope, its owner's or the global one".to_string()),
+            Scope::UserScope { .. } => {
+                Err("a workspace lies in no other user's scope than its owner's".to_string())
+            }
+            Scope::ChannelScope { .. } | Scope::GroupScope { .. } | Scope::ProjectScope { .. } => {
+                Err("a workspace lies in a session's scope, its owner's or the global one"
+                    .to_string())
+            }
         }
     }
 
@@ -150,9 +163,15 @@ impl Updatable for Workspace {
 
     fn apply(&mut self, event: &WorkspaceUpdateEvent) -> Result<(), ValueError> {
         match event {
-            WorkspaceUpdateEvent::NameChanged(name) => self.name = ScopedName::new(name, self.name.scope.clone())?,
-            WorkspaceUpdateEvent::DescriptionChanged(description) => self.description = Description::optional(description.as_deref())?,
-            WorkspaceUpdateEvent::ClassificationChanged(classification) => self.classification = classification.clone(),
+            WorkspaceUpdateEvent::NameChanged(name) => {
+                self.name = ScopedName::new(name, self.name.scope.clone())?
+            }
+            WorkspaceUpdateEvent::DescriptionChanged(description) => {
+                self.description = Description::optional(description.as_deref())?
+            }
+            WorkspaceUpdateEvent::ClassificationChanged(classification) => {
+                self.classification = classification.clone()
+            }
             WorkspaceUpdateEvent::AccessChanged => {}
         }
         Ok(())
@@ -206,10 +225,10 @@ pub enum CommandStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Stored;
     use crate::scope::Scope;
     use crate::security::AclEntry;
     use crate::session::{ChannelId, SessionId};
+    use Stored;
 
     fn named(scope: Scope) -> ScopedName {
         ScopedName::new("Docs", scope).unwrap()
@@ -219,52 +238,135 @@ mod tests {
     fn a_workspace_lies_in_a_session_s_scope_its_owner_s_or_the_global_one() {
         let alice = UserId::new();
         let session_id = SessionId::new();
-        for scope in [Scope::SessionScope { session_id }, Scope::UserScope { user_id: alice }, Scope::GlobalScope] {
-            let workspace = Workspace::new(named(scope.clone()), "main", Classification::CHANNEL_DEFAULT, alice);
+        for scope in [
+            Scope::SessionScope { session_id },
+            Scope::UserScope { user_id: alice },
+            Scope::GlobalScope,
+        ] {
+            let workspace = Workspace::new(
+                named(scope.clone()),
+                "main",
+                Classification::CHANNEL_DEFAULT,
+                alice,
+            );
             assert_eq!(workspace.scoped_name().scope, scope);
             assert!(workspace.validate().is_ok(), "{scope:?}");
         }
-        for scope in [Scope::UserScope { user_id: UserId::new() }, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }, Scope::GroupScope { group_id: GroupId::new() }] {
-            assert!(Workspace::new(named(scope.clone()), "main", Classification::CHANNEL_DEFAULT, alice).validate().is_err(), "not in {scope:?}");
+        for scope in [
+            Scope::UserScope { user_id: UserId::new() },
+            Scope::ChannelScope { session_id, channel_id: ChannelId::new() },
+            Scope::GroupScope { group_id: GroupId::new() },
+        ] {
+            assert!(
+                Workspace::new(
+                    named(scope.clone()),
+                    "main",
+                    Classification::CHANNEL_DEFAULT,
+                    alice
+                )
+                .validate()
+                .is_err(),
+                "not in {scope:?}"
+            );
         }
     }
 
     #[test]
     fn a_workspace_belongs_to_a_user_and_a_sessions_is_its_participants_to_work_on() {
         let alice = UserId::new();
-        let workspace = Workspace::new(named(Scope::GlobalScope), "main", Classification::CHANNEL_DEFAULT, alice);
+        let workspace = Workspace::new(
+            named(Scope::GlobalScope),
+            "main",
+            Classification::CHANNEL_DEFAULT,
+            alice,
+        );
         assert_eq!(workspace.owner(), Some(alice));
-        assert!(workspace.security_attributes.acl.is_empty(), "one of its owner's grants nobody anything until shared");
+        assert!(
+            workspace.security_attributes.acl.is_empty(),
+            "one of its owner's grants nobody anything until shared"
+        );
         let session_id = SessionId::new();
-        let sessions = Workspace::new(named(Scope::SessionScope { session_id }), "main", Classification::CHANNEL_DEFAULT, alice);
-        assert_eq!(sessions.security_attributes.acl, [AclEntry { subject: Subject::Group(GroupId::of_session(session_id)), grant: Grant::Write }], "one made for a session, the group of its participants");
-        let shared = Workspace { security_attributes: workspace.security_attributes.clone().granting(Subject::Actor(ActorId::User(UserId::new())), Grant::Read), ..workspace.clone() };
+        let sessions = Workspace::new(
+            named(Scope::SessionScope { session_id }),
+            "main",
+            Classification::CHANNEL_DEFAULT,
+            alice,
+        );
+        assert_eq!(
+            sessions.security_attributes.acl,
+            [AclEntry {
+                subject: Subject::Group(GroupId::of_session(session_id)),
+                grant: Grant::Write
+            }],
+            "one made for a session, the group of its participants"
+        );
+        let shared = Workspace {
+            security_attributes: workspace
+                .security_attributes
+                .clone()
+                .granting(Subject::Actor(ActorId::User(UserId::new())), Grant::Read),
+            ..workspace.clone()
+        };
         assert!(shared.validate().is_ok(), "shared with someone");
-        let systems = Workspace { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..workspace };
+        let systems = Workspace {
+            security_attributes: SecurityAttributes::owned_by(ActorId::System),
+            ..workspace
+        };
         assert!(systems.validate().is_err(), "nor nobody's");
     }
 
     #[test]
     fn a_change_is_applied_where_the_workspace_lies() {
         let session_id = SessionId::new();
-        let mut workspace = Workspace::new(named(Scope::SessionScope { session_id }), "main", Classification::CHANNEL_DEFAULT, UserId::new());
+        let mut workspace = Workspace::new(
+            named(Scope::SessionScope { session_id }),
+            "main",
+            Classification::CHANNEL_DEFAULT,
+            UserId::new(),
+        );
         workspace.apply(&WorkspaceUpdateEvent::NameChanged("Notes".to_string())).unwrap();
-        assert_eq!(workspace.scoped_name(), ScopedName::new("Notes", Scope::SessionScope { session_id }).unwrap(), "renamed in its scope");
-        workspace.apply(&WorkspaceUpdateEvent::DescriptionChanged(Some("What we found".to_string()))).unwrap();
+        assert_eq!(
+            workspace.scoped_name(),
+            ScopedName::new("Notes", Scope::SessionScope { session_id }).unwrap(),
+            "renamed in its scope"
+        );
+        workspace
+            .apply(&WorkspaceUpdateEvent::DescriptionChanged(Some("What we found".to_string())))
+            .unwrap();
         workspace.apply(&WorkspaceUpdateEvent::DescriptionChanged(Some(String::new()))).unwrap();
         assert_eq!(workspace.description, None, "empty is none");
-        workspace.apply(&WorkspaceUpdateEvent::ClassificationChanged(Classification::PUBLIC)).unwrap();
+        workspace
+            .apply(&WorkspaceUpdateEvent::ClassificationChanged(Classification::PUBLIC))
+            .unwrap();
         assert_eq!(workspace.classification, Classification::PUBLIC);
-        assert!(workspace.apply(&WorkspaceUpdateEvent::NameChanged(" ".to_string())).is_err(), "no name");
-        assert_eq!(workspace.scoped_name().name.as_str(), "Notes", "unchanged by what does not fit");
+        assert!(
+            workspace.apply(&WorkspaceUpdateEvent::NameChanged(" ".to_string())).is_err(),
+            "no name"
+        );
+        assert_eq!(
+            workspace.scoped_name().name.as_str(),
+            "Notes",
+            "unchanged by what does not fit"
+        );
     }
 
     #[test]
     fn a_workspace_is_written_without_what_it_does_not_have() {
-        let workspace = Workspace::new(named(Scope::GlobalScope), "main", Classification::CHANNEL_DEFAULT, UserId::new());
+        let workspace = Workspace::new(
+            named(Scope::GlobalScope),
+            "main",
+            Classification::CHANNEL_DEFAULT,
+            UserId::new(),
+        );
         let written = serde_json::to_value(&workspace).unwrap();
-        assert!(written.get("description").is_none() && written.get("deleted").is_none(), "{written}");
+        assert!(
+            written.get("description").is_none() && written.get("deleted").is_none(),
+            "{written}"
+        );
         let read: Workspace = serde_json::from_value(written).unwrap();
-        assert_eq!((read.id, read.name, read.storage), (workspace.id, workspace.name, workspace.storage));
+        assert_eq!(
+            (read.id, read.name, read.storage),
+            (workspace.id, workspace.name, workspace.storage)
+        );
     }
 }

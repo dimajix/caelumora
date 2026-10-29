@@ -29,7 +29,9 @@ pub enum AgentError {
     NotFound(AgentId),
     /// The personality of an agent lies in a session's or a channel's scope
     /// the agent would not lie in (issue 178).
-    #[error("the personality '{0}' cannot make an agent outside the session or channel it lies in")]
+    #[error(
+        "the personality '{0}' cannot make an agent outside the session or channel it lies in"
+    )]
     PersonalityOutOfScope(Name),
     /// What a value was given as does not fit it: the name of an agent to
     /// make.

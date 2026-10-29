@@ -1,54 +1,56 @@
 //! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors.
 
-use caelumora_model::chain::Position;
-use caelumora_model::value::name::Name;
-use crate::attachment::AttachmentManager;
-use crate::actor::Actor;
-use crate::actor::AgentKinds;
 use crate::actor::approval::ApproverActor;
 use crate::actor::user::UserActor;
+use crate::actor::Actor;
+use crate::actor::AgentKinds;
+use crate::attachment::AttachmentManager;
 use crate::component::{ComponentContainer, ComponentContext, ComponentError, ComponentImpl};
-use crate::moderator::Moderator;
-use crate::session::SessionError;
-use crate::runtime::ChannelRuntime;
-use anyhow::{Result, Error};
-use arc_swap::{ArcSwap, Guard};
-use caelumora_model::actor::ActorId;
-use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::controller::{ChannelController, ControllerManager, WorkspaceController};
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
-use caelumora_model::mention::MentionDirectory;
-use caelumora_model::question::{QuestionError, QuestionId};
-use caelumora_model::message::MessageId;
-use caelumora_model::work::TurnId;
-use caelumora_model::security::{ActionType, Enforcement, Grant, Refused, SecurityAttributes, SecurityContext, AccessPolicy};
-use caelumora_model::session::{Session, SessionId};
-use caelumora_model::workspace::Workspace;
+use crate::moderator::Moderator;
+use crate::runtime::ChannelRuntime;
+use crate::session::SessionError;
+use crate::session::SessionLoop;
 use crate::terminal::{Shell, Terminal};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
-use caelumora_model::type_map::TypeKey;
-use caelumora_model::store::{StateStore, StoreError};
+use anyhow::{Error, Result};
+use arc_swap::{ArcSwap, Guard};
+use caelumora_model::actor::ActorId;
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_model::actor::Envelope;
+use caelumora_model::chain::Position;
+use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant};
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
+use caelumora_model::mention::MentionDirectory;
+use caelumora_model::message::MessageId;
+use caelumora_model::question::{QuestionError, QuestionId};
+use caelumora_model::security::{
+    AccessPolicy, ActionType, Enforcement, Grant, Refused, SecurityAttributes, SecurityContext,
+};
+use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::{StateStore, StoreError};
+use caelumora_model::type_map::TypeKey;
 use caelumora_model::user::UserId;
-use tracing::{info, warn};
+use caelumora_model::value::name::Name;
+use caelumora_model::work::TurnId;
+use caelumora_model::workspace::Workspace;
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use crate::session::SessionLoop;
 use std::time::Duration;
-#[cfg(any(test, feature = "test-support"))]
-use caelumora_model::actor::Envelope;
 #[cfg(any(test, feature = "test-support"))]
 use tokio::sync::broadcast;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::task::TaskTracker;
+use tracing::{info, warn};
 
 mod control;
 mod history;
 mod inbox;
-mod participation;
 mod participants;
+mod participation;
 mod run;
 mod settings;
 #[cfg(any(test, feature = "test-support"))]
@@ -56,8 +58,8 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use participation::{ResolvedParticipant, ResolvedKind, Participation};
 use futures::future;
+pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
 use std::sync;
 use tokio::time;
 
@@ -80,14 +82,21 @@ pub enum ChannelError {
     /// which rule refused it and about what the caller would have to be
     /// instead - like a refused tool call (issue 15).
     #[error("{action} channel {channel} is not permitted")]
-    Forbidden { action: &'static str, channel: ChannelId, #[source] refused: Refused },
+    Forbidden {
+        action: &'static str,
+        channel: ChannelId,
+        #[source]
+        refused: Refused,
+    },
     /// Only participants of the session can be added to its channels
     /// (issue 46).
     #[error("{participant} is not a participant of the session of channel {channel}")]
     NotInSession { participant: ActorId, channel: ChannelId },
     /// An agent of another session's or channel's scope, which takes part
     /// only there (issue 178).
-    #[error("{participant} lies in the scope of another session or channel than channel {channel}")]
+    #[error(
+        "{participant} lies in the scope of another session or channel than channel {channel}"
+    )]
     OutOfScope { participant: ActorId, channel: ChannelId },
     #[error("{participant} already takes part in channel {channel}")]
     AlreadyParticipant { participant: ActorId, channel: ChannelId },
@@ -130,7 +139,9 @@ pub enum ChannelError {
     /// A participant not cleared for the channel's classification - to
     /// join it, or for the classification it would be raised to (issue
     /// 133).
-    #[error("{participant} is not cleared for channel {channel} as it is, or would be, classified")]
+    #[error(
+        "{participant} is not cleared for channel {channel} as it is, or would be, classified"
+    )]
     NotCleared { participant: ActorId, channel: ChannelId },
     /// An agent whose personality is of a kind the program runs none of
     /// (`AgentKinds`, issue 370): its actor cannot be built.
@@ -153,7 +164,9 @@ pub enum ChannelError {
 /// agent's to read - rather than that the store failed.
 fn cannot_run(error: &Error) -> bool {
     error.downcast_ref::<StoreError>().is_some_and(StoreError::is_absent_or_refused)
-        || error.chain().any(|e| e.downcast_ref::<ComponentError>().is_some_and(ComponentError::is_unavailable))
+        || error
+            .chain()
+            .any(|e| e.downcast_ref::<ComponentError>().is_some_and(ComponentError::is_unavailable))
 }
 
 /// The actor of a channel's participant, with the participant it was built
@@ -281,7 +294,10 @@ impl ChannelLoop {
         // agent's are in the agent's, with the roles of now (issue 321):
         // what they ask is asked as they are built; routing, they act in
         // the context of the event they route.
-        let security_context = runtime.controller_manager().owner_context(channel.security_attributes.owner_id, session_id, id).await?;
+        let security_context = runtime
+            .controller_manager()
+            .owner_context(channel.security_attributes.owner_id, session_id, id)
+            .await?;
         let components = ComponentContainer::from_config(
             &channel.components,
             Self::COMPONENT_FACETS,
@@ -290,8 +306,9 @@ impl ChannelLoop {
         )
         .await
         .map_err(SessionError::InvalidComponents)?;
-        let moderator = components.one::<dyn Moderator>().await.map_err(SessionError::InvalidComponents)?;
-        
+        let moderator =
+            components.one::<dyn Moderator>().await.map_err(SessionError::InvalidComponents)?;
+
         let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,
             Err(StoreError::NotFound { entity: _, id: _ }) => {
@@ -302,7 +319,6 @@ impl ChannelLoop {
             Err(e) => return Err(e.into()),
         };
         let state = Mutex::new(state);
-
 
         let (changes_tx, changes_rx) = mpsc::unbounded_channel();
         let channel_loop = Arc::new(Self {
@@ -355,18 +371,32 @@ impl ChannelLoop {
             let resolved = match found {
                 Ok(Some(resolved)) => resolved,
                 Ok(None) => {
-                    info!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
+                    info!(
+                        "{} of channel {} no longer exists and is left out",
+                        participant.actor_id(),
+                        channel_loop.id
+                    );
                     continue;
                 }
                 Err(e) if cannot_run(&e) => {
-                    warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e);
+                    warn!(
+                        "{} of channel {} cannot be run and is left out: {:#}",
+                        participant.actor_id(),
+                        channel_loop.id,
+                        e
+                    );
                     continue;
                 }
                 Err(e) => return Err(e),
             };
             match channel_loop.start_participant(resolved, None, None).await {
                 Ok(()) => {}
-                Err(e) if cannot_run(&e) => warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e),
+                Err(e) if cannot_run(&e) => warn!(
+                    "{} of channel {} cannot be run and is left out: {:#}",
+                    participant.actor_id(),
+                    channel_loop.id,
+                    e
+                ),
                 Err(e) => return Err(e),
             }
         }
@@ -391,7 +421,13 @@ impl ChannelLoop {
     /// moderator routes to it, it is among the participants' actors, and it
     /// can be mentioned. The one way an actor enters the channel - when the
     /// channel is built and when a participant joins (issue 91).
-    async fn adopt(&self, actor: Arc<dyn Actor>, resolved: ResolvedParticipant, from: Option<Position>, joined: Option<SecurityContext>) {
+    async fn adopt(
+        &self,
+        actor: Arc<dyn Actor>,
+        resolved: ResolvedParticipant,
+        from: Option<Position>,
+        joined: Option<SecurityContext>,
+    ) {
         self.moderator.add_actor(Arc::clone(&actor));
         let id = actor.id();
         let adopted = ChannelActor { actor, participant: resolved, task: TaskTracker::new() };
@@ -410,11 +446,14 @@ impl ChannelLoop {
         self.observed.subscribe()
     }
 
+    pub fn id(&self) -> ChannelId {
+        self.id
+    }
 
-    pub fn id(&self) -> ChannelId { self.id }
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
+    }
 
-    pub fn session_id(&self) -> SessionId { self.session_id }
-    
     pub fn name(&self) -> Name {
         self.channel.name()
     }
@@ -438,7 +477,11 @@ impl ChannelLoop {
     /// `NotUsableInChannel` if they may not use one here - also once the
     /// channel's session is gone, or none is attached to it -,
     /// or what `WorkspaceController::terminal_in` reports.
-    pub async fn workspace_terminal(&self, ctx: &SecurityContext, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+    pub async fn workspace_terminal(
+        &self,
+        ctx: &SecurityContext,
+        need: Grant,
+    ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let (session, workspace) = self.session_workspace()?;
         workspace.terminal_in(ctx, &session, &self.channel(), need).await
     }
@@ -450,7 +493,10 @@ impl ChannelLoop {
     ///
     /// # Errors
     /// As [`Self::workspace_terminal`].
-    pub async fn workspace_shell(&self, ctx: &SecurityContext) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+    pub async fn workspace_shell(
+        &self,
+        ctx: &SecurityContext,
+    ) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
         let (session, workspace) = self.session_workspace()?;
         workspace.shell_in(ctx, &session, &self.channel()).await
     }
@@ -468,10 +514,22 @@ impl ChannelLoop {
 
     /// `action` on the channel, as its attributes are now, refused as a
     /// `ChannelError::Forbidden` that names what was refused, not why.
-    async fn require(&self, context: &SecurityContext, action: impl FnOnce(&SecurityAttributes) -> ActionType<'_>, what: &'static str) -> Result<()> {
+    async fn require(
+        &self,
+        context: &SecurityContext,
+        action: impl FnOnce(&SecurityAttributes) -> ActionType<'_>,
+        what: &'static str,
+    ) -> Result<()> {
         let attributes = self.security_attributes();
         let channel = self.id;
-        Ok(self.access_policy.require(context, action(&attributes), |refused| ChannelError::Forbidden { action: what, channel, refused }).await?)
+        Ok(self
+            .access_policy
+            .require(context, action(&attributes), |refused| ChannelError::Forbidden {
+                action: what,
+                channel,
+                refused,
+            })
+            .await?)
     }
 
     /// The classification of the channel's contents (issue 133).
@@ -508,7 +566,10 @@ impl ChannelLoop {
     /// answered anew after (issue 259).
     async fn given_up_last(&self, author: ActorId, turn: TurnId) -> bool {
         let state = self.state.lock().await;
-        state.history.turn_given_up_last(author).is_some_and(|(last, reason)| last == turn && reason.may_be_answered_again())
+        state
+            .history
+            .turn_given_up_last(author)
+            .is_some_and(|(last, reason)| last == turn && reason.may_be_answered_again())
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are
@@ -528,8 +589,12 @@ impl ChannelLoop {
         let actor_runtime = self.runtime.new_actor_runtime(resolved.actor_id());
         Ok(match resolved.kind().clone() {
             ResolvedKind::User(user) => Box::new(UserActor::new(user, actor_runtime).await?),
-            ResolvedKind::Agent(agent, personality) => self.agent_kinds.build(agent, personality, actor_runtime).await?,
-            ResolvedKind::Approver(approver) => Box::new(ApproverActor::new(approver, actor_runtime)),
+            ResolvedKind::Agent(agent, personality) => {
+                self.agent_kinds.build(agent, personality, actor_runtime).await?
+            }
+            ResolvedKind::Approver(approver) => {
+                Box::new(ApproverActor::new(approver, actor_runtime))
+            }
         })
     }
 }

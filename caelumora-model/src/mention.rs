@@ -88,7 +88,10 @@ pub fn mention_spans(text: &str) -> Vec<MentionSpan> {
                 }
             }
             if end > start + c.len_utf8() {
-                spans.push(MentionSpan { range: start..end, handle: handle_of(&text[start + 1..end]) });
+                spans.push(MentionSpan {
+                    range: start..end,
+                    handle: handle_of(&text[start + 1..end]),
+                });
             }
             prev = Some(last);
             continue;
@@ -157,7 +160,9 @@ impl MentionDirectory {
     /// of, and group handles a participant's name yields, which address
     /// everyone.
     pub fn ambiguous(&self) -> Vec<String> {
-        let mut result: Vec<String> = self.handles.iter()
+        let mut result: Vec<String> = self
+            .handles
+            .iter()
             .filter(|(handle, ids)| ids.len() > 1 || is_group_handle(handle))
             .map(|(handle, _)| handle.clone())
             .collect();
@@ -180,7 +185,6 @@ impl MentionDirectory {
         result
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -253,16 +257,23 @@ mod tests {
         let sassy = ActorId::Agent(AgentId::new());
         let bob = ActorId::User(UserId::new());
         let nameless = ActorId::Agent(AgentId::new());
-        let directory = MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob"), (nameless, "!!!")]);
+        let directory =
+            MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob"), (nameless, "!!!")]);
 
         for text in ["@all, what do you think?", "@channel?", "@ALL", "@bob and @all"] {
             let resolved: HashSet<ActorId> = directory.resolve(text).into_iter().collect();
-            assert_eq!(resolved, HashSet::from([sassy, bob, nameless]), "{text}: everyone, also who has no handle of their own");
+            assert_eq!(
+                resolved,
+                HashSet::from([sassy, bob, nameless]),
+                "{text}: everyone, also who has no handle of their own"
+            );
         }
         assert!(directory.resolve("`@all`").is_empty(), "not in code");
         assert!(directory.resolve("@allison").is_empty(), "a handle of its own");
         assert!(directory.ambiguous().is_empty());
-        assert!(is_group_handle("all") && is_group_handle("channel") && !is_group_handle("everyone"));
+        assert!(
+            is_group_handle("all") && is_group_handle("channel") && !is_group_handle("everyone")
+        );
     }
 
     #[test]
@@ -272,14 +283,22 @@ mod tests {
         let directory = MentionDirectory::new(vec![(all, "All"), (bob, "Bob")]);
 
         assert_eq!(directory.lookup("all"), [all, bob], "the group wins");
-        assert_eq!(directory.ambiguous(), vec!["all".to_string()], "and the handle is not the participant's alone");
+        assert_eq!(
+            directory.ambiguous(),
+            vec!["all".to_string()],
+            "and the handle is not the participant's alone"
+        );
     }
 
     #[test]
     fn directory_resolves_ambiguous_handles_to_all_bearers() {
         let first = ActorId::Agent(AgentId::new());
         let second = ActorId::Agent(AgentId::new());
-        let directory = MentionDirectory::new(vec![(first, "Sassy"), (second, "sassy"), (ActorId::None, "!!!")]);
+        let directory = MentionDirectory::new(vec![
+            (first, "Sassy"),
+            (second, "sassy"),
+            (ActorId::None, "!!!"),
+        ]);
 
         assert_eq!(directory.ambiguous(), vec!["sassy".to_string()]);
         assert_eq!(directory.resolve("@sassy"), vec![first, second]);

@@ -2,36 +2,40 @@ use crate::actor::Shown;
 use crate::actor::{Actor, Answering};
 use crate::channel::{ChannelError, ChannelLoop};
 use crate::command::{CommandContext, CommandError, CommandReply};
+use crate::controller::{ChannelController, UserController};
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::content::ContentId;
-use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
-use caelumora_model::work::TurnId;
-use caelumora_model::approval::{ApprovalDecision, ApprovalRequest, ApprovalResponse, ApprovalRule, ApprovalRuleId, RuleDecision};
+use caelumora_model::actor::{
+    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
+};
+use caelumora_model::agent::AgentId;
+use caelumora_model::approval::{
+    ApprovalDecision, ApprovalRequest, ApprovalResponse, ApprovalRule, ApprovalRuleId, RuleDecision,
+};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::mention::{handle_of, is_group_handle};
-use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext, AccessPolicy};
+use caelumora_model::content::ContentId;
+use caelumora_model::mention::{handle_of, is_group_handle};
+use caelumora_model::message::{Message, MessageId, MessageRole};
+use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
+use caelumora_model::security::{AccessPolicy, AccessQuestions, ActionType, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::value::name::Name;
-use crate::controller::{ChannelController, UserController};
+use caelumora_model::work::TurnId;
 use chrono::Utc;
-use tracing::{debug, info, warn};
 use std::collections::HashMap;
-use std::sync::{Arc, PoisonError};
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
-use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
-use caelumora_model::agent::AgentId;
 use std::future;
 use std::sync;
+use std::sync::{Arc, PoisonError};
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct UserActor {
@@ -136,7 +140,7 @@ impl UserActor {
         let channel = Arc::clone(&channel_controller.load());
         let user_id = user.id();
 
-        let (utx,urx) = mpsc::channel(100);
+        let (utx, urx) = mpsc::channel(100);
         let outbox = actor_runtime.actor_manager().outbox(channel.id, ActorId::User(user_id));
 
         Ok(Self {
@@ -162,15 +166,22 @@ impl UserActor {
     /// `send_message` is. Nothing of what a user says is for its owner
     /// alone: it is sent as it is (`Answering::envelope`).
     fn envelope(&self, event: ActorEvent, span_id: Uuid) -> Envelope {
-        Answering::own(self.id(), self.name(), &self.security_context()).with_span(span_id).envelope(event)
+        Answering::own(self.id(), self.name(), &self.security_context())
+            .with_span(span_id)
+            .envelope(event)
     }
 
     /// The questions put to this user that are open, forgotten: a message
     /// declines them all.
     fn take_open_questions(&self) -> Vec<(QuestionId, AgentId)> {
         let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-        let asked: Vec<QuestionId> = open.values().filter(|r| r.questions.is_asked(self.id())).map(|r| r.id).collect();
-        asked.iter().filter_map(|id| open.remove(id)).map(|request| (request.id, request.agent_id)).collect()
+        let asked: Vec<QuestionId> =
+            open.values().filter(|r| r.questions.is_asked(self.id())).map(|r| r.id).collect();
+        asked
+            .iter()
+            .filter_map(|id| open.remove(id))
+            .map(|request| (request.id, request.agent_id))
+            .collect()
     }
 
     /// Answers the questions `id` put to this user with `responses`, one per
@@ -186,9 +197,14 @@ impl UserActor {
     /// # Errors
     /// `ChannelError::Question` with why the answer cannot be given; an
     /// error if the channel is gone.
-    pub async fn answer_questions(&self, id: QuestionId, responses: Option<Vec<Response>>) -> Result<Uuid> {
+    pub async fn answer_questions(
+        &self,
+        id: QuestionId,
+        responses: Option<Vec<Response>>,
+    ) -> Result<Uuid> {
         self.channel_loop()?;
-        let refused = |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
+        let refused =
+            |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
         let agent_id = {
             let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
             let request = open.get(&id).ok_or_else(|| refused(QuestionError::NotOpen))?;
@@ -225,13 +241,26 @@ impl UserActor {
     /// # Errors
     /// `AttachmentError::NotFound` for an attachment that is not one of this
     /// user's uploads for the channel; an error if the channel is gone.
-    pub async fn send_message(&self, content: Option<String>, classification: Option<Classification>, attachments: Vec<ContentId>) -> Result<Uuid> {
+    pub async fn send_message(
+        &self,
+        content: Option<String>,
+        classification: Option<Classification>,
+        attachments: Vec<ContentId>,
+    ) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let classification = classification.unwrap_or_else(|| channel_loop.classification());
-        let attachments = self.actor_runtime.attachment_manager().named(self.id, self.channel_id, &attachments, &[])?;
+        let attachments = self.actor_runtime.attachment_manager().named(
+            self.id,
+            self.channel_id,
+            &attachments,
+            &[],
+        )?;
         let msg = Message {
             role: MessageRole::User,
-            mentions: content.as_deref().map(|content| channel_loop.mentions_in(content)).unwrap_or_default(),
+            mentions: content
+                .as_deref()
+                .map(|content| channel_loop.mentions_in(content))
+                .unwrap_or_default(),
             content,
             attachments,
             id: MessageId(Uuid::new_v4()),
@@ -248,7 +277,8 @@ impl UserActor {
         // turn, the message is answered by itself (issue 258).
         let span_id = Uuid::new_v4();
         for (id, agent_id) in self.take_open_questions() {
-            self.send(self.envelope(ActorEvent::QuestionDeclined { id, agent_id }, span_id)).await?;
+            self.send(self.envelope(ActorEvent::QuestionDeclined { id, agent_id }, span_id))
+                .await?;
         }
         self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
         self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg), span_id)).await?;
@@ -275,17 +305,40 @@ impl UserActor {
     /// taken back; `AttachmentError::NotFound` for an attachment that is
     /// neither the message's nor an upload of the user's for the channel; an
     /// error if the channel is gone.
-    pub async fn modify_message(&self, message: MessageId, content: Option<String>, classification: Option<Classification>, attachments: Vec<ContentId>) -> Result<Uuid> {
+    pub async fn modify_message(
+        &self,
+        message: MessageId,
+        content: Option<String>,
+        classification: Option<Classification>,
+        attachments: Vec<ContentId>,
+    ) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let original = self.message_to_change(&channel_loop, message).await?;
         if original.sender_id != self.id {
-            let refused = ActionType::ModifyMessage { author: original.sender_id, channel: &channel_loop.security_attributes() }.refused();
-            return Err(ChannelError::Forbidden { action: "modifying a message of", channel: self.channel_id, refused }.into());
+            let refused = ActionType::ModifyMessage {
+                author: original.sender_id,
+                channel: &channel_loop.security_attributes(),
+            }
+            .refused();
+            return Err(ChannelError::Forbidden {
+                action: "modifying a message of",
+                channel: self.channel_id,
+                refused,
+            }
+            .into());
         }
         let classification = classification.unwrap_or_else(|| original.classification.clone());
-        let attachments = self.actor_runtime.attachment_manager().named(self.id, self.channel_id, &attachments, &original.attachments)?;
+        let attachments = self.actor_runtime.attachment_manager().named(
+            self.id,
+            self.channel_id,
+            &attachments,
+            &original.attachments,
+        )?;
         let modified = Message {
-            mentions: content.as_deref().map(|content| channel_loop.mentions_in(content)).unwrap_or_default(),
+            mentions: content
+                .as_deref()
+                .map(|content| channel_loop.mentions_in(content))
+                .unwrap_or_default(),
             content,
             attachments,
             classification,
@@ -309,7 +362,8 @@ impl UserActor {
         let channel_loop = self.channel_loop()?;
         self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
-        self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id)).await?;
+        self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id))
+            .await?;
         Ok(span_id)
     }
 
@@ -326,11 +380,18 @@ impl UserActor {
     /// `ChannelError::MessageNotFound` if the channel has no such message,
     /// `MessageRevoked` if it was taken back; an error if the channel is
     /// gone.
-    pub async fn reclassify_message(&self, message: MessageId, classification: Classification) -> Result<Uuid> {
+    pub async fn reclassify_message(
+        &self,
+        message: MessageId,
+        classification: Classification,
+    ) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
-        self.send(self.envelope(ActorEvent::MessageReclassified { message, classification }, span_id)).await?;
+        self.send(
+            self.envelope(ActorEvent::MessageReclassified { message, classification }, span_id),
+        )
+        .await?;
         Ok(span_id)
     }
 
@@ -353,7 +414,9 @@ impl UserActor {
         let channel_loop = self.channel_loop()?;
         let author = self.message_to_change(&channel_loop, message).await?.sender_id;
         if channel_loop.agent_actor(author).is_none() {
-            return Err(ChannelError::NotAnAgentsMessage { message, channel: self.channel_id }.into());
+            return Err(
+                ChannelError::NotAnAgentsMessage { message, channel: self.channel_id }.into()
+            );
         }
         self.send_retry(RetryTarget::Message(message), author).await
     }
@@ -377,7 +440,11 @@ impl UserActor {
     pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         if channel_loop.agent_actor(author).is_none() {
-            return Err(ChannelError::NotAParticipant { participant: author, channel: self.channel_id }.into());
+            return Err(ChannelError::NotAParticipant {
+                participant: author,
+                channel: self.channel_id,
+            }
+            .into());
         }
         if !channel_loop.retryable_turn(author, turn).await {
             return Err(ChannelError::TurnNotRetryable { turn, channel: self.channel_id }.into());
@@ -403,13 +470,16 @@ impl UserActor {
     /// error if the channel is gone.
     pub async fn request_response(&self, participant: ActorId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
-        let actor = channel_loop.actor(participant)
+        let actor = channel_loop
+            .actor(participant)
             .ok_or(ChannelError::NotAParticipant { participant, channel: self.channel_id })?;
         if participant == self.id {
             return Err(ChannelError::NudgesItself { participant, channel: self.channel_id }.into());
         }
         if actor.state().in_turn() {
-            return Err(ChannelError::AlreadyResponding { participant, channel: self.channel_id }.into());
+            return Err(
+                ChannelError::AlreadyResponding { participant, channel: self.channel_id }.into()
+            );
         }
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::NudgeRequested { participant }, span_id)).await?;
@@ -431,17 +501,23 @@ impl UserActor {
     /// # Errors
     /// An error if the channel is gone.
     fn channel_loop(&self) -> Result<Arc<ChannelLoop>> {
-        self.actor_runtime.channel_loop().ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))
+        self.actor_runtime
+            .channel_loop()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))
     }
 
     /// The message `id` of `channel` as it stands, if it can still be
     /// changed: not taken back. Whether this user may change it is the
     /// channel's to decide as it admits the change (issue 304).
     async fn message_to_change(&self, channel: &ChannelLoop, id: MessageId) -> Result<Message> {
-        let message = channel.message(id).await
+        let message = channel
+            .message(id)
+            .await
             .ok_or(ChannelError::MessageNotFound { message: id, channel: self.channel_id })?;
         if message.revoked.is_some() {
-            return Err(ChannelError::MessageRevoked { message: id, channel: self.channel_id }.into());
+            return Err(
+                ChannelError::MessageRevoked { message: id, channel: self.channel_id }.into()
+            );
         }
         Ok(message)
     }
@@ -494,7 +570,11 @@ impl UserActor {
     }
 
     fn answer(response: ApprovalResponse, approved: bool) -> ActorEvent {
-        if approved { ActorEvent::ApprovalGranted(response) } else { ActorEvent::ApprovalDenied(response) }
+        if approved {
+            ActorEvent::ApprovalGranted(response)
+        } else {
+            ActorEvent::ApprovalDenied(response)
+        }
     }
 
     /// This user's part in an approval, now - by their rule `by_rule` if
@@ -512,13 +592,23 @@ impl UserActor {
     /// calls here - the approver would leave their answer out. That is offering,
     /// as a client asks it to show its buttons, not permitting: the approver
     /// asks it again as it counts the answer (issue 304, rule 5).
-    async fn answer_by_rule(&self, envelope: &Envelope, request: &ApprovalRequest) -> Option<Envelope> {
+    async fn answer_by_rule(
+        &self,
+        envelope: &Envelope,
+        request: &ApprovalRequest,
+    ) -> Option<Envelope> {
         if request.explicit || !matches!(envelope.context.sender_id, ActorId::Approver(_)) {
             return None;
         }
         let (rule_id, decision) = {
             let profile = self.user.profile();
-            let (rule, decision) = ApprovalRule::decide(profile.approval_rules(), &request.tool_call, request.session_id, request.channel_id, Utc::now())?;
+            let (rule, decision) = ApprovalRule::decide(
+                profile.approval_rules(),
+                &request.tool_call,
+                request.session_id,
+                request.channel_id,
+                Utc::now(),
+            )?;
             (rule.id, decision)
         };
         if decision == RuleDecision::Ask {
@@ -538,7 +628,10 @@ impl UserActor {
         }
         let approved = decision == RuleDecision::Allow;
         info!(rule = %rule_id, approved, "UserActor {} answers approval {} by a rule", self.id(), request.id);
-        let response = ApprovalResponse { decisions: vec![self.decision(Some(rule_id))], ..ApprovalResponse::new(request.id, request.agent_id) };
+        let response = ApprovalResponse {
+            decisions: vec![self.decision(Some(rule_id))],
+            ..ApprovalResponse::new(request.id, request.agent_id)
+        };
         Some(self.envelope(Self::answer(response, approved), envelope.context.span_id))
     }
 
@@ -562,14 +655,27 @@ impl UserActor {
         let context = CommandContext { issuer: self, channel: &channel, executor };
         debug!("UserActor {} runs /{}", self.id, name);
         let output = match executor.execute(name, args, &context).await {
-            Err(CommandError::Unknown(_)) => return self.request_command(&channel, name, args).await,
+            Err(CommandError::Unknown(_)) => {
+                return self.request_command(&channel, name, args).await
+            }
             result => result?,
         };
         if output.visibility == CommandVisibility::Channel {
-            let event = ActorEvent::CommandExecuted { command: name.to_string(), args: args.to_string(), output: output.text.clone(), to: None, turn_id: None };
+            let event = ActorEvent::CommandExecuted {
+                command: name.to_string(),
+                args: args.to_string(),
+                output: output.text.clone(),
+                to: None,
+                turn_id: None,
+            };
             self.send(self.envelope(event, Uuid::new_v4())).await?;
         }
-        Ok(CommandReply { command: name.to_string(), output: Some(output.text), visibility: output.visibility, span_id: None })
+        Ok(CommandReply {
+            command: name.to_string(),
+            output: Some(output.text),
+            visibility: output.visibility,
+            span_id: None,
+        })
     }
 
     /// Asks agents of `channel` to carry out the command `name` (issue 269).
@@ -589,16 +695,29 @@ impl UserActor {
     /// `CommandError::Unknown` if no agent here carries it out as this user
     /// sees it; `InvalidArguments` if `args` names no agent that does; an
     /// error if a request cannot be sent.
-    async fn request_command(&self, channel: &ChannelLoop, name: &str, args: &str) -> Result<CommandReply> {
-        let understanding: Vec<_> = channel.agent_commands(&self.security_context()).await.into_iter()
+    async fn request_command(
+        &self,
+        channel: &ChannelLoop,
+        name: &str,
+        args: &str,
+    ) -> Result<CommandReply> {
+        let understanding: Vec<_> = channel
+            .agent_commands(&self.security_context())
+            .await
+            .into_iter()
             .filter(|(_, commands)| commands.iter().any(|c| c.name == name))
             .map(|(agent, _)| agent)
             .collect();
         if understanding.is_empty() {
             return Err(CommandError::Unknown(name.to_string()).into());
         }
-        let handles: Vec<String> = understanding.iter().filter_map(|m| m.handle.as_ref()).map(|h| format!("@{h}")).collect();
-        let invalid = |reason: String| CommandError::InvalidArguments { command: name.to_string(), reason };
+        let handles: Vec<String> = understanding
+            .iter()
+            .filter_map(|m| m.handle.as_ref())
+            .map(|h| format!("@{h}"))
+            .collect();
+        let invalid =
+            |reason: String| CommandError::InvalidArguments { command: name.to_string(), reason };
         let (whom, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
         let targets: Vec<_> = match whom.strip_prefix('@') {
             Some(group) if is_group_handle(&handle_of(group)) => understanding,
@@ -606,21 +725,42 @@ impl UserActor {
                 let named = channel.agents_named(agent);
                 if named.len() > 1 {
                     let names: Vec<&str> = named.iter().map(|m| m.name.as_str()).collect();
-                    return Err(invalid(format!("{whom} names several agents: {}", names.join(", "))).into());
+                    return Err(invalid(format!(
+                        "{whom} names several agents: {}",
+                        names.join(", ")
+                    ))
+                    .into());
                 }
                 understanding.into_iter().filter(|m| named.iter().any(|n| n.id == m.id)).collect()
             }
-            None => return Err(invalid(format!("name the agent: {}, or @all", handles.join(", "))).into()),
+            None => {
+                return Err(
+                    invalid(format!("name the agent: {}, or @all", handles.join(", "))).into()
+                )
+            }
         };
         if targets.is_empty() {
-            return Err(invalid(format!("{whom} does not carry it out here; name {}, or @all", handles.join(", "))).into());
+            return Err(invalid(format!(
+                "{whom} does not carry it out here; name {}, or @all",
+                handles.join(", ")
+            ))
+            .into());
         }
         let span_id = Uuid::new_v4();
         for agent in targets {
-            let event = ActorEvent::CommandRequested { command: name.to_string(), args: rest.trim().to_string(), agent: agent.id };
+            let event = ActorEvent::CommandRequested {
+                command: name.to_string(),
+                args: rest.trim().to_string(),
+                agent: agent.id,
+            };
             self.send(self.envelope(event, span_id)).await?;
         }
-        Ok(CommandReply { command: name.to_string(), output: None, visibility: CommandVisibility::Private, span_id: Some(span_id) })
+        Ok(CommandReply {
+            command: name.to_string(),
+            output: None,
+            visibility: CommandVisibility::Private,
+            span_id: Some(span_id),
+        })
     }
 
     /// The commands this user may see, e.g. for completion.
@@ -640,13 +780,20 @@ impl UserActor {
     /// approval that a rule of the user's answers (issue 13): sent as the
     /// user's own answer would be, and shown to the user as theirs. `true`
     /// once the actor is to end - its inbox closed, or the channel is gone.
-    async fn handle_actor_envelope(&self, maybe_event: Option<Envelope>, tx: &dyn EventSender) -> bool {
+    async fn handle_actor_envelope(
+        &self,
+        maybe_event: Option<Envelope>,
+        tx: &dyn EventSender,
+    ) -> bool {
         let Some(event) = maybe_event else { return true };
         debug!("UserActor {} received {}", self.id(), event.describe());
         let answer = match &event.event {
             ActorEvent::ApprovalRequested(request) => self.answer_by_rule(&event, request).await,
             ActorEvent::QuestionRequested(request) => {
-                self.open_questions.lock().unwrap_or_else(PoisonError::into_inner).insert(request.id, request.clone());
+                self.open_questions
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(request.id, request.clone());
                 None
             }
             ActorEvent::QuestionClosed { id, .. } => {
@@ -679,7 +826,12 @@ impl UserActor {
     /// ends (issue 79).
     async fn forward(&self, envelope: Envelope, tx: &dyn EventSender) -> bool {
         debug!(span_id = %envelope.context.span_id, "UserActor {} sends {}", self.id(), envelope.event.kind());
-        if !matches!(envelope.event, ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::QuestionAnswered { .. }) {
+        if !matches!(
+            envelope.event,
+            ActorEvent::WakeupRequested
+                | ActorEvent::NudgeRequested { .. }
+                | ActorEvent::QuestionAnswered { .. }
+        ) {
             self.show(Shown::Envelope(envelope.clone()));
         }
         match tx.send(envelope).await {
@@ -741,7 +893,11 @@ impl Actor for UserActor {
 
     /// With the introduction of their profile as it is now.
     fn describe(&self) -> ActorDescription {
-        ActorDescription { id: self.id, name: self.name(), introduction: self.user.profile().introduction.clone() }
+        ActorDescription {
+            id: self.id,
+            name: self.name(),
+            introduction: self.user.profile().introduction.clone(),
+        }
     }
 
     fn state(&self) -> ActorState {
@@ -766,12 +922,10 @@ impl Actor for UserActor {
         |_| true
     }
 
-    async fn run(
-        &self,
-        mut rx: Box<dyn EventReceiver>,
-        tx: Box<dyn EventSender>,
-    ) -> Result<()> {
-        let queue = self.user_rx.try_lock()
+    async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
+        let queue = self
+            .user_rx
+            .try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
         let mut run = EndOfRun { queue, actor: self };
         // Shown before anything of the run, which follows it.
@@ -802,15 +956,15 @@ impl Actor for UserActor {
 mod tests {
     use super::*;
     use crate::actor::manager::OUTBOX_CAPACITY;
-    use crate::session::testing::{bare_session, test_runtime};
-    use caelumora_model::actor::EventContext;
     use crate::runtime::ChannelRuntime;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::channel::{Channel, moderation_components};
-    use caelumora_model::user::{User, UserId};
+    use crate::session::testing::{bare_session, test_runtime};
     use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
-    use std::time::Duration;
+    use caelumora_model::actor::EventContext;
+    use caelumora_model::channel::{moderation_components, Channel};
+    use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::user::{User, UserId};
     use std::iter;
+    use std::time::Duration;
     use tokio::time;
 
     /// A user's actor, with the channel it is in - to be kept while the
@@ -819,7 +973,8 @@ mod tests {
         let runtime = test_runtime();
         let session_id = SessionId::new();
         let channel = Channel {
-            summary: None, briefing: None,
+            summary: None,
+            briefing: None,
             approval_rules: Vec::new(),
             uses_workspace: true,
             id: ChannelId::new(),
@@ -841,30 +996,51 @@ mod tests {
             roles: Vec::new(),
             deleted: None,
         };
-        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), bare_session(session_id), channel);
+        let channel_runtime = ChannelRuntime::outside_a_session(
+            Arc::clone(&runtime),
+            bare_session(session_id),
+            channel,
+        );
         let channel_loop = ChannelLoop::new(channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id));
         runtime.entity_stores().users.create(&SecurityContext::system(), &user).await.unwrap();
-        let actor = UserActor::new(runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap();
+        let actor = UserActor::new(
+            runtime.controller_manager().user_controller(user.id).await.unwrap(),
+            actor_runtime,
+        )
+        .await
+        .unwrap();
         (actor, channel_loop)
     }
 
     fn envelope_from(sender: ActorId) -> Envelope {
-        let context = EventContext::new(Default::default(), Default::default(), sender, "agent".to_string());
-        Envelope::new(SecurityContext::default(), context, ActorEvent::ResponseStarted { turn_id: TurnId::new() })
+        let context =
+            EventContext::new(Default::default(), Default::default(), sender, "agent".to_string());
+        Envelope::new(
+            SecurityContext::default(),
+            context,
+            ActorEvent::ResponseStarted { turn_id: TurnId::new() },
+        )
     }
 
     #[tokio::test]
     async fn send_message_asks_for_a_wakeup_and_returns_the_span_of_all_its_envelopes() {
         let (actor, _channel) = user_actor().await;
 
-        let span_id = actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
+        let span_id =
+            actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
 
         let mut rx = actor.user_rx.lock().await;
         let wakeup = rx.recv().await.expect("WakeupRequested");
         let complete = rx.recv().await.expect("CompleteMessageGenerated");
-        assert!(matches!(wakeup.event, ActorEvent::WakeupRequested), "the wakeup first, so that the agents are awake when the message comes");
-        assert!(matches!(&complete.event, ActorEvent::CompleteMessageGenerated(m) if m.turn_id.is_none()), "said outside of any turn, answered by itself (issue 258)");
+        assert!(
+            matches!(wakeup.event, ActorEvent::WakeupRequested),
+            "the wakeup first, so that the agents are awake when the message comes"
+        );
+        assert!(
+            matches!(&complete.event, ActorEvent::CompleteMessageGenerated(m) if m.turn_id.is_none()),
+            "said outside of any turn, answered by itself (issue 258)"
+        );
         assert!(rx.try_recv().is_err(), "and nothing else: there is no turn to end");
         for envelope in [&wakeup, &complete] {
             assert_eq!(envelope.context.span_id, span_id, "one user action, one span");
@@ -883,24 +1059,49 @@ mod tests {
         let (output, mut channel_inbox) = mpsc::channel(10);
         let running = tokio::spawn({
             let actor = Arc::clone(&actor);
-            async move { actor.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output))).await }
+            async move {
+                actor
+                    .run(
+                        Box::new(InMemoryEventReceiver::new(rx)),
+                        Box::new(InMemoryEventSender::new(output)),
+                    )
+                    .await
+            }
         });
-        assert!(matches!(following.next().await, Ok(Shown::Started)), "its run begins first (issue 386)");
+        assert!(
+            matches!(following.next().await, Ok(Shown::Started)),
+            "its run begins first (issue 386)"
+        );
 
         actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
         for _ in ["WakeupRequested", "CompleteMessageGenerated"] {
             channel_inbox.recv().await.expect("forwarded");
         }
-        let shown: Vec<&str> = iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
-        assert_eq!(shown, ["CompleteMessageGenerated"], "what it said, as it forwarded it, not the request to wake the channel (issue 220)");
+        let shown: Vec<&str> =
+            iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
+        assert_eq!(
+            shown,
+            ["CompleteMessageGenerated"],
+            "what it said, as it forwarded it, not the request to wake the channel (issue 220)"
+        );
 
-        actor.send_approval(ApprovalResponse::new(Default::default(), Default::default()), true).await.unwrap();
+        actor
+            .send_approval(ApprovalResponse::new(Default::default(), Default::default()), true)
+            .await
+            .unwrap();
         channel_inbox.recv().await.expect("forwarded");
-        assert_eq!(following.try_recv().map(|e| e.event.kind()).ok(), Some("ApprovalGranted"), "everything it sends");
+        assert_eq!(
+            following.try_recv().map(|e| e.event.kind()).ok(),
+            Some("ApprovalGranted"),
+            "everything it sends"
+        );
 
         actor.stop();
         running.await.unwrap().unwrap();
-        assert!(matches!(following.next().await, Ok(Shown::Ended)), "and its end, after everything it showed");
+        assert!(
+            matches!(following.next().await, Ok(Shown::Ended)),
+            "and its end, after everything it showed"
+        );
     }
 
     #[tokio::test]
@@ -908,9 +1109,17 @@ mod tests {
         let (actor, _channel) = user_actor().await;
         let mut following = actor.watch();
         actor.leave();
-        assert!(matches!(following.next().await, Ok(Shown::Ended)), "its followers are told at once (issue 386)");
-        let ran = actor.run(Box::new(InMemoryEventReceiver::new(mpsc::channel(1).1)), Box::new(nowhere())).await;
-        assert!(ran.is_ok() && following.shown.try_recv().is_err(), "and nothing more: it does not run");
+        assert!(
+            matches!(following.next().await, Ok(Shown::Ended)),
+            "its followers are told at once (issue 386)"
+        );
+        let ran = actor
+            .run(Box::new(InMemoryEventReceiver::new(mpsc::channel(1).1)), Box::new(nowhere()))
+            .await;
+        assert!(
+            ran.is_ok() && following.shown.try_recv().is_err(),
+            "and nothing more: it does not run"
+        );
     }
 
     #[tokio::test]
@@ -924,8 +1133,13 @@ mod tests {
         actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
         let ended = time::timeout(
             Duration::from_secs(5),
-            actor.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output))),
-        ).await.expect("the actor ends");
+            actor.run(
+                Box::new(InMemoryEventReceiver::new(rx)),
+                Box::new(InMemoryEventSender::new(output)),
+            ),
+        )
+        .await
+        .expect("the actor ends");
         assert!(ended.is_ok(), "a channel that is gone is an end, not an error: {ended:?}");
     }
 
@@ -942,7 +1156,10 @@ mod tests {
         for _ in 0..(OUTBOX_CAPACITY * 2) {
             assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         }
-        assert!(actor.handle_actor_envelope(None, &nowhere()).await, "a closed input ends the actor");
+        assert!(
+            actor.handle_actor_envelope(None, &nowhere()).await,
+            "a closed input ends the actor"
+        );
     }
 
     #[tokio::test]
@@ -957,13 +1174,14 @@ mod tests {
         for _ in 0..(OUTBOX_CAPACITY + 10) {
             assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         }
-        assert!(matches!(first.try_recv(), Err(broadcast::error::TryRecvError::Lagged(10))), "the oldest are lost, and it learns how many");
+        assert!(
+            matches!(first.try_recv(), Err(broadcast::error::TryRecvError::Lagged(10))),
+            "the oldest are lost, and it learns how many"
+        );
         let mut received = 0;
         while first.try_recv().is_ok() {
             received += 1;
         }
         assert_eq!(received, OUTBOX_CAPACITY, "the newest are kept");
     }
-
-
 }

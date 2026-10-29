@@ -1,19 +1,23 @@
 //! `ProjectController`: the one writer of a live project in this instance (issue 467).
 
+use super::document::{LiveDocument, Writing};
+use crate::group::{keep_participants, prune_gone_groups, require_nameable};
+use crate::project::{store_error, ProjectError, ProjectResult};
 use arc_swap::Guard;
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessPolicy, AclEntry, ActionType, Enforcement, Grant, SecurityContext, Subject};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored, Updatable};
+use caelumora_model::security::{
+    AccessPolicy, AclEntry, ActionType, Enforcement, Grant, SecurityContext, Subject,
+};
+use caelumora_model::store::{
+    EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored, Updatable,
+};
 use caelumora_model::user::{User, UserId};
 use std::sync::Arc;
 use tracing::error;
-use crate::group::{keep_participants, prune_gone_groups, require_nameable};
-use crate::project::{store_error, ProjectError, ProjectResult};
-use super::document::{LiveDocument, Writing};
 
 /// The live project in this instance (issue 467), shared by everything that uses it - the
 /// sessions that lie in it, a description a running system reads: the one writer of what it is -
@@ -37,9 +41,19 @@ pub struct ProjectController {
 
 impl ProjectController {
     /// The live `project`. Made by the `ControllerManager`, which keeps one per project.
-    pub(crate) fn new(project: Project, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores, access_policy: Arc<dyn AccessPolicy>) -> Self {
+    pub(crate) fn new(
+        project: Project,
+        event_publisher: Arc<dyn EventPublisher>,
+        stores: &EntityStores,
+        access_policy: Arc<dyn AccessPolicy>,
+    ) -> Self {
         Self {
-            project: LiveDocument::new(project.id, project, Arc::clone(&stores.projects), event_publisher),
+            project: LiveDocument::new(
+                project.id,
+                project,
+                Arc::clone(&stores.projects),
+                event_publisher,
+            ),
             users: Arc::clone(&stores.users),
             groups: Arc::clone(&stores.groups),
             access_policy,
@@ -66,8 +80,13 @@ impl ProjectController {
     ///
     /// # Errors
     /// As [`Self::update`].
-    pub async fn update_description(&self, ctx: &SecurityContext, description: Option<&str>) -> ProjectResult<()> {
-        self.update(ctx, ProjectUpdateEvent::DescriptionChanged(description.map(String::from))).await
+    pub async fn update_description(
+        &self,
+        ctx: &SecurityContext,
+        description: Option<&str>,
+    ) -> ProjectResult<()> {
+        self.update(ctx, ProjectUpdateEvent::DescriptionChanged(description.map(String::from)))
+            .await
     }
 
     /// Makes `members` the users who work on the project, on behalf of `ctx`: reached, then asked
@@ -79,10 +98,20 @@ impl ProjectController {
     /// # Errors
     /// `UnknownMember` for a user that does not exist; `StoreError::Validation` for a session's own
     /// project, which has none; otherwise as [`Self::update`].
-    pub async fn update_members(&self, ctx: &SecurityContext, members: Vec<UserId>) -> ProjectResult<()> {
+    pub async fn update_members(
+        &self,
+        ctx: &SecurityContext,
+        members: Vec<UserId>,
+    ) -> ProjectResult<()> {
         let mut writing = self.project.write().await;
         let mut project = writing.reached(ctx).await.map_err(store_error(self.id()))?;
-        self.access_policy.require(ctx, ActionType::update(Project::KIND, &project.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy
+            .require(
+                ctx,
+                ActionType::update(Project::KIND, &project.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         let system = SecurityContext::system();
         let mut wanted = Vec::with_capacity(members.len());
         for member in members {
@@ -93,14 +122,23 @@ impl ProjectController {
                 wanted.push(member);
             }
         }
-        let left: Vec<Subject> = project.members.iter().filter(|member| !wanted.contains(member)).map(|member| Subject::Actor(ActorId::User(*member))).collect();
+        let left: Vec<Subject> = project
+            .members
+            .iter()
+            .filter(|member| !wanted.contains(member))
+            .map(|member| Subject::Actor(ActorId::User(*member)))
+            .collect();
         let event = ProjectUpdateEvent::MembersChanged(wanted);
         project.apply(&event)?;
         let project = self.store(ctx, &writing, project).await?;
         if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_project(&project)).await {
             error!(project = %project.id, "The group of the project's members does not follow them: {e}");
         }
-        writing.announce_also_to(GlobalEvent::updated::<Project>(&project.id, &event), &project, left);
+        writing.announce_also_to(
+            GlobalEvent::updated::<Project>(&project.id, &event),
+            &project,
+            left,
+        );
         Ok(())
     }
 
@@ -113,7 +151,11 @@ impl ProjectController {
     /// `NotFound` if the caller does not reach it, a `StoreError` - `PermissionDenied` for anyone
     /// but its owner, `Validation` for an entry that names an agent, the system or nobody, or a
     /// group the caller cannot read.
-    pub async fn update_access(&self, ctx: &SecurityContext, acl: Vec<AclEntry>) -> ProjectResult<()> {
+    pub async fn update_access(
+        &self,
+        ctx: &SecurityContext,
+        acl: Vec<AclEntry>,
+    ) -> ProjectResult<()> {
         let mut writing = self.project.write().await;
         let project = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         self.store_access(ctx, &writing, project, acl).await
@@ -126,7 +168,12 @@ impl ProjectController {
     ///
     /// # Errors
     /// As [`Self::update_access`].
-    pub async fn share(&self, ctx: &SecurityContext, subject: Subject, grant: Grant) -> ProjectResult<()> {
+    pub async fn share(
+        &self,
+        ctx: &SecurityContext,
+        subject: Subject,
+        grant: Grant,
+    ) -> ProjectResult<()> {
         let mut writing = self.project.write().await;
         let project = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         let mut acl = project.security_attributes.acl.clone();
@@ -149,7 +196,13 @@ impl ProjectController {
         if !project.security_attributes.acl.iter().any(|entry| entry.subject == subject) {
             return Ok(());
         }
-        let acl = project.security_attributes.acl.iter().filter(|entry| entry.subject != subject).cloned().collect();
+        let acl = project
+            .security_attributes
+            .acl
+            .iter()
+            .filter(|entry| entry.subject != subject)
+            .cloned()
+            .collect();
         self.store_access(ctx, &writing, project, acl).await
     }
 
@@ -185,7 +238,9 @@ impl ProjectController {
     /// # Errors
     /// Whatever the store reports; the live copy is then unchanged.
     pub async fn process_global_event(&self, event: &GlobalEvent) -> StoreResult<()> {
-        if event.about::<Project>().is_some_and(|(id, change)| id == self.id() && change.update::<ProjectUpdateEvent>().is_some()) {
+        if event.about::<Project>().is_some_and(|(id, change)| {
+            id == self.id() && change.update::<ProjectUpdateEvent>().is_some()
+        }) {
             self.project.reload().await?;
         }
         Ok(())
@@ -209,7 +264,13 @@ impl ProjectController {
 
     /// Gives the reached `project` the access list `acl`, as `update_access` says, under
     /// `writing`. Announced without the list (`ProjectUpdateEvent::AccessChanged`).
-    async fn store_access(&self, ctx: &SecurityContext, writing: &Writing<'_, Project>, mut project: Project, acl: Vec<AclEntry>) -> ProjectResult<()> {
+    async fn store_access(
+        &self,
+        ctx: &SecurityContext,
+        writing: &Writing<'_, Project>,
+        mut project: Project,
+        acl: Vec<AclEntry>,
+    ) -> ProjectResult<()> {
         require_nameable(self.groups.as_ref(), ctx, &project.security_attributes.acl, &acl).await?;
         project.security_attributes.acl = acl;
         let project = self.store(ctx, writing, project).await?;
@@ -219,7 +280,12 @@ impl ProjectController {
 
     /// Stores `project` as changed by `ctx` under `writing` - its access list without the entries
     /// naming a group that is gone (issue 347) - and takes it over live.
-    async fn store(&self, ctx: &SecurityContext, writing: &Writing<'_, Project>, mut project: Project) -> ProjectResult<Arc<Project>> {
+    async fn store(
+        &self,
+        ctx: &SecurityContext,
+        writing: &Writing<'_, Project>,
+        mut project: Project,
+    ) -> ProjectResult<Arc<Project>> {
         prune_gone_groups(self.groups.as_ref(), [&mut project.security_attributes.acl]).await;
         writing.store(ctx, project).await.map_err(store_error(self.id()))
     }

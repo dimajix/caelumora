@@ -1,21 +1,23 @@
-use caelumora_model::value::name::Name;
-use arc_swap::Guard;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentId;
-use caelumora_model::approval::ApprovalRule;
-use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, Participant};
-use caelumora_model::removal::Removal;
-use caelumora_model::message::Message;
-use caelumora_model::group::Group;
-use tracing::error;
-use caelumora_model::event::{EventPublisher, GlobalEvent};
-use caelumora_model::security::{SecurityContext, Subject};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
-use std::sync::Arc;
 use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
+use arc_swap::Guard;
+use caelumora_model::actor::ActorId;
+use caelumora_model::agent::AgentId;
+use caelumora_model::approval::ApprovalRule;
+use caelumora_model::channel::{
+    self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, Participant,
+};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::group::Group;
+use caelumora_model::message::Message;
+use caelumora_model::removal::Removal;
+use caelumora_model::security::{SecurityContext, Subject};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
+use caelumora_model::value::name::Name;
+use std::sync::Arc;
+use tracing::error;
 
 /// The one writer of a channel's document (issue 70): changes are stored first - where the
 /// permission is checked, on the channel's own attributes - and only then taken over live and
@@ -27,9 +29,18 @@ pub struct ChannelController {
 }
 
 impl ChannelController {
-    pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
+    pub fn new(
+        channel: Channel,
+        event_publisher: Arc<dyn EventPublisher>,
+        stores: &EntityStores,
+    ) -> Self {
         Self {
-            channel: LiveDocument::new((channel.session_id, channel.id), channel, Arc::clone(&stores.channels), event_publisher),
+            channel: LiveDocument::new(
+                (channel.session_id, channel.id),
+                channel,
+                Arc::clone(&stores.channels),
+                event_publisher,
+            ),
             groups: Arc::clone(&stores.groups),
         }
     }
@@ -64,7 +75,11 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn update_classification(&self, ctx: &SecurityContext, classification: Classification) -> StoreResult<()> {
+    pub async fn update_classification(
+        &self,
+        ctx: &SecurityContext,
+        classification: Classification,
+    ) -> StoreResult<()> {
         let event = ChannelUpdateEvent::ClassificationChanged(classification);
         self.update(ctx, &event).await
     }
@@ -76,7 +91,11 @@ impl ChannelController {
     /// `StoreError::Invalid` if `language` is no language tag, otherwise
     /// whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn update_language(&self, ctx: &SecurityContext, language: Option<&str>) -> StoreResult<()> {
+    pub async fn update_language(
+        &self,
+        ctx: &SecurityContext,
+        language: Option<&str>,
+    ) -> StoreResult<()> {
         let event = ChannelUpdateEvent::LanguageChanged(language.map(String::from));
         self.update(ctx, &event).await
     }
@@ -87,7 +106,11 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied`
     /// included; the channel is then unchanged.
-    pub async fn update_uses_workspace(&self, ctx: &SecurityContext, uses: bool) -> StoreResult<()> {
+    pub async fn update_uses_workspace(
+        &self,
+        ctx: &SecurityContext,
+        uses: bool,
+    ) -> StoreResult<()> {
         self.update(ctx, &ChannelUpdateEvent::UsesWorkspaceChanged(uses)).await
     }
 
@@ -99,7 +122,11 @@ impl ChannelController {
     /// `StoreError::Validation` if a rule does not only ask or deny
     /// (`ApprovalRule::check_restricting`), otherwise whatever the store
     /// reports; the channel is then unchanged.
-    pub async fn update_approval_rules(&self, ctx: &SecurityContext, rules: Vec<ApprovalRule>) -> StoreResult<()> {
+    pub async fn update_approval_rules(
+        &self,
+        ctx: &SecurityContext,
+        rules: Vec<ApprovalRule>,
+    ) -> StoreResult<()> {
         check_restricting(&rules)?;
         self.update(ctx, &ChannelUpdateEvent::ApprovalRulesChanged(rules)).await
     }
@@ -114,7 +141,11 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant) -> StoreResult<()> {
+    pub async fn add_participant(
+        &self,
+        ctx: &SecurityContext,
+        participant: Participant,
+    ) -> StoreResult<()> {
         let writing = self.channel.write().await;
         let mut channel = writing.current();
         let id = participant.actor_id();
@@ -139,14 +170,23 @@ impl ChannelController {
     /// # Errors
     /// `StoreError::NotFound` if `participant` takes no part in the channel;
     /// whatever the store reports otherwise.
-    pub async fn remove_participant(&self, ctx: &SecurityContext, participant: ActorId) -> StoreResult<Participant> {
+    pub async fn remove_participant(
+        &self,
+        ctx: &SecurityContext,
+        participant: ActorId,
+    ) -> StoreResult<Participant> {
         let writing = self.channel.write().await;
         let mut channel = writing.current();
-        let index = channel.participants.iter().position(|p| p.actor_id() == participant)
-            .ok_or_else(|| StoreError::NotFound { entity: "participant", id: participant.to_string() })?;
+        let index =
+            channel.participants.iter().position(|p| p.actor_id() == participant).ok_or_else(
+                || StoreError::NotFound { entity: "participant", id: participant.to_string() },
+            )?;
         let removed = channel.participants.remove(index);
         channel.former.retain(|f| f.participant.actor_id() != participant);
-        channel.former.push(FormerParticipant { participant: removed.clone(), left: Removal::now(ctx.caller_id) });
+        channel.former.push(FormerParticipant {
+            participant: removed.clone(),
+            left: Removal::now(ctx.caller_id),
+        });
         let channel = writing.store(ctx, channel).await?;
         self.keep_participants(&channel).await;
         if let Some(event) = self.joined_or_left_event(participant, false) {
@@ -163,8 +203,20 @@ impl ChannelController {
     /// # Errors
     /// `StoreError::Invalid` if one does not fit (`Channel::describe`),
     /// otherwise whatever the store reports; the channel is then unchanged.
-    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
-        self.update(ctx, &ChannelUpdateEvent::DescriptionChanged { summary: summary.map(String::from), briefing: briefing.map(String::from) }).await
+    pub async fn update_description(
+        &self,
+        ctx: &SecurityContext,
+        summary: Option<&str>,
+        briefing: Option<&str>,
+    ) -> StoreResult<()> {
+        self.update(
+            ctx,
+            &ChannelUpdateEvent::DescriptionChanged {
+                summary: summary.map(String::from),
+                briefing: briefing.map(String::from),
+            },
+        )
+        .await
     }
 
     /// Announces that agent `agent` left the channel, or came back to it,
@@ -181,14 +233,20 @@ impl ChannelController {
     /// 404): to whoever reads the channel, as it is classified - who would
     /// read the message in its history.
     pub(crate) fn announce_said(&self, message: &Message) {
-        self.channel.announce(GlobalEvent::custom::<Channel>(self.channel.address(), channel::SAID, message));
+        self.channel.announce(GlobalEvent::custom::<Channel>(
+            self.channel.address(),
+            channel::SAID,
+            message,
+        ));
     }
 
     /// The event announcing that `participant` joined or left.
     fn joined_or_left_event(&self, participant: ActorId, joined: bool) -> Option<GlobalEvent> {
         let name = if joined { channel::JOINED } else { channel::LEFT };
         match participant {
-            ActorId::Agent(_) | ActorId::User(_) => Some(GlobalEvent::custom::<Channel>(self.channel.address(), name, &participant)),
+            ActorId::Agent(_) | ActorId::User(_) => {
+                Some(GlobalEvent::custom::<Channel>(self.channel.address(), name, &participant))
+            }
             _ => None,
         }
     }

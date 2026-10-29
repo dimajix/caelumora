@@ -4,22 +4,22 @@ use super::participant::{participant_state, AgentParticipant, ParticipantState};
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::actor::user::ChannelWatch;
 use crate::attachment::AttachmentError;
-use crate::terminal::ByteStream;
 use crate::channel::ChannelLoop;
 use crate::error::component_message;
-use crate::session::ChannelRun;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
-use caelumora_model::chain::Position;
+use crate::session::ChannelRun;
+use crate::terminal::ByteStream;
 use caelumora_model::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;
+use caelumora_model::chain::Position;
 use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Place, Reading};
 use caelumora_model::content::{ContentId, ContentRef};
-use caelumora_model::confidentiality::{Reading, Place};
 use caelumora_model::digest::Digest;
 use caelumora_model::history::{HistoryEntry, HistoryPage, Reader};
 use caelumora_model::message::{Message, MessageId};
@@ -27,7 +27,9 @@ use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
 use caelumora_model::session::ChannelId;
-use caelumora_model::snapshot::{ChannelSnapshot, Detail, ChannelParticipantSnapshot, PublishedNotes, Unread};
+use caelumora_model::snapshot::{
+    ChannelParticipantSnapshot, ChannelSnapshot, Detail, PublishedNotes, Unread,
+};
 use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::Filter;
 use caelumora_model::store::{StoreError, StoreResultExt};
@@ -36,9 +38,9 @@ use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
 use caelumora_model::value::text::{Briefing, Introduction, Summary};
 use caelumora_model::work::TurnId;
+use caelumora_model::workspace::WorkspaceId;
 use std::sync::Arc;
 use tracing::warn;
-use caelumora_model::workspace::WorkspaceId;
 
 /// A channel the viewer may read.
 #[derive(Debug, Clone)]
@@ -53,7 +55,12 @@ pub struct ChannelView {
 }
 
 impl ChannelView {
-    pub(super) fn of(session: SessionView, channel: Arc<Channel>, run: Option<ChannelRun>, reading: Reading) -> Self {
+    pub(super) fn of(
+        session: SessionView,
+        channel: Arc<Channel>,
+        run: Option<ChannelRun>,
+        reading: Reading,
+    ) -> Self {
         Self { session, channel, run, reading }
     }
 
@@ -84,9 +91,19 @@ impl ChannelView {
     pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
         let session = self.session.as_session();
         let Some(id) = session.workspace else { return Ok(None) };
-        let Some(workspace) = self.views().controller_manager().workspace_controller(id).await.optional()
-            .map_err(|e| ViewError::failed(e, "reading the session's workspace"))? else { return Ok(None) };
-        let usable = workspace.usable_in(self.views().context(), session, &self.channel).await
+        let Some(workspace) = self
+            .views()
+            .controller_manager()
+            .workspace_controller(id)
+            .await
+            .optional()
+            .map_err(|e| ViewError::failed(e, "reading the session's workspace"))?
+        else {
+            return Ok(None);
+        };
+        let usable = workspace
+            .usable_in(self.views().context(), session, &self.channel)
+            .await
             .map_err(|e| ViewError::failed(e, "reading the session's workspace"))?;
         Ok(usable.map(|workspace| WorkspaceView::of(self.views().clone(), workspace)))
     }
@@ -144,7 +161,11 @@ impl ChannelView {
     /// What the channel holds classified `classification`: one side of the
     /// question whether it may be read from elsewhere.
     pub fn place(&self, classification: &Classification) -> Place {
-        Place { channel: self.channel.id, classification: classification.clone(), session: self.session.privacy() }
+        Place {
+            channel: self.channel.id,
+            classification: classification.clone(),
+            session: self.session.privacy(),
+        }
     }
 
     /// Whether `actor` is among the channel's participants - resting in it
@@ -177,7 +198,9 @@ impl ChannelView {
     /// if the viewer is no user taking part in it.
     pub fn user_follow(&self) -> Option<ChannelWatch> {
         let viewer @ ActorId::User(_) = self.views().context().caller_id else { return None };
-        self.lists(viewer).then(|| ChannelWatch::of(&self.views().actor_manager().outbox(self.channel.id, viewer)))
+        self.lists(viewer).then(|| {
+            ChannelWatch::of(&self.views().actor_manager().outbox(self.channel.id, viewer))
+        })
     }
 
     /// Whether the viewer may read an entry of the channel classified
@@ -197,7 +220,10 @@ impl ChannelView {
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub async fn may_change(&self) -> bool {
-        self.views().access_policy().may_change_channel(self.views().context(), &self.channel.security_attributes).await
+        self.views()
+            .access_policy()
+            .may_change_channel(self.views().context(), &self.channel.security_attributes)
+            .await
     }
 
     /// Its participants, in the order of the channel - but the deleted
@@ -220,7 +246,14 @@ impl ChannelView {
     pub async fn former_participants(&self) -> Vec<ParticipantView> {
         let mut former = Vec::with_capacity(self.channel.former.len());
         for left in &self.channel.former {
-            former.push(ParticipantView::of_former(self.clone(), left.participant.clone(), Some(left.left.clone())).await);
+            former.push(
+                ParticipantView::of_former(
+                    self.clone(),
+                    left.participant.clone(),
+                    Some(left.left.clone()),
+                )
+                .await,
+            );
         }
         for participant in &self.channel.participants {
             if !self.takes_part(participant).await {
@@ -240,14 +273,20 @@ impl ChannelView {
     /// `ParticipantNotFound` if `actor` neither takes part in the channel nor
     /// left it; `Failed` if the history cannot be read.
     pub async fn participant(&self, actor: ActorId) -> ViewResult<ParticipantView> {
-        if let Some(participant) = self.channel.participants.iter().find(|p| p.actor_id() == actor) {
+        if let Some(participant) = self.channel.participants.iter().find(|p| p.actor_id() == actor)
+        {
             return Ok(match self.takes_part(participant).await {
                 true => ParticipantView::of(self.clone(), participant.clone()).await,
                 false => self.resting(participant).await,
             });
         }
         if let Some(left) = self.channel.former.iter().find(|f| f.participant.actor_id() == actor) {
-            return Ok(ParticipantView::of_former(self.clone(), left.participant.clone(), Some(left.left.clone())).await);
+            return Ok(ParticipantView::of_former(
+                self.clone(),
+                left.participant.clone(),
+                Some(left.left.clone()),
+            )
+            .await);
         }
         let not_found = || ViewError::ParticipantNotFound { channel: self.channel.id, actor };
         let ActorId::Agent(agent) = actor else { return Err(not_found()) };
@@ -286,7 +325,12 @@ impl ChannelView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn visible_from(&self) -> ViewResult<Position> {
-        let ranges = self.views().histories().memberships(self.channel.id, self.reader()).await.map_err(|e| self.failed_reading(e))?;
+        let ranges = self
+            .views()
+            .histories()
+            .memberships(self.channel.id, self.reader())
+            .await
+            .map_err(|e| self.failed_reading(e))?;
         Ok(ranges.first().map_or(Position::START, |range| range.start))
     }
 
@@ -300,7 +344,11 @@ impl ChannelView {
     /// # Errors
     /// `Failed` if the history cannot be read; `NoChannelNamed` if nothing
     /// of a channel read entry by entry can be on this page.
-    pub async fn history_page(&self, before: Option<Position>, limit: usize) -> ViewResult<HistoryPage> {
+    pub async fn history_page(
+        &self,
+        before: Option<Position>,
+        limit: usize,
+    ) -> ViewResult<HistoryPage> {
         self.history_page_of(before, limit, None).await
     }
 
@@ -310,9 +358,25 @@ impl ChannelView {
     ///
     /// # Errors
     /// As `history_page`.
-    pub async fn history_page_of(&self, before: Option<Position>, limit: usize, filter: Option<Filter<HistoryField>>) -> ViewResult<HistoryPage> {
+    pub async fn history_page_of(
+        &self,
+        before: Option<Position>,
+        limit: usize,
+        filter: Option<Filter<HistoryField>>,
+    ) -> ViewResult<HistoryPage> {
         let filter = self.readable_items(filter);
-        let page = self.views().histories().page(self.channel.id, &self.reading_as(), Position::START, before, limit, filter.as_ref()).await
+        let page = self
+            .views()
+            .histories()
+            .page(
+                self.channel.id,
+                &self.reading_as(),
+                Position::START,
+                before,
+                limit,
+                filter.as_ref(),
+            )
+            .await
             .map_err(|e| self.failed_reading(e))?;
         if self.reading != Reading::Whole && page.items.is_empty() {
             return Err(self.nothing_released());
@@ -328,7 +392,12 @@ impl ChannelView {
     /// read; `NoChannelNamed` instead of `MessageNotFound` in a channel read
     /// entry by entry.
     pub async fn message(&self, id: MessageId) -> ViewResult<Message> {
-        let said = self.views().histories().said(self.channel.id, &self.reading_as(), id).await.map_err(|e| self.failed_reading(e))?;
+        let said = self
+            .views()
+            .histories()
+            .said(self.channel.id, &self.reading_as(), id)
+            .await
+            .map_err(|e| self.failed_reading(e))?;
         let seen = said.and_then(|(_, item)| item.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
@@ -346,8 +415,11 @@ impl ChannelView {
     /// viewer may not read - a channel read entry by entry releases each by its own label.
     pub async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<ContentRef> {
         let message = self.message(message).await?;
-        let attachment = message.carried()
-            .find(|attachment| attachment.id == id && self.may_read_entry(&attachment.classification))
+        let attachment = message
+            .carried()
+            .find(|attachment| {
+                attachment.id == id && self.may_read_entry(&attachment.classification)
+            })
             .ok_or(AttachmentError::NotFound(id))?;
         Ok(attachment.clone())
     }
@@ -359,7 +431,11 @@ impl ChannelView {
     /// # Errors
     /// As `attachment`; `Attachment` with `NotFound` also if the storage has nothing under its
     /// key, `StorageGone`, `Content`.
-    pub async fn attachment_content(&self, message: MessageId, id: ContentId) -> ViewResult<(ContentRef, u64, ByteStream)> {
+    pub async fn attachment_content(
+        &self,
+        message: MessageId,
+        id: ContentId,
+    ) -> ViewResult<(ContentRef, u64, ByteStream)> {
         let attachment = self.attachment(message, id).await?;
         let (size, content) = self.views().attachment_manager().content_of(&attachment).await?;
         Ok((attachment, size, content))
@@ -377,7 +453,8 @@ impl ChannelView {
     /// channel or read it from elsewhere, entry by entry.
     fn reading_as(&self) -> Reader {
         let reader = self.reader();
-        let took_part = self.lists(reader) || self.channel.former.iter().any(|left| left.participant.actor_id() == reader);
+        let took_part = self.lists(reader)
+            || self.channel.former.iter().any(|left| left.participant.actor_id() == reader);
         match self.reading {
             Reading::Whole if took_part => Reader::Participant(reader),
             _ => Reader::Outsider,
@@ -396,7 +473,10 @@ impl ChannelView {
     /// turns ended - that would tell of work in the channel whose messages
     /// are not released (issue 258).
     fn readable_items(&self, filter: Option<Filter<HistoryField>>) -> Option<Filter<HistoryField>> {
-        match (Filter::readable(&self.reading, self.views().confidentiality().compartments()), filter) {
+        match (
+            Filter::readable(&self.reading, self.views().confidentiality().compartments()),
+            filter,
+        ) {
             (Some(readable), Some(filter)) => Some(Filter::all_of([readable, filter])),
             (readable, filter) => readable.or(filter),
         }
@@ -448,7 +528,11 @@ impl ChannelView {
     /// shown its owner's (issue 255).
     fn shows_approvals(&self) -> bool {
         let viewer = self.views().viewer().context().caller_id;
-        let takes_part = self.channel.participants.iter().any(|p| matches!(p, Participant::User(_)) && p.actor_id() == viewer);
+        let takes_part = self
+            .channel
+            .participants
+            .iter()
+            .any(|p| matches!(p, Participant::User(_)) && p.actor_id() == viewer);
         takes_part && self.reading == Reading::Whole
     }
 
@@ -508,22 +592,49 @@ impl ChannelView {
     /// `Failed` if the history or what the user read cannot be read.
     pub async fn unread(&self) -> ViewResult<Option<Unread>> {
         let viewer @ ActorId::User(user) = self.reader() else { return Ok(None) };
-        let state = self.views().states().get_user_channel_state(user, self.channel.id).await.map_err(|e| {
-            warn!("Cannot read what user {} read of channel {}: {}", user, self.channel.id, e);
-            ViewError::failed(e, format!("reading what was read of channel {}", self.channel.id))
-        })?;
+        let state = self
+            .views()
+            .states()
+            .get_user_channel_state(user, self.channel.id)
+            .await
+            .map_err(|e| {
+                warn!("Cannot read what user {} read of channel {}: {}", user, self.channel.id, e);
+                ViewError::failed(
+                    e,
+                    format!("reading what was read of channel {}", self.channel.id),
+                )
+            })?;
         let read_up_to = state.read.map(|read| read.message);
         let from = state.unread_from();
-        let heard_from_others = || Filter::all_of([Filter::heard(), Filter::negated(Filter::said_by(viewer))]);
+        let heard_from_others =
+            || Filter::all_of([Filter::heard(), Filter::negated(Filter::said_by(viewer))]);
         let new = self.readable_items(Some(heard_from_others()));
-        let mentioning = self.readable_items(Some(Filter::all_of([heard_from_others(), Filter::mentioning(viewer)])));
+        let mentioning = self.readable_items(Some(Filter::all_of([
+            heard_from_others(),
+            Filter::mentioning(viewer),
+        ])));
         let key = self.channel.id;
         let reader = Reader::Participant(viewer);
-        let counted = self.views().histories().page(key, &reader, from, None, Unread::CAP, new.as_ref()).await.map_err(|e| self.failed_reading(e))?;
+        let counted = self
+            .views()
+            .histories()
+            .page(key, &reader, from, None, Unread::CAP, new.as_ref())
+            .await
+            .map_err(|e| self.failed_reading(e))?;
         // A mention among those not counted is looked for on its own.
-        let mentions_viewer = |item: &HistoryEntry| item.said().is_some_and(|message| message.mentions.contains(&viewer));
-        let mentioned = counted.entries().any(mentions_viewer) || (counted.items.len() == Unread::CAP
-            && !self.views().histories().page(key, &reader, from, None, 1, mentioning.as_ref()).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
+        let mentions_viewer = |item: &HistoryEntry| {
+            item.said().is_some_and(|message| message.mentions.contains(&viewer))
+        };
+        let mentioned = counted.entries().any(mentions_viewer)
+            || (counted.items.len() == Unread::CAP
+                && !self
+                    .views()
+                    .histories()
+                    .page(key, &reader, from, None, 1, mentioning.as_ref())
+                    .await
+                    .map_err(|e| self.failed_reading(e))?
+                    .items
+                    .is_empty());
         Ok(Some(Unread { messages: counted.items.len(), mentioned, read_up_to }))
     }
 }
@@ -552,7 +663,11 @@ impl ParticipantView {
 
     /// `participant`, who took part in `channel` and left - removed as
     /// `left` says, if the channel kept it.
-    async fn of_former(channel: ChannelView, participant: Participant, left: Option<Removal>) -> Self {
+    async fn of_former(
+        channel: ChannelView,
+        participant: Participant,
+        left: Option<Removal>,
+    ) -> Self {
         let state = participant_state(channel.views(), &participant, channel.id()).await;
         Self { channel, participant, former: true, left, state }
     }
@@ -626,7 +741,11 @@ impl ParticipantView {
     /// # Errors
     /// `Failed` if it cannot be read.
     pub async fn personality(&self) -> ViewResult<Option<(String, PersonalityKind)>> {
-        Ok(self.state.personality().await?.map(|personality| (personality.name.to_string(), personality.kind)))
+        Ok(self
+            .state
+            .personality()
+            .await?
+            .map(|personality| (personality.name.to_string(), personality.kind)))
     }
 
     /// Who owns an agent participant (issue 244): whose authority it acts with
@@ -640,7 +759,12 @@ impl ParticipantView {
     /// message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub async fn may_read_context(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) => self.views().access_policy().may_read_agent_context(self.views().context(), attributes).await,
+            Some(attributes) => {
+                self.views()
+                    .access_policy()
+                    .may_read_agent_context(self.views().context(), attributes)
+                    .await
+            }
             None => false,
         }
     }
@@ -649,7 +773,16 @@ impl ParticipantView {
     /// (`ReadAgentTools`, issue 194) - only ever for agents.
     pub async fn may_read_tools(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) => self.views().access_policy().may_read_agent_tools(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
+            Some(attributes) => {
+                self.views()
+                    .access_policy()
+                    .may_read_agent_tools(
+                        self.views().context(),
+                        attributes,
+                        &self.channel.channel.security_attributes,
+                    )
+                    .await
+            }
             None => false,
         }
     }
@@ -658,7 +791,12 @@ impl ParticipantView {
     /// from (`ReadAgentComponents`, issue 270) - only ever for agents.
     pub async fn may_read_components(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) => self.views().access_policy().may_read_agent_components(self.views().context(), attributes).await,
+            Some(attributes) => {
+                self.views()
+                    .access_policy()
+                    .may_read_agent_components(self.views().context(), attributes)
+                    .await
+            }
             None => false,
         }
     }
@@ -669,7 +807,16 @@ impl ParticipantView {
     /// else sees only that it waits.
     pub async fn may_approve(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) if !self.former => self.views().access_policy().may_approve(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
+            Some(attributes) if !self.former => {
+                self.views()
+                    .access_policy()
+                    .may_approve(
+                        self.views().context(),
+                        attributes,
+                        &self.channel.channel.security_attributes,
+                    )
+                    .await
+            }
             _ => false,
         }
     }
@@ -686,7 +833,13 @@ impl ParticipantView {
         }
         match self.state.personality().await {
             Ok(Some(personality)) if personality.kind.can_retry() => {
-                self.views().access_policy().may_retry_message(self.views().context(), &self.channel.channel.security_attributes).await
+                self.views()
+                    .access_policy()
+                    .may_retry_message(
+                        self.views().context(),
+                        &self.channel.channel.security_attributes,
+                    )
+                    .await
             }
             Ok(_) => false,
             Err(e) => {
@@ -701,7 +854,15 @@ impl ParticipantView {
     /// of either kind.
     pub async fn may_cancel(&self) -> bool {
         match self.state.agent() {
-            Some(_) if !self.former => self.views().access_policy().may_cancel_channel(self.views().context(), &self.channel.channel.security_attributes).await,
+            Some(_) if !self.former => {
+                self.views()
+                    .access_policy()
+                    .may_cancel_channel(
+                        self.views().context(),
+                        &self.channel.channel.security_attributes,
+                    )
+                    .await
+            }
             _ => false,
         }
     }
@@ -722,7 +883,10 @@ impl ParticipantView {
         if self.former {
             return Vec::new();
         }
-        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id())) else { return Vec::new() };
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id()))
+        else {
+            return Vec::new();
+        };
         actor.commands(self.views().context()).await
     }
 
@@ -738,12 +902,24 @@ impl ParticipantView {
     pub async fn tool_sets(&self) -> ViewResult<Vec<ToolSet>> {
         let Some(attributes) = self.state.attributes() else { return Ok(Vec::new()) };
         let views = self.views();
-        views.access_policy()
-            .require(views.context(), ActionType::ReadAgentTools { agent: attributes, channel: &self.channel.channel.security_attributes }, |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
+        views
+            .access_policy()
+            .require(
+                views.context(),
+                ActionType::ReadAgentTools {
+                    agent: attributes,
+                    channel: &self.channel.channel.security_attributes,
+                },
+                |refused| ViewError::Forbidden { actor: self.id(), refused },
+            )
+            .await?;
         if self.former {
             return Ok(Vec::new());
         }
-        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id())) else { return Ok(Vec::new()) };
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id()))
+        else {
+            return Ok(Vec::new());
+        };
         Ok(actor.tool_sets().await)
     }
 
@@ -756,14 +932,23 @@ impl ParticipantView {
     /// `Forbidden` if the participant is an agent whose components the viewer
     /// may not see (`ReadAgentComponents`).
     pub async fn components(&self) -> ViewResult<ComponentConfig> {
-        let Some(attributes) = self.state.attributes() else { return Ok(ComponentConfig::default()) };
+        let Some(attributes) = self.state.attributes() else {
+            return Ok(ComponentConfig::default());
+        };
         let views = self.views();
-        views.access_policy()
-            .require(views.context(), ActionType::ReadAgentComponents(attributes), |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
+        views
+            .access_policy()
+            .require(views.context(), ActionType::ReadAgentComponents(attributes), |refused| {
+                ViewError::Forbidden { actor: self.id(), refused }
+            })
+            .await?;
         if self.former {
             return Ok(ComponentConfig::default());
         }
-        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id())) else { return Ok(ComponentConfig::default()) };
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id()))
+        else {
+            return Ok(ComponentConfig::default());
+        };
         Ok(actor.components())
     }
 
@@ -771,7 +956,12 @@ impl ParticipantView {
     /// its owner (`DeleteAgent`, issue 164).
     pub async fn may_delete(&self) -> bool {
         match (self.state.agent(), self.state.attributes()) {
-            (Some(_), Some(attributes)) => self.views().access_policy().may_delete_agent(self.views().context(), attributes).await,
+            (Some(_), Some(attributes)) => {
+                self.views()
+                    .access_policy()
+                    .may_delete_agent(self.views().context(), attributes)
+                    .await
+            }
             _ => false,
         }
     }
@@ -787,7 +977,12 @@ impl ParticipantView {
         let Some(agent) = self.state.agent() else { return Ok(None) };
         let state = agent.stored().await?;
         let notes = self.notes_in(&state).await;
-        Ok(Some(PublishedNotes { agent: self.id(), name: self.name().unwrap_or_default().to_string(), notes, digest: state.notes.digest() }))
+        Ok(Some(PublishedNotes {
+            agent: self.id(),
+            name: self.name().unwrap_or_default().to_string(),
+            notes,
+            digest: state.notes.digest(),
+        }))
     }
 
     /// Of the notes the agent published, as its `state` holds them, those
@@ -835,8 +1030,12 @@ impl ParticipantView {
     pub async fn context(&self) -> ViewResult<AgentContextView> {
         let agent = self.readable_agent().await?;
         if self.channel.reading != Reading::Whole {
-            let attributes = self.state.attributes().ok_or(ViewError::NoContext { actor: self.id() })?;
-            return Err(ViewError::Forbidden { actor: self.id(), refused: ActionType::ReadAgentContext(attributes).refused() });
+            let attributes =
+                self.state.attributes().ok_or(ViewError::NoContext { actor: self.id() })?;
+            return Err(ViewError::Forbidden {
+                actor: self.id(),
+                refused: ActionType::ReadAgentContext(attributes).refused(),
+            });
         }
         agent.context().await
     }
@@ -846,8 +1045,12 @@ impl ParticipantView {
         let no_context = || ViewError::NoContext { actor: self.id() };
         let attributes = self.state.attributes().ok_or_else(no_context)?;
         let views = self.views();
-        views.access_policy()
-            .require(views.context(), ActionType::ReadAgentContext(attributes), |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
+        views
+            .access_policy()
+            .require(views.context(), ActionType::ReadAgentContext(attributes), |refused| {
+                ViewError::Forbidden { actor: self.id(), refused }
+            })
+            .await?;
         self.state.agent().ok_or_else(no_context)
     }
 
@@ -869,7 +1072,9 @@ impl ParticipantView {
             wanted.remove(Detail::APPROVALS);
         }
         let state = match self.state.agent() {
-            Some(agent) if !wanted.is_empty() => agent.stored().await
+            Some(agent) if !wanted.is_empty() => agent
+                .stored()
+                .await
                 .inspect_err(|e| warn!("Reading the state of {} failed: {:#}", self.id(), e))
                 .ok(),
             _ => None,
@@ -878,12 +1083,19 @@ impl ParticipantView {
         let mut personality = None;
         let (mut owner, mut owner_name) = (None, None);
         if detail.contains(Detail::PROFILE) {
-            introduction = self.introduction().await
+            introduction = self
+                .introduction()
+                .await
                 .inspect_err(|e| warn!("Reading the introduction of {} failed: {:#}", self.id(), e))
-                .ok().flatten().map(String::from);
-            personality = self.personality().await
+                .ok()
+                .flatten()
+                .map(String::from);
+            personality = self
+                .personality()
+                .await
                 .inspect_err(|e| warn!("Reading the personality of {} failed: {:#}", self.id(), e))
-                .ok().flatten();
+                .ok()
+                .flatten();
             owner = self.owner();
             if let Some(owner) = owner {
                 owner_name = self.views().name_of(owner).await;
@@ -905,7 +1117,9 @@ impl ParticipantView {
                 // Sensitive questions only for those asked (issue 165) -
                 // in person, never to an agent of theirs.
                 let viewer = self.views().viewer().context().caller_id;
-                pending_questions = state.pending_questions().into_iter()
+                pending_questions = state
+                    .pending_questions()
+                    .into_iter()
                     .filter(|q| q.shown_to().is_none_or(|asked| asked.contains(&viewer)))
                     .collect();
             }

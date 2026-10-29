@@ -98,7 +98,10 @@ impl<T> RpcResponse<T> {
         match (self.result, self.error) {
             (_, Some(error)) => Ok(Err(error)),
             (Some(result), None) => Ok(Ok(result)),
-            (None, None) => Err(ExternalAgentError::InvalidResponse { endpoint: endpoint.to_string(), reason: "neither a result nor an error".to_string() }),
+            (None, None) => Err(ExternalAgentError::InvalidResponse {
+                endpoint: endpoint.to_string(),
+                reason: "neither a result nor an error".to_string(),
+            }),
         }
     }
 }
@@ -106,7 +109,10 @@ impl<T> RpcResponse<T> {
 impl RpcError {
     /// The error of a request the agent at `endpoint` refused so.
     pub(super) fn rejected(self, endpoint: &str) -> ExternalAgentError {
-        ExternalAgentError::Rejected { endpoint: endpoint.to_string(), message: format!("{} ({})", self.message, self.code) }
+        ExternalAgentError::Rejected {
+            endpoint: endpoint.to_string(),
+            message: format!("{} ({})", self.message, self.code),
+        }
     }
 }
 
@@ -126,7 +132,11 @@ impl AgentCard {
         if self.supported_interfaces.is_empty() {
             return "nothing".to_string();
         }
-        self.supported_interfaces.iter().map(|i| format!("{} {}", i.protocol_binding, i.protocol_version)).collect::<Vec<_>>().join(", ")
+        self.supported_interfaces
+            .iter()
+            .map(|i| format!("{} {}", i.protocol_binding, i.protocol_version))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -291,7 +301,11 @@ mod tests {
         assert_eq!(request["method"], "GetTask");
         assert_eq!(request["params"], json!({ "id": "t-1" }));
         assert!(request["id"].as_str().is_some_and(|id| !id.is_empty()));
-        assert_ne!(sent(RpcRequest::new(method::GET_TASK, ()))["id"], request["id"], "every request its own");
+        assert_ne!(
+            sent(RpcRequest::new(method::GET_TASK, ()))["id"],
+            request["id"],
+            "every request its own"
+        );
     }
 
     #[test]
@@ -304,21 +318,42 @@ mod tests {
         };
         let params = |return_immediately| SendMessageParams {
             message: message(),
-            configuration: SendConfiguration { accepted_output_modes: vec!["text/plain".to_string()], return_immediately },
+            configuration: SendConfiguration {
+                accepted_output_modes: vec!["text/plain".to_string()],
+                return_immediately,
+            },
         };
-        assert_eq!(sent(params(false)), json!({
-            "message": { "messageId": "m-1", "role": "ROLE_USER", "parts": [{ "text": "alice: hello" }] },
-            "configuration": { "acceptedOutputModes": ["text/plain"] },
-        }), "streamed: no returnImmediately");
-        assert_eq!(sent(params(true))["configuration"], json!({ "acceptedOutputModes": ["text/plain"], "returnImmediately": true }));
+        assert_eq!(
+            sent(params(false)),
+            json!({
+                "message": { "messageId": "m-1", "role": "ROLE_USER", "parts": [{ "text": "alice: hello" }] },
+                "configuration": { "acceptedOutputModes": ["text/plain"] },
+            }),
+            "streamed: no returnImmediately"
+        );
+        assert_eq!(
+            sent(params(true))["configuration"],
+            json!({ "acceptedOutputModes": ["text/plain"], "returnImmediately": true })
+        );
 
-        let reply = sent(WireMessage { context_id: Some("c-1".to_string()), task_id: Some("t-1".to_string()), ..message() });
-        assert_eq!((reply["contextId"].as_str(), reply["taskId"].as_str()), (Some("c-1"), Some("t-1")));
+        let reply = sent(WireMessage {
+            context_id: Some("c-1".to_string()),
+            task_id: Some("t-1".to_string()),
+            ..message()
+        });
+        assert_eq!(
+            (reply["contextId"].as_str(), reply["taskId"].as_str()),
+            (Some("c-1"), Some("t-1"))
+        );
     }
 
     #[test]
     fn a_role_not_known_is_read_as_unspecified() {
-        let read = |role: &str| serde_json::from_value::<WireMessage>(json!({ "role": role, "parts": [] })).expect("a message").role;
+        let read = |role: &str| {
+            serde_json::from_value::<WireMessage>(json!({ "role": role, "parts": [] }))
+                .expect("a message")
+                .role
+        };
         assert_eq!(read("ROLE_AGENT"), Some(WireRole::Agent));
         assert_eq!(read("ROLE_USER"), Some(WireRole::User));
         assert_eq!(read("ROLE_SOMEONE_ELSE"), Some(WireRole::Unspecified));

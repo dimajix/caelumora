@@ -1,39 +1,42 @@
-use crate::actor::AgentKinds;
+use super::{RuntimeManager, Services};
 use crate::actor::ActorManager;
+use crate::actor::AgentKinds;
+use crate::agent::state::AgentStates;
+use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
+use crate::backend::{Backends, NamedBackends};
 use crate::channel::Participation;
 use crate::component::ComponentRegistry;
 use crate::content::ContentStorage;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
+use crate::group::GroupManager;
+use crate::plugin::Plugin;
+use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
+use crate::seed::SeedSection;
+use crate::terminal::TerminalProvider;
+use crate::workspace::reaper::CommandReaper;
+use crate::workspace::WorkspaceManager;
 use anyhow::{bail, Context, Result};
 use caelumora_model::approval::ApprovalRule;
-use crate::agent::state::AgentStates;
 use caelumora_model::component::ComponentConfig;
+use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS, DEFAULT_VARIANT};
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::AccessPolicy;
-use caelumora_model::user_provider::{UserManager, UserProvider};
-use crate::backend::{Backends, NamedBackends};
 use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, PersistenceBackend, Persistence, StoreResult, Stored};
-use crate::plugin::Plugin;
-use crate::seed::SeedSection;
+use caelumora_model::store::{
+    EntityStore, EntityStoreFactory, EntityStores, Persistence, PersistenceBackend, StoreResult,
+    Stored,
+};
+use caelumora_model::user_provider::{UserManager, UserProvider};
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::agent::AgentManager;
-use crate::group::GroupManager;
-use crate::terminal::TerminalProvider;
-use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
-use crate::workspace::WorkspaceManager;
-use crate::workspace::reaper::CommandReaper;
-use super::{RuntimeManager, Services};
-use serde_json::Value;
 
 /// What builds the `RuntimeManager` (issue 323): the core's services and
 /// managers, made first - their backends by `Backends`, the core's and the
@@ -82,7 +85,9 @@ pub struct RuntimeBuilder {
 
 impl fmt::Debug for RuntimeBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RuntimeBuilder").field("services", &self.services.names()).finish_non_exhaustive()
+        f.debug_struct("RuntimeBuilder")
+            .field("services", &self.services.names())
+            .finish_non_exhaustive()
     }
 }
 
@@ -112,6 +117,7 @@ impl RuntimeBuilder {
     /// # Errors
     /// If a store of the core's kinds cannot be opened, or a storage of
     /// workspaces or of content or a user provider cannot be made.
+    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     pub fn new(
         persistence: Persistence,
         secret_manager: Arc<SecretManager>,
@@ -123,7 +129,8 @@ impl RuntimeBuilder {
     ) -> Result<Self> {
         let state_store = persistence.state_store();
         let entity_stores = persistence.entity_stores()?;
-        let event_bus = Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
+        let event_bus =
+            Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
         // What a backend may ask for: the policies, the secrets and, for a
         // user provider, the records of the users.
         let backend_services = Services::empty()
@@ -131,19 +138,71 @@ impl RuntimeBuilder {
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&entity_stores.users));
-        let storages = Arc::new(backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?);
-        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), Arc::clone(&storages), Arc::clone(&state_store), persistence.history_store()));
-        let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
-        let command_reaper = CommandReaper::new(&entity_stores, &event_bus, Arc::clone(&controller_manager), Arc::clone(&storages))?;
-        let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), storages, &config.workspaces));
-        let content_storages = Arc::new(backends.make_named::<dyn ContentStorage>("storage of content", &config.content.storage, &backend_services)?);
-        let attachments = Arc::new(AttachmentManager::new(Arc::clone(&confidentiality), Arc::clone(&content_storages), &config.attachments)?);
+        let storages = Arc::new(backends.make_named::<dyn TerminalProvider>(
+            "storage of workspaces",
+            &config.workspaces.storage,
+            &backend_services,
+        )?);
+        let controller_manager = Arc::new(ControllerManager::new(
+            entity_stores.clone(),
+            Arc::clone(&event_bus),
+            Arc::clone(&access_policy),
+            Arc::clone(&confidentiality),
+            Arc::clone(&storages),
+            Arc::clone(&state_store),
+            persistence.history_store(),
+        ));
+        let agent_states = Arc::new(AgentStates::new(
+            Arc::clone(&state_store),
+            Arc::<EventBus>::clone(&event_bus),
+        ));
+        let command_reaper = CommandReaper::new(
+            &entity_stores,
+            &event_bus,
+            Arc::clone(&controller_manager),
+            Arc::clone(&storages),
+        )?;
+        let workspaces = Arc::new(WorkspaceManager::new(
+            &entity_stores,
+            Arc::clone(&event_bus),
+            Arc::clone(&access_policy),
+            Arc::clone(&confidentiality),
+            storages,
+            &config.workspaces,
+        ));
+        let content_storages = Arc::new(backends.make_named::<dyn ContentStorage>(
+            "storage of content",
+            &config.content.storage,
+            &backend_services,
+        )?);
+        let attachments = Arc::new(AttachmentManager::new(
+            Arc::clone(&confidentiality),
+            Arc::clone(&content_storages),
+            &config.attachments,
+        )?);
         // Users are recorded and their changes announced on the event bus
         // (issue 306).
-        let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
-        let user_manager = Arc::new(UserManager::new(user_providers, Arc::clone(&entity_stores.users), Arc::<EventBus>::clone(&event_bus)));
-        let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy)));
-        let agents = Arc::new(AgentManager::new(&entity_stores, Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&access_policy)));
+        let user_providers = backends.make_chain::<dyn UserProvider>(
+            "user provider",
+            &config.users.providers,
+            &backend_services,
+        )?;
+        let user_manager = Arc::new(UserManager::new(
+            user_providers,
+            Arc::clone(&entity_stores.users),
+            Arc::<EventBus>::clone(&event_bus),
+        ));
+        let groups = Arc::new(GroupManager::new(
+            &entity_stores,
+            Arc::clone(&event_bus),
+            Arc::clone(&access_policy),
+        ));
+        let agents = Arc::new(AgentManager::new(
+            &entity_stores,
+            Arc::clone(&state_store),
+            Arc::clone(&event_bus),
+            Arc::clone(&access_policy),
+        ));
         let scope_members: Vec<Arc<dyn ScopeMember>> = vec![
             Arc::new(Unowned(Arc::clone(&entity_stores.personalities))),
             Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
@@ -210,22 +269,45 @@ impl RuntimeBuilder {
         // The policy is made before the store it guards, and bound to it
         // once it exists.
         let memberships = Arc::new(StoreMemberships::new());
-        let access_policy = config.create_access_policy(Arc::<StoreMemberships>::clone(&memberships));
+        let access_policy =
+            config.create_access_policy(Arc::<StoreMemberships>::clone(&memberships));
         let confidentiality = config.create_confidentiality_policy();
-        let secret_services = Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
-        let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
-        let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
+        let secret_services =
+            Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
+        let secret_providers = backends.make_chain::<dyn SecretProvider>(
+            "secret provider",
+            &config.secrets.providers,
+            &secret_services,
+        )?;
+        let secret_manager =
+            Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
         // The stores, over the backends the configuration names (issue 446),
         // which may ask for the secrets (issue 447).
         let store_services = secret_services.with(Arc::clone(&secret_manager));
-        let backend = |what: &str, name: &str, backend: &BackendConfig| backends.make_one::<dyn PersistenceBackend>(what, name, backend, &store_services);
+        let backend = |what: &str, name: &str, backend: &BackendConfig| {
+            backends.make_one::<dyn PersistenceBackend>(what, name, backend, &store_services)
+        };
         let states = backend("state store", "state_store", &config.persistence.state_store)?;
         let entities = backend("entity store", "entity_store", &config.persistence.entity_store)?;
-        let persistence = Persistence::new(entities, states, Arc::clone(&access_policy), Arc::clone(&confidentiality)).context("Cannot make the state store")?;
+        let persistence = Persistence::new(
+            entities,
+            states,
+            Arc::clone(&access_policy),
+            Arc::clone(&confidentiality),
+        )
+        .context("Cannot make the state store")?;
         let stores = persistence.entity_stores()?;
         memberships.bind(&stores.groups);
         let registry = ComponentRegistry::built_in(stores.component_bundles);
-        let mut builder = Self::new(persistence.clone(), secret_manager, access_policy, confidentiality, config, registry, backends)?;
+        let mut builder = Self::new(
+            persistence.clone(),
+            secret_manager,
+            access_policy,
+            confidentiality,
+            config,
+            registry,
+            backends,
+        )?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
@@ -238,7 +320,9 @@ impl RuntimeBuilder {
     /// # Errors
     /// Whatever its registration fails with, naming the plugin.
     pub fn plugin(&mut self, plugin: &dyn Plugin) -> Result<()> {
-        plugin.register(self).with_context(|| format!("Cannot register the plugin {}", plugin.name()))
+        plugin
+            .register(self)
+            .with_context(|| format!("Cannot register the plugin {}", plugin.name()))
     }
 
     /// The store of the entities of `T`, a plugin's kind - the same for
@@ -328,7 +412,8 @@ impl RuntimeBuilder {
             bail!("The section '{name}' of the configuration is claimed twice");
         }
         match self.sections.remove(name) {
-            Some(section) => serde_json::from_value(section).with_context(|| format!("Cannot read the section '{name}' of the configuration")),
+            Some(section) => serde_json::from_value(section)
+                .with_context(|| format!("Cannot read the section '{name}' of the configuration")),
             None => Ok(C::default()),
         }
     }
@@ -358,14 +443,22 @@ impl RuntimeBuilder {
         }
         self.component_registry.set_defaults(&self.component_defaults)?;
         // The default variant first: the others fall back to it.
-        let (defaults, variants): (Vec<_>, Vec<_>) = self.prompt_variants.iter().partition(|(variant, _)| variant.as_str() == DEFAULT_VARIANT);
+        let (defaults, variants): (Vec<_>, Vec<_>) = self
+            .prompt_variants
+            .iter()
+            .partition(|(variant, _)| variant.as_str() == DEFAULT_VARIANT);
         for (variant, dir) in defaults.into_iter().chain(variants) {
             self.prompts.add_variant(variant, dir)?;
         }
         let prompts = Arc::new(self.prompts);
         self.services.insert(Arc::clone(&prompts));
         let scoped = Arc::new(ScopedEntities::new(self.scope_members));
-        let participation = Arc::new(Participation::new(Arc::clone(&self.entity_stores.agents), Arc::clone(&self.controller_manager), Arc::clone(&self.access_policy), Arc::clone(&self.confidentiality)));
+        let participation = Arc::new(Participation::new(
+            Arc::clone(&self.entity_stores.agents),
+            Arc::clone(&self.controller_manager),
+            Arc::clone(&self.access_policy),
+            Arc::clone(&self.confidentiality),
+        ));
         Ok(RuntimeManager {
             access_policy: self.access_policy,
             confidentiality: self.confidentiality,
@@ -408,11 +501,19 @@ mod tests {
     async fn the_backends_the_configuration_names_are_made_when_the_runtime_is_built() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = format!("secrets:\n  providers: []\nworkspaces:\n  storage:\n    main:\n      type: local\n      root: \"{0}\"\ncontent:\n  storage:\n    kept:\n      type: local\n      root: \"{0}\"\nusers:\n  providers:\n    - type: accept_any\n", dir.path().display());
-        let builder = RuntimeBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).await.unwrap();
-        assert!(builder.content_storages().get("kept").is_some(), "for their owners to be made with");
+        let builder =
+            RuntimeBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).await.unwrap();
+        assert!(
+            builder.content_storages().get("kept").is_some(),
+            "for their owners to be made with"
+        );
         let runtime = builder.build().unwrap();
         assert_eq!(runtime.workspace_manager().storages().collect::<Vec<_>>(), [("main", false)]);
-        let alice = runtime.user_manager().authenticate("alice", &Credential::Password("x")).await.expect("accepted by accept_any");
+        let alice = runtime
+            .user_manager()
+            .authenticate("alice", &Credential::Password("x"))
+            .await
+            .expect("accepted by accept_any");
         assert_eq!(alice.username, "alice");
 
         for (yaml, names) in [
@@ -436,20 +537,63 @@ mod tests {
     async fn the_variants_of_the_texts_are_read_when_the_runtime_is_built() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("default")).unwrap();
-        fs::write(dir.path().join("default").join("core.yaml"), "given_up_cause:\n  failed: it broke\n").unwrap();
+        fs::write(
+            dir.path().join("default").join("core.yaml"),
+            "given_up_cause:\n  failed: it broke\n",
+        )
+        .unwrap();
         fs::create_dir(dir.path().join("gemma4")).unwrap();
-        fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  left: you went\n").unwrap();
+        fs::write(
+            dir.path().join("gemma4").join("core.yaml"),
+            "given_up_cause:\n  left: you went\n",
+        )
+        .unwrap();
         let yaml = |variants: &str| format!("prompts:\n{variants}");
-        let config = yaml(&format!("  gemma4: \"{0}/gemma4\"\n  default: \"{0}/default\"\n", dir.path().display()));
-        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).await.unwrap().build().unwrap();
+        let config = yaml(&format!(
+            "  gemma4: \"{0}/gemma4\"\n  default: \"{0}/default\"\n",
+            dir.path().display()
+        ));
+        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[])
+            .await
+            .unwrap()
+            .build()
+            .unwrap();
         let prompts = runtime.prompts();
-        assert_eq!(prompts.render("core.given_up_cause.failed", ()).unwrap(), "it broke", "the default overridden");
-        assert_eq!(prompts.render_in(Some(PromptVariant::new("gemma4").unwrap()), "core.given_up_cause.left", ()).unwrap(), "you went");
-        assert_eq!(prompts.render_in(Some(PromptVariant::new("gemma4").unwrap()), "core.given_up_cause.failed", ()).unwrap(), "it broke", "a variant falls back to the overridden default");
+        assert_eq!(
+            prompts.render("core.given_up_cause.failed", ()).unwrap(),
+            "it broke",
+            "the default overridden"
+        );
+        assert_eq!(
+            prompts
+                .render_in(
+                    Some(PromptVariant::new("gemma4").unwrap()),
+                    "core.given_up_cause.left",
+                    ()
+                )
+                .unwrap(),
+            "you went"
+        );
+        assert_eq!(
+            prompts
+                .render_in(
+                    Some(PromptVariant::new("gemma4").unwrap()),
+                    "core.given_up_cause.failed",
+                    ()
+                )
+                .unwrap(),
+            "it broke",
+            "a variant falls back to the overridden default"
+        );
 
-        fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  gone: away\n").unwrap();
-        let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).await.unwrap().build().map(|_| ()).expect_err("no such text");
+        fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  gone: away\n")
+            .unwrap();
+        let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[])
+            .await
+            .unwrap()
+            .build()
+            .map(|_| ())
+            .expect_err("no such text");
         assert!(format!("{refused:#}").contains("'core.given_up_cause.gone'"), "{refused:#}");
     }
-
 }

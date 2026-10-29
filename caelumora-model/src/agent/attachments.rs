@@ -103,29 +103,44 @@ mod tests {
     fn an_attachment_is_numbered_once_keeps_its_number_and_names_its_message() {
         let (a, b) = (make_content_ref("a.png", b"a"), make_content_ref("b.png", b"b"));
         let mut index = AttachmentIndex::default();
-        let mut first = Message { attachments: vec![a.clone()], ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let mut first = Message {
+            attachments: vec![a.clone()],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
         index.number(&mut first);
         let mut modified = Message { attachments: vec![b.clone(), a.clone()], ..first.clone() };
         index.number(&mut modified);
-        let numbers = |message: &Message| message.attachments.iter().map(|a| a.reference()).collect::<Vec<_>>();
+        let numbers = |message: &Message| {
+            message.attachments.iter().map(|a| a.reference()).collect::<Vec<_>>()
+        };
         assert_eq!(numbers(&first), [Some("a1".to_string())]);
-        assert_eq!(numbers(&modified), [Some("a2".to_string()), Some("a1".to_string())], "kept by a modification, the new one the next");
+        assert_eq!(
+            numbers(&modified),
+            [Some("a2".to_string()), Some("a1".to_string())],
+            "kept by a modification, the new one the next"
+        );
         assert_eq!(index.named("a2"), Some((first.id, b.id)), "with the message that carries it");
         for unknown in ["a3", "a0", "3", "ax", ""] {
             assert_eq!(index.named(unknown), None, "{unknown}");
         }
         assert_eq!(index.changes().len(), 2, "each recorded once");
 
-        let stored: AttachmentIndex = serde_json::from_value(serde_json::to_value(&index).unwrap()).unwrap();
+        let stored: AttachmentIndex =
+            serde_json::from_value(serde_json::to_value(&index).unwrap()).unwrap();
         assert!(stored.changes().is_empty(), "what was read was stored");
         let mut replayed = AttachmentIndex::default();
         replayed.apply(index.changes().to_vec());
         replayed.apply(index.changes().to_vec());
         assert!(replayed.changes().is_empty(), "replayed is stored");
         for mut again in [stored, replayed] {
-            let mut later = Message { attachments: vec![make_content_ref("c.png", b"c")], ..first.clone() };
+            let mut later =
+                Message { attachments: vec![make_content_ref("c.png", b"c")], ..first.clone() };
             again.number(&mut later);
-            assert_eq!(numbers(&later), [Some("a3".to_string())], "never given again, stored or replayed - twice");
+            assert_eq!(
+                numbers(&later),
+                [Some("a3".to_string())],
+                "never given again, stored or replayed - twice"
+            );
         }
     }
 }

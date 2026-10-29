@@ -1,36 +1,36 @@
+use super::{ChannelRuntime, Services};
+use crate::actor::ActorManager;
+use crate::agent::state::AgentStateHandle;
 use crate::attachment::{AttachmentManager, AttachmentResult};
 use crate::channel::ChannelLoop;
-use crate::actor::ActorManager;
-use crate::command::{CommandExecutor, ChannelCommandProvider};
+use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, SessionController};
+use crate::event::{EventSubscription, SubscriptionTopic};
+use crate::terminal::{Shell, Terminal};
+use crate::view::{SessionView, ViewResult, Viewer};
+use crate::workspace::{WorkspaceError, WorkspaceResult};
 use anyhow::{anyhow, Result};
-use caelumora_model::context::ModelProfile;
-use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{self, Channel, ChannelId};
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
+use caelumora_model::context::ModelProfile;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::value::time_zone::TimeZone;
-use caelumora_model::session::SessionId;
-use crate::agent::state::AgentStateHandle;
-use crate::event::{EventSubscription, SubscriptionTopic};
-use crate::view::{SessionView, ViewResult, Viewer};
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{SecurityContext, AccessPolicy};
-use caelumora_model::session::Session;
-use caelumora_model::store::StoreResult;
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
+use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::question::{QuestionError, Questions};
+use caelumora_model::secret::SecretManager;
 use caelumora_model::security::Grant;
+use caelumora_model::security::SecurityAttributes;
+use caelumora_model::security::{AccessPolicy, SecurityContext};
+use caelumora_model::session::Session;
+use caelumora_model::session::SessionId;
+use caelumora_model::store::StoreResult;
+use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::workspace::Workspace;
-use crate::terminal::{Shell, Terminal};
-use crate::workspace::{WorkspaceError, WorkspaceResult};
 use std::sync::Arc;
-use super::{ChannelRuntime, Services};
 
 /// What an actor runs with (issue 69): the services every actor needs, and
 /// access to what concerns this actor alone - its controller, its state, its
@@ -57,24 +57,38 @@ impl ActorRuntime {
         self.actor
     }
 
-    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> { self.runtime.runtime_manager.access_policy() }
+    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        self.runtime.runtime_manager.access_policy()
+    }
 
-    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { self.runtime.runtime_manager.confidentiality() }
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+        self.runtime.runtime_manager.confidentiality()
+    }
 
-    pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
+    pub fn secret_manager(&self) -> &Arc<SecretManager> {
+        self.runtime.runtime_manager.secret_manager()
+    }
 
-    pub fn services(&self) -> &Services { self.runtime.runtime_manager.services() }
+    pub fn services(&self) -> &Services {
+        self.runtime.runtime_manager.services()
+    }
 
     /// The texts given to models (issue 57): what the actor's work words
     /// for its model itself - the results of tool calls, a plan's steps.
-    pub fn prompts(&self) -> &Arc<PromptCatalogue> { self.runtime.runtime_manager.prompts() }
+    pub fn prompts(&self) -> &Arc<PromptCatalogue> {
+        self.runtime.runtime_manager.prompts()
+    }
 
     /// Where the actor's outbox is kept across its runs (issue 386).
-    pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> { self.runtime.runtime_manager.actor_manager() }
+    pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> {
+        self.runtime.runtime_manager.actor_manager()
+    }
 
     /// The owner of attachments (issue 282): what a user's message names of what they uploaded,
     /// what a model is given along.
-    pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> { self.runtime.runtime_manager.attachment_manager() }
+    pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> {
+        self.runtime.runtime_manager.attachment_manager()
+    }
 
     /// Puts their content on the attachments of `messages` - what the actor's model is given of
     /// its transcript - that the model of `profile` is given along (issue 282), and answers how
@@ -82,7 +96,11 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// `AttachmentError` if one cannot be read, or is not what its message says.
-    pub async fn load_attachments(&self, messages: &mut [Message], profile: &ModelProfile) -> AttachmentResult<Vec<Classification>> {
+    pub async fn load_attachments(
+        &self,
+        messages: &mut [Message],
+        profile: &ModelProfile,
+    ) -> AttachmentResult<Vec<Classification>> {
         self.attachment_manager().load(messages, profile).await
     }
 
@@ -126,7 +144,11 @@ impl ActorRuntime {
     }
 
     /// The session `id` as stored, as `security` may read it.
-    pub async fn load_session(&self, security: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+    pub async fn load_session(
+        &self,
+        security: &SecurityContext,
+        id: SessionId,
+    ) -> StoreResult<Session> {
         self.runtime.runtime_manager.entity_stores().sessions.get(security, id).await
     }
 
@@ -135,7 +157,10 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// If this actor is no agent, or the state cannot be loaded.
-    pub async fn agent_state(&self, attributes: SecurityAttributes) -> Result<Arc<AgentStateHandle>> {
+    pub async fn agent_state(
+        &self,
+        attributes: SecurityAttributes,
+    ) -> Result<Arc<AgentStateHandle>> {
         let agent = self.agent_id()?;
         self.runtime.runtime_manager.agent_states().get(agent, attributes).await
     }
@@ -147,7 +172,12 @@ impl ActorRuntime {
     /// If this actor is no agent, or whatever the `StateStore` reports.
     pub async fn load_channel_state(&self) -> Result<AgentChannelState> {
         let agent = self.agent_id()?;
-        Ok(self.runtime.runtime_manager.state_store().get_agent_channel_state(agent, self.channel_id).await?)
+        Ok(self
+            .runtime
+            .runtime_manager
+            .state_store()
+            .get_agent_channel_state(agent, self.channel_id)
+            .await?)
     }
 
     /// The message `id` as this agent's transcript in its channel holds it,
@@ -173,7 +203,11 @@ impl ActorRuntime {
     /// nothing is let go then.
     pub async fn store_channel_state(&self, state: &mut AgentChannelState) -> Result<()> {
         let agent = self.agent_id()?;
-        self.runtime.runtime_manager.state_store().put_agent_channel_state(agent, self.channel_id, state).await?;
+        self.runtime
+            .runtime_manager
+            .state_store()
+            .put_agent_channel_state(agent, self.channel_id, state)
+            .await?;
         state.keep_window();
         Ok(())
     }
@@ -183,7 +217,10 @@ impl ActorRuntime {
     /// or agent are the session's to take in, into the controller the actor
     /// shares (issue 120).
     pub fn subscribe_channel(&self) -> EventSubscription {
-        self.runtime.runtime_manager.event_bus().subscribe(vec![SubscriptionTopic::Channel(self.channel_id)])
+        self.runtime
+            .runtime_manager
+            .event_bus()
+            .subscribe(vec![SubscriptionTopic::Channel(self.channel_id)])
     }
 
     /// Announces that this agent's state in its channel changed and is
@@ -191,8 +228,14 @@ impl ActorRuntime {
     /// Nothing once the channel is gone.
     pub fn announce_channel_state_changed(&self) {
         let (Ok(agent), Some(channel)) = (self.agent_id(), self.channel_loop()) else { return };
-        self.runtime.runtime_manager.event_bus()
-            .announce(GlobalEvent::custom::<Channel>(&(self.session_id, self.channel_id), channel::AGENT_STATE_CHANGED, &agent), &**channel.channel());
+        self.runtime.runtime_manager.event_bus().announce(
+            GlobalEvent::custom::<Channel>(
+                &(self.session_id, self.channel_id),
+                channel::AGENT_STATE_CHANGED,
+                &agent,
+            ),
+            &**channel.channel(),
+        );
     }
 
     /// The actor's own session as `context` reads it from the actor's
@@ -205,9 +248,17 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// As `Views::session`: `context` may not read it, or reading it failed.
-    pub async fn session_view(&self, context: &SecurityContext, classification: Classification) -> ViewResult<Option<SessionView>> {
-        let Some(session_loop) = self.channel_loop().and_then(|channel| channel.session_loop()) else { return Ok(None) };
-        let from = Place { channel: self.channel_id, classification, session: session_loop.privacy() };
+    pub async fn session_view(
+        &self,
+        context: &SecurityContext,
+        classification: Classification,
+    ) -> ViewResult<Option<SessionView>> {
+        let Some(session_loop) = self.channel_loop().and_then(|channel| channel.session_loop())
+        else {
+            return Ok(None);
+        };
+        let from =
+            Place { channel: self.channel_id, classification, session: session_loop.privacy() };
         let views = session_loop.views(Viewer::from_place(context.clone(), from));
         views.session(session_loop.id()).await.map(Some)
     }
@@ -241,7 +292,11 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// As `Questions::resolve`: an addressee the channel does not know.
-    pub fn address_questions(&self, questions: Questions, context: &SecurityContext) -> Option<Result<Questions, QuestionError>> {
+    pub fn address_questions(
+        &self,
+        questions: Questions,
+        context: &SecurityContext,
+    ) -> Option<Result<Questions, QuestionError>> {
         Some(self.channel_loop()?.address_questions(questions, context))
     }
 
@@ -252,7 +307,11 @@ impl ActorRuntime {
     /// # Errors
     /// `NotUsableInChannel` while the channel is still being built or once
     /// it is gone, or what `ChannelLoop::workspace_terminal` reports.
-    pub async fn workspace_terminal(&self, context: &SecurityContext, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+    pub async fn workspace_terminal(
+        &self,
+        context: &SecurityContext,
+        need: Grant,
+    ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let channel = self.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
         channel.workspace_terminal(context, need).await
     }
@@ -263,7 +322,10 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// As [`Self::workspace_terminal`].
-    pub async fn workspace_shell(&self, context: &SecurityContext) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+    pub async fn workspace_shell(
+        &self,
+        context: &SecurityContext,
+    ) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
         let channel = self.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
         channel.workspace_shell(context).await
     }
@@ -303,7 +365,9 @@ mod tests {
         assert!(hers.agent_state(Default::default()).await.is_err());
 
         let its = runtime.new_actor_runtime(ActorId::Agent(AgentId::new()));
-        its.store_channel_state(&mut AgentChannelState::default()).await.expect("its own state in its channel");
+        its.store_channel_state(&mut AgentChannelState::default())
+            .await
+            .expect("its own state in its channel");
         its.load_channel_state().await.expect("and back");
     }
 }

@@ -20,22 +20,22 @@
 //! changed the file in between is overwritten.
 
 use crate::terminal_tool::{tool, TerminalTool, TerminalToolConfig};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_agents::turn::Turn;
-use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
+use bytes::Bytes;
 use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
-use caelumora_model::workspace::Workspace;
+use caelumora_agents::turn::Turn;
 use caelumora_model::approval::{ArgumentMatcher, ToolMatcher};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::digest::{self, ContentDigest, Digest};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
+use caelumora_model::workspace::Workspace;
+use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
+use futures::stream;
 use futures::StreamExt;
+use regex::{Regex, RegexBuilder};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use bytes::Bytes;
-use caelumora_model::digest::{self, ContentDigest, Digest};
-use regex::{Regex, RegexBuilder};
-use futures::stream;
 
 /// A file read (issue 251): its `path`, and the `content` of its result
 /// as text, with the lines it covers - `start_line`, `end_line`,
@@ -81,7 +81,16 @@ pub const DELETE_FILE: &str = "delete_file";
 pub const PUBLISH_FILE: &str = "publish_file";
 
 /// The file tools, by name.
-pub(crate) const TOOLS: [&str; 8] = [LIST_FILES, READ_FILE, GREP_FILES, WRITE_FILE, REPLACE_IN_FILE, MOVE_FILE, DELETE_FILE, PUBLISH_FILE];
+pub(crate) const TOOLS: [&str; 8] = [
+    LIST_FILES,
+    READ_FILE,
+    GREP_FILES,
+    WRITE_FILE,
+    REPLACE_IN_FILE,
+    MOVE_FILE,
+    DELETE_FILE,
+    PUBLISH_FILE,
+];
 
 /// The largest file read or searched.
 const READ_LIMIT: u64 = 4 * 1024 * 1024;
@@ -183,40 +192,90 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
     WorkspacePath::parse(text).map_err(ToolError::from)
 }
 
-pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
+pub(crate) fn tools(
+    config: &TerminalToolConfig,
+    prompts: &PromptTexts,
+) -> Result<Vec<Tool>, PromptError> {
     let asks = |name: &str| config.requires_approval.required(read_only(name));
     let values = context! { max_matches => MAX_MATCHES, default_matches => DEFAULT_MATCHES };
-    let tool = |name: &str, parameters, requires_approval, presentation| tool(prompts, name, parameters, requires_approval, presentation, &values);
+    let tool = |name: &str, parameters, requires_approval, presentation| {
+        tool(prompts, name, parameters, requires_approval, presentation, &values)
+    };
     let string = ToolParameters::string;
     Ok(vec![
-        tool(LIST_FILES, ToolParameters::object([("path", string())], Vec::<&str>::new()), asks(LIST_FILES), FILE_LIST_PRESENTATION)?,
+        tool(
+            LIST_FILES,
+            ToolParameters::object([("path", string())], Vec::<&str>::new()),
+            asks(LIST_FILES),
+            FILE_LIST_PRESENTATION,
+        )?,
         tool(
             READ_FILE,
-            ToolParameters::object([("path", string()), ("start_line", ToolParameters::number()), ("line_count", ToolParameters::number())], ["path"]),
+            ToolParameters::object(
+                [
+                    ("path", string()),
+                    ("start_line", ToolParameters::number()),
+                    ("line_count", ToolParameters::number()),
+                ],
+                ["path"],
+            ),
             asks(READ_FILE),
             FILE_READ_PRESENTATION,
         )?,
         tool(
             GREP_FILES,
-            ToolParameters::object([("pattern", string()), ("path", string()), ("max_matches", ToolParameters::number())], ["pattern"]),
+            ToolParameters::object(
+                [
+                    ("pattern", string()),
+                    ("path", string()),
+                    ("max_matches", ToolParameters::number()),
+                ],
+                ["pattern"],
+            ),
             asks(GREP_FILES),
             FILE_SEARCH_PRESENTATION,
         )?,
-        tool(WRITE_FILE, ToolParameters::object([("path", string()), ("content", string())], ["path", "content"]), asks(WRITE_FILE), FILE_WRITE_PRESENTATION)?,
+        tool(
+            WRITE_FILE,
+            ToolParameters::object(
+                [("path", string()), ("content", string())],
+                ["path", "content"],
+            ),
+            asks(WRITE_FILE),
+            FILE_WRITE_PRESENTATION,
+        )?,
         tool(
             REPLACE_IN_FILE,
             ToolParameters::object(
-                [("path", string()), ("old_text", string()), ("new_text", string()), ("replace_all", ToolParameters::boolean())],
+                [
+                    ("path", string()),
+                    ("old_text", string()),
+                    ("new_text", string()),
+                    ("replace_all", ToolParameters::boolean()),
+                ],
                 ["path", "old_text", "new_text"],
             ),
             asks(REPLACE_IN_FILE),
             FILE_EDIT_PRESENTATION,
         )?,
-        tool(MOVE_FILE, ToolParameters::object([("from", string()), ("to", string())], ["from", "to"]), asks(MOVE_FILE), FILE_MOVE_PRESENTATION)?,
-        tool(DELETE_FILE, ToolParameters::object([("path", string())], ["path"]), asks(DELETE_FILE), ToolPresentation::DEFAULT)?,
+        tool(
+            MOVE_FILE,
+            ToolParameters::object([("from", string()), ("to", string())], ["from", "to"]),
+            asks(MOVE_FILE),
+            FILE_MOVE_PRESENTATION,
+        )?,
+        tool(
+            DELETE_FILE,
+            ToolParameters::object([("path", string())], ["path"]),
+            asks(DELETE_FILE),
+            ToolPresentation::DEFAULT,
+        )?,
         tool(
             PUBLISH_FILE,
-            ToolParameters::object([("path", string()), ("name", string()), ("description", string())], ["path"]),
+            ToolParameters::object(
+                [("path", string()), ("name", string()), ("description", string())],
+                ["path"],
+            ),
             // Never asked (issue 275): it changes nothing, and hands the file
             // to nobody who could not download it already.
             false,
@@ -228,7 +287,9 @@ pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptTexts) -> Resul
 /// What an approver reads: what is read, or the change whole.
 pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     Ok(match name {
-        LIST_FILES => format!("List '{}' in the workspace", arguments::<At>(params)?.path.unwrap_or_default()),
+        LIST_FILES => {
+            format!("List '{}' in the workspace", arguments::<At>(params)?.path.unwrap_or_default())
+        }
         READ_FILE => format!("Read '{}' in the workspace", arguments::<Read>(params)?.path),
         GREP_FILES => {
             let Grep { pattern, path, .. } = arguments(params)?;
@@ -267,8 +328,14 @@ pub(crate) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
         return None;
     }
     let keys: &[&str] = if name == MOVE_FILE { &["from", "to"] } else { &["path"] };
-    let arguments = keys.iter()
-        .map(|key| Some((key.to_string(), ArgumentMatcher::Pattern(regex::escape(params.get(key)?.as_str()?)))))
+    let arguments = keys
+        .iter()
+        .map(|key| {
+            Some((
+                key.to_string(),
+                ArgumentMatcher::Pattern(regex::escape(params.get(key)?.as_str()?)),
+            ))
+        })
         .collect::<Option<BTreeMap<_, _>>>()?;
     Some(ToolMatcher { tool: name.to_string(), arguments })
 }
@@ -281,9 +348,13 @@ async fn content(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<Vec<
     }
     let mut bytes = Vec::with_capacity(size as usize);
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| ToolError::ExecutionFailed(format!("reading '{at}' broke off: {}", e.kind())))?;
+        let chunk = chunk.map_err(|e| {
+            ToolError::ExecutionFailed(format!("reading '{at}' broke off: {}", e.kind()))
+        })?;
         if bytes.len() as u64 + chunk.len() as u64 > READ_LIMIT {
-            return Err(ToolError::InvalidParameter(format!("'{at}' is larger than the {READ_LIMIT} bytes a file may be read with")));
+            return Err(ToolError::InvalidParameter(format!(
+                "'{at}' is larger than the {READ_LIMIT} bytes a file may be read with"
+            )));
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -294,24 +365,38 @@ async fn content(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<Vec<
 async fn text(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<(String, Digest)> {
     let bytes = content(terminal, at).await?;
     let digest = digest::content(&bytes);
-    let text = String::from_utf8(bytes).map_err(|_| ToolError::InvalidParameter(format!("'{at}' is no text (not UTF-8)")))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| ToolError::InvalidParameter(format!("'{at}' is no text (not UTF-8)")))?;
     Ok((text, digest))
 }
 
-async fn write(terminal: &dyn Terminal, limit: u64, at: &WorkspacePath, content: String) -> ToolResult<u64> {
+async fn write(
+    terminal: &dyn Terminal,
+    limit: u64,
+    at: &WorkspacePath,
+    content: String,
+) -> ToolResult<u64> {
     let stream: ByteStream = Box::pin(stream::iter([Ok(Bytes::from(content))]));
     terminal.write(at, stream, limit).await.map_err(ToolError::from)
 }
 
 /// The digest of the file `at`, read in parts, at most `limit` bytes.
-async fn digest(terminal: &dyn Terminal, at: &WorkspacePath, limit: u64) -> ToolResult<(u64, Digest)> {
+async fn digest(
+    terminal: &dyn Terminal,
+    at: &WorkspacePath,
+    limit: u64,
+) -> ToolResult<(u64, Digest)> {
     let (size, mut stream) = terminal.read(at).await?;
     if size > limit {
-        return Err(ToolError::InvalidParameter(format!("'{at}' is {size} bytes, more than the {limit} a file may be offered with")));
+        return Err(ToolError::InvalidParameter(format!(
+            "'{at}' is {size} bytes, more than the {limit} a file may be offered with"
+        )));
     }
     let (mut digest, mut read) = (ContentDigest::new(size), 0u64);
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| ToolError::ExecutionFailed(format!("reading '{at}' broke off: {}", e.kind())))?;
+        let chunk = chunk.map_err(|e| {
+            ToolError::ExecutionFailed(format!("reading '{at}' broke off: {}", e.kind()))
+        })?;
         read += chunk.len() as u64;
         if read > size {
             break;
@@ -319,7 +404,9 @@ async fn digest(terminal: &dyn Terminal, at: &WorkspacePath, limit: u64) -> Tool
         digest.update(&chunk);
     }
     if read != size {
-        return Err(ToolError::ExecutionFailed(format!("'{at}' changed while it was read; offer it again once it is written")));
+        return Err(ToolError::ExecutionFailed(format!(
+            "'{at}' changed while it was read; offer it again once it is written"
+        )));
     }
     Ok((size, digest.finish()))
 }
@@ -339,7 +426,12 @@ fn shown(line: &str) -> String {
 
 /// Searches `terminal` from `start` for `pattern`; what was searched and
 /// the matches.
-async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, most: usize) -> ToolResult<Value> {
+async fn search(
+    terminal: &dyn Terminal,
+    start: WorkspacePath,
+    pattern: &Regex,
+    most: usize,
+) -> ToolResult<Value> {
     let mut pending = vec![start];
     let mut matches = Vec::new();
     let (mut searched, mut skipped) = (0usize, 0usize);
@@ -350,7 +442,11 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
             let mut entries = terminal.list(&at).await?;
             entries.reverse();
             for listed in entries {
-                let below = if at.is_root() { path(&listed.name)? } else { path(&format!("{at}/{}", listed.name))? };
+                let below = if at.is_root() {
+                    path(&listed.name)?
+                } else {
+                    path(&format!("{at}/{}", listed.name))?
+                };
                 pending.push(below);
             }
             continue;
@@ -374,11 +470,15 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
                     complete = false;
                     break 'walk;
                 }
-                matches.push(json!({ "path": at.to_string(), "line": number + 1, "text": shown(line) }));
+                matches.push(
+                    json!({ "path": at.to_string(), "line": number + 1, "text": shown(line) }),
+                );
             }
         }
     }
-    Ok(json!({ "matches": matches, "files_searched": searched, "files_skipped": skipped, "complete": complete }))
+    Ok(
+        json!({ "matches": matches, "files_searched": searched, "files_skipped": skipped, "complete": complete }),
+    )
 }
 
 /// Runs the file tool `name` of `tool` with `params` on `terminal`, the
@@ -386,42 +486,74 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
 /// workspaces take and the texts its results give -, recording in `turn`
 /// what was read.
 #[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
-pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, turn: &mut Turn<'_>) -> ToolResult<Value> {
+pub(crate) async fn execute(
+    tool: &TerminalTool,
+    name: &str,
+    params: &Value,
+    terminal: &dyn Terminal,
+    workspace: &Workspace,
+    turn: &mut Turn<'_>,
+) -> ToolResult<Value> {
     let config = &tool.config;
     let prompts = &tool.prompts;
     let max_file_bytes = tool.workspaces.max_file_bytes();
-    let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {
-        channel: turn.situation().channel_id(),
-        session: turn.situation().session_id(),
-        source: KnowledgeSource::entity::<Workspace>(workspace.id, digest),
-        classification: Some(workspace.classification.clone()),
-    });
+    let read = |turn: &mut Turn<'_>, digest| {
+        turn.record_knowledge(KnowledgeRef {
+            channel: turn.situation().channel_id(),
+            session: turn.situation().session_id(),
+            source: KnowledgeSource::entity::<Workspace>(workspace.id, digest),
+            classification: Some(workspace.classification.clone()),
+        })
+    };
     match name {
         LIST_FILES => {
             let at = path(&arguments::<At>(params)?.path.unwrap_or_default())?;
             let entries = terminal.list(&at).await?;
             read(turn, None);
             let listed: Vec<Value> = entries.iter().take(MAX_ENTRIES).map(entry).collect();
-            Ok(json!({ "path": at.to_string(), "entries": listed, "complete": entries.len() <= MAX_ENTRIES }))
+            Ok(
+                json!({ "path": at.to_string(), "entries": listed, "complete": entries.len() <= MAX_ENTRIES }),
+            )
         }
         READ_FILE => {
             let Read { path: at, start_line, line_count } = arguments(params)?;
             let at = path(&at)?;
             let (text, digest) = text(terminal, &at).await?;
             read(turn, Some(digest));
-            let mut result = page_of(&text, &format!("'{at}'"), start_line, line_count, config.max_output_bytes)?.value(prompts);
+            let mut result = page_of(
+                &text,
+                &format!("'{at}'"),
+                start_line,
+                line_count,
+                config.max_output_bytes,
+            )?
+            .value(prompts);
             result["path"] = json!(at.to_string());
             Ok(result)
         }
         GREP_FILES => {
             let Grep { pattern, path: at, max_matches } = arguments(params)?;
             if pattern.chars().count() > MAX_PATTERN_CHARS {
-                return Err(ToolError::InvalidParameter(format!("the pattern is longer than {MAX_PATTERN_CHARS} characters")));
+                return Err(ToolError::InvalidParameter(format!(
+                    "the pattern is longer than {MAX_PATTERN_CHARS} characters"
+                )));
             }
-            let pattern = RegexBuilder::new(&pattern).size_limit(MAX_COMPILED_PATTERN_BYTES).build()
-                .map_err(|e| ToolError::InvalidParameter(format!("the pattern is no regular expression: {e}")))?;
+            let pattern = RegexBuilder::new(&pattern)
+                .size_limit(MAX_COMPILED_PATTERN_BYTES)
+                .build()
+                .map_err(|e| {
+                    ToolError::InvalidParameter(format!(
+                        "the pattern is no regular expression: {e}"
+                    ))
+                })?;
             let at = path(&at.unwrap_or_default())?;
-            let found = search(terminal, at, &pattern, max_matches.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES)).await?;
+            let found = search(
+                terminal,
+                at,
+                &pattern,
+                max_matches.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES),
+            )
+            .await?;
             read(turn, None);
             Ok(found)
         }
@@ -434,7 +566,9 @@ pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, ter
         REPLACE_IN_FILE => {
             let Replace { path: at, old_text, new_text, replace_all } = arguments(params)?;
             if old_text.is_empty() {
-                return Err(ToolError::InvalidParameter("'old_text' must not be empty".to_string()));
+                return Err(ToolError::InvalidParameter(
+                    "'old_text' must not be empty".to_string(),
+                ));
             }
             let at = path(&at)?;
             let (text, digest) = text(terminal, &at).await?;
@@ -452,29 +586,42 @@ pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, ter
             let Move { from, to } = arguments(params)?;
             let (from, to) = (path(&from)?, path(&to)?);
             terminal.move_entry(&from, &to).await.map_err(|e| match e {
-                TerminalError::InvalidPath(_) if from.is_root() || to.is_root() => ToolError::InvalidParameter("the workspace itself cannot be moved, nor moved over".to_string()),
+                TerminalError::InvalidPath(_) if from.is_root() || to.is_root() => {
+                    ToolError::InvalidParameter(
+                        "the workspace itself cannot be moved, nor moved over".to_string(),
+                    )
+                }
                 e => ToolError::from(e),
             })?;
-            Ok(json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }))
+            Ok(
+                json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }),
+            )
         }
         PUBLISH_FILE => {
             let Publish { path: at, name, description } = arguments(params)?;
             let at = path(&at)?;
             let found = terminal.stat(&at).await?;
             if found.is_dir {
-                return Err(ToolError::InvalidParameter(format!("'{at}' is a directory; only a file can be offered")));
+                return Err(ToolError::InvalidParameter(format!(
+                    "'{at}' is a directory; only a file can be offered"
+                )));
             }
             let name = match name.as_deref().map(str::trim) {
                 Some(name) if !name.is_empty() => name.to_string(),
                 _ => at.file_name().unwrap_or_default().to_string(),
             };
-            if name.chars().count() > MAX_NAME_CHARS || name.contains(['/', '\\']) || name.chars().any(char::is_control) {
+            if name.chars().count() > MAX_NAME_CHARS
+                || name.contains(['/', '\\'])
+                || name.chars().any(char::is_control)
+            {
                 return Err(ToolError::InvalidParameter(format!("'{name}' is no name to offer a file under: at most {MAX_NAME_CHARS} characters, no slashes")));
             }
             let (size, digest) = digest(terminal, &at, max_file_bytes).await?;
             read(turn, Some(digest));
             let mut result = json!({ "workspace": workspace.id, "path": at.to_string(), "name": name, "size": size, "modified": found.modified, "digest": digest.to_string() });
-            if let Some(description) = description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()) {
+            if let Some(description) =
+                description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty())
+            {
                 result["description"] = json!(description);
             }
             Ok(result)
@@ -482,7 +629,9 @@ pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, ter
         _ => {
             let at = path(&arguments::<Delete>(params)?.path)?;
             terminal.delete(&at).await.map_err(|e| match e {
-                TerminalError::InvalidPath(_) if at.is_root() => ToolError::InvalidParameter("the workspace itself cannot be deleted".to_string()),
+                TerminalError::InvalidPath(_) if at.is_root() => ToolError::InvalidParameter(
+                    "the workspace itself cannot be deleted".to_string(),
+                ),
                 e => ToolError::from(e),
             })?;
             Ok(json!({ "path": at.to_string(), "deleted": true }))
@@ -493,20 +642,25 @@ pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, ter
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_agents::testing::workspace_turn;
-    use caelumora_model::digest::Digest;
-    use caelumora_agents::tool::ToolProvider;
     use crate::terminal_tool::tests::tool as terminal_tool;
-    use caelumora_runtime::workspace::testing::{session_with_workspace, MAX_FILE_BYTES};
+    use caelumora_agents::testing::workspace_turn;
+    use caelumora_agents::tool::ToolProvider;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::digest;
+    use caelumora_model::digest::Digest;
+    use caelumora_runtime::workspace::testing::{session_with_workspace, MAX_FILE_BYTES};
     use std::fs;
 
     fn knowledge(state: &AgentChannelState) -> Vec<KnowledgeRef> {
-        state.turn.as_ref().map(|turn| turn.work.context.frame.knowledge.clone()).unwrap_or_default()
+        state
+            .turn
+            .as_ref()
+            .map(|turn| turn.work.context.frame.knowledge.clone())
+            .unwrap_or_default()
     }
 
     #[tokio::test]
+    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn files_are_written_listed_read_searched_replaced_and_deleted() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
@@ -515,55 +669,142 @@ mod tests {
         let run = |name: &'static str, params: Value| (name, params);
 
         let calls = [
-            run(WRITE_FILE, json!({ "path": "docs/plan.md", "content": "# Plan\nfirst step\nsecond step\n" })),
+            run(
+                WRITE_FILE,
+                json!({ "path": "docs/plan.md", "content": "# Plan\nfirst step\nsecond step\n" }),
+            ),
             run(WRITE_FILE, json!({ "path": "docs/notes.txt", "content": "a side step\n" })),
         ];
         for (name, params) in calls {
             let written = tool.execute(name, &params, None, &mut turn).await.unwrap();
             assert_eq!(written.classification.as_ref(), Some(&world.workspace.classification));
         }
-        assert_eq!(fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(), "# Plan\nfirst step\nsecond step\n");
+        assert_eq!(
+            fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(),
+            "# Plan\nfirst step\nsecond step\n"
+        );
 
-        let listed = tool.execute(LIST_FILES, &json!({ "path": "docs" }), None, &mut turn).await.unwrap().value;
-        let names: Vec<&str> = listed["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+        let listed = tool
+            .execute(LIST_FILES, &json!({ "path": "docs" }), None, &mut turn)
+            .await
+            .unwrap()
+            .value;
+        let names: Vec<&str> = listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
         assert_eq!(names, ["notes.txt", "plan.md"]);
 
-        let read = tool.execute(READ_FILE, &json!({ "path": "docs/plan.md", "start_line": 2, "line_count": 1 }), None, &mut turn).await.unwrap().value;
-        assert_eq!((read["content"].as_str(), read["end_line"].as_u64(), read["total_lines"].as_u64()), (Some("first step\n"), Some(2), Some(3)));
+        let read = tool
+            .execute(
+                READ_FILE,
+                &json!({ "path": "docs/plan.md", "start_line": 2, "line_count": 1 }),
+                None,
+                &mut turn,
+            )
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(
+            (read["content"].as_str(), read["end_line"].as_u64(), read["total_lines"].as_u64()),
+            (Some("first step\n"), Some(2), Some(3))
+        );
 
-        let found = tool.execute(GREP_FILES, &json!({ "pattern": "step$" }), None, &mut turn).await.unwrap().value;
-        let hits: Vec<(String, u64)> = found["matches"].as_array().unwrap().iter().map(|m| (m["path"].as_str().unwrap().to_string(), m["line"].as_u64().unwrap())).collect();
-        assert_eq!(hits, [("docs/notes.txt".to_string(), 1), ("docs/plan.md".to_string(), 2), ("docs/plan.md".to_string(), 3)]);
+        let found = tool
+            .execute(GREP_FILES, &json!({ "pattern": "step$" }), None, &mut turn)
+            .await
+            .unwrap()
+            .value;
+        let hits: Vec<(String, u64)> = found["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| (m["path"].as_str().unwrap().to_string(), m["line"].as_u64().unwrap()))
+            .collect();
+        assert_eq!(
+            hits,
+            [
+                ("docs/notes.txt".to_string(), 1),
+                ("docs/plan.md".to_string(), 2),
+                ("docs/plan.md".to_string(), 3)
+            ]
+        );
         assert_eq!(found["complete"], true);
 
-        let ambiguous = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "move" }), None, &mut turn).await;
-        assert!(matches!(&ambiguous, Err(ToolError::InvalidParameter(why)) if why.contains("occurs 2 times")), "{ambiguous:?}");
+        let ambiguous = tool
+            .execute(
+                REPLACE_IN_FILE,
+                &json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "move" }),
+                None,
+                &mut turn,
+            )
+            .await;
+        assert!(
+            matches!(&ambiguous, Err(ToolError::InvalidParameter(why)) if why.contains("occurs 2 times")),
+            "{ambiguous:?}"
+        );
         let replaced = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "first step", "new_text": "first move" }), None, &mut turn).await.unwrap().value;
         assert_eq!(replaced["replacements"], 1);
         tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "stride", "replace_all": true }), None, &mut turn).await.unwrap();
-        assert_eq!(fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(), "# Plan\nfirst move\nsecond stride\n");
-        let absent = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "nowhere", "new_text": "x" }), None, &mut turn).await;
+        assert_eq!(
+            fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(),
+            "# Plan\nfirst move\nsecond stride\n"
+        );
+        let absent = tool
+            .execute(
+                REPLACE_IN_FILE,
+                &json!({ "path": "docs/plan.md", "old_text": "nowhere", "new_text": "x" }),
+                None,
+                &mut turn,
+            )
+            .await;
         assert!(matches!(absent, Err(ToolError::InvalidParameter(_))));
 
-        let not_empty = tool.execute(DELETE_FILE, &json!({ "path": "docs" }), None, &mut turn).await;
-        assert!(matches!(&not_empty, Err(ToolError::InvalidParameter(why)) if why.contains("not empty")), "{not_empty:?}");
-        tool.execute(DELETE_FILE, &json!({ "path": "docs/notes.txt" }), None, &mut turn).await.unwrap();
+        let not_empty =
+            tool.execute(DELETE_FILE, &json!({ "path": "docs" }), None, &mut turn).await;
+        assert!(
+            matches!(&not_empty, Err(ToolError::InvalidParameter(why)) if why.contains("not empty")),
+            "{not_empty:?}"
+        );
+        tool.execute(DELETE_FILE, &json!({ "path": "docs/notes.txt" }), None, &mut turn)
+            .await
+            .unwrap();
         assert!(!world.dir().join("docs/notes.txt").exists());
-        let outside = tool.execute(READ_FILE, &json!({ "path": "../secret" }), None, &mut turn).await;
+        let outside =
+            tool.execute(READ_FILE, &json!({ "path": "../secret" }), None, &mut turn).await;
         assert!(matches!(outside, Err(ToolError::InvalidParameter(_))), "the model's to correct");
 
         drop(turn);
-        let read: Vec<Option<Digest>> = knowledge(&state).into_iter().map(|k| match k.source.about::<Workspace>() {
-            Some((workspace, digest)) => {
-                assert_eq!((workspace, k.classification.as_ref(), k.channel), (world.workspace.id, Some(&world.workspace.classification), world.session.channels()[0].id()));
-                digest
-            }
-            None => panic!("{:?}", k.source),
-        }).collect();
+        let read: Vec<Option<Digest>> = knowledge(&state)
+            .into_iter()
+            .map(|k| match k.source.about::<Workspace>() {
+                Some((workspace, digest)) => {
+                    assert_eq!(
+                        (workspace, k.classification.as_ref(), k.channel),
+                        (
+                            world.workspace.id,
+                            Some(&world.workspace.classification),
+                            world.session.channels()[0].id()
+                        )
+                    );
+                    digest
+                }
+                None => panic!("{:?}", k.source),
+            })
+            .collect();
         // The listing and the search are one entry, each content read is
         // one: the file as written, after the first replacement, after the
         // second.
-        assert_eq!((read.iter().filter(|d| d.is_none()).count(), read.iter().filter(|d| d.is_some()).count()), (1, 3), "{read:?}");
+        assert_eq!(
+            (
+                read.iter().filter(|d| d.is_none()).count(),
+                read.iter().filter(|d| d.is_some()).count()
+            ),
+            (1, 3),
+            "{read:?}"
+        );
     }
 
     #[tokio::test]
@@ -575,19 +816,48 @@ mod tests {
         fs::write(world.dir().join("long.txt"), "line one\nline two\nline three\n").unwrap();
         fs::write(world.dir().join("image.bin"), [0xff, 0xfe, 0x00, 0x81]).unwrap();
 
-        let first = tool.execute(READ_FILE, &json!({ "path": "long.txt" }), None, &mut turn).await.unwrap().value;
-        assert_eq!((first["content"].as_str(), first["end_line"].as_u64()), (Some("line one\n"), Some(1)));
+        let first = tool
+            .execute(READ_FILE, &json!({ "path": "long.txt" }), None, &mut turn)
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(
+            (first["content"].as_str(), first["end_line"].as_u64()),
+            (Some("line one\n"), Some(1))
+        );
         assert!(first["next"].as_str().unwrap().contains("start_line 2"), "{first}");
-        let last = tool.execute(READ_FILE, &json!({ "path": "long.txt", "start_line": 3 }), None, &mut turn).await.unwrap().value;
+        let last = tool
+            .execute(READ_FILE, &json!({ "path": "long.txt", "start_line": 3 }), None, &mut turn)
+            .await
+            .unwrap()
+            .value;
         assert_eq!(last["content"], "line three\n");
         assert!(last.get("next").is_none());
-        let beyond = tool.execute(READ_FILE, &json!({ "path": "long.txt", "start_line": 9 }), None, &mut turn).await;
+        let beyond = tool
+            .execute(READ_FILE, &json!({ "path": "long.txt", "start_line": 9 }), None, &mut turn)
+            .await;
         assert!(matches!(beyond, Err(ToolError::InvalidParameter(_))));
 
-        let binary = tool.execute(READ_FILE, &json!({ "path": "image.bin" }), None, &mut turn).await;
-        assert!(matches!(&binary, Err(ToolError::InvalidParameter(why)) if why.contains("no text")), "{binary:?}");
-        let searched = tool.execute(GREP_FILES, &json!({ "pattern": "line" }), None, &mut turn).await.unwrap().value;
-        assert_eq!((searched["files_searched"].as_u64(), searched["files_skipped"].as_u64(), searched["matches"].as_array().unwrap().len()), (Some(2), Some(1), 3), "{searched}");
+        let binary =
+            tool.execute(READ_FILE, &json!({ "path": "image.bin" }), None, &mut turn).await;
+        assert!(
+            matches!(&binary, Err(ToolError::InvalidParameter(why)) if why.contains("no text")),
+            "{binary:?}"
+        );
+        let searched = tool
+            .execute(GREP_FILES, &json!({ "pattern": "line" }), None, &mut turn)
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(
+            (
+                searched["files_searched"].as_u64(),
+                searched["files_skipped"].as_u64(),
+                searched["matches"].as_array().unwrap().len()
+            ),
+            (Some(2), Some(1), 3),
+            "{searched}"
+        );
         let bad = tool.execute(GREP_FILES, &json!({ "pattern": "(" }), None, &mut turn).await;
         assert!(matches!(bad, Err(ToolError::InvalidParameter(_))));
     }
@@ -602,22 +872,70 @@ mod tests {
         fs::write(world.dir().join("docs/plan.md"), "plan").unwrap();
         fs::write(world.dir().join("docs/notes.md"), "notes").unwrap();
 
-        let renamed = tool.execute(MOVE_FILE, &json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md" }), None, &mut turn).await.unwrap();
-        assert_eq!(renamed.value, json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md", "renamed": true }));
+        let renamed = tool
+            .execute(
+                MOVE_FILE,
+                &json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md" }),
+                None,
+                &mut turn,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            renamed.value,
+            json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md", "renamed": true })
+        );
         assert_eq!(renamed.classification.as_ref(), Some(&world.workspace.classification));
-        let moved = tool.execute(MOVE_FILE, &json!({ "from": "docs/plan-v2.md", "to": "archive/2026/plan.md" }), None, &mut turn).await.unwrap().value;
+        let moved = tool
+            .execute(
+                MOVE_FILE,
+                &json!({ "from": "docs/plan-v2.md", "to": "archive/2026/plan.md" }),
+                None,
+                &mut turn,
+            )
+            .await
+            .unwrap()
+            .value;
         assert_eq!(moved["renamed"], false);
-        assert_eq!(fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan", "its directories made");
+        assert_eq!(
+            fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(),
+            "plan",
+            "its directories made"
+        );
 
-        let over = tool.execute(MOVE_FILE, &json!({ "from": "docs/notes.md", "to": "archive/2026/plan.md" }), None, &mut turn).await;
-        assert!(matches!(over, Err(ToolError::InvalidParameter(_))), "nothing is moved over: {over:?}");
+        let over = tool
+            .execute(
+                MOVE_FILE,
+                &json!({ "from": "docs/notes.md", "to": "archive/2026/plan.md" }),
+                None,
+                &mut turn,
+            )
+            .await;
+        assert!(
+            matches!(over, Err(ToolError::InvalidParameter(_))),
+            "nothing is moved over: {over:?}"
+        );
         assert_eq!(fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan");
-        let missing = tool.execute(MOVE_FILE, &json!({ "from": "docs/gone.md", "to": "docs/here.md" }), None, &mut turn).await;
+        let missing = tool
+            .execute(
+                MOVE_FILE,
+                &json!({ "from": "docs/gone.md", "to": "docs/here.md" }),
+                None,
+                &mut turn,
+            )
+            .await;
         assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
-        let top = tool.execute(MOVE_FILE, &json!({ "from": "", "to": "elsewhere" }), None, &mut turn).await;
-        assert!(matches!(&top, Err(ToolError::InvalidParameter(why)) if why.contains("workspace itself")), "{top:?}");
+        let top = tool
+            .execute(MOVE_FILE, &json!({ "from": "", "to": "elsewhere" }), None, &mut turn)
+            .await;
+        assert!(
+            matches!(&top, Err(ToolError::InvalidParameter(why)) if why.contains("workspace itself")),
+            "{top:?}"
+        );
 
-        tool.execute(MOVE_FILE, &json!({ "from": "docs", "to": "old/docs" }), None, &mut turn).await.expect("a directory with what it holds");
+        tool.execute(MOVE_FILE, &json!({ "from": "docs", "to": "old/docs" }), None, &mut turn)
+            .await
+            .expect("a directory with what it holds");
         assert_eq!(fs::read_to_string(world.dir().join("old/docs/notes.md")).unwrap(), "notes");
         drop(turn);
         assert!(knowledge(&state).is_empty(), "a move reads nothing");
@@ -634,27 +952,54 @@ mod tests {
 
         let offered = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv", "name": " Report Q3.csv ", "description": "The figures" }), None, &mut turn).await.unwrap();
         let value = offered.value;
-        assert_eq!((value["path"].as_str(), value["name"].as_str(), value["size"].as_u64(), value["description"].as_str()), (Some("out/report.csv"), Some("Report Q3.csv"), Some(8), Some("The figures")));
+        assert_eq!(
+            (
+                value["path"].as_str(),
+                value["name"].as_str(),
+                value["size"].as_u64(),
+                value["description"].as_str()
+            ),
+            (Some("out/report.csv"), Some("Report Q3.csv"), Some(8), Some("The figures"))
+        );
         let digest = digest::content(b"a,b\n1,2\n");
         assert_eq!(value["digest"], digest.to_string());
         assert_eq!(value["workspace"], json!(world.workspace.id));
         assert!(value["modified"].is_string(), "{value}");
         assert_eq!(offered.classification.as_ref(), Some(&world.workspace.classification));
-        let plain = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv" }), None, &mut turn).await.unwrap().value;
+        let plain = tool
+            .execute(PUBLISH_FILE, &json!({ "path": "out/report.csv" }), None, &mut turn)
+            .await
+            .unwrap()
+            .value;
         assert_eq!(plain["name"], "report.csv", "its file name unless given");
         assert!(plain.get("description").is_none());
 
-        let directory = tool.execute(PUBLISH_FILE, &json!({ "path": "out" }), None, &mut turn).await;
-        assert!(matches!(&directory, Err(ToolError::InvalidParameter(why)) if why.contains("directory")), "{directory:?}");
-        let missing = tool.execute(PUBLISH_FILE, &json!({ "path": "out/gone.csv" }), None, &mut turn).await;
+        let directory =
+            tool.execute(PUBLISH_FILE, &json!({ "path": "out" }), None, &mut turn).await;
+        assert!(
+            matches!(&directory, Err(ToolError::InvalidParameter(why)) if why.contains("directory")),
+            "{directory:?}"
+        );
+        let missing =
+            tool.execute(PUBLISH_FILE, &json!({ "path": "out/gone.csv" }), None, &mut turn).await;
         assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
-        let slashed = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv", "name": "../x.csv" }), None, &mut turn).await;
+        let slashed = tool
+            .execute(
+                PUBLISH_FILE,
+                &json!({ "path": "out/report.csv", "name": "../x.csv" }),
+                None,
+                &mut turn,
+            )
+            .await;
         assert!(matches!(slashed, Err(ToolError::InvalidParameter(_))), "{slashed:?}");
         assert!(world.dir().join("out/report.csv").is_file(), "nothing changed");
 
         drop(turn);
         let read: Vec<_> = knowledge(&state).into_iter().map(|k| k.source).collect();
-        assert!(matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d == Some(digest))), "what was read, once: {read:?}");
+        assert!(
+            matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d == Some(digest))),
+            "what was read, once: {read:?}"
+        );
     }
 
     #[tokio::test]
@@ -664,8 +1009,18 @@ mod tests {
         let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({}));
         let too_large = "x".repeat(MAX_FILE_BYTES as usize + 1);
-        let refused = tool.execute(WRITE_FILE, &json!({ "path": "big.txt", "content": too_large }), None, &mut turn).await;
-        assert!(matches!(&refused, Err(ToolError::InvalidParameter(why)) if why.contains("larger than")), "{refused:?}");
+        let refused = tool
+            .execute(
+                WRITE_FILE,
+                &json!({ "path": "big.txt", "content": too_large }),
+                None,
+                &mut turn,
+            )
+            .await;
+        assert!(
+            matches!(&refused, Err(ToolError::InvalidParameter(why)) if why.contains("larger than")),
+            "{refused:?}"
+        );
         assert!(!world.dir().join("big.txt").exists());
     }
 
@@ -674,18 +1029,49 @@ mod tests {
         let world = session_with_workspace().await;
         let tool = terminal_tool(&world, json!({}));
         let write = json!({ "path": "docs/a.md", "content": "hello\nworld" });
-        assert_eq!(tool.describe(WRITE_FILE, &write).unwrap(), "Write 'docs/a.md' in the workspace (11 bytes):\nhello\nworld");
+        assert_eq!(
+            tool.describe(WRITE_FILE, &write).unwrap(),
+            "Write 'docs/a.md' in the workspace (11 bytes):\nhello\nworld"
+        );
         let replace = json!({ "path": "a.md", "old_text": "x", "new_text": "y" });
-        assert_eq!(tool.describe(REPLACE_IN_FILE, &replace).unwrap(), "Replace in 'a.md' in the workspace, once:\n--- old\nx\n+++ new\ny");
+        assert_eq!(
+            tool.describe(REPLACE_IN_FILE, &replace).unwrap(),
+            "Replace in 'a.md' in the workspace, once:\n--- old\nx\n+++ new\ny"
+        );
         let matcher = tool.matcher(WRITE_FILE, &write);
-        assert_eq!((matcher.tool.as_str(), matcher.arguments.keys().map(String::as_str).collect::<Vec<_>>()), (WRITE_FILE, vec!["path"]), "not what is written");
+        assert_eq!(
+            (
+                matcher.tool.as_str(),
+                matcher.arguments.keys().map(String::as_str).collect::<Vec<_>>()
+            ),
+            (WRITE_FILE, vec!["path"]),
+            "not what is written"
+        );
         assert_eq!(matcher.arguments["path"], ArgumentMatcher::Pattern(regex::escape("docs/a.md")));
         let moving = json!({ "from": "docs/a.md", "to": "docs/b.md" });
-        assert_eq!(tool.describe(MOVE_FILE, &moving).unwrap(), "Rename 'docs/a.md' to 'docs/b.md' in the workspace");
-        assert_eq!(tool.describe(MOVE_FILE, &json!({ "from": "docs/a.md", "to": "archive/a.md" })).unwrap(), "Move 'docs/a.md' to 'archive/a.md' in the workspace");
+        assert_eq!(
+            tool.describe(MOVE_FILE, &moving).unwrap(),
+            "Rename 'docs/a.md' to 'docs/b.md' in the workspace"
+        );
+        assert_eq!(
+            tool.describe(MOVE_FILE, &json!({ "from": "docs/a.md", "to": "archive/a.md" }))
+                .unwrap(),
+            "Move 'docs/a.md' to 'archive/a.md' in the workspace"
+        );
         let matcher = tool.matcher(MOVE_FILE, &moving);
-        assert_eq!(matcher.arguments, BTreeMap::from([("from".to_string(), ArgumentMatcher::Pattern(regex::escape("docs/a.md"))), ("to".to_string(), ArgumentMatcher::Pattern(regex::escape("docs/b.md")))]), "that move, both of its places");
-        assert_eq!(tool.describe(PUBLISH_FILE, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Offer 'out/r.csv' in the workspace for download as 'Report.csv'");
+        assert_eq!(
+            matcher.arguments,
+            BTreeMap::from([
+                ("from".to_string(), ArgumentMatcher::Pattern(regex::escape("docs/a.md"))),
+                ("to".to_string(), ArgumentMatcher::Pattern(regex::escape("docs/b.md")))
+            ]),
+            "that move, both of its places"
+        );
+        assert_eq!(
+            tool.describe(PUBLISH_FILE, &json!({ "path": "out/r.csv", "name": "Report.csv" }))
+                .unwrap(),
+            "Offer 'out/r.csv' in the workspace for download as 'Report.csv'"
+        );
         let reading = tool.matcher(READ_FILE, &json!({ "path": "a.md", "start_line": 2 }));
         assert_eq!(reading.arguments.len(), 2, "a read is alike when exactly alike");
     }
@@ -693,7 +1079,11 @@ mod tests {
     #[tokio::test]
     async fn the_file_tools_are_presented_as_what_they_do_to_files() {
         let world = session_with_workspace().await;
-        let presented: BTreeMap<String, ToolPresentation> = terminal_tool(&world, json!({})).tools().into_iter().map(|t| (t.name, t.presentation)).collect();
+        let presented: BTreeMap<String, ToolPresentation> = terminal_tool(&world, json!({}))
+            .tools()
+            .into_iter()
+            .map(|t| (t.name, t.presentation))
+            .collect();
         assert_eq!(presented[LIST_FILES], FILE_LIST_PRESENTATION);
         assert_eq!(presented[READ_FILE], FILE_READ_PRESENTATION);
         assert_eq!(presented[GREP_FILES], FILE_SEARCH_PRESENTATION);

@@ -101,9 +101,13 @@ impl WorkspacePath {
         let mut components = Vec::new();
         for component in Path::new(text).components() {
             match component {
-                Component::Normal(part) => components.push(part.to_str().ok_or_else(invalid)?.to_string()),
+                Component::Normal(part) => {
+                    components.push(part.to_str().ok_or_else(invalid)?.to_string())
+                }
                 Component::CurDir => {}
-                Component::ParentDir | Component::RootDir | Component::Prefix(_) => return Err(invalid()),
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(invalid())
+                }
             }
         }
         Ok(Self { components })
@@ -170,7 +174,12 @@ pub trait Terminal: Send + Sync + Debug {
     /// Writes `content` to the file `path`, replacing what was there, and
     /// makes the directories it lies in; at most `limit` bytes, or nothing
     /// is written. Answers how many bytes were written.
-    async fn write(&self, path: &WorkspacePath, content: ByteStream, limit: u64) -> TerminalResult<u64>;
+    async fn write(
+        &self,
+        path: &WorkspacePath,
+        content: ByteStream,
+        limit: u64,
+    ) -> TerminalResult<u64>;
     /// Removes the file `path`, or the directory if it is empty.
     async fn delete(&self, path: &WorkspacePath) -> TerminalResult<()>;
     /// Makes the directory `path`, and those it lies in.
@@ -312,12 +321,19 @@ mod tests {
     #[test]
     fn a_path_is_one_inside_the_workspace_or_none() {
         assert_eq!(WorkspacePath::parse("a/b").unwrap().to_string(), "a/b");
-        assert_eq!(WorkspacePath::parse("./a//b/").unwrap(), WorkspacePath::parse("a/b").unwrap(), "normalised");
+        assert_eq!(
+            WorkspacePath::parse("./a//b/").unwrap(),
+            WorkspacePath::parse("a/b").unwrap(),
+            "normalised"
+        );
         assert!(WorkspacePath::parse("").unwrap().is_root());
         assert!(WorkspacePath::parse(".").unwrap().is_root());
         for refused in ["/etc/passwd", "../x", "a/../../x", "a/..", "a\0b"] {
             let error = WorkspacePath::parse(refused).expect_err(refused);
-            assert!(matches!(&error, TerminalError::InvalidPath(written) if written == refused), "{refused:?}: {error}");
+            assert!(
+                matches!(&error, TerminalError::InvalidPath(written) if written == refused),
+                "{refused:?}: {error}"
+            );
         }
     }
 

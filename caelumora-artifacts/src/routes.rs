@@ -14,13 +14,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
-use caelumora_model::project::ProjectId;
 use axum::Router;
+use caelumora_model::project::ProjectId;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::StoreError;
 use caelumora_rest_api::access::AccessEntry;
-use caelumora_rest_api::scope::ItemDescriptionRequest;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
+use caelumora_rest_api::scope::ItemDescriptionRequest;
 use caelumora_rest_server::auth::AuthenticatedUser;
 use caelumora_rest_server::error::{ApiError, Json, Path, Query};
 use caelumora_rest_server::plugin::RestPlugin;
@@ -42,8 +42,11 @@ impl RestPlugin for ArtifactsPlugin {
     fn routes(&self, app: Arc<AppState>) -> Router {
         // Without the plugin registered with the runtime there are no
         // artifacts to serve.
-        let Some(manager) = app.runtime_manager.services().get::<ArtifactManager>().map(Arc::clone) else {
-            tracing::error!("The artifacts plugin serves no routes: the runtime was built without it");
+        let Some(manager) = app.runtime_manager.services().get::<ArtifactManager>().map(Arc::clone)
+        else {
+            tracing::error!(
+                "The artifacts plugin serves no routes: the runtime was built without it"
+            );
             return Router::new();
         };
         Router::new()
@@ -65,7 +68,9 @@ impl From<ArtifactError> for ApiError {
     fn from(error: ArtifactError) -> Self {
         let detail = error.to_string();
         match error {
-            ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => Self::not_found("artifact_not_found", detail),
+            ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => {
+                Self::not_found("artifact_not_found", detail)
+            }
             ArtifactError::VersionNotFound { .. } => Self::not_found("version_not_found", detail),
             ArtifactError::NotConfigured => Self::bad_request("artifacts_not_configured", detail),
             ArtifactError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
@@ -76,30 +81,47 @@ impl From<ArtifactError> for ApiError {
             ArtifactError::Store(e) => e.into(),
             // A caller that is no user, a name not in a project's scope - which the publisher
             // vouches for -, a runtime without artifacts: not the client's request.
-            ArtifactError::OwnerNotAUser | ArtifactError::InvalidScope | ArtifactError::NotJoined => Self::internal("internal_error", "the request", &error.into()),
+            ArtifactError::OwnerNotAUser
+            | ArtifactError::InvalidScope
+            | ArtifactError::NotJoined => {
+                Self::internal("internal_error", "the request", &error.into())
+            }
         }
     }
 }
 
 /// The artifacts the user may read anything of - their own and those
 /// shared with them - or, with `?deleted=true`, those they deleted.
-async fn list_artifacts(State(state): State<Artifacts>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+async fn list_artifacts(
+    State(state): State<Artifacts>,
+    Query(options): Query<ListOptions>,
+    user: AuthenticatedUser,
+) -> Result<Response, ApiError> {
     let views = views(&state.app, &user);
     if options.deleted {
         let deleted = views.deleted_artifacts().await?;
-        return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
+        return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>())
+            .into_response());
     }
     Ok(Json(listed(views.artifacts().await?).await).into_response())
 }
 
 /// Artifact `id`, with the versions the user may read.
-async fn get_artifact(State(state): State<Artifacts>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<ArtifactResponse>, ApiError> {
+async fn get_artifact(
+    State(state): State<Artifacts>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<Json<ArtifactResponse>, ApiError> {
     Ok(Json(owned(&state, &user, ArtifactId(id)).await?))
 }
 
 /// Version `number` of artifact `id`: whoever its list or the version's
 /// lets read it (issue 23).
-async fn download_version(State(state): State<Artifacts>, Path((id, number)): Path<(Uuid, u32)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+async fn download_version(
+    State(state): State<Artifacts>,
+    Path((id, number)): Path<(Uuid, u32)>,
+    user: AuthenticatedUser,
+) -> Result<Response, ApiError> {
     let id = ArtifactId(id);
     let artifact = views(&state.app, &user).artifact(id).await?;
     let (size, content) = artifact.content(number).await?;
@@ -107,24 +129,39 @@ async fn download_version(State(state): State<Artifacts>, Path((id, number)): Pa
 }
 
 /// Says what the artifact is; `null` or empty takes it away.
-async fn describe_artifact(State(state): State<Artifacts>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<ItemDescriptionRequest>) -> Result<Json<ArtifactResponse>, ApiError> {
+async fn describe_artifact(
+    State(state): State<Artifacts>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(request): Json<ItemDescriptionRequest>,
+) -> Result<Json<ArtifactResponse>, ApiError> {
     let id = ArtifactId(id);
     state.manager.describe(&user.security_context(), id, request.description.as_deref()).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
 
 /// Deletes the artifact: kept, with its content, until it is purged.
-async fn delete_artifact(State(state): State<Artifacts>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+async fn delete_artifact(
+    State(state): State<Artifacts>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
     let id = ArtifactId(id);
     let deleted = state.manager.delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
-        false => Err(ApiError::not_found("artifact_not_found", format!("There is no artifact {id}"))),
+        false => {
+            Err(ApiError::not_found("artifact_not_found", format!("There is no artifact {id}")))
+        }
     }
 }
 
 /// Restores the deleted artifact; `409` if another took its name meanwhile.
-async fn restore_artifact(State(state): State<Artifacts>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<ArtifactResponse>, ApiError> {
+async fn restore_artifact(
+    State(state): State<Artifacts>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<Json<ArtifactResponse>, ApiError> {
     let id = ArtifactId(id);
     state.manager.restore(&user.security_context(), id).await?;
     Ok(Json(owned(&state, &user, id).await?))
@@ -132,18 +169,29 @@ async fn restore_artifact(State(state): State<Artifacts>, Path(id): Path<Uuid>, 
 
 /// Removes the deleted artifact for good, its content first - as the
 /// policy allows, by default the system's alone.
-async fn purge_artifact(State(state): State<Artifacts>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+async fn purge_artifact(
+    State(state): State<Artifacts>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
     let id = ArtifactId(id);
     let purged = state.manager.purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
-        false => Err(ApiError::not_found("artifact_not_found", format!("There is no deleted artifact {id}"))),
+        false => Err(ApiError::not_found(
+            "artifact_not_found",
+            format!("There is no deleted artifact {id}"),
+        )),
     }
 }
 
 /// The artifacts with a version published in the channel, each with those
 /// versions, as a reader of the channel sees them.
-async fn channel_artifacts(State(state): State<Artifacts>, Path((id, cid)): Path<(Uuid, Uuid)>, user: AuthenticatedUser) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
+async fn channel_artifacts(
+    State(state): State<Artifacts>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
     let channel = channel_of(&state.app, &user, SessionId(id), ChannelId(cid)).await?;
     Ok(Json(listed(channel.artifacts().await?).await))
 }
@@ -151,7 +199,11 @@ async fn channel_artifacts(State(state): State<Artifacts>, Path((id, cid)): Path
 /// The artifacts that lie in project `id` and the user may read (issue 467), each with the
 /// versions they may read: a member reads every artifact, and the versions published where they
 /// took part.
-async fn project_artifacts(State(state): State<Artifacts>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
+async fn project_artifacts(
+    State(state): State<Artifacts>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
     let project = views(&state.app, &user).project(ProjectId(id)).await?;
     Ok(Json(listed(project.artifacts().await?).await))
 }
@@ -159,9 +211,16 @@ async fn project_artifacts(State(state): State<Artifacts>, Path(id): Path<Uuid>,
 /// Gives the artifact the access list in the body (issues 23, 316),
 /// replacing the one it had: its owner's act. Whom it newly names reads
 /// every version there is as well, unless `?versions=false`.
-async fn set_access(State(state): State<Artifacts>, Path(id): Path<Uuid>, Query(options): Query<ShareOptions>, user: AuthenticatedUser, Json(entries): Json<Vec<AccessEntry>>) -> Result<Json<ArtifactResponse>, ApiError> {
+async fn set_access(
+    State(state): State<Artifacts>,
+    Path(id): Path<Uuid>,
+    Query(options): Query<ShareOptions>,
+    user: AuthenticatedUser,
+    Json(entries): Json<Vec<AccessEntry>>,
+) -> Result<Json<ArtifactResponse>, ApiError> {
     let id = ArtifactId(id);
-    let acl = AccessEntry::acl_of(entries).map_err(|e| ApiError::bad_request("invalid_access", e))?;
+    let acl =
+        AccessEntry::acl_of(entries).map_err(|e| ApiError::bad_request("invalid_access", e))?;
     state.manager.set_access(&user.security_context(), id, acl, options.versions).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
@@ -177,7 +236,11 @@ async fn listed(artifacts: Vec<ArtifactView>) -> Vec<ArtifactResponse> {
 
 /// Artifact `id`, as the user sees it, with where its versions were
 /// published.
-async fn owned(state: &Artifacts, user: &AuthenticatedUser, id: ArtifactId) -> Result<ArtifactResponse, ApiError> {
+async fn owned(
+    state: &Artifacts,
+    user: &AuthenticatedUser,
+    id: ArtifactId,
+) -> Result<ArtifactResponse, ApiError> {
     let artifact = views(&state.app, user).artifact(id).await?;
     Ok(ArtifactResponse::from(artifact.snapshot_with_publications().await))
 }

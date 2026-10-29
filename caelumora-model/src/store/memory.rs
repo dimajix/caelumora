@@ -3,28 +3,32 @@ use crate::agent::{AgentChannelState, AgentId, AgentState};
 use crate::chain::{Node, Position};
 use crate::channel::{ChannelId, ChannelState};
 use crate::context::FrameRef;
-use crate::user::{UserChannelState, UserId};
-use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::digest::Digest;
+use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::message::{Message, MessageId};
-use crate::store::documents::{Document, DocumentOf, DocumentStorage};
 use crate::security::Admission;
-use crate::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
+use crate::store::documents::{Document, DocumentOf, DocumentStorage};
+use crate::store::history::{
+    answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems,
+};
 use crate::store::kept_chain::KeptChain;
-use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
-use crate::transcript::{known, Transcript, TranscriptEntry};
 use crate::store::query::{ordered_after, FieldPath, Filter};
-use crate::value::name::ScopedName;
-use crate::store::{EntityKind, Journaled, PersistenceBackend, Presence, StateStore, StoreError, StoreResult};
+use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
+use crate::store::{
+    EntityKind, Journaled, PersistenceBackend, Presence, StateStore, StoreError, StoreResult,
+};
 use crate::tool::ToolSet;
+use crate::transcript::{known, Transcript, TranscriptEntry};
+use crate::user::{UserChannelState, UserId};
+use crate::value::name::ScopedName;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use uuid::Uuid;
+use std::mem;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 use tracing::info;
-use std::mem;
+use uuid::Uuid;
 
 /// A backend in memory (issue 446): the documents of every kind, a storage
 /// per kind (`MemoryDocuments`) opened when it is first asked for, and maps
@@ -78,7 +82,11 @@ impl MemoryStore {
         write_lock(&self.histories, |all| {
             let kept = all.entry(channel).or_default();
             let end = kept.chain.end();
-            kept.chain.append(changes).map_err(|e| StoreError::Backend(format!("what the history of channel {channel} added does not fit: {e}")))?;
+            kept.chain.append(changes).map_err(|e| {
+                StoreError::Backend(format!(
+                    "what the history of channel {channel} added does not fit: {e}"
+                ))
+            })?;
             for node in kept.chain.from(end) {
                 kept.items.take(node);
                 kept.memberships.take(node);
@@ -94,18 +102,30 @@ impl MemoryStore {
     fn load_history(&self, channel: ChannelId, from: Position) -> StoreResult<History> {
         read_lock(&self.histories, |all| {
             let Some(kept) = all.get(&channel) else { return Ok(History::default()) };
-            kept.chain.suffix(from)
-                .map_err(|e| StoreError::Backend(format!("the history of channel {channel} cannot be read from position {from}: {e}")))
+            kept.chain.suffix(from).map_err(|e| {
+                StoreError::Backend(format!(
+                    "the history of channel {channel} cannot be read from position {from}: {e}"
+                ))
+            })
         })
     }
 
     /// Appends what `transcript`, that of `agent` in `channel` as its state
     /// holds it, added since it was last stored, and marks it stored.
-    fn append_transcript(&self, agent: AgentId, channel: ChannelId, transcript: &mut Transcript) -> StoreResult<()> {
+    fn append_transcript(
+        &self,
+        agent: AgentId,
+        channel: ChannelId,
+        transcript: &mut Transcript,
+    ) -> StoreResult<()> {
         let Some(changes) = transcript.changes() else { return Ok(()) };
         write_lock(&self.transcripts, |all| {
-            all.entry((agent, channel)).or_default().append(changes)
-                .map_err(|e| StoreError::Backend(format!("what {} added does not fit: {e}", transcript_of(agent, channel))))
+            all.entry((agent, channel)).or_default().append(changes).map_err(|e| {
+                StoreError::Backend(format!(
+                    "what {} added does not fit: {e}",
+                    transcript_of(agent, channel)
+                ))
+            })
         })?;
         transcript.mark_stored();
         Ok(())
@@ -134,10 +154,20 @@ impl MemoryStore {
 
     /// The transcript of `agent` in `channel` from the position `from` on,
     /// as its state holds it; empty if none is kept.
-    fn load_transcript(&self, agent: AgentId, channel: ChannelId, from: Position) -> StoreResult<Transcript> {
+    fn load_transcript(
+        &self,
+        agent: AgentId,
+        channel: ChannelId,
+        from: Position,
+    ) -> StoreResult<Transcript> {
         read_lock(&self.transcripts, |all| {
             let Some(kept) = all.get(&(agent, channel)) else { return Ok(Transcript::default()) };
-            kept.suffix(from).map_err(|e| StoreError::Backend(format!("{} cannot be read from position {from}: {e}", transcript_of(agent, channel))))
+            kept.suffix(from).map_err(|e| {
+                StoreError::Backend(format!(
+                    "{} cannot be read from position {from}: {e}",
+                    transcript_of(agent, channel)
+                ))
+            })
         })
     }
 
@@ -165,15 +195,20 @@ impl MemoryStore {
         state.frames = frames;
         document
     }
-
 }
 
 /// Opens the storage of a kind in memory, which cannot fail; a document is
 /// kept with what it was told, so `document_of` is not needed. The store of
 /// the states is the memory store itself.
 impl PersistenceBackend for MemoryStore {
-    fn documents(&self, kind: EntityKind, _document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>> {
-        let storage = write_lock(&self.documents, |all| Arc::clone(all.entry(kind).or_insert_with(|| Arc::new(MemoryDocuments::new(kind)))));
+    fn documents(
+        &self,
+        kind: EntityKind,
+        _document_of: DocumentOf,
+    ) -> StoreResult<Arc<dyn DocumentStorage>> {
+        let storage = write_lock(&self.documents, |all| {
+            Arc::clone(all.entry(kind).or_insert_with(|| Arc::new(MemoryDocuments::new(kind))))
+        });
         Ok(storage)
     }
 
@@ -227,9 +262,19 @@ impl MemoryDocuments {
 
     /// Refuses `document` if another of `documents` that is not deleted has
     /// its name (issue 250).
-    fn name_free(&self, documents: &HashMap<Uuid, Document>, document: &Document) -> StoreResult<()> {
-        let Some(name) = document.name.as_ref().filter(|_| document.removal_id.is_none()) else { return Ok(()) };
-        match documents.values().any(|other| other.id != document.id && other.removal_id.is_none() && other.name.as_ref() == Some(name)) {
+    fn name_free(
+        &self,
+        documents: &HashMap<Uuid, Document>,
+        document: &Document,
+    ) -> StoreResult<()> {
+        let Some(name) = document.name.as_ref().filter(|_| document.removal_id.is_none()) else {
+            return Ok(());
+        };
+        match documents.values().any(|other| {
+            other.id != document.id
+                && other.removal_id.is_none()
+                && other.name.as_ref() == Some(name)
+        }) {
             false => Ok(()),
             true => Err(StoreError::NameTaken { entity: self.kind.name() }),
         }
@@ -245,27 +290,51 @@ impl DocumentStorage for MemoryDocuments {
     /// Narrowed by the admission as far as told without the groups
     /// (`Admission::may_admit`): an entry for a group lets a document
     /// through, for the store to decide.
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    async fn scan(
+        &self,
+        filter: Option<&Filter<FieldPath>>,
+        admission: Option<&Admission>,
+        presence: Presence,
+        after: Option<Uuid>,
+        limit: usize,
+    ) -> StoreResult<Vec<(Uuid, Value)>> {
         Ok(read_lock(&self.documents, |all| {
-            let meeting = all.values()
-                .filter(|document| presence.holds_mark(document.removal_id) && filter.is_none_or(|filter| filter.matches(&document.body)))
-                .filter(|document| admission.is_none_or(|admission| admission.may_admit(&document.security_attributes)))
+            let meeting = all
+                .values()
+                .filter(|document| {
+                    presence.holds_mark(document.removal_id)
+                        && filter.is_none_or(|filter| filter.matches(&document.body))
+                })
+                .filter(|document| {
+                    admission
+                        .is_none_or(|admission| admission.may_admit(&document.security_attributes))
+                })
                 .map(|document| (document.id, document))
                 .collect();
-            ordered_after(meeting, after).take(limit).map(|(id, document)| (id, document.body.clone())).collect()
+            ordered_after(meeting, after)
+                .take(limit)
+                .map(|(id, document)| (id, document.body.clone()))
+                .collect()
         }))
     }
 
     async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
         Ok(read_lock(&self.documents, |all| {
-            all.values().find(|document| document.removal_id.is_none() && document.name.as_ref() == Some(name)).map(|document| document.body.clone())
+            all.values()
+                .find(|document| {
+                    document.removal_id.is_none() && document.name.as_ref() == Some(name)
+                })
+                .map(|document| document.body.clone())
         }))
     }
 
     async fn insert(&self, document: Document) -> StoreResult<()> {
         write_lock(&self.documents, |all| {
             if all.contains_key(&document.id) {
-                return Err(StoreError::Conflict(format!("{} {} already exists", self.kind, document.id)));
+                return Err(StoreError::Conflict(format!(
+                    "{} {} already exists",
+                    self.kind, document.id
+                )));
             }
             self.name_free(all, &document)?;
             all.insert(document.id, document);
@@ -291,8 +360,14 @@ impl DocumentStorage for MemoryDocuments {
 
 #[async_trait]
 impl StateStore for MemoryStore {
-    async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
-        let mut state = read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default();
+    async fn get_agent_channel_state(
+        &self,
+        agent_id: AgentId,
+        channel_id: ChannelId,
+    ) -> StoreResult<AgentChannelState> {
+        let mut state =
+            read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned())
+                .unwrap_or_default();
         state.transcript = self.load_transcript(agent_id, channel_id, state.transcript_from)?;
         load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
@@ -300,7 +375,12 @@ impl StateStore for MemoryStore {
 
     /// The prompt texts and the tool sets first, as the `JsonFileStore`
     /// writes them.
-    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
+    async fn put_agent_channel_state(
+        &self,
+        agent_id: AgentId,
+        channel_id: ChannelId,
+        state: &mut AgentChannelState,
+    ) -> StoreResult<()> {
         self.append_given(agent_id, channel_id, state);
         self.append_transcript(agent_id, channel_id, &mut state.transcript)?;
         // Marked first: the copy kept is the state as stored, with nothing pending.
@@ -314,7 +394,10 @@ impl StateStore for MemoryStore {
     /// way.
     async fn channels_with_work_under_way(&self) -> StoreResult<Vec<ChannelId>> {
         let channels: HashSet<ChannelId> = read_lock(&self.agent_channel_states, |v| {
-            v.iter().filter(|(_, state)| state.has_work_under_way()).map(|((_, channel_id), _)| *channel_id).collect()
+            v.iter()
+                .filter(|(_, state)| state.has_work_under_way())
+                .map(|((_, channel_id), _)| *channel_id)
+                .collect()
         });
         Ok(channels.into_iter().collect())
     }
@@ -331,12 +414,19 @@ impl StateStore for MemoryStore {
     }
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
-        let mut state = read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()).ok_or_else(|| StoreError::NotFound { entity: "channel_state", id: channel_id.to_string() })?;
+        let mut state =
+            read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()).ok_or_else(|| {
+                StoreError::NotFound { entity: "channel_state", id: channel_id.to_string() }
+            })?;
         state.history = self.load_history(channel_id, state.history_from)?;
         Ok(state)
     }
 
-    async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()> {
+    async fn put_channel_state(
+        &self,
+        channel_id: ChannelId,
+        state: &mut ChannelState,
+    ) -> StoreResult<()> {
         self.append_history(channel_id, &mut state.history)?;
         // Marked first: the copy kept is the state as stored, with nothing pending.
         state.mark_stored();
@@ -345,11 +435,21 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
-    async fn get_user_channel_state(&self, user_id: UserId, channel_id: ChannelId) -> StoreResult<UserChannelState> {
-        Ok(read_lock(&self.user_channel_states, |v| v.get(&(user_id, channel_id)).cloned()).unwrap_or_default())
+    async fn get_user_channel_state(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+    ) -> StoreResult<UserChannelState> {
+        Ok(read_lock(&self.user_channel_states, |v| v.get(&(user_id, channel_id)).cloned())
+            .unwrap_or_default())
     }
 
-    async fn put_user_channel_state(&self, user_id: UserId, channel_id: ChannelId, state: &mut UserChannelState) -> StoreResult<()> {
+    async fn put_user_channel_state(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+        state: &mut UserChannelState,
+    ) -> StoreResult<()> {
         state.mark_stored();
         write_lock(&self.user_channel_states, |v| v.insert((user_id, channel_id), state.clone()));
         Ok(())
@@ -372,46 +472,98 @@ impl StateStore for MemoryStore {
         write_lock(&self.given, |v| v.retain(|(aid, _), _| *aid != agent_id));
         Ok(())
     }
-
 }
 
 #[async_trait]
 impl HistoryStore for MemoryStore {
-    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, filter: Option<&Filter<HistoryField>>) -> StoreResult<HistoryPage> {
+    async fn page(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        from: Position,
+        before: Option<Position>,
+        limit: usize,
+        filter: Option<&Filter<HistoryField>>,
+    ) -> StoreResult<HistoryPage> {
         read_lock(&self.histories, |all| match all.get(&channel) {
             Some(kept) => {
                 let ranges = kept.memberships.of_reader(reader);
-                let newest = kept.items.newest_before(before.unwrap_or(Position::MAX)).take_while(|(seq, _)| *seq >= from);
-                page_of(newest.map(|item| seen(reader, &ranges, filter, item)), from, limit, kept.chain.head())
+                let newest = kept
+                    .items
+                    .newest_before(before.unwrap_or(Position::MAX))
+                    .take_while(|(seq, _)| *seq >= from);
+                page_of(
+                    newest.map(|item| seen(reader, &ranges, filter, item)),
+                    from,
+                    limit,
+                    kept.chain.head(),
+                )
             }
             None => Ok(HistoryPage::default()),
         })
     }
 
-    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(Position, HistoryEntry)>> {
-        read_lock(&self.histories, |all| match all.get(&channel).and_then(|kept| kept.items.said(id).map(|item| (kept, item))) {
-            Some((kept, item)) => seen(reader, &kept.memberships.of_reader(reader), None, item),
-            None => Ok(None),
+    async fn said(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        id: MessageId,
+    ) -> StoreResult<Option<(Position, HistoryEntry)>> {
+        read_lock(&self.histories, |all| {
+            match all.get(&channel).and_then(|kept| kept.items.said(id).map(|item| (kept, item))) {
+                Some((kept, item)) => seen(reader, &kept.memberships.of_reader(reader), None, item),
+                None => Ok(None),
+            }
         })
     }
 
-    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<Recorded>>> {
-        Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| {
-            let nodes = kept.chain.from(range.start).iter().take_while(|node| node.seq < range.end);
-            seen_nodes(reader, &kept.memberships.of_reader(reader), nodes)
-        }).unwrap_or_default()))
+    async fn entries(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        range: Range<Position>,
+    ) -> StoreResult<Vec<Node<Recorded>>> {
+        Ok(read_lock(&self.histories, |all| {
+            all.get(&channel)
+                .map(|kept| {
+                    let nodes =
+                        kept.chain.from(range.start).iter().take_while(|node| node.seq < range.end);
+                    seen_nodes(reader, &kept.memberships.of_reader(reader), nodes)
+                })
+                .unwrap_or_default()
+        }))
     }
 
-    async fn answer(&self, channel: ChannelId, reader: &Reader, end: Position) -> StoreResult<Vec<Message>> {
-        Ok(read_lock(&self.histories, |all| all.get(&channel).and_then(|kept| {
-            let nodes = kept.chain.from(Position::START);
-            let at = usize::try_from(end.get()).ok().filter(|at| *at < nodes.len())?;
-            Some(answer_of(&nodes[at].entry.entry, nodes[..at].iter().rev(), reader, &kept.memberships.of_reader(reader)))
-        }).unwrap_or_default()))
+    async fn answer(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        end: Position,
+    ) -> StoreResult<Vec<Message>> {
+        Ok(read_lock(&self.histories, |all| {
+            all.get(&channel)
+                .and_then(|kept| {
+                    let nodes = kept.chain.from(Position::START);
+                    let at = usize::try_from(end.get()).ok().filter(|at| *at < nodes.len())?;
+                    Some(answer_of(
+                        &nodes[at].entry.entry,
+                        nodes[..at].iter().rev(),
+                        reader,
+                        &kept.memberships.of_reader(reader),
+                    ))
+                })
+                .unwrap_or_default()
+        }))
     }
 
-    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<Position>>> {
-        Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| kept.memberships.of_member(actor)).unwrap_or_default()))
+    async fn memberships(
+        &self,
+        channel: ChannelId,
+        actor: ActorId,
+    ) -> StoreResult<Vec<Range<Position>>> {
+        Ok(read_lock(&self.histories, |all| {
+            all.get(&channel).map(|kept| kept.memberships.of_member(actor)).unwrap_or_default()
+        }))
     }
 
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {
@@ -427,20 +579,43 @@ impl HistoryStore for MemoryStore {
 
 #[async_trait]
 impl TranscriptStore for MemoryStore {
-    async fn path(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<Vec<Node<TranscriptEntry>>>> {
+    async fn path(
+        &self,
+        agent: AgentId,
+        channel: ChannelId,
+        digest: Digest,
+    ) -> StoreResult<Option<Vec<Node<TranscriptEntry>>>> {
         read_lock(&self.transcripts, |all| match all.get(&(agent, channel)) {
-            Some(kept) => kept.path(digest).map_err(|e| StoreError::Backend(format!("{} does not lead back to its root: {e}", transcript_of(agent, channel)))),
+            Some(kept) => kept.path(digest).map_err(|e| {
+                StoreError::Backend(format!(
+                    "{} does not lead back to its root: {e}",
+                    transcript_of(agent, channel)
+                ))
+            }),
             None => Ok(None),
         })
     }
 
-    async fn message(&self, agent: AgentId, channel: ChannelId, id: MessageId) -> StoreResult<Option<Message>> {
-        Ok(read_lock(&self.transcripts, |all| all.get(&(agent, channel)).and_then(|kept| known(kept.from(Position::START).iter(), id))))
+    async fn message(
+        &self,
+        agent: AgentId,
+        channel: ChannelId,
+        id: MessageId,
+    ) -> StoreResult<Option<Message>> {
+        Ok(read_lock(&self.transcripts, |all| {
+            all.get(&(agent, channel)).and_then(|kept| known(kept.from(Position::START).iter(), id))
+        }))
     }
 
-    async fn in_transcript(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>> {
+    async fn in_transcript(
+        &self,
+        agent: AgentId,
+        channel: ChannelId,
+        ids: &[MessageId],
+    ) -> StoreResult<HashSet<MessageId>> {
         Ok(read_lock(&self.transcripts, |all| {
-            all.get(&(agent, channel)).into_iter()
+            all.get(&(agent, channel))
+                .into_iter()
                 .flat_map(|kept| kept.from(Position::START))
                 .filter_map(|node| node.entry.message().map(|m| m.id))
                 .filter(|id| ids.contains(id))
@@ -448,37 +623,64 @@ impl TranscriptStore for MemoryStore {
         }))
     }
 
-    async fn prompts(&self, agent: AgentId, channel: ChannelId, digests: &[Digest]) -> StoreResult<BTreeMap<Digest, String>> {
+    async fn prompts(
+        &self,
+        agent: AgentId,
+        channel: ChannelId,
+        digests: &[Digest],
+    ) -> StoreResult<BTreeMap<Digest, String>> {
         Ok(read_lock(&self.given, |all| {
-            all.get(&(agent, channel)).into_iter()
-                .flat_map(|kept| digests.iter().filter_map(|digest| kept.prompts.get(digest).map(|text| (*digest, text.clone()))))
+            all.get(&(agent, channel))
+                .into_iter()
+                .flat_map(|kept| {
+                    digests.iter().filter_map(|digest| {
+                        kept.prompts.get(digest).map(|text| (*digest, text.clone()))
+                    })
+                })
                 .collect()
         }))
     }
 
-    async fn offered_tools(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<Vec<ToolSet>>> {
-        Ok(read_lock(&self.given, |all| all.get(&(agent, channel)).and_then(|kept| kept.offered_tools.get(&digest).cloned())))
+    async fn offered_tools(
+        &self,
+        agent: AgentId,
+        channel: ChannelId,
+        digest: Digest,
+    ) -> StoreResult<Option<Vec<ToolSet>>> {
+        Ok(read_lock(&self.given, |all| {
+            all.get(&(agent, channel)).and_then(|kept| kept.offered_tools.get(&digest).cloned())
+        }))
     }
 
-    async fn frame(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<FrameRef>> {
-        Ok(read_lock(&self.given, |all| all.get(&(agent, channel)).and_then(|kept| kept.frames.get(&digest).cloned())))
+    async fn frame(
+        &self,
+        agent: AgentId,
+        channel: ChannelId,
+        digest: Digest,
+    ) -> StoreResult<Option<FrameRef>> {
+        Ok(read_lock(&self.given, |all| {
+            all.get(&(agent, channel)).and_then(|kept| kept.frames.get(&digest).cloned())
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::suite;
-    use crate::store::{EntityStoreFactory, Persistence};
-    use crate::store::query::Query;
-    use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
     use crate::group::GroupId;
     use crate::security::{Grant, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject};
+    use crate::store::query::Query;
+    use crate::store::suite;
+    use crate::store::{EntityStoreFactory, Persistence};
+    use crate::user::UserId;
 
     /// The stores of a memory store, as the owners' policy checks them.
     fn owners() -> Persistence {
-        Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))
+        Persistence::in_memory_with(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        )
     }
 
     #[tokio::test]
@@ -496,31 +698,64 @@ mod tests {
         let kept = [
             SecurityAttributes::owned_by(bob),
             SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read),
-            SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::new()), Grant::Read),
+            SecurityAttributes::owned_by(alice)
+                .granting(Subject::Group(GroupId::new()), Grant::Read),
             SecurityAttributes::owned_by(alice),
             SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Join),
         ];
         let mut ids = Vec::new();
         for security_attributes in kept {
             let id = Uuid::new_v4();
-            documents.insert(Document { id, name: None, removal_id: None, security_attributes, body: Value::Null }).await.unwrap();
+            documents
+                .insert(Document {
+                    id,
+                    name: None,
+                    removal_id: None,
+                    security_attributes,
+                    body: Value::Null,
+                })
+                .await
+                .unwrap();
             ids.push(id);
         }
-        let bobs = Admission { actors: vec![bob], grant: Some(Grant::Read), ..Admission::default() };
-        let mut scanned: Vec<Uuid> = documents.scan(None, Some(&bobs), Presence::Present, None, 10).await.unwrap().into_iter().map(|(id, _)| id).collect();
+        let bobs =
+            Admission { actors: vec![bob], grant: Some(Grant::Read), ..Admission::default() };
+        let mut scanned: Vec<Uuid> = documents
+            .scan(None, Some(&bobs), Presence::Present, None, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         let mut admitted = ids[..3].to_vec();
         scanned.sort();
         admitted.sort();
-        assert_eq!(scanned, admitted, "his own, shared with him, shared with a group - not hers, nor what lets him join");
-        assert_eq!(documents.scan(None, None, Presence::Present, None, 10).await.unwrap().len(), 5, "without an admission, all of them");
+        assert_eq!(
+            scanned, admitted,
+            "his own, shared with him, shared with a group - not hers, nor what lets him join"
+        );
+        assert_eq!(
+            documents.scan(None, None, Presence::Present, None, 10).await.unwrap().len(),
+            5,
+            "without an admission, all of them"
+        );
     }
 
     #[tokio::test]
     async fn lists_what_check_decides() {
         let (memberships, access_policy) = suite::admitting_policy();
-        let store = Persistence::in_memory_with(Arc::clone(&access_policy), Arc::new(ConfidentialityRules::default()));
+        let store = Persistence::in_memory_with(
+            Arc::clone(&access_policy),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let folders = store.entity_store::<suite::Folder>().unwrap();
-        suite::lists_admit_what_check_decides(&store.entity_stores().unwrap(), folders.as_ref(), &memberships, access_policy.as_ref()).await;
+        suite::lists_admit_what_check_decides(
+            &store.entity_stores().unwrap(),
+            folders.as_ref(),
+            &memberships,
+            access_policy.as_ref(),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -542,7 +777,8 @@ mod tests {
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
-            let name = ScopedName::new(format!("w{index}"), Scope::UserScope { user_id: owner }).unwrap();
+            let name =
+                ScopedName::new(format!("w{index}"), Scope::UserScope { user_id: owner }).unwrap();
             let workspace = Workspace::new(name, "main", Classification::CHANNEL_DEFAULT, owner);
             store.create(&SecurityContext::system(), &workspace).await.unwrap();
             if owner == alice {
@@ -550,7 +786,8 @@ mod tests {
             }
         }
         hers.sort();
-        let ctx = SecurityContext::new(ActorId::User(alice), Default::default(), Default::default());
+        let ctx =
+            SecurityContext::new(ActorId::User(alice), Default::default(), Default::default());
         let mut read = Vec::new();
         let mut query = Query::all().limited(1);
         loop {
@@ -558,7 +795,11 @@ mod tests {
             read.extend(page.items.iter().map(|w| w.id));
             match page.next {
                 Some(cursor) => {
-                    assert_eq!(page.items.len(), 1, "every page that goes on is full, however many of bob's lie between");
+                    assert_eq!(
+                        page.items.len(),
+                        1,
+                        "every page that goes on is full, however many of bob's lie between"
+                    );
                     query = Query::all().limited(1).after(cursor);
                 }
                 // The last page may be empty: what followed was bob's.

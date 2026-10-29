@@ -19,13 +19,17 @@
 //! 204) - is told them once and then only when they changed (parameter
 //! `changes_only`), as the roster and the language are.
 
-use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
+use crate::prompt::{
+    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::text::{Briefing, Summary};
+use caelumora_runtime::component::{
+    flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+};
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND: &str = "channel_briefing_prompt_provider";
@@ -88,11 +92,20 @@ impl PromptProvider for ChannelBriefingPromptProvider {
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // Work that reaches no session (`Situation::channel`) has no place to describe.
-        let Some(channel) = situation.channel().await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let Some(channel) = situation.channel().await? else {
+            return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
+        };
         let session = channel.session();
-        let places = [("session", session.summary(), session.briefing()), ("channel", channel.summary(), channel.briefing())];
+        let places = [
+            ("session", session.summary(), session.briefing()),
+            ("channel", channel.summary(), channel.briefing()),
+        ];
         // A session's descriptions are public; a channel's are the channel's.
-        let classification = if says_nothing(&places[1]) { Classification::PUBLIC } else { channel.classification().clone() };
+        let classification = if says_nothing(&places[1]) {
+            Classification::PUBLIC
+        } else {
+            channel.classification().clone()
+        };
         let text = self.text(render(&self.prompts, &places)?)?;
         Ok(Prompt::classified(text, classification))
     }
@@ -122,12 +135,19 @@ fn render(prompts: &PromptTexts, places: &[Place<'_>]) -> Result<String, PromptE
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND)
+                .provides::<dyn PromptProvider>(),
+        ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
             let position = PromptPosition::of_params(&descriptor.params)?;
             let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
-            let provider = if changes_only { ChannelBriefingPromptProvider::changes_only(position, prompts) } else { ChannelBriefingPromptProvider::new(position, prompts) };
+            let provider = if changes_only {
+                ChannelBriefingPromptProvider::changes_only(position, prompts)
+            } else {
+                ChannelBriefingPromptProvider::new(position, prompts)
+            };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
             Ok(facets)
@@ -138,22 +158,22 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use crate::turn::Turn;
     use crate::testing::{self, TestAgents};
-    use caelumora_runtime::testing::TestRuntime;
-    use caelumora_runtime::session::{SessionLoop, SessionManager};
-    use caelumora_runtime::session::testing::{actor_runtime_in, make_session, user};
+    use crate::turn::Turn;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::{Confidentiality, Visibility};
-    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use caelumora_runtime::session::testing::{actor_runtime_in, make_session, user};
+    use caelumora_runtime::session::{SessionLoop, SessionManager};
+    use caelumora_runtime::testing::TestRuntime;
 
     #[test]
     fn a_place_is_described_by_its_summary_and_briefing() {
@@ -164,7 +184,11 @@ mod tests {
             "[About this channel]\nWhat this channel is for, as its owner describes it.\nIn short: Planning the release.\n\nDates are in UTC.\nBe brief.\n");
         let release = Summary::new("Release 2.0").unwrap();
         assert_eq!(render(&prompts, &[("session", Some(&release), None)]).unwrap(), "[About this session]\nWhat this session is for, as its owner describes it.\nIn short: Release 2.0\n");
-        assert_eq!(render(&prompts, &[("session", None, None)]).unwrap(), "", "a place that says nothing adds nothing");
+        assert_eq!(
+            render(&prompts, &[("session", None, None)]).unwrap(),
+            "",
+            "a place that says nothing adds nothing"
+        );
         assert_eq!(render(&prompts, &[("session", Some(&release), None), ("channel", None, Some(&briefing))]).unwrap(),
             "[About this session]\nWhat this session is for, as its owner describes it.\nIn short: Release 2.0\n\n\
              [About this channel]\nWhat this channel is for, as its owner describes it.\n\nDates are in UTC.\nBe brief.\n",
@@ -177,66 +201,152 @@ mod tests {
     #[test]
     fn told_every_time_unless_only_changes_are_told() {
         let always = ChannelBriefingPromptProvider::new(PromptPosition::Start, testing::prompts());
-        assert_eq!(always.text("a".to_string()).unwrap(), always.text("a".to_string()).unwrap(), "every turn");
+        assert_eq!(
+            always.text("a".to_string()).unwrap(),
+            always.text("a".to_string()).unwrap(),
+            "every turn"
+        );
 
-        let changes = ChannelBriefingPromptProvider::changes_only(PromptPosition::Start, testing::prompts());
-        assert_eq!(changes.text(String::new()).unwrap(), "", "nothing from the start: nothing to tell");
+        let changes =
+            ChannelBriefingPromptProvider::changes_only(PromptPosition::Start, testing::prompts());
+        assert_eq!(
+            changes.text(String::new()).unwrap(),
+            "",
+            "nothing from the start: nothing to tell"
+        );
         assert_eq!(changes.text("a".to_string()).unwrap(), "a", "what is said first");
         assert_eq!(changes.text("a".to_string()).unwrap(), "", "not again while it stays");
         assert_eq!(changes.text("b".to_string()).unwrap(), "b", "but when it changes");
-        assert!(changes.text(String::new()).unwrap().contains("no longer holds"), "and when it is taken back");
+        assert!(
+            changes.text(String::new()).unwrap().contains("no longer holds"),
+            "and when it is taken back"
+        );
         assert_eq!(changes.text(String::new()).unwrap(), "");
     }
 
     #[tokio::test]
     async fn the_descriptions_are_read_at_every_turn_and_classified_as_their_place() {
         let store = Persistence::in_memory();
-        let runtime = TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }.build();
+        let runtime =
+            TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }
+                .build();
         let system = SecurityContext::system();
 
         let personality = Personality {
-            description: None, id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(), roles: None, introduction: None, components: Default::default(),
-            security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, hears_during_turn: Default::default(), deleted: None,
+            description: None,
+            id: PersonalityId::new(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(),
+            roles: None,
+            introduction: None,
+            components: Default::default(),
+            security_attributes: Default::default(),
+            reasoning_visibility: Visibility::Channel,
+            hears_during_turn: Default::default(),
+            deleted: None,
         };
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
-        let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
+        let agent = Agent::new(
+            ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),
+            personality.id,
+            ActorId::None,
+        );
         store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
         let owner = user("owner");
         store.entity_stores().unwrap().users.create(&system, &owner).await.unwrap();
-        let as_owner = SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
+        let as_owner =
+            SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
         let session = make_session("s", owner.id);
         let confidential = Classification::general(Confidentiality::Confidential);
-        let mut channel = Channel::build(session.id, ActorId::User(owner.id), Name::new("main").unwrap(), Default::default(), confidential.clone(), None);
+        let mut channel = Channel::build(
+            session.id,
+            ActorId::User(owner.id),
+            Name::new("main").unwrap(),
+            Default::default(),
+            confidential.clone(),
+            None,
+        );
         channel.participants = vec![Participant::Agent(agent.id)];
-        let session = Session { summary: Some(Summary::new("Release 2.0").unwrap()), participants: channel.participants.clone(), channels: vec![channel.id], ..session };
-        let session_loop = SessionManager::new(Arc::clone(&runtime)).create(&as_owner, session.clone(), vec![channel.clone()]).await.unwrap();
+        let session = Session {
+            summary: Some(Summary::new("Release 2.0").unwrap()),
+            participants: channel.participants.clone(),
+            channels: vec![channel.id],
+            ..session
+        };
+        let session_loop = SessionManager::new(Arc::clone(&runtime))
+            .create(&as_owner, session.clone(), vec![channel.clone()])
+            .await
+            .unwrap();
 
-        let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);
+        let context =
+            SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(EventContext::new(session.id, channel.id, ActorId::None, String::new()), None, context.clone(), channel.classification.clone(), Default::default()));
-        let provider = ChannelBriefingPromptProvider::new(PromptPosition::Start, testing::prompts());
+        state.begin_turn(Work::new(
+            EventContext::new(session.id, channel.id, ActorId::None, String::new()),
+            None,
+            context.clone(),
+            channel.classification.clone(),
+            Default::default(),
+        ));
+        let provider =
+            ChannelBriefingPromptProvider::new(PromptPosition::Start, testing::prompts());
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
-        assert!(prompt.text.contains("In short: Release 2.0") && !prompt.text.contains("[About this channel]"), "{}", prompt.text);
-        assert_eq!(prompt.classification, Some(Classification::PUBLIC), "a session's descriptions are public");
+        assert!(
+            prompt.text.contains("In short: Release 2.0")
+                && !prompt.text.contains("[About this channel]"),
+            "{}",
+            prompt.text
+        );
+        assert_eq!(
+            prompt.classification,
+            Some(Classification::PUBLIC),
+            "a session's descriptions are public"
+        );
 
         let running = session_loop.channel(channel.id).expect("the channel runs");
-        running.update_description(&system, Some("Planning"), Some("Dates are in UTC.")).await.unwrap();
+        running
+            .update_description(&system, Some("Planning"), Some("Dates are in UTC."))
+            .await
+            .unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         let ours = prompt.text.find("[About this session]").unwrap();
         let its = prompt.text.find("[About this channel]").unwrap();
         assert!(ours < its, "the session's first: {}", prompt.text);
-        assert!(prompt.text.contains("Dates are in UTC."), "the channel's as it is now: {}", prompt.text);
-        assert_eq!(prompt.classification, Some(confidential), "a channel's are classified as the channel");
+        assert!(
+            prompt.text.contains("Dates are in UTC."),
+            "the channel's as it is now: {}",
+            prompt.text
+        );
+        assert_eq!(
+            prompt.classification,
+            Some(confidential),
+            "a channel's are classified as the channel"
+        );
 
         session_loop.update_description(&system, None, None).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
-        assert!(!prompt.text.contains("[About this session]"), "a session that says nothing any more: {}", prompt.text);
+        assert!(
+            !prompt.text.contains("[About this session]"),
+            "a session that says nothing any more: {}",
+            prompt.text
+        );
     }
 
     /// What `provider` tells agent `agent` in the turn begun in `state`.
-    async fn told(provider: &ChannelBriefingPromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, state: &mut AgentChannelState) -> Prompt {
-        let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(agent))).expect("a turn was begun");
+    async fn told(
+        provider: &ChannelBriefingPromptProvider,
+        agent: AgentId,
+        session_loop: &Arc<SessionLoop>,
+        state: &mut AgentChannelState,
+    ) -> Prompt {
+        let turn = Turn::of(
+            agent,
+            "Jonathan".to_string(),
+            state,
+            AgentStateHandle::detached(),
+            actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(agent)),
+        )
+        .expect("a turn was begun");
         provider.get_prompt(&turn.situation()).await.unwrap()
     }
 }

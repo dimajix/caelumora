@@ -69,7 +69,9 @@ impl ContentStorage for LocalContentStorage {
         }
         write_whole(&place, content, limit).await.map_err(|failure| match failure {
             WriteFailure::TooLarge => ContentError::TooLarge { limit },
-            WriteFailure::BrokeOff(kind) => ContentError::Unavailable(format!("what was to be kept broke off: {kind}")),
+            WriteFailure::BrokeOff(kind) => {
+                ContentError::Unavailable(format!("what was to be kept broke off: {kind}"))
+            }
             WriteFailure::Io(e) => ContentError::unavailable(e),
         })
     }
@@ -114,7 +116,9 @@ impl ContentStorage for LocalContentStorage {
     async fn remove_under(&self, prefix: &str) -> ContentResult<()> {
         let dir = self.place(prefix)?;
         match fs::metadata(&dir).await {
-            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&dir).await.map_err(ContentError::unavailable),
+            Ok(metadata) if metadata.is_dir() => {
+                fs::remove_dir_all(&dir).await.map_err(ContentError::unavailable)
+            }
             Err(e) if e.kind() != ErrorKind::NotFound => Err(ContentError::unavailable(e)),
             // A key itself lies under no key.
             _ => Ok(()),
@@ -138,7 +142,12 @@ mod tests {
 
     async fn read(storage: &LocalContentStorage, key: &str) -> Vec<u8> {
         let (_, content) = storage.get(key).await.unwrap();
-        content.collect::<Vec<_>>().await.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect()
+        content
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .flat_map(|chunk| chunk.unwrap().to_vec())
+            .collect()
     }
 
     #[tokio::test]
@@ -153,19 +162,35 @@ mod tests {
 
         let too_large = storage.put("artifacts/a/3", stream(b"too large"), 4).await;
         assert!(matches!(too_large, Err(ContentError::TooLarge { limit: 4 })), "{too_large:?}");
-        assert!(matches!(storage.get("artifacts/a/3").await, Err(ContentError::NotFound(_))), "nothing left of it");
-        assert!(matches!(storage.get("artifacts/a").await, Err(ContentError::NotFound(_))), "a prefix is no key");
+        assert!(
+            matches!(storage.get("artifacts/a/3").await, Err(ContentError::NotFound(_))),
+            "nothing left of it"
+        );
+        assert!(
+            matches!(storage.get("artifacts/a").await, Err(ContentError::NotFound(_))),
+            "a prefix is no key"
+        );
 
         storage.copy("artifacts/a/1", "artifacts/c/1").await.unwrap();
         assert_eq!(read(&storage, "artifacts/c/1").await, b"first", "a copy");
-        assert!(matches!(storage.copy("artifacts/a/9", "artifacts/c/9").await, Err(ContentError::NotFound(_))), "of nothing");
+        assert!(
+            matches!(
+                storage.copy("artifacts/a/9", "artifacts/c/9").await,
+                Err(ContentError::NotFound(_))
+            ),
+            "of nothing"
+        );
 
         storage.delete("artifacts/a/2").await.unwrap();
         assert!(matches!(storage.get("artifacts/a/2").await, Err(ContentError::NotFound(_))));
         storage.delete("artifacts/a/2").await.expect("nothing there is no error");
         storage.remove_under("artifacts/a").await.unwrap();
         assert!(matches!(storage.get("artifacts/a/1").await, Err(ContentError::NotFound(_))));
-        assert_eq!(read(&storage, "artifacts/b/1").await, b"other", "what lies under another prefix stays");
+        assert_eq!(
+            read(&storage, "artifacts/b/1").await,
+            b"other",
+            "what lies under another prefix stays"
+        );
         assert_eq!(read(&storage, "artifacts/c/1").await, b"first", "a copy is removed on its own");
         storage.remove_under("artifacts/a").await.expect("nothing there is no error");
         storage.remove_under("artifacts/b/1").await.expect("a key itself lies under no key");
@@ -176,9 +201,29 @@ mod tests {
     async fn a_key_never_leaves_the_root() {
         let root = tempfile::tempdir().unwrap();
         let storage = LocalContentStorage::new(root.path().join("content"), None);
-        for key in ["", "/etc/passwd", "../outside", "a/../../outside", "a//b", "a/", "./a", "a/./b", "a/.", "a\0b"] {
-            assert!(matches!(storage.put(key, stream(b"x"), 10).await, Err(ContentError::InvalidKey(_))), "{key:?}");
-            assert!(matches!(storage.remove_under(key).await, Err(ContentError::InvalidKey(_))), "{key:?}");
+        for key in [
+            "",
+            "/etc/passwd",
+            "../outside",
+            "a/../../outside",
+            "a//b",
+            "a/",
+            "./a",
+            "a/./b",
+            "a/.",
+            "a\0b",
+        ] {
+            assert!(
+                matches!(
+                    storage.put(key, stream(b"x"), 10).await,
+                    Err(ContentError::InvalidKey(_))
+                ),
+                "{key:?}"
+            );
+            assert!(
+                matches!(storage.remove_under(key).await, Err(ContentError::InvalidKey(_))),
+                "{key:?}"
+            );
         }
         assert!(!root.path().join("outside").exists());
     }

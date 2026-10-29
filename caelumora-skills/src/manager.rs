@@ -14,13 +14,17 @@
 use crate::skill::{Skill, SkillBody, SkillId, SkillUpdateEvent};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
+use caelumora_model::confidentiality::{
+    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
+};
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{Deleted, EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{
+    Deleted, EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
+};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -89,7 +93,11 @@ impl SkillManager {
     /// Who may do what is asked by `skills`, the store every write goes
     /// through - the clearance for a skill reached included (issue 322);
     /// the manager asks the flow alone (issue 304).
-    pub fn new(skills: Arc<dyn EntityStore<Skill>>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+    pub fn new(
+        skills: Arc<dyn EntityStore<Skill>>,
+        events: Arc<EventBus>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+    ) -> Self {
         Self { skills, events, confidentiality, writing: Mutex::new(()) }
     }
 
@@ -102,7 +110,11 @@ impl SkillManager {
     /// they write they can read - the flow, the `ConfidentialityPolicy`'s
     /// (issue 304), asked before the store asks their permission: it tells
     /// them nothing of others (issue 312).
-    fn require_flow(&self, ctx: &SecurityContext, classification: &Classification) -> SkillResult<()> {
+    fn require_flow(
+        &self,
+        ctx: &SecurityContext,
+        classification: &Classification,
+    ) -> SkillResult<()> {
         self.confidentiality.require_cleared_for(ctx, classification, || SkillError::NotCleared)
     }
 
@@ -115,13 +127,28 @@ impl SkillManager {
     /// not fit, `ClassificationRefused`, `NotCleared`, or a `StoreError` -
     /// `NameTaken` among them, and `Validation` for a scope a skill does not
     /// lie in.
-    pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, description: &str, body: &str, classification: Classification) -> SkillResult<Skill> {
+    pub async fn create(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        scope: Scope,
+        description: &str,
+        body: &str,
+        classification: Classification,
+    ) -> SkillResult<Skill> {
         let owner = match ctx.principal_id {
             owner @ (ActorId::User(_) | ActorId::System) => owner,
             _ => return Err(SkillError::OwnerNotAUser),
         };
-        let skill = Skill::new(ScopedName::new(name, scope)?, Description::new(description)?, SkillBody::new(body)?, classification, owner);
-        self.confidentiality.require_classifiable(&skill.classification, || SkillError::ClassificationRefused)?;
+        let skill = Skill::new(
+            ScopedName::new(name, scope)?,
+            Description::new(description)?,
+            SkillBody::new(body)?,
+            classification,
+            owner,
+        );
+        self.confidentiality
+            .require_classifiable(&skill.classification, || SkillError::ClassificationRefused)?;
         self.require_flow(ctx, &skill.classification)?;
 
         let _writing = self.writing.lock().await;
@@ -135,7 +162,12 @@ impl SkillManager {
     ///
     /// # Errors
     /// As [`Self::update`].
-    pub async fn rename(&self, ctx: &SecurityContext, id: SkillId, name: &str) -> SkillResult<Skill> {
+    pub async fn rename(
+        &self,
+        ctx: &SecurityContext,
+        id: SkillId,
+        name: &str,
+    ) -> SkillResult<Skill> {
         self.update(ctx, id, SkillUpdateEvent::NameChanged(name.to_string())).await
     }
 
@@ -143,7 +175,12 @@ impl SkillManager {
     ///
     /// # Errors
     /// As [`Self::update`].
-    pub async fn describe(&self, ctx: &SecurityContext, id: SkillId, description: &str) -> SkillResult<Skill> {
+    pub async fn describe(
+        &self,
+        ctx: &SecurityContext,
+        id: SkillId,
+        description: &str,
+    ) -> SkillResult<Skill> {
         self.update(ctx, id, SkillUpdateEvent::DescriptionChanged(description.to_string())).await
     }
 
@@ -152,7 +189,12 @@ impl SkillManager {
     ///
     /// # Errors
     /// As [`Self::update`].
-    pub async fn rewrite(&self, ctx: &SecurityContext, id: SkillId, body: &str) -> SkillResult<Skill> {
+    pub async fn rewrite(
+        &self,
+        ctx: &SecurityContext,
+        id: SkillId,
+        body: &str,
+    ) -> SkillResult<Skill> {
         self.update(ctx, id, SkillUpdateEvent::BodyChanged(body.to_string())).await
     }
 
@@ -161,7 +203,12 @@ impl SkillManager {
     ///
     /// # Errors
     /// As [`Self::update`].
-    pub async fn reclassify(&self, ctx: &SecurityContext, id: SkillId, classification: Classification) -> SkillResult<Skill> {
+    pub async fn reclassify(
+        &self,
+        ctx: &SecurityContext,
+        id: SkillId,
+        classification: Classification,
+    ) -> SkillResult<Skill> {
         self.update(ctx, id, SkillUpdateEvent::ClassificationChanged(classification)).await
     }
 
@@ -174,25 +221,39 @@ impl SkillManager {
     /// `NotFound` if there is none the caller may read or is cleared for,
     /// `Invalid` if what `event` says does not fit, `ClassificationRefused`
     /// or `NotCleared` for a classification, or whatever the store reports.
-    async fn update(&self, ctx: &SecurityContext, id: SkillId, event: SkillUpdateEvent) -> SkillResult<Skill> {
+    async fn update(
+        &self,
+        ctx: &SecurityContext,
+        id: SkillId,
+        event: SkillUpdateEvent,
+    ) -> SkillResult<Skill> {
         let _writing = self.writing.lock().await;
         let mut skill = self.skills.get(ctx, id).await.map_err(store_error(id))?;
         // Announced to who reaches it as it was, too: who no longer does
         // learns so (issue 312).
         let had = skill.classification.clone();
         match &event {
-            SkillUpdateEvent::NameChanged(name) => skill.name = ScopedName::new(name, skill.name.scope.clone())?,
-            SkillUpdateEvent::DescriptionChanged(description) => skill.description = Description::new(description)?,
+            SkillUpdateEvent::NameChanged(name) => {
+                skill.name = ScopedName::new(name, skill.name.scope.clone())?
+            }
+            SkillUpdateEvent::DescriptionChanged(description) => {
+                skill.description = Description::new(description)?
+            }
             SkillUpdateEvent::BodyChanged(body) => skill.body = SkillBody::new(body)?,
             SkillUpdateEvent::ClassificationChanged(classification) => {
-                self.confidentiality.require_classifiable(classification, || SkillError::ClassificationRefused)?;
+                self.confidentiality
+                    .require_classifiable(classification, || SkillError::ClassificationRefused)?;
                 self.require_flow(ctx, classification)?;
                 skill.classification = classification.clone();
             }
         }
         skill.updated_at = Utc::now();
         self.skills.update(ctx, &skill).await.map_err(store_error(id))?;
-        self.events.publish_classified(GlobalEvent::updated::<Skill>(&id, &event), skill.security_attributes.clone(), &[had, skill.classification.clone()]);
+        self.events.publish_classified(
+            GlobalEvent::updated::<Skill>(&id, &event),
+            skill.security_attributes.clone(),
+            &[had, skill.classification.clone()],
+        );
         info!(skill = %id, by = %ctx.caller_id, "Skill changed");
         Ok(skill)
     }
@@ -254,11 +315,18 @@ impl ScopeMember for SkillManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
+    async fn delete_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for skill in self.skills.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for skill in
+            self.skills.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items
+        {
             if deleted_unless_refused(self.skills.delete(ctx, skill.id, removal).await)? {
                 self.events.announce(GlobalEvent::deleted::<Skill>(&skill.id), &skill);
             } else {
@@ -275,11 +343,23 @@ impl ScopeMember for SkillManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
+    async fn restore_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for skill in self.skills.list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
-            if let Some(restored) = restored_unless_refused(self.skills.restore(ctx, skill.id).await, &skill)? {
+        for skill in self
+            .skills
+            .list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
+            if let Some(restored) =
+                restored_unless_refused(self.skills.restore(ctx, skill.id).await, &skill)?
+            {
                 self.events.announce(GlobalEvent::restored::<Skill>(&restored.id), &restored);
             }
         }
@@ -294,7 +374,12 @@ impl ScopeMember for SkillManager {
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for Deleted { entity: skill, .. } in self.skills.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity: skill, .. } in self
+            .skills
+            .list_deleted(&system, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
             self.skills.purge(&system, skill.id).await?;
         }
         Ok(())

@@ -3,8 +3,8 @@
 
 use crate::filter::Condition;
 use caelumora_model::actor::ActorId;
-use caelumora_model::store::query::Filter;
 use caelumora_model::security::{Admission, Grant, SecurityAttributes, Subject};
+use caelumora_model::store::query::Filter;
 use sqlx::postgres::PgArguments;
 use sqlx::query::QueryAs;
 use sqlx::Postgres;
@@ -28,7 +28,10 @@ const OWNER: &str = "owner";
 /// hand out more, which the store decides again.
 pub(crate) fn entries(attributes: &SecurityAttributes) -> (Vec<Uuid>, Vec<String>) {
     let owner = (attributes.owner_id.id(), OWNER.to_string());
-    let listed = attributes.acl.iter().map(|entry| (subject(entry.subject), relation(entry.grant).to_string()));
+    let listed = attributes
+        .acl
+        .iter()
+        .map(|entry| (subject(entry.subject), relation(entry.grant).to_string()));
     iter::once(owner).chain(listed).unzip()
 }
 
@@ -75,9 +78,22 @@ impl Admitted {
     /// over its access entries in `access` and the groups in `groups` - both
     /// tables quoted -, its parameters numbered from `first`.
     pub(crate) fn of(admission: &Admission, access: &str, groups: &str, first: usize) -> Self {
-        let owners = admission.actors.iter().map(ActorId::id).chain(admission.unowned.then_some(UNOWNED)).collect();
-        let relations: Vec<String> = admission.grant.into_iter().flat_map(Grant::covering).map(|grant| relation(grant).to_string()).collect();
-        let subjects = admission.actors.iter().map(ActorId::id)
+        let owners = admission
+            .actors
+            .iter()
+            .map(ActorId::id)
+            .chain(admission.unowned.then_some(UNOWNED))
+            .collect();
+        let relations: Vec<String> = admission
+            .grant
+            .into_iter()
+            .flat_map(Grant::covering)
+            .map(|grant| relation(grant).to_string())
+            .collect();
+        let subjects = admission
+            .actors
+            .iter()
+            .map(ActorId::id)
             .chain(admission.roles.iter().map(|role| Uuid::from(*role)))
             .chain(admission.everyone.then_some(EVERYONE))
             .collect();
@@ -92,7 +108,8 @@ impl Admitted {
         if admission.grant.is_some() {
             let present = if admission.deleted_groups { "true" } else { "g.removal_id IS NULL" };
             for member in &admission.actors {
-                let belonging = Condition::of(&Filter::with_member(*member).by_path(), "g.body", next);
+                let belonging =
+                    Condition::of(&Filter::with_member(*member).by_path(), "g.body", next);
                 next = belonging.next();
                 sql.push_str(&format!(" UNION ALL SELECT a.entity_id FROM {groups} g JOIN {access} a ON a.subject = g.id AND a.relation = ANY({related}) \
                     WHERE {present} AND {}", belonging.sql));
@@ -105,8 +122,14 @@ impl Admitted {
 
     /// `query`, which binds the parameters before the condition's first,
     /// with what the condition binds bound after them.
-    pub(crate) fn bound<'q, O>(&self, query: QueryAs<'q, Postgres, O, PgArguments>) -> QueryAs<'q, Postgres, O, PgArguments> {
-        let query = query.bind(self.owners.clone()).bind(self.relations.clone()).bind(self.subjects.clone());
+    pub(crate) fn bound<'q, O>(
+        &self,
+        query: QueryAs<'q, Postgres, O, PgArguments>,
+    ) -> QueryAs<'q, Postgres, O, PgArguments> {
+        let query = query
+            .bind(self.owners.clone())
+            .bind(self.relations.clone())
+            .bind(self.subjects.clone());
         self.groups.iter().fold(query, |query, belonging| belonging.bound(query))
     }
 }
@@ -131,7 +154,11 @@ mod tests {
         assert_eq!(subjects, [alice.into(), bob.into(), role.into(), group.into(), EVERYONE]);
         assert_eq!(relations, [OWNER, "read", "write", "join", "read"]);
         for unowned in [ActorId::System, ActorId::None] {
-            assert_eq!(entries(&SecurityAttributes::owned_by(unowned)).0, [UNOWNED], "{unowned} by no id of its own");
+            assert_eq!(
+                entries(&SecurityAttributes::owned_by(unowned)).0,
+                [UNOWNED],
+                "{unowned} by no id of its own"
+            );
         }
     }
 }

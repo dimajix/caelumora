@@ -1,12 +1,15 @@
 //! The built-in `/nudge` command (issue 278).
 
 use crate::channel::ChannelError;
-use crate::command::{named_participant, CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
-use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
+use crate::command::{
+    named_participant, ChannelCommandProvider, CommandContext, CommandError, CommandResult,
+    ProvidesCommands,
+};
+use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::error::user_message;
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, NUDGE_COMMAND_KIND};
 use std::sync::Arc;
-use crate::error::user_message;
 
 pub const NUDGE_COMMAND_NAME: &str = "nudge";
 
@@ -31,20 +34,34 @@ impl ProvidesCommands for NudgeCommandProvider {
 
 #[async_trait]
 impl ChannelCommandProvider for NudgeCommandProvider {
-    async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
+    async fn execute(
+        &self,
+        _name: &str,
+        args: &str,
+        context: &CommandContext<'_>,
+    ) -> CommandResult<CommandOutput> {
         let wanted = args.trim();
         if wanted.is_empty() {
-            return Err(CommandError::InvalidArguments { command: NUDGE_COMMAND_NAME.to_string(), reason: "name who is to respond".to_string() });
+            return Err(CommandError::InvalidArguments {
+                command: NUDGE_COMMAND_NAME.to_string(),
+                reason: "name who is to respond".to_string(),
+            });
         }
         let participant = named_participant(NUDGE_COMMAND_NAME, wanted, context.channel)?;
         match context.issuer.request_response(participant.id).await {
             Ok(_) => Ok(CommandOutput::private(format!("Asked {} to respond.", participant.name))),
             Err(e) => match e.downcast_ref::<ChannelError>() {
-                Some(ChannelError::AlreadyResponding { .. }) => Ok(CommandOutput::private(format!("{} is responding already.", participant.name))),
-                Some(ChannelError::NudgesItself { .. }) => Err(CommandError::InvalidArguments { command: NUDGE_COMMAND_NAME.to_string(), reason: "you cannot nudge yourself".to_string() }),
+                Some(ChannelError::AlreadyResponding { .. }) => Ok(CommandOutput::private(
+                    format!("{} is responding already.", participant.name),
+                )),
+                Some(ChannelError::NudgesItself { .. }) => Err(CommandError::InvalidArguments {
+                    command: NUDGE_COMMAND_NAME.to_string(),
+                    reason: "you cannot nudge yourself".to_string(),
+                }),
                 _ => {
                     tracing::warn!("/nudge failed: {:#}", e);
-                    let reason = user_message(&e).unwrap_or_else(|| "see the server log".to_string());
+                    let reason =
+                        user_message(&e).unwrap_or_else(|| "see the server log".to_string());
                     Err(CommandError::Failed { command: NUDGE_COMMAND_NAME.to_string(), reason })
                 }
             },

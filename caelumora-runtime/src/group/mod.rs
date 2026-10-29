@@ -84,14 +84,21 @@ fn store_error(id: GroupId) -> impl FnOnce(StoreError) -> GroupError {
 /// # Errors
 /// `StoreError::Validation` naming the first group `ctx` may not read, or
 /// whatever else the store reports.
-pub async fn require_nameable(store: &dyn EntityStore<Group>, ctx: &SecurityContext, before: &[AclEntry], entries: &[AclEntry]) -> StoreResult<()> {
+pub async fn require_nameable(
+    store: &dyn EntityStore<Group>,
+    ctx: &SecurityContext,
+    before: &[AclEntry],
+    entries: &[AclEntry],
+) -> StoreResult<()> {
     for entry in entries {
         let Subject::Group(group) = entry.subject else { continue };
         if before.iter().any(|named| named.subject == entry.subject) {
             continue;
         }
         if store.get(ctx, group).await.optional()?.is_none() {
-            return Err(StoreError::Validation(format!("an access list names group {group}, which you cannot read")));
+            return Err(StoreError::Validation(format!(
+                "an access list names group {group}, which you cannot read"
+            )));
         }
     }
     Ok(())
@@ -105,7 +112,10 @@ pub async fn require_nameable(store: &dyn EntityStore<Group>, ctx: &SecurityCont
 /// list naming it, of every kind. A deleted group comes back with
 /// what it belongs to and keeps its entries, and so does one that cannot be
 /// looked up: an entry is dropped only for certain.
-pub async fn prune_gone_groups<'a>(store: &dyn EntityStore<Group>, lists: impl IntoIterator<Item = &'a mut Vec<AclEntry>>) {
+pub async fn prune_gone_groups<'a>(
+    store: &dyn EntityStore<Group>,
+    lists: impl IntoIterator<Item = &'a mut Vec<AclEntry>>,
+) {
     let mut lists: Vec<&mut Vec<AclEntry>> = lists.into_iter().collect();
     let mut named = Vec::new();
     for entry in lists.iter().flat_map(|list| list.iter()) {
@@ -124,7 +134,9 @@ pub async fn prune_gone_groups<'a>(store: &dyn EntityStore<Group>, lists: impl I
         return;
     }
     for list in &mut lists {
-        list.retain(|entry| !matches!(entry.subject, Subject::Group(group) if gone.contains(&group)));
+        list.retain(
+            |entry| !matches!(entry.subject, Subject::Group(group) if gone.contains(&group)),
+        );
     }
     debug!(groups = ?gone, "Entries naming groups that are gone dropped from an access list");
 }
@@ -134,7 +146,9 @@ pub async fn prune_gone_groups<'a>(store: &dyn EntityStore<Group>, lists: impl I
 async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
     let system = SecurityContext::system();
     let found = match store.get(&system, id).await.optional() {
-        Ok(None) => store.get_deleted(&system, id).await.optional().map(|deleted| deleted.is_some()),
+        Ok(None) => {
+            store.get_deleted(&system, id).await.optional().map(|deleted| deleted.is_some())
+        }
         there => there.map(|live| live.is_some()),
     };
     found.map(|found| !found).unwrap_or_else(|e| {
@@ -151,7 +165,10 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
 ///
 /// # Errors
 /// Whatever the store reports.
-pub(crate) async fn keep_participants(store: &dyn EntityStore<Group>, participants: Group) -> StoreResult<()> {
+pub(crate) async fn keep_participants(
+    store: &dyn EntityStore<Group>,
+    participants: Group,
+) -> StoreResult<()> {
     let system = SecurityContext::system();
     let mut stored = match store.get(&system, participants.id).await.optional()? {
         Some(stored) => stored,
@@ -171,28 +188,28 @@ pub(crate) async fn keep_participants(store: &dyn EntityStore<Group>, participan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::removal::{Removal, RemovalId};
     use crate::event::EventBus;
+    use async_trait::async_trait;
     use caelumora_model::actor::ActorId;
+    use caelumora_model::channel::ChannelId;
     use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::group::GroupField;
+    use caelumora_model::project::Project;
+    use caelumora_model::removal::{Removal, RemovalId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::Grant;
-    use caelumora_model::store::EntityStores;
-    use caelumora_model::value::name::ScopedName;
-    use std::sync::Arc;
     use caelumora_model::security::AllowAllPolicy;
+    use caelumora_model::security::Grant;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::documents::Document;
-    use serde_json::Value;
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::{Deleted, PersistenceBackend, Stored};
-    use caelumora_model::store::Persistence;
     use caelumora_model::store::query::{Page, Query};
-    use caelumora_model::channel::ChannelId;
-    use caelumora_model::project::Project;
-    use caelumora_model::group::GroupField;
-    use async_trait::async_trait;
+    use caelumora_model::store::EntityStores;
+    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{Deleted, PersistenceBackend, Stored};
+    use caelumora_model::value::name::ScopedName;
+    use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     /// A store of groups whose deleting and restoring fail once, after as
     /// many as `passing` let through - counted down past zero, never again;
@@ -224,11 +241,20 @@ mod tests {
         async fn update(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
             self.inner.update(ctx, value).await
         }
-        async fn delete(&self, ctx: &SecurityContext, id: GroupId, removal: &Removal) -> StoreResult<bool> {
+        async fn delete(
+            &self,
+            ctx: &SecurityContext,
+            id: GroupId,
+            removal: &Removal,
+        ) -> StoreResult<bool> {
             self.fails()?;
             self.inner.delete(ctx, id, removal).await
         }
-        async fn list(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
+        async fn list(
+            &self,
+            ctx: &SecurityContext,
+            query: &Query<GroupField>,
+        ) -> StoreResult<Page<Group>> {
             self.inner.list(ctx, query).await
         }
         async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
@@ -238,16 +264,33 @@ mod tests {
         async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
             self.inner.purge(ctx, id).await
         }
-        async fn get_deleted(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Deleted<Group>> {
+        async fn get_deleted(
+            &self,
+            ctx: &SecurityContext,
+            id: GroupId,
+        ) -> StoreResult<Deleted<Group>> {
             self.inner.get_deleted(ctx, id).await
         }
-        async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Deleted<Group>>> {
+        async fn list_deleted(
+            &self,
+            ctx: &SecurityContext,
+            query: &Query<GroupField>,
+        ) -> StoreResult<Page<Deleted<Group>>> {
             self.inner.list_deleted(ctx, query).await
         }
-        async fn list_deleted_with(&self, ctx: &SecurityContext, removal_id: RemovalId, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
+        async fn list_deleted_with(
+            &self,
+            ctx: &SecurityContext,
+            removal_id: RemovalId,
+            query: &Query<GroupField>,
+        ) -> StoreResult<Page<Group>> {
             self.inner.list_deleted_with(ctx, removal_id, query).await
         }
-        async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
+        async fn find_by_name(
+            &self,
+            ctx: &SecurityContext,
+            name: &ScopedName,
+        ) -> StoreResult<Group> {
             self.inner.find_by_name(ctx, name).await
         }
     }
@@ -259,13 +302,20 @@ mod tests {
         let owner = UserId::new();
         let bob = ActorId::User(UserId::new());
         let session = SessionId::new();
-        let name = ScopedName::new("participants", Scope::SessionScope { session_id: session }).unwrap();
+        let name =
+            ScopedName::new("participants", Scope::SessionScope { session_id: session }).unwrap();
         let participants = Group { id: GroupId::of_session(session), ..Group::team(name, owner) };
         keep_participants(groups.as_ref(), participants.clone()).await.expect("made");
         groups.delete(&system, participants.id, &Removal::now(system.caller_id)).await.unwrap();
 
-        keep_participants(groups.as_ref(), Group { members: vec![bob], ..participants.clone() }).await.expect("restored, not made again");
-        assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob], "there again, following who takes part");
+        keep_participants(groups.as_ref(), Group { members: vec![bob], ..participants.clone() })
+            .await
+            .expect("restored, not made again");
+        assert_eq!(
+            groups.get(&system, participants.id).await.unwrap().members,
+            [bob],
+            "there again, following who takes part"
+        );
     }
 
     /// Issue 348: the groups of the participants of a session and its channel, and of the members
@@ -275,16 +325,33 @@ mod tests {
     #[tokio::test]
     async fn the_participants_go_and_come_back_all_or_none() {
         let stores = Persistence::in_memory().entity_stores().unwrap();
-        let failing = Arc::new(Failing { inner: Arc::clone(&stores.groups), passing: AtomicUsize::new(usize::MAX) });
-        let events = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
-        let manager = GroupManager::new(&EntityStores { groups: Arc::<Failing>::clone(&failing), ..stores.clone() }, events, Arc::new(AllowAllPolicy::new()));
+        let failing = Arc::new(Failing {
+            inner: Arc::clone(&stores.groups),
+            passing: AtomicUsize::new(usize::MAX),
+        });
+        let events = Arc::new(EventBus::new(
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        ));
+        let manager = GroupManager::new(
+            &EntityStores { groups: Arc::<Failing>::clone(&failing), ..stores.clone() },
+            events,
+            Arc::new(AllowAllPolicy::new()),
+        );
         let system = SecurityContext::system();
         let owner = UserId::new();
         let session_id = SessionId::new();
         let channel_id = ChannelId::new();
-        let participants = |id: GroupId, scope: Scope| Group { id, ..Group::team(ScopedName::new("participants", scope).unwrap(), owner) };
-        let of_session = participants(GroupId::of_session(session_id), Scope::SessionScope { session_id });
-        let of_channel = participants(GroupId::of_channel(channel_id), Scope::ChannelScope { session_id, channel_id });
+        let participants = |id: GroupId, scope: Scope| Group {
+            id,
+            ..Group::team(ScopedName::new("participants", scope).unwrap(), owner)
+        };
+        let of_session =
+            participants(GroupId::of_session(session_id), Scope::SessionScope { session_id });
+        let of_channel = participants(
+            GroupId::of_channel(channel_id),
+            Scope::ChannelScope { session_id, channel_id },
+        );
         let own = Project::own_of(session_id, owner);
         let of_project = Group::of_project(&own);
         let groups = [&of_session, &of_channel, &of_project];
@@ -324,10 +391,20 @@ mod tests {
     #[tokio::test]
     async fn only_the_entries_naming_a_group_known_to_be_gone_are_dropped() {
         let memory = Arc::new(MemoryStore::new());
-        let groups = Persistence::over(Arc::<MemoryStore>::clone(&memory), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap().entity_stores().unwrap().groups;
+        let groups = Persistence::over(
+            Arc::<MemoryStore>::clone(&memory),
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        )
+        .unwrap()
+        .entity_stores()
+        .unwrap()
+        .groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
-        let team = |name: &str| Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner);
+        let team = |name: &str| {
+            Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner)
+        };
         let there = team("there");
         let deleted = team("deleted");
         let purged = team("purged");
@@ -339,12 +416,25 @@ mod tests {
         groups.delete(&system, purged.id, &Removal::now(system.caller_id)).await.unwrap();
         groups.purge(&system, purged.id).await.unwrap();
         // Kept as something that is no group, past the store.
-        let storage = memory.documents(Group::KIND, |_| Err(StoreError::Backend("not read".to_string()))).unwrap();
-        storage.replace(Document { id: unreadable.id.into(), name: None, removal_id: None, security_attributes: Default::default(), body: Value::from("not a group") }).await.unwrap();
+        let storage = memory
+            .documents(Group::KIND, |_| Err(StoreError::Backend("not read".to_string())))
+            .unwrap();
+        storage
+            .replace(Document {
+                id: unreadable.id.into(),
+                name: None,
+                removal_id: None,
+                security_attributes: Default::default(),
+                body: Value::from("not a group"),
+            })
+            .await
+            .unwrap();
 
-        let entry = |group: &Group| AclEntry { subject: Subject::Group(group.id), grant: Grant::Read };
+        let entry =
+            |group: &Group| AclEntry { subject: Subject::Group(group.id), grant: Grant::Read };
         let everyone = AclEntry { subject: Subject::Everyone, grant: Grant::Read };
-        let mut acl = vec![entry(&there), entry(&deleted), entry(&purged), entry(&unreadable), everyone];
+        let mut acl =
+            vec![entry(&there), entry(&deleted), entry(&purged), entry(&unreadable), everyone];
         let mut of_version = vec![entry(&purged)];
         prune_gone_groups(groups.as_ref(), [&mut acl, &mut of_version]).await;
         assert_eq!(acl, [entry(&there), entry(&deleted), entry(&unreadable), everyone], "the one purged alone: deleted, it may come back, and one that cannot be read may be there");

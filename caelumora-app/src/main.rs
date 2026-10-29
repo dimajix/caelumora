@@ -3,51 +3,51 @@
 //! their routes under `/api` and - with the feature `web-ui` - the web UI at
 //! `/`, from the binary.
 
+use anyhow::Result;
+use axum::http::Request;
+use axum::middleware;
+use axum::routing;
 use axum::Router;
-use caelumora_logging::{LogTarget, init};
 use caelumora_a2a::plugin::A2aPlugin;
+use caelumora_agents::llm::LLMClient;
+use caelumora_agents::plugin::AgentsPlugin;
+use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_artifacts::plugin::ArtifactsPlugin;
+use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_decision::plugin::DecisionPlugin;
+use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_model::config::AppConfig;
 use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
 use caelumora_ollama::plugin::OllamaPlugin;
-use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
-use caelumora_store_json::plugin::JsonStorePlugin;
-use caelumora_store_postgres::plugin::PostgresStorePlugin;
-use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
-use caelumora_agents::prompt::ModelProfileProvider;
-use caelumora_agents::llm::LLMClient;
-use caelumora_agents::plugin::AgentsPlugin;
-use caelumora_compaction::plugin::CompactionPlugin;
 use caelumora_runtime::plugin::Plugin;
+use caelumora_runtime::project::ProjectManager;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
-use caelumora_runtime::project::ProjectManager;
-use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_skills::plugin::SkillsPlugin;
+use caelumora_store_json::plugin::JsonStorePlugin;
+use caelumora_store_postgres::plugin::PostgresStorePlugin;
+use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
 use clap::Parser;
+use std::future;
+use std::future::IntoFuture;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tower_http::trace::TraceLayer;
-use anyhow::Result;
-use axum::http::Request;
-use std::future::IntoFuture;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::signal::unix::{signal, SignalKind};
-use tokio_util::sync::CancellationToken;
-use tracing::field::Empty;
-use axum::middleware;
-use axum::routing;
-use std::future;
 use tokio::signal::ctrl_c;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::time;
+use tokio_util::sync::CancellationToken;
+use tower_http::trace::TraceLayer;
+use tracing::field::Empty;
 
 #[cfg(feature = "web-ui")]
 mod web_ui;
@@ -69,8 +69,7 @@ async fn main() -> Result<()> {
 
     let config = if let Some(config_path) = args.config {
         AppConfig::load(config_path)?
-    }
-    else {
+    } else {
         AppConfig::default()
     };
 
@@ -84,8 +83,10 @@ async fn main() -> Result<()> {
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
     let user_manager = Arc::clone(runtime_manager.user_manager());
     if user_manager.is_empty() {
-        tracing::warn!("No user providers configured (`users` section): nobody can log in. \
-            See examples/config.yaml.");
+        tracing::warn!(
+            "No user providers configured (`users` section): nobody can log in. \
+            See examples/config.yaml."
+        );
     }
     let auth = Arc::new(Auth {
         tokens: TokenService::from_secret(runtime_manager.secret_manager(), &config.auth).await?,
@@ -131,7 +132,8 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(config.server.address).await?;
     tracing::info!("Caelumora listening on {}", listener.local_addr()?);
-    let serving = axum::serve(listener, app).with_graceful_shutdown(shutdown_on_signal(session_manager, shutdown.clone()));
+    let serving = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_on_signal(session_manager, shutdown.clone()));
     tokio::select! {
         served = serving.into_future() => served?,
         () = async { shutdown.cancelled().await; time::sleep(CONNECTIONS_CLOSE).await } => {
@@ -166,7 +168,9 @@ async fn signalled() {
                 terminated.recv().await;
             }
             Err(e) => {
-                tracing::warn!("SIGTERM cannot be caught, and ends Caelumora without a shutdown: {e}");
+                tracing::warn!(
+                    "SIGTERM cannot be caught, and ends Caelumora without a shutdown: {e}"
+                );
                 future::pending::<()>().await;
             }
         }
@@ -193,7 +197,18 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 /// 428), which only its runtime is built with - first the essential one,
 /// the agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(AgentsPlugin), Box::new(CompactionPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin), Box::new(JsonStorePlugin), Box::new(PostgresStorePlugin)]
+    vec![
+        Box::new(AgentsPlugin),
+        Box::new(CompactionPlugin),
+        Box::new(OllamaPlugin),
+        Box::new(McpPlugin),
+        Box::new(A2aPlugin),
+        Box::new(OpenTerminalPlugin),
+        Box::new(WorkspaceToolsPlugin),
+        Box::new(DecisionPlugin),
+        Box::new(JsonStorePlugin),
+        Box::new(PostgresStorePlugin),
+    ]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core
@@ -210,15 +225,24 @@ fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentErro
 
 /// Every plugin of the program, which it builds its runtime with:
 /// `rest_plugins` and `plugins`, those without routes.
-fn all<'a>(rest_plugins: &'a [Box<dyn RestPlugin>], plugins: &'a [Box<dyn Plugin>]) -> Vec<&'a dyn Plugin> {
-    rest_plugins.iter().map(|plugin| plugin.as_ref() as &dyn Plugin).chain(plugins.iter().map(Box::as_ref)).collect()
+fn all<'a>(
+    rest_plugins: &'a [Box<dyn RestPlugin>],
+    plugins: &'a [Box<dyn Plugin>],
+) -> Vec<&'a dyn Plugin> {
+    rest_plugins
+        .iter()
+        .map(|plugin| plugin.as_ref() as &dyn Plugin)
+        .chain(plugins.iter().map(Box::as_ref))
+        .collect()
 }
 
 /// What the program serves: `api` under `/api`, where a path no route
 /// takes is answered as a problem like every other error of the API, and
 /// the web UI everywhere else if it is built in.
 fn app(api: Router) -> Router {
-    let api = api.fallback(|| async { ApiError::not_found("not_found", "There is nothing at this path of the API") });
+    let api = api.fallback(|| async {
+        ApiError::not_found("not_found", "There is nothing at this path of the API")
+    });
     let app = Router::new().nest(API_PATH, api);
     #[cfg(feature = "web-ui")]
     let app = app.fallback_service(routing::get(web_ui::serve));
@@ -231,27 +255,27 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use axum::routing::get;
+    use caelumora_agents::testing::offered_anywhere;
+    use caelumora_agents::tool::ToolProvider;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::actor::ActorId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::config::BackendConfig;
     use caelumora_model::removal::Removal;
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::store::query::Query;
     use caelumora_model::store::EntityStoreFactory;
+    use caelumora_model::store::Persistence;
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
     use caelumora_runtime::backend::Backends;
     use caelumora_runtime::channel::ChannelLoop;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-    use caelumora_model::config::BackendConfig;
     use caelumora_runtime::runtime::{RuntimeManager, Services};
-    use caelumora_runtime::terminal::TerminalProvider;
     use caelumora_runtime::seed::Seed;
-    use caelumora_agents::testing::offered_anywhere;
-    use caelumora_agents::tool::ToolProvider;
+    use caelumora_runtime::terminal::TerminalProvider;
     use caelumora_skills::skill::Skill;
     use serde_json::json;
     use std::path::Path;
@@ -271,19 +295,33 @@ mod tests {
     fn runtime(store: &Persistence) -> RuntimeManager {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let prompts = config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
+        let prompts =
+            config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
         let AppConfig { compartments, roles, component_defaults, .. } = config;
-        runtime_of(store, &AppConfig { compartments, roles, component_defaults, prompts, ..AppConfig::default() })
+        runtime_of(
+            store,
+            &AppConfig { compartments, roles, component_defaults, prompts, ..AppConfig::default() },
+        )
     }
 
     /// The runtime of the program, with its plugins, over `store`, as
     /// `config` configures it.
     fn runtime_of(store: &Persistence, config: &AppConfig) -> RuntimeManager {
         let access_policy = Arc::new(AllowAllPolicy::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
+        let secrets =
+            Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
-        let mut builder = RuntimeBuilder::new(store.clone(), secrets, access_policy, config.create_confidentiality_policy(), config, ComponentRegistry::built_in(store.entity_stores().unwrap().component_bundles), Backends::with_plugins(&plugins)).unwrap();
+        let mut builder = RuntimeBuilder::new(
+            store.clone(),
+            secrets,
+            access_policy,
+            config.create_confidentiality_policy(),
+            config,
+            ComponentRegistry::built_in(store.entity_stores().unwrap().component_bundles),
+            Backends::with_plugins(&plugins),
+        )
+        .unwrap();
         for plugin in plugins {
             builder.plugin(plugin).unwrap();
         }
@@ -297,7 +335,13 @@ mod tests {
     #[test]
     fn the_default_model_is_served_by_ollama() {
         let runtime = runtime_of(&Persistence::in_memory(), &AppConfig::default());
-        assert_eq!(runtime.component_registry().kind_of::<dyn LLMClient>(&ComponentConfig::default()).as_deref(), Some(OLLAMA_CLIENT_KIND));
+        assert_eq!(
+            runtime
+                .component_registry()
+                .kind_of::<dyn LLMClient>(&ComponentConfig::default())
+                .as_deref(),
+            Some(OLLAMA_CLIENT_KIND)
+        );
     }
 
     #[tokio::test]
@@ -314,8 +358,9 @@ mod tests {
         for template in &seed.session_templates {
             for participant in &template.participants {
                 if let ParticipantTemplate::Agent { personality_id, .. } = participant {
-                    stores.personalities.get(&system, *personality_id).await
-                        .unwrap_or_else(|_| panic!("template {} names a personality the seed has", template.name));
+                    stores.personalities.get(&system, *personality_id).await.unwrap_or_else(|_| {
+                        panic!("template {} names a personality the seed has", template.name)
+                    });
                 }
             }
         }
@@ -325,15 +370,58 @@ mod tests {
         changed.description = Some(Description::new("changed").unwrap());
         stores.personalities.update(&system, &changed).await.unwrap();
         runtime.seed(&[example("seed.yaml")]).await.expect("seeding again is no conflict");
-        assert_eq!(stores.personalities.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.personalities.len(), "nothing twice");
-        assert_eq!(stores.session_templates.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.session_templates.len());
-        assert_eq!(stores.personalities.get(&system, changed.id).await.unwrap().description, changed.description);
-        let skills = store.entity_store::<Skill>().unwrap().list(&system, &Query::all()).await.map(|page| page.items).unwrap();
-        let seeded = seed.plugins.get("skills").and_then(|section| section.as_array()).map_or(0, Vec::len);
-        assert!(!skills.is_empty() && skills.len() == seeded, "the skills, once, by their plugin (issues 22, 323)");
-        assert!(skills.iter().all(|s| s.security_attributes.owner_id == ActorId::System), "the system's");
-        let bundles = stores.component_bundles.list(&system, &Query::all()).await.map(|page| page.items).unwrap();
-        assert!(!bundles.is_empty() && bundles.len() == seed.component_bundles.len(), "the component bundles, once (issues 270, 455)");
+        assert_eq!(
+            stores
+                .personalities
+                .list(&system, &Query::all())
+                .await
+                .map(|page| page.items)
+                .unwrap()
+                .len(),
+            seed.personalities.len(),
+            "nothing twice"
+        );
+        assert_eq!(
+            stores
+                .session_templates
+                .list(&system, &Query::all())
+                .await
+                .map(|page| page.items)
+                .unwrap()
+                .len(),
+            seed.session_templates.len()
+        );
+        assert_eq!(
+            stores.personalities.get(&system, changed.id).await.unwrap().description,
+            changed.description
+        );
+        let skills = store
+            .entity_store::<Skill>()
+            .unwrap()
+            .list(&system, &Query::all())
+            .await
+            .map(|page| page.items)
+            .unwrap();
+        let seeded =
+            seed.plugins.get("skills").and_then(|section| section.as_array()).map_or(0, Vec::len);
+        assert!(
+            !skills.is_empty() && skills.len() == seeded,
+            "the skills, once, by their plugin (issues 22, 323)"
+        );
+        assert!(
+            skills.iter().all(|s| s.security_attributes.owner_id == ActorId::System),
+            "the system's"
+        );
+        let bundles = stores
+            .component_bundles
+            .list(&system, &Query::all())
+            .await
+            .map(|page| page.items)
+            .unwrap();
+        assert!(
+            !bundles.is_empty() && bundles.len() == seed.component_bundles.len(),
+            "the component bundles, once (issues 270, 455)"
+        );
     }
 
     /// A seeded document that was deleted stays deleted, of every kind the
@@ -353,20 +441,51 @@ mod tests {
         let personality = seed.personalities[0].personality.id;
         let template = seed.session_templates[0].id;
         let skill = skills.list(&system, &Query::all()).await.unwrap().items[0].id;
-        assert!(stores.component_bundles.delete(&system, bundle, &Removal::now(system.caller_id)).await.unwrap());
-        assert!(stores.personalities.delete(&system, personality, &Removal::now(system.caller_id)).await.unwrap());
-        assert!(stores.session_templates.delete(&system, template, &Removal::now(system.caller_id)).await.unwrap());
+        assert!(stores
+            .component_bundles
+            .delete(&system, bundle, &Removal::now(system.caller_id))
+            .await
+            .unwrap());
+        assert!(stores
+            .personalities
+            .delete(&system, personality, &Removal::now(system.caller_id))
+            .await
+            .unwrap());
+        assert!(stores
+            .session_templates
+            .delete(&system, template, &Removal::now(system.caller_id))
+            .await
+            .unwrap());
         assert!(skills.delete(&system, skill, &Removal::now(system.caller_id)).await.unwrap());
 
         runtime.seed(&[example("seed.yaml")]).await.expect("a taken id is no failure");
-        assert!(stores.component_bundles.get(&system, bundle).await.is_err() && stores.component_bundles.get_deleted(&system, bundle).await.is_ok(), "the bundle stays deleted");
-        assert!(stores.personalities.get(&system, personality).await.is_err() && stores.personalities.get_deleted(&system, personality).await.is_ok(), "the personality stays deleted");
-        assert!(stores.session_templates.get(&system, template).await.is_err() && stores.session_templates.get_deleted(&system, template).await.is_ok(), "the template stays deleted");
-        assert!(skills.get(&system, skill).await.is_err() && skills.get_deleted(&system, skill).await.is_ok(), "the skill stays deleted");
+        assert!(
+            stores.component_bundles.get(&system, bundle).await.is_err()
+                && stores.component_bundles.get_deleted(&system, bundle).await.is_ok(),
+            "the bundle stays deleted"
+        );
+        assert!(
+            stores.personalities.get(&system, personality).await.is_err()
+                && stores.personalities.get_deleted(&system, personality).await.is_ok(),
+            "the personality stays deleted"
+        );
+        assert!(
+            stores.session_templates.get(&system, template).await.is_err()
+                && stores.session_templates.get_deleted(&system, template).await.is_ok(),
+            "the template stays deleted"
+        );
+        assert!(
+            skills.get(&system, skill).await.is_err()
+                && skills.get_deleted(&system, skill).await.is_ok(),
+            "the skill stays deleted"
+        );
 
         assert!(stores.personalities.purge(&system, personality).await.unwrap());
         runtime.seed(&[example("seed.yaml")]).await.unwrap();
-        assert!(stores.personalities.get(&system, personality).await.is_ok(), "purged, it is seeded again");
+        assert!(
+            stores.personalities.get(&system, personality).await.is_ok(),
+            "purged, it is seeded again"
+        );
     }
 
     /// Every personality of the example seed can be built with what the
@@ -382,9 +501,18 @@ mod tests {
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
         for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
             // Asked for what its actor asks for (issue 337).
-            let asked = runtime.agent_kinds().facets(personality.kind).expect("a kind of agent the program runs");
-            ComponentContainer::from_config(&personality.components, asked, runtime.component_registry(), &context).await
-                .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
+            let asked = runtime
+                .agent_kinds()
+                .facets(personality.kind)
+                .expect("a kind of agent the program runs");
+            ComponentContainer::from_config(
+                &personality.components,
+                asked,
+                runtime.component_registry(),
+                &context,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
         }
     }
 
@@ -398,9 +526,24 @@ mod tests {
         let runtime = runtime(&store);
         runtime.seed(&[example("seed.yaml")]).await.unwrap();
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
-        for (template, channel) in seed.session_templates.iter().flat_map(|template| template.channels.iter().map(move |channel| (template, channel))) {
-            ComponentContainer::from_config(&channel.components, ChannelLoop::COMPONENT_FACETS, runtime.component_registry(), &context).await
-                .unwrap_or_else(|e| panic!("channel {} of template {} cannot be built: {e}", channel.name, template.name));
+        for (template, channel) in seed
+            .session_templates
+            .iter()
+            .flat_map(|template| template.channels.iter().map(move |channel| (template, channel)))
+        {
+            ComponentContainer::from_config(
+                &channel.components,
+                ChannelLoop::COMPONENT_FACETS,
+                runtime.component_registry(),
+                &context,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "channel {} of template {} cannot be built: {e}",
+                    channel.name, template.name
+                )
+            });
         }
     }
 
@@ -411,8 +554,20 @@ mod tests {
     async fn the_tools_of_an_mcp_server_are_a_component_of_the_program() {
         let runtime = runtime(&Persistence::in_memory());
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
-        let config = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } }), ..ComponentDescriptor::new("tracker", MCP_TOOL_KIND) }] };
-        let container = ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], runtime.component_registry(), &context).await.expect("the kind is known");
+        let config = ComponentConfig {
+            component_nodes: vec![ComponentDescriptor {
+                params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } }),
+                ..ComponentDescriptor::new("tracker", MCP_TOOL_KIND)
+            }],
+        };
+        let container = ComponentContainer::from_config(
+            &config,
+            &[TypeKey::of::<dyn ToolProvider>()],
+            runtime.component_registry(),
+            &context,
+        )
+        .await
+        .expect("the kind is known");
         let tools = container.get_all::<dyn ToolProvider>(None).unwrap();
         assert_eq!(tools.len(), 1);
         assert!(offered_anywhere(tools[0].facet.as_ref()).await.is_err());
@@ -429,16 +584,35 @@ mod tests {
         let backends = Backends::with_plugins(&all(&rest_plugins, &plugins));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
         let services = Services::empty().with(secrets);
-        let storages = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &services).expect("every type is known");
+        let storages = backends
+            .make_named::<dyn TerminalProvider>(
+                "storage of workspaces",
+                &config.workspaces.storage,
+                &services,
+            )
+            .expect("every type is known");
         assert!(storages.get("sandbox").is_some(), "the shared Open Terminal of the example");
-        let docker = [("isolated".to_string(), BackendConfig::new("open_terminal_docker", json!({ "image": "x", "max_run_secs": 0 })))].into();
-        let refused = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &docker, &services).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("max_run_secs") && !refused.contains("no backend of this type"), "{refused}");
+        let docker = [(
+            "isolated".to_string(),
+            BackendConfig::new("open_terminal_docker", json!({ "image": "x", "max_run_secs": 0 })),
+        )]
+        .into();
+        let refused = backends
+            .make_named::<dyn TerminalProvider>("storage of workspaces", &docker, &services)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("max_run_secs") && !refused.contains("no backend of this type"),
+            "{refused}"
+        );
     }
 
     async fn status_of(app: &Router, uri: &str) -> (StatusCode, Option<String>) {
-        let response = app.clone().oneshot(Request::get(uri).body(Body::empty()).unwrap()).await.unwrap();
-        let content_type = response.headers().get("content-type").map(|v| v.to_str().unwrap().to_string());
+        let response =
+            app.clone().oneshot(Request::get(uri).body(Body::empty()).unwrap()).await.unwrap();
+        let content_type =
+            response.headers().get("content-type").map(|v| v.to_str().unwrap().to_string());
         (response.status(), content_type)
     }
 
@@ -446,6 +620,10 @@ mod tests {
     async fn the_api_is_served_under_its_path_and_answers_a_wrong_path_as_a_problem() {
         let app = app(Router::new().route("/sessions", get(|| async { "listed" })));
         assert_eq!(status_of(&app, "/api/sessions").await.0, StatusCode::OK);
-        assert_eq!(status_of(&app, "/api/nothing").await, (StatusCode::NOT_FOUND, Some("application/problem+json".to_string())), "not the web UI");
+        assert_eq!(
+            status_of(&app, "/api/nothing").await,
+            (StatusCode::NOT_FOUND, Some("application/problem+json".to_string())),
+            "not the web UI"
+        );
     }
 }

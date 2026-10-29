@@ -64,16 +64,17 @@ impl TypeMap {
     }
 
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
-        self.map
-            .get(&TypeId::of::<T>())
-            .and_then(|(_, boxed)| boxed.downcast_ref::<Arc<T>>())
+        self.map.get(&TypeId::of::<T>()).and_then(|(_, boxed)| boxed.downcast_ref::<Arc<T>>())
     }
 
     /// The value of `T`, made by `make` and kept if there is none yet.
     ///
     /// # Errors
     /// Whatever `make` fails with; nothing is kept then.
-    pub fn get_or_try_insert<T: ?Sized + Send + Sync + 'static, E>(&mut self, make: impl FnOnce() -> Result<Arc<T>, E>) -> Result<Arc<T>, E> {
+    pub fn get_or_try_insert<T: ?Sized + Send + Sync + 'static, E>(
+        &mut self,
+        make: impl FnOnce() -> Result<Arc<T>, E>,
+    ) -> Result<Arc<T>, E> {
         if let Some(value) = self.get::<T>() {
             return Ok(Arc::clone(value));
         }
@@ -84,7 +85,10 @@ impl TypeMap {
 
     /// It with the values of `keys` alone.
     pub fn only(&self, keys: &[TypeKey]) -> Self {
-        let map = keys.iter().filter_map(|key| self.map.get(&key.id).map(|value| (key.id, value.clone()))).collect();
+        let map = keys
+            .iter()
+            .filter_map(|key| self.map.get(&key.id).map(|value| (key.id, value.clone())))
+            .collect();
         Self { map }
     }
 
@@ -105,7 +109,8 @@ mod tests {
         let mut map = TypeMap::empty().with(Arc::new(7u32));
         assert_eq!(map.get::<u32>().map(|v| **v), Some(7));
         assert!(map.get::<dyn Debug + Send + Sync>().is_none(), "by the type it was put in as");
-        let made = map.get_or_try_insert::<String, ()>(|| Ok(Arc::new("first".to_string()))).unwrap();
+        let made =
+            map.get_or_try_insert::<String, ()>(|| Ok(Arc::new("first".to_string()))).unwrap();
         let again = map.get_or_try_insert::<String, ()>(|| unreachable!("it is there")).unwrap();
         assert!(Arc::ptr_eq(&made, &again));
         assert!(map.get_or_try_insert::<u8, &str>(|| Err("cannot")).is_err());

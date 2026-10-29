@@ -1,6 +1,8 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::error::{Json, Path, Query};
+use crate::routes::{change_error, channel_of, channel_view, ensure_session, open_channel, views};
+use crate::sse::{bounded_by_token, data_event, named_event};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -17,27 +19,32 @@ use caelumora_model::question::QuestionId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::Detail;
-use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest, MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest, TurnRequest};
-use caelumora_rest_api::context::{AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse, SeenItemResponse};
+use caelumora_rest_api::channel::{
+    AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse,
+    ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest,
+    MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest, TurnRequest,
+};
+use caelumora_rest_api::context::{
+    AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse,
+    SeenItemResponse,
+};
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
 use caelumora_rest_api::stream::{ShownEnvelope, StreamOptions};
-use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
-use caelumora_runtime::actor::Shown;
 use caelumora_runtime::actor::user::{ChannelWatch, UserActor};
+use caelumora_runtime::actor::Shown;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
 use caelumora_runtime::view::{ChannelView, ParticipantView, Reached, SessionView, Viewer};
 use futures::stream::{self, Stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::Arc;
-use uuid::Uuid;
-use crate::routes::{change_error, channel_of, channel_view, ensure_session, open_channel, views};
-use crate::sse::{bounded_by_token, data_event, named_event};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
-use tracing::Span;
 use tracing::field;
+use tracing::Span;
+use uuid::Uuid;
 
 /// The channels of the session the user may read - or, with
 /// `?deleted=true`, those deleted from it they may read as such (issue 164).
@@ -53,7 +60,8 @@ pub(super) async fn list_channels(
     let session = views(&state, &user).session(session_id).await?;
     if options.deleted {
         let deleted = session.deleted_channels().await?;
-        return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
+        return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>())
+            .into_response());
     }
     let mut channels: Vec<ChannelResponse> = Vec::new();
     for channel in session.channels().await {
@@ -88,8 +96,17 @@ pub(super) async fn create_channel(
     let session = ensure_session(&state, &user, session_id).await?;
     let context = user.security_context();
 
-    let components = moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
-    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language, uses_workspace: payload.uses_workspace, internal_actors: payload.internal_actors };
+    let components =
+        moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
+    let spec = ChannelSpec {
+        name: payload.name,
+        components,
+        participants: payload.participants,
+        classification: payload.classification,
+        language: payload.language,
+        uses_workspace: payload.uses_workspace,
+        internal_actors: payload.internal_actors,
+    };
     let channel = session.create_channel(&context, spec).await?;
     Ok(Json(channel_view(&state, &user, session_id, channel.id()).await?))
 }
@@ -106,7 +123,6 @@ pub(super) async fn delete_channel(
     session.delete_channel(&user.security_context(), ChannelId(cid)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
-
 
 pub(super) async fn get_channel(
     State(state): State<Arc<AppState>>,
@@ -149,7 +165,9 @@ pub(super) async fn mark_read(
     Json(payload): Json<ReadRequest>,
 ) -> Result<StatusCode, ApiError> {
     let controller = state.runtime_manager.controller_manager().user_controller(user.id).await?;
-    controller.mark_read(&user.security_context(), SessionId(id), ChannelId(cid), payload.message_id).await?;
+    controller
+        .mark_read(&user.security_context(), SessionId(id), ChannelId(cid), payload.message_id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -174,8 +192,13 @@ pub(super) async fn get_notes(
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PublishedNotesResponse>>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let notes = channel.notes().await
-        .map_err(|e| ApiError::internal("notes_failed", &format!("reading the notes of channel {}", cid), &e.into()))?;
+    let notes = channel.notes().await.map_err(|e| {
+        ApiError::internal(
+            "notes_failed",
+            &format!("reading the notes of channel {}", cid),
+            &e.into(),
+        )
+    })?;
     Ok(Json(notes.into_iter().map(Into::into).collect()))
 }
 
@@ -183,7 +206,12 @@ pub(super) async fn get_notes(
 /// for a stream that starts with a snapshot (issue 34); `None` if the
 /// channel cannot be described to `viewer` any more - deleted, or no longer
 /// theirs to read - in which case their stream ends.
-async fn channel_snapshot(state: &AppState, session_id: SessionId, channel_id: ChannelId, viewer: &SecurityContext) -> Option<ChannelSnapshot> {
+async fn channel_snapshot(
+    state: &AppState,
+    session_id: SessionId,
+    channel_id: ChannelId,
+    viewer: &SecurityContext,
+) -> Option<ChannelSnapshot> {
     let views = state.session_manager.views(Viewer::new(viewer.clone()));
     let reached = match views.session(session_id).await {
         Ok(session) => session.channel(channel_id).await,
@@ -199,12 +227,25 @@ async fn channel_snapshot(state: &AppState, session_id: SessionId, channel_id: C
     let page = match view.history_page(None, SNAPSHOT_ITEMS).await {
         Ok(page) => page,
         Err(e) => {
-            tracing::warn!("Cannot read the history of channel {} for its snapshot: {:#}", channel_id, e);
+            tracing::warn!(
+                "Cannot read the history of channel {} for its snapshot: {:#}",
+                channel_id,
+                e
+            );
             return None;
         }
     };
     // The conversation can be shown without what of it cannot be read.
-    let channel = view.snapshot(Detail::PARTICIPANTS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS | Detail::BRIEFING | Detail::UNREAD).await;
+    let channel = view
+        .snapshot(
+            Detail::PARTICIPANTS
+                | Detail::USAGE
+                | Detail::NOTES
+                | Detail::APPROVALS
+                | Detail::BRIEFING
+                | Detail::UNREAD,
+        )
+        .await;
     Some(ChannelSnapshot::of(channel, HistoryPageResponse::of(page, |message, _| message)))
 }
 
@@ -227,11 +268,22 @@ pub(super) async fn join_channel(
     let channel = channel_of(&state, &user, session_id, channel_id).await?;
     let watch = channel.user_follow().ok_or_else(|| not_a_participant(channel_id))?;
     let shutdown = state.shutdown.clone();
-    let follower = ChannelFollower { state, user: user.clone(), session_id, channel_id, watch, with_snapshot: options.snapshot, shutdown };
+    let follower = ChannelFollower {
+        state,
+        user: user.clone(),
+        session_id,
+        channel_id,
+        watch,
+        with_snapshot: options.snapshot,
+        shutdown,
+    };
     // Read after the watch began, so that nothing is lost in between; what
     // is in both, clients drop by message id.
     let first = if follower.with_snapshot { follower.snapshot().await } else { None };
-    Ok(Sse::new(bounded_by_token(&user, stream::iter(first.map(Ok)).chain(stream::unfold(follower, ChannelFollower::next)))))
+    Ok(Sse::new(bounded_by_token(
+        &user,
+        stream::iter(first.map(Ok)).chain(stream::unfold(follower, ChannelFollower::next)),
+    )))
 }
 
 /// The stream of `join_channel` after its snapshot (issue 386): what the
@@ -265,9 +317,14 @@ impl ChannelFollower {
             Ok(Shown::Started) => self.anew("started").await?,
             Ok(Shown::Ended) => self.anew("stopped").await?,
             Err(RecvError::Lagged(lost)) => {
-                tracing::warn!("SSE client of channel {} fell behind and lost {} events", self.channel_id, lost);
+                tracing::warn!(
+                    "SSE client of channel {} fell behind and lost {} events",
+                    self.channel_id,
+                    lost
+                );
                 let resynced = if self.with_snapshot { self.snapshot().await } else { None };
-                resynced.unwrap_or_else(|| Event::default().comment(format!("{} events lost", lost)))
+                resynced
+                    .unwrap_or_else(|| Event::default().comment(format!("{} events lost", lost)))
             }
             Err(RecvError::Closed) => return None,
         };
@@ -279,7 +336,8 @@ impl ChannelFollower {
     /// `None` if the user no longer takes part in the channel, or cannot
     /// reach it.
     async fn anew(&self, marker: &'static str) -> Option<Event> {
-        let channel = channel_of(&self.state, &self.user, self.session_id, self.channel_id).await.ok()?;
+        let channel =
+            channel_of(&self.state, &self.user, self.session_id, self.channel_id).await.ok()?;
         if !channel.lists(ActorId::User(self.user.id)) {
             return None;
         }
@@ -291,8 +349,14 @@ impl ChannelFollower {
 
     /// The channel's snapshot as a named event, as it is now.
     async fn snapshot(&self) -> Option<Event> {
-        channel_snapshot(&self.state, self.session_id, self.channel_id, &self.user.security_context()).await
-            .map(|snapshot| named_event("snapshot", &snapshot))
+        channel_snapshot(
+            &self.state,
+            self.session_id,
+            self.channel_id,
+            &self.user.security_context(),
+        )
+        .await
+        .map(|snapshot| named_event("snapshot", &snapshot))
     }
 }
 
@@ -308,7 +372,13 @@ pub(super) async fn add_participant(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     // Through the session: one not in it yet is taken into it, too (issue 221).
     let session = ensure_session(&state, &user, SessionId(id)).await?;
-    session.add_participant(&user.security_context(), payload.participant, Some((ChannelId(cid), payload.history))).await?;
+    session
+        .add_participant(
+            &user.security_context(),
+            payload.participant,
+            Some((ChannelId(cid), payload.history)),
+        )
+        .await?;
     Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
@@ -323,9 +393,11 @@ pub(super) async fn get_participant(
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelParticipantResponse>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = participant_of(&channel, aid).await?.snapshot(Detail::USAGE | Detail::PROFILE).await;
-    ChannelParticipantResponse::of(participant).map(Json)
-        .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))
+    let participant =
+        participant_of(&channel, aid).await?.snapshot(Detail::USAGE | Detail::PROFILE).await;
+    ChannelParticipantResponse::of(participant).map(Json).ok_or_else(|| {
+        ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid))
+    })
 }
 
 pub(super) async fn remove_participant(
@@ -335,12 +407,15 @@ pub(super) async fn remove_participant(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let context = user.security_context();
-    let participant = actor_in(&channel, aid)
-        .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
+    let participant = actor_in(&channel, aid).ok_or_else(|| {
+        ApiError::not_found(
+            "participant_not_found",
+            format!("{} takes no part in channel {}", aid, cid),
+        )
+    })?;
     channel.remove_participant(&context, participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
-
 
 pub(super) async fn send_message(
     State(state): State<Arc<AppState>>,
@@ -350,7 +425,9 @@ pub(super) async fn send_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.send_message(payload.content, payload.classification, payload.attachments).await?;
+    let span_id = user_actor
+        .send_message(payload.content, payload.classification, payload.attachments)
+        .await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -367,7 +444,14 @@ pub(super) async fn modify_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.modify_message(MessageId(mid), payload.content, payload.classification, payload.attachments).await?;
+    let span_id = user_actor
+        .modify_message(
+            MessageId(mid),
+            payload.content,
+            payload.classification,
+            payload.attachments,
+        )
+        .await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -403,8 +487,12 @@ pub(super) async fn retry_turn(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let participant = actor_in(&channel, aid)
-        .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
+    let participant = actor_in(&channel, aid).ok_or_else(|| {
+        ApiError::not_found(
+            "participant_not_found",
+            format!("{} takes no part in channel {}", aid, cid),
+        )
+    })?;
     let span_id = user_actor.request_retry_of_turn(participant, payload.turn_id).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
@@ -436,7 +524,9 @@ fn actor_in(channel: &ChannelLoop, id: Uuid) -> Option<ActorId> {
 async fn participant_of(channel: &ChannelView, id: Uuid) -> Result<ParticipantView, ApiError> {
     let mut participants = channel.participants().await;
     participants.extend(channel.former_participants().await);
-    if let Some(participant) = participants.into_iter().find(|participant| participant.id().id() == id) {
+    if let Some(participant) =
+        participants.into_iter().find(|participant| participant.id().id() == id)
+    {
         return Ok(participant);
     }
     // An agent that left before the channel kept who left is known by what
@@ -448,7 +538,10 @@ async fn participant_of(channel: &ChannelView, id: Uuid) -> Result<ParticipantVi
 ///
 /// Whoever writes or approves does so in their own name, so someone who is
 /// not a participant of the channel has no actor here and is refused.
-fn user_actor_of(channel: &ChannelLoop, user: &AuthenticatedUser) -> Result<Arc<UserActor>, ApiError> {
+fn user_actor_of(
+    channel: &ChannelLoop,
+    user: &AuthenticatedUser,
+) -> Result<Arc<UserActor>, ApiError> {
     channel.user_actor(user.id).ok_or_else(|| not_a_participant(channel.id()))
 }
 
@@ -480,8 +573,12 @@ pub(super) async fn cancel_participant(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = actor_in(&channel, aid)
-        .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
+    let participant = actor_in(&channel, aid).ok_or_else(|| {
+        ApiError::not_found(
+            "participant_not_found",
+            format!("{} takes no part in channel {}", aid, cid),
+        )
+    })?;
     channel.cancel_actor(&user.security_context(), participant).await?;
     Ok(StatusCode::OK)
 }
@@ -498,9 +595,15 @@ pub(super) async fn interrupt_tool_call(
     Json(payload): Json<TurnRequest>,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = actor_in(&channel, aid)
-        .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
-    channel.interrupt_tool_call(&user.security_context(), participant, payload.turn_id, &call_id).await?;
+    let participant = actor_in(&channel, aid).ok_or_else(|| {
+        ApiError::not_found(
+            "participant_not_found",
+            format!("{} takes no part in channel {}", aid, cid),
+        )
+    })?;
+    channel
+        .interrupt_tool_call(&user.security_context(), participant, payload.turn_id, &call_id)
+        .await?;
     Ok(StatusCode::OK)
 }
 
@@ -544,7 +647,9 @@ pub(super) async fn update_channel_approval_rules(
     Json(rules): Json<Vec<ApprovalRule>>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.update_approval_rules(&user.security_context(), rules).await
+    channel
+        .update_approval_rules(&user.security_context(), rules)
+        .await
         .map_err(|e| change_error(e, "invalid_rule"))?;
     Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
@@ -560,7 +665,13 @@ pub(super) async fn update_channel_description(
     Json(payload): Json<DescriptionRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await?;
+    channel
+        .update_description(
+            &user.security_context(),
+            payload.summary.as_deref(),
+            payload.briefing.as_deref(),
+        )
+        .await?;
     Ok(Json(channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
@@ -611,7 +722,6 @@ pub(super) async fn execute_command(
     Ok(Json(CommandReplyResponse { command: reply.command, output, span_id: reply.span_id }))
 }
 
-
 /// What the actor `aid` saw when it produced message `mid` (issues 06, 47):
 /// its context with the prompt parts where they were placed. The actor answers: only the agent that
 /// produced a message has a context for it.
@@ -626,11 +736,14 @@ pub(super) async fn message_context(
     let seen = view.context_of(MessageId(mid)).await?;
     // What set the message's label, of the parts classified (issue 170).
     let label = view.classification_of(MessageId(mid)).await?.unwrap_or_default();
-    let mut classified: Vec<&Classification> = seen.reference.frame.knowledge.iter().filter_map(|k| k.classification.as_ref()).collect();
+    let mut classified: Vec<&Classification> =
+        seen.reference.frame.knowledge.iter().filter_map(|k| k.classification.as_ref()).collect();
     for item in &seen.items {
         match item {
             ContextItem::Prompt { classification, .. } => classified.extend(classification),
-            ContextItem::Conversation { message } => classified.extend(seen.reference.frame.profile.classifications_given(message)),
+            ContextItem::Conversation { message } => {
+                classified.extend(seen.reference.frame.profile.classifications_given(message))
+            }
         }
     }
     let causes = LabelCauses::new(label, classified);
@@ -642,7 +755,11 @@ pub(super) async fn message_context(
         message_id: MessageId(mid),
         actor_id: participant.id(),
         transcript_digest: seen.reference.transcript,
-        items: seen.items.into_iter().map(|item| SeenItemResponse::of(item, &causes, &seen.reference.frame.profile)).collect(),
+        items: seen
+            .items
+            .into_iter()
+            .map(|item| SeenItemResponse::of(item, &causes, &seen.reference.frame.profile))
+            .collect(),
         knowledge,
         tools_digest: seen.reference.frame.tools,
         tool_sets: seen.tool_sets,
@@ -652,20 +769,37 @@ pub(super) async fn message_context(
 /// `knowledge` with the names of its channel and agent, as far as `session`
 /// still has them, and whether it set the label of the message, which
 /// `causes` tells.
-async fn knowledge_response(session: &SessionView, knowledge: &KnowledgeRef, causes: &LabelCauses) -> KnowledgeRefResponse {
+async fn knowledge_response(
+    session: &SessionView,
+    knowledge: &KnowledgeRef,
+    causes: &LabelCauses,
+) -> KnowledgeRefResponse {
     // Named only if the viewer may read it - of this session or another
     // (issue 134) - and it is still there; by id alone otherwise.
-    let reached = session.views().channel_of(knowledge.session, knowledge.channel).await.unwrap_or_else(|e| {
-        tracing::warn!("Cannot reach channel {} of the knowledge read: {:#}", knowledge.channel, e);
-        Reached::Never
-    });
+    let reached =
+        session.views().channel_of(knowledge.session, knowledge.channel).await.unwrap_or_else(
+            |e| {
+                tracing::warn!(
+                    "Cannot reach channel {} of the knowledge read: {:#}",
+                    knowledge.channel,
+                    e
+                );
+                Reached::Never
+            },
+        );
     let channel_deleted = matches!(reached, Reached::Gone(_));
     let channel = reached.there();
     let (source, agent_id, digest, history_start) = match knowledge.source {
-        KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
-        KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
+        KnowledgeSource::Notes { agent, digest } => {
+            ("notes", Some(ActorId::Agent(agent)), digest, None)
+        }
+        KnowledgeSource::PrivateNotes { agent, digest } => {
+            ("private_notes", Some(ActorId::Agent(agent)), digest, None)
+        }
         KnowledgeSource::History { digest, from } => ("history", None, digest, from),
-        KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
+        KnowledgeSource::Memory { agent, digest } => {
+            ("memory", Some(ActorId::Agent(agent)), digest, None)
+        }
         KnowledgeSource::Entity { kind, digest, .. } => (kind.name(), None, digest, None),
     };
     let entity_id = match knowledge.source {
@@ -673,7 +807,9 @@ async fn knowledge_response(session: &SessionView, knowledge: &KnowledgeRef, cau
         _ => None,
     };
     let agent_name = match (agent_id, &channel) {
-        (Some(id), Some(channel)) => channel.participant(id).await.ok().and_then(|m| m.name().map(str::to_string)),
+        (Some(id), Some(channel)) => {
+            channel.participant(id).await.ok().and_then(|m| m.name().map(str::to_string))
+        }
         _ => None,
     };
     KnowledgeRefResponse {
@@ -705,9 +841,14 @@ pub(super) async fn agent_history(
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = participant_of(&channel, aid).await?.context().await?;
     let page = view.history_page(query.before, query.limit()).await?;
-    let heard: Vec<MessageId> = page.entries().filter_map(|item| item.said().map(|m| m.id)).collect();
+    let heard: Vec<MessageId> =
+        page.entries().filter_map(|item| item.said().map(|m| m.id)).collect();
     let passed_on = view.in_transcript(&heard).await?;
-    Ok(Json(HistoryPageResponse::of(page, |message, has_context| HistoryMessageResponse { has_context, in_transcript: passed_on.contains(&message.id), message })))
+    Ok(Json(HistoryPageResponse::of(page, |message, has_context| HistoryMessageResponse {
+        has_context,
+        in_transcript: passed_on.contains(&message.id),
+        message,
+    })))
 }
 
 /// The tools actor `aid` has now in the channel (issue 194), for whoever
@@ -742,8 +883,11 @@ pub(super) async fn send_approval(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let response = ApprovalResponse::new(ApprovalId(payload.approval_id), AgentId(payload.agent_id));
-    let span_id = user_actor.send_approval(response, payload.approved).await
+    let response =
+        ApprovalResponse::new(ApprovalId(payload.approval_id), AgentId(payload.agent_id));
+    let span_id = user_actor
+        .send_approval(response, payload.approved)
+        .await
         .map_err(|e| ApiError::internal("approval_not_sent", "sending the approval", &e))?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
@@ -760,7 +904,13 @@ pub(super) async fn answer_questions(
     let responses = match (payload.responses, payload.declined) {
         (Some(responses), false) => Some(responses),
         (None, true) => None,
-        _ => return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_answer", "give either the responses or that the questions are declined")),
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_answer",
+                "give either the responses or that the questions are declined",
+            ))
+        }
     };
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
@@ -769,51 +919,73 @@ pub(super) async fn answer_questions(
     Ok(StatusCode::OK)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::message::MessageId;
-    use caelumora_model::security::Refused;
-    use caelumora_runtime::channel::ChannelError;
-    use caelumora_runtime::command::CommandError;
-    use caelumora_runtime::view::{AgentContextError, ViewError};
-    use anyhow::Error;
     use crate::routes::api;
     use crate::routes::tests::{login, state};
-    use axum::Router;
+    use anyhow::Error;
     use axum::body::{to_bytes, Body, BodyDataStream};
     use axum::http::header::{CONTENT_TYPE, COOKIE};
     use axum::http::Request;
+    use axum::Router;
+    use caelumora_model::message::MessageId;
+    use caelumora_model::security::Refused;
     use caelumora_model::session::Participant;
     use caelumora_model::user::UserId;
+    use caelumora_runtime::channel::ChannelError;
+    use caelumora_runtime::command::CommandError;
     use caelumora_runtime::session::testing::{create, make_session};
+    use caelumora_runtime::view::{AgentContextError, ViewError};
     use serde_json::{json, Value};
     use std::time::Duration;
-    use tower::ServiceExt;
     use tokio::time;
+    use tower::ServiceExt;
 
     #[test]
     fn a_command_that_does_not_run_is_answered_with_what_the_user_did() {
         let status = |error: CommandError| ApiError::from(error).status();
         assert_eq!(status(CommandError::Unknown("x".to_string())), StatusCode::BAD_REQUEST);
         assert_eq!(status(CommandError::Empty), StatusCode::BAD_REQUEST);
-        assert_eq!(status(CommandError::InvalidArguments { command: "x".to_string(), reason: "y".to_string() }), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            status(CommandError::InvalidArguments {
+                command: "x".to_string(),
+                reason: "y".to_string()
+            }),
+            StatusCode::BAD_REQUEST
+        );
         let refused = Refused { subject: "command", action: "ExecuteCommand(/x)".to_string() };
-        assert_eq!(status(CommandError::Forbidden { name: "x".to_string(), refused: refused.clone() }), StatusCode::FORBIDDEN);
-        assert_eq!(status(CommandError::Failed { command: "x".to_string(), reason: "y".to_string() }), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            status(CommandError::Forbidden { name: "x".to_string(), refused: refused.clone() }),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status(CommandError::Failed { command: "x".to_string(), reason: "y".to_string() }),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
 
-        let refused = Error::new(ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default(), refused });
+        let refused = Error::new(ChannelError::Forbidden {
+            action: "waking the agents of",
+            channel: ChannelId::default(),
+            refused,
+        });
         assert_eq!(ApiError::from(refused).status(), StatusCode::FORBIDDEN);
     }
 
     /// The API on `state`, the cookie of alice, and a session of hers with
     /// her in its main channel, started and stopped again.
-    async fn stopped_session_of_alice(state: &Arc<AppState>) -> (Router, String, SessionId, ChannelId) {
+    async fn stopped_session_of_alice(
+        state: &Arc<AppState>,
+    ) -> (Router, String, SessionId, ChannelId) {
         let api = api(Arc::clone(state), &[]);
         let cookie = login(&api, "alice").await;
-        let me = api.clone().oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
-        let me: Value = serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let me = api
+            .clone()
+            .oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let me: Value =
+            serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
         let alice = UserId(me["id"].as_str().unwrap().parse().unwrap());
         let mut session = make_session("talk", alice);
         session.participants = vec![Participant::User(alice)];
@@ -824,17 +996,33 @@ mod tests {
     }
 
     /// The stream of the channel, as whoever `cookie` logs in follows it.
-    async fn follow(api: &Router, cookie: &str, session: SessionId, channel: ChannelId, snapshot: bool) -> BodyDataStream {
-        let uri = format!("/sessions/{}/channels/{}/events?snapshot={snapshot}", session.0, channel.0);
-        let response = api.clone().oneshot(Request::get(uri).header(COOKIE, cookie).body(Body::empty()).unwrap()).await.unwrap();
+    async fn follow(
+        api: &Router,
+        cookie: &str,
+        session: SessionId,
+        channel: ChannelId,
+        snapshot: bool,
+    ) -> BodyDataStream {
+        let uri =
+            format!("/sessions/{}/channels/{}/events?snapshot={snapshot}", session.0, channel.0);
+        let response = api
+            .clone()
+            .oneshot(Request::get(uri).header(COOKIE, cookie).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         response.into_body().into_data_stream()
     }
 
     /// What `stream` sent, read on until `seen` holds of all of it.
-    async fn read_until(stream: &mut BodyDataStream, read: &mut String, seen: impl Fn(&str) -> bool) {
+    async fn read_until(
+        stream: &mut BodyDataStream,
+        read: &mut String,
+        seen: impl Fn(&str) -> bool,
+    ) {
         while !seen(read) {
-            let chunk = time::timeout(Duration::from_secs(5), stream.next()).await
+            let chunk = time::timeout(Duration::from_secs(5), stream.next())
+                .await
                 .unwrap_or_else(|_| panic!("nothing more came of the stream: {read}"))
                 .unwrap_or_else(|| panic!("the stream ended: {read}"))
                 .unwrap();
@@ -863,31 +1051,54 @@ mod tests {
         read_until(&mut stream, &mut read, |read| snapshots(read) == 1).await;
         assert!(!runs(&state, session, channel).await, "following starts nothing");
 
-        let sent = Request::post(format!("/sessions/{}/channels/{}/messages", session.0, channel.0))
-            .header(COOKIE, &cookie).header(CONTENT_TYPE, "application/json")
-            .body(Body::from(json!({"content": "hello there"}).to_string())).unwrap();
+        let sent =
+            Request::post(format!("/sessions/{}/channels/{}/messages", session.0, channel.0))
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"content": "hello there"}).to_string()))
+                .unwrap();
         assert_eq!(api.clone().oneshot(sent).await.unwrap().status(), StatusCode::OK);
-        let after = |read: &str, nth: usize| read.split("event: snapshot").nth(nth).unwrap_or_default().to_string();
+        let after = |read: &str, nth: usize| {
+            read.split("event: snapshot").nth(nth).unwrap_or_default().to_string()
+        };
         read_until(&mut stream, &mut read, |read| after(read, 2).contains("hello there")).await;
-        assert!(runs(&state, session, channel).await, "whoever acts starts it, and is shown what they said after the state it started from");
+        assert!(
+            runs(&state, session, channel).await,
+            "whoever acts starts it, and is shown what they said after the state it started from"
+        );
 
         // Kept, before the stop would lose it on its way (issue 385).
         let history = format!("/sessions/{}/channels/{}/history", session.0, channel.0);
         for _ in 0..100 {
-            let page = api.clone().oneshot(Request::get(&history).header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
-            if String::from_utf8_lossy(&to_bytes(page.into_body(), usize::MAX).await.unwrap()).contains("hello there") { break }
+            let page = api
+                .clone()
+                .oneshot(
+                    Request::get(&history).header(COOKIE, &cookie).body(Body::empty()).unwrap(),
+                )
+                .await
+                .unwrap();
+            if String::from_utf8_lossy(&to_bytes(page.into_body(), usize::MAX).await.unwrap())
+                .contains("hello there")
+            {
+                break;
+            }
             time::sleep(Duration::from_millis(10)).await;
         }
         // Seen at the stop, which only a stream following the actor sees.
         state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| snapshots(read) == 3).await;
-        assert!(read.rsplit("event: snapshot").next().is_some_and(|last| last.contains("hello there")), "{read}");
+        assert!(
+            read.rsplit("event: snapshot").next().is_some_and(|last| last.contains("hello there")),
+            "{read}"
+        );
         assert!(!runs(&state, session, channel).await, "the stream does not start it again");
 
         state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| snapshots(read) == 4).await;
         state.session_manager.delete(&SecurityContext::system(), session).await.unwrap();
-        let ended = time::timeout(Duration::from_secs(5), async { while stream.next().await.is_some() {} }).await;
+        let ended =
+            time::timeout(Duration::from_secs(5), async { while stream.next().await.is_some() {} })
+                .await;
         assert!(ended.is_ok(), "the stream of a deleted channel ends: {read}");
     }
 
@@ -908,9 +1119,14 @@ mod tests {
             while let Some(chunk) = stream.next().await {
                 read.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
             }
-        }).await;
+        })
+        .await;
         assert!(ended.is_ok(), "the stream ends: {read}");
-        assert_eq!(read.matches("event: snapshot").count(), 2, "with the state as the channel stopped: {read}");
+        assert_eq!(
+            read.matches("event: snapshot").count(),
+            2,
+            "with the state as the channel stopped: {read}"
+        );
     }
 
     /// Issue 386: a client without snapshots is told that the channel
@@ -937,13 +1153,22 @@ mod tests {
         let state = state();
         let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
         let uri = format!("/sessions/{}/channels/{}/history?limit=abc", session.0, channel.0);
-        let response = api.oneshot(Request::get(uri).header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
+        let response = api
+            .oneshot(Request::get(uri).header(COOKIE, &cookie).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(response.headers()[CONTENT_TYPE], "application/problem+json");
-        let json: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let json: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
         assert_eq!(json["code"], "invalid_query");
-        assert!(json["detail"].as_str().unwrap().contains("limit"), "the detail says what is wrong: {}", json["detail"]);
+        assert!(
+            json["detail"].as_str().unwrap().contains("limit"),
+            "the detail says what is wrong: {}",
+            json["detail"]
+        );
     }
 
     /// Who takes no part in a channel cannot follow it, whether it runs or
@@ -955,7 +1180,11 @@ mod tests {
         let bob = login(&api, "bob").await;
         let uri = format!("/sessions/{}/channels/{}/events", session.0, channel.0);
         for _ in [false, true] {
-            let response = api.clone().oneshot(Request::get(&uri).header(COOKIE, &bob).body(Body::empty()).unwrap()).await.unwrap();
+            let response = api
+                .clone()
+                .oneshot(Request::get(&uri).header(COOKIE, &bob).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::FORBIDDEN);
             state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
         }
@@ -966,10 +1195,22 @@ mod tests {
         let actor = ActorId::None;
         let message = MessageId::new();
         let refused = Refused { subject: "context", action: "ReadAgentContext".to_string() };
-        assert_eq!(ApiError::from(ViewError::Forbidden { actor, refused }).code(), "context_forbidden");
+        assert_eq!(
+            ApiError::from(ViewError::Forbidden { actor, refused }).code(),
+            "context_forbidden"
+        );
         assert_eq!(ApiError::from(ViewError::NoContext { actor }).code(), "context_not_recorded");
-        assert_eq!(ApiError::from(AgentContextError::NotRecorded { actor, message }).code(), "context_not_recorded");
-        assert_eq!(ApiError::from(AgentContextError::Unavailable { actor, message }).code(), "context_unavailable");
-        assert_eq!(ApiError::from(ViewError::Failed(anyhow::anyhow!("disk"))).status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            ApiError::from(AgentContextError::NotRecorded { actor, message }).code(),
+            "context_not_recorded"
+        );
+        assert_eq!(
+            ApiError::from(AgentContextError::Unavailable { actor, message }).code(),
+            "context_unavailable"
+        );
+        assert_eq!(
+            ApiError::from(ViewError::Failed(anyhow::anyhow!("disk"))).status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 }

@@ -1,11 +1,11 @@
+use super::document::LiveDocument;
+use super::UserController;
 use arc_swap::Guard;
 use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::role::RoleId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
-use super::document::LiveDocument;
-use super::UserController;
 use caelumora_model::store::{EntityStores, StoreResult};
 use std::sync::Arc;
 
@@ -22,7 +22,12 @@ pub struct AgentController {
 impl AgentController {
     /// The live `agent`, owned by the user `owner` holds, if any. Made by
     /// the `ControllerManager`, which keeps one per agent.
-    pub fn new(agent: Agent, owner: Option<Arc<UserController>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
+    pub fn new(
+        agent: Agent,
+        owner: Option<Arc<UserController>>,
+        event_publisher: Arc<dyn EventPublisher>,
+        stores: &EntityStores,
+    ) -> Self {
         Self {
             agent: LiveDocument::new(agent.id, agent, Arc::clone(&stores.agents), event_publisher),
             owner,
@@ -45,9 +50,17 @@ impl AgentController {
     /// delegate (issue 255), with its owner's roles as they are now, limited
     /// to `limiting_roles` - its personality's (`Personality::limiting_roles`,
     /// issues 179, 304).
-    pub fn security_context(&self, session: SessionId, channel: ChannelId, limiting_roles: Option<&[RoleId]>) -> SecurityContext {
+    pub fn security_context(
+        &self,
+        session: SessionId,
+        channel: ChannelId,
+        limiting_roles: Option<&[RoleId]>,
+    ) -> SecurityContext {
         let roles = self.owner.as_ref().map(|owner| owner.load().roles.clone()).unwrap_or_default();
-        self.agent.load().security_context(session, channel).with_roles(roles, limiting_roles.map(<[_]>::to_vec))
+        self.agent
+            .load()
+            .security_context(session, channel)
+            .with_roles(roles, limiting_roles.map(<[_]>::to_vec))
     }
 
     /// Renames the agent on behalf of `ctx` (`LiveDocument::update`):
@@ -71,12 +84,12 @@ impl AgentController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::value::name::{ScopedName, Name};
+    use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{Personality, PersonalityId};
+    use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
     use caelumora_model::store::Persistence;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::confidentiality::Visibility;
+    use caelumora_model::value::name::{Name, ScopedName};
 
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
@@ -93,16 +106,28 @@ mod tests {
             hears_during_turn: Default::default(),
             deleted: None,
         };
-        let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
+        let agent = Agent::new(
+            ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
+            personality.id,
+            ActorId::None,
+        );
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
         store.entity_stores().unwrap().agents.create(&ctx, &agent).await.unwrap();
-        let controller = AgentController::new(agent.clone(), None, Arc::new(()), &store.entity_stores().unwrap());
+        let controller = AgentController::new(
+            agent.clone(),
+            None,
+            Arc::new(()),
+            &store.entity_stores().unwrap(),
+        );
 
         controller.update_name(&ctx, "new_name").await.unwrap();
 
         assert_eq!(controller.name(), "new_name");
-        assert_eq!(store.entity_stores().unwrap().agents.get(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
+        assert_eq!(
+            store.entity_stores().unwrap().agents.get(&ctx, agent.id).await.unwrap().name.as_str(),
+            "new_name"
+        );
     }
 
     /// Issue 304: an agent acts with its owner's roles as they are now - a
@@ -114,20 +139,51 @@ mod tests {
         use caelumora_model::role::RoleId;
         use caelumora_model::user::{User, UserId, UserUpdateEvent};
         let (staff, hr) = (RoleId::new(), RoleId::new());
-        let alice = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: vec![staff], deleted: None };
+        let alice = User {
+            id: UserId::new(),
+            username: Name::new("alice").unwrap(),
+            email: String::new(),
+            roles: vec![staff],
+            deleted: None,
+        };
         let store = Persistence::in_memory();
-        let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), &store.entity_stores().unwrap(), store.state_store(), store.history_store()));
+        let owner = Arc::new(UserController::new(
+            alice.clone(),
+            None,
+            Arc::new(()),
+            &store.entity_stores().unwrap(),
+            store.state_store(),
+            store.history_store(),
+        ));
         let personality = Personality { roles: Some(vec![staff]), ..plain() };
-        let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
-        let controller = AgentController::new(agent, Some(Arc::clone(&owner)), Arc::new(()), &store.entity_stores().unwrap());
+        let agent = Agent::new(
+            ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
+            personality.id,
+            ActorId::User(alice.id),
+        );
+        let controller = AgentController::new(
+            agent,
+            Some(Arc::clone(&owner)),
+            Arc::new(()),
+            &store.entity_stores().unwrap(),
+        );
         let (session, channel) = (Default::default(), Default::default());
 
         let context = controller.security_context(session, channel, personality.limiting_roles());
-        assert_eq!((context.principal_id, context.roles.clone(), context.limiting_roles.clone()), (ActorId::User(alice.id), vec![staff], Some(vec![staff])));
-        owner.process_global_event(&GlobalEvent::updated::<User>(&alice.id, &UserUpdateEvent::RolesChanged(vec![staff, hr])));
+        assert_eq!(
+            (context.principal_id, context.roles.clone(), context.limiting_roles.clone()),
+            (ActorId::User(alice.id), vec![staff], Some(vec![staff]))
+        );
+        owner.process_global_event(&GlobalEvent::updated::<User>(
+            &alice.id,
+            &UserUpdateEvent::RolesChanged(vec![staff, hr]),
+        ));
         let context = controller.security_context(session, channel, personality.limiting_roles());
         assert_eq!(context.roles, [staff, hr], "her roles as they are now");
-        assert!(context.has_role(staff) && !context.has_role(hr), "but only those its personality names count");
+        assert!(
+            context.has_role(staff) && !context.has_role(hr),
+            "but only those its personality names count"
+        );
     }
 
     fn plain() -> Personality {

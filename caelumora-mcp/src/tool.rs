@@ -1,15 +1,17 @@
 use async_trait::async_trait;
+use caelumora_agents::situation::Situation;
+use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::turn::Turn;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::question::Answers;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_agents::turn::Turn;
-use caelumora_agents::situation::Situation;
-use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{
+    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+};
 use caelumora_runtime::remote::ExpiringCache;
-use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
 use rmcp::service::{RunningService, ServiceError};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -19,8 +21,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::warn;
 use tokio::time;
+use tracing::warn;
 
 pub const MCP_TOOL_KIND: &str = "mcp_tool";
 
@@ -90,7 +92,8 @@ impl McpError {
             McpError::Timeout(_) => "its server did not answer in time",
             McpError::ToolCallFailed(_) => "its server failed",
             McpError::Secret(_) => "its credentials are not available",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
@@ -143,7 +146,11 @@ const NAME_SEPARATOR: &str = "__";
 impl McpToolProvider {
     /// The provider of the component `descriptor_id` with `config`; its
     /// tools are not discovered yet.
-    fn new(descriptor_id: String, config: McpToolConfig, secret_manager: Arc<SecretManager>) -> Self {
+    fn new(
+        descriptor_id: String,
+        config: McpToolConfig,
+        secret_manager: Arc<SecretManager>,
+    ) -> Self {
         let discovered = ExpiringCache::new(config.refresh());
         Self { descriptor_id, config, discovered, secret_manager }
     }
@@ -158,18 +165,26 @@ impl McpToolProvider {
     /// `security` within the endpoint's timeout.
     async fn discover(&self, security: &SecurityContext) -> McpResult<(Vec<Tool>, Option<String>)> {
         let discover = async {
-            let auth_header = self.config.endpoint.bearer_token(&self.secret_manager, security).await?;
+            let auth_header =
+                self.config.endpoint.bearer_token(&self.secret_manager, security).await?;
             discover_tools(&self.descriptor_id, &self.config, auth_header).await
         };
-        time::timeout(self.config.timeout(), discover).await
-            .unwrap_or_else(|_| Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", self.config.endpoint.shown()))))
+        time::timeout(self.config.timeout(), discover).await.unwrap_or_else(|_| {
+            Err(McpError::Timeout(format!(
+                "Timed out discovering tools from MCP server at '{}'",
+                self.config.endpoint.shown()
+            )))
+        })
     }
 }
 
 /// A connection to the MCP server at `endpoint`. Its errors show the
 /// endpoint without credentials, also where `rmcp` writes it into its own
 /// messages (issue 188).
-async fn connect(endpoint: &RemoteEndpoint, auth_header: Option<String>) -> McpResult<RunningService<RoleClient, ()>> {
+async fn connect(
+    endpoint: &RemoteEndpoint,
+    auth_header: Option<String>,
+) -> McpResult<RunningService<RoleClient, ()>> {
     let mut transport_config = StreamableHttpClientTransportConfig::with_uri(endpoint.url.clone());
     if let Some(token) = auth_header {
         transport_config = transport_config.auth_header(token);
@@ -186,10 +201,15 @@ async fn connect(endpoint: &RemoteEndpoint, auth_header: Option<String>) -> McpR
 /// and requiring approval as `config` says (issue 78) - tool by tool, from
 /// what the server says of each (issue 246) - with what the server
 /// says of itself in its `instructions`, if anything (issue 194).
-async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header: Option<String>) -> McpResult<(Vec<Tool>, Option<String>)> {
+async fn discover_tools(
+    descriptor_id: &str,
+    config: &McpToolConfig,
+    auth_header: Option<String>,
+) -> McpResult<(Vec<Tool>, Option<String>)> {
     let endpoint = &config.endpoint;
     let service = connect(endpoint, auth_header).await?;
-    let instructions = service.peer_info()
+    let instructions = service
+        .peer_info()
         .and_then(|info| info.instructions.clone())
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty());
@@ -209,7 +229,9 @@ async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header
                 name: format!("{}{}{}", descriptor_id, NAME_SEPARATOR, t.name),
                 description,
                 parameters: schema_to_tool_parameters(&schema),
-                requires_approval: config.requires_approval.required(read_only(t.annotations.as_ref())),
+                requires_approval: config
+                    .requires_approval
+                    .required(read_only(t.annotations.as_ref())),
                 visibility: ToolVisibility::SHOWN,
                 classification: config.classification.clone(),
                 presentation: Default::default(),
@@ -237,10 +259,7 @@ fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
                 .get("properties")
                 .and_then(|v| v.as_object())
                 .map(|props| {
-                    props
-                        .iter()
-                        .map(|(k, v)| (k.clone(), schema_to_tool_parameters(v)))
-                        .collect()
+                    props.iter().map(|(k, v)| (k.clone(), schema_to_tool_parameters(v))).collect()
                 })
                 .unwrap_or_default();
             let required = obj
@@ -255,16 +274,15 @@ fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
                 .get("items")
                 .map(schema_to_tool_parameters)
                 .unwrap_or_else(|| ToolParameters::string().described("Array item"));
-            ToolParameters::Array {
-                items: Box::new(items),
-                description,
-            }
+            ToolParameters::Array { items: Box::new(items), description }
         }
         Some("string") => ToolParameters::String { description, language: None },
         Some("number") | Some("integer") => ToolParameters::Number { description },
         Some("boolean") => ToolParameters::Boolean { description },
         _ => ToolParameters::String {
-            description: Some(description.unwrap_or_else(|| "Unrecognized parameter schema".to_string())),
+            description: Some(
+                description.unwrap_or_else(|| "Unrecognized parameter schema".to_string()),
+            ),
             language: None,
         },
     }
@@ -284,7 +302,10 @@ fn call_tool_result_to_value(name: &str, result: CallToolResult) -> McpResult<Va
         } else {
             serde_json::to_string(&result.content).unwrap_or_default()
         };
-        return Err(McpError::ToolCallFailed(format!("MCP tool '{}' returned an error: {}", name, message)));
+        return Err(McpError::ToolCallFailed(format!(
+            "MCP tool '{}' returned an error: {}",
+            name, message
+        )));
     }
 
     if let Some(structured) = result.structured_content {
@@ -301,7 +322,9 @@ fn call_tool_result_to_value(name: &str, result: CallToolResult) -> McpResult<Va
 #[async_trait]
 impl ToolProvider for McpToolProvider {
     fn description(&self) -> String {
-        self.config.description.clone()
+        self.config
+            .description
+            .clone()
             .or_else(|| self.discovered.current().and_then(|discovered| discovered.1.clone()))
             .unwrap_or_else(|| format!("The tools of the MCP server '{}'.", self.descriptor_id))
     }
@@ -336,7 +359,13 @@ impl ToolProvider for McpToolProvider {
         Some(self.config.destination.clone().unwrap_or(Classification::PUBLIC))
     }
 
-    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(
+        &self,
+        name: &str,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
         let remote_name = self.strip_prefix(name)?.to_string();
         let security_context = turn.situation().security_context().clone();
 
@@ -381,7 +410,11 @@ pub fn register(registry: &mut ComponentRegistry) {
             let config: McpToolConfig = config_of_params(&descriptor.params)?;
             let secret_manager = Arc::clone(context.service::<SecretManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(McpToolProvider::new(descriptor.id.clone(), config, secret_manager)));
+            facets.insert::<dyn ToolProvider>(Arc::new(McpToolProvider::new(
+                descriptor.id.clone(),
+                config,
+                secret_manager,
+            )));
             Ok(facets)
         },
     );
@@ -426,13 +459,28 @@ mod tests {
         assert!(config.endpoint.auth.is_none());
         assert_eq!(config.timeout(), Duration::from_secs(10));
         assert_eq!(config.refresh(), Duration::from_secs(300));
-        assert_eq!(config.requires_approval, ApprovalMode::Always, "approval unless configured otherwise");
-        assert!(serde_json::from_value::<McpToolConfig>(json!({ "endpoint": { "url": "x" }, "requires_aproval": true })).is_err(), "nothing unknown");
+        assert_eq!(
+            config.requires_approval,
+            ApprovalMode::Always,
+            "approval unless configured otherwise"
+        );
+        assert!(
+            serde_json::from_value::<McpToolConfig>(
+                json!({ "endpoint": { "url": "x" }, "requires_aproval": true })
+            )
+            .is_err(),
+            "nothing unknown"
+        );
     }
 
     #[test]
     fn approval_is_configured_for_all_none_or_all_but_the_read_only_tools() {
-        let configured = |approval: Value| serde_json::from_value::<McpToolConfig>(json!({ "endpoint": { "url": "x" }, "requires_approval": approval })).map(|c| c.requires_approval);
+        let configured = |approval: Value| {
+            serde_json::from_value::<McpToolConfig>(
+                json!({ "endpoint": { "url": "x" }, "requires_approval": approval }),
+            )
+            .map(|c| c.requires_approval)
+        };
         assert_eq!(configured(json!("unless_read_only")).unwrap(), ApprovalMode::UnlessReadOnly);
         let refused = configured(json!("hints")).unwrap_err().to_string();
         assert!(refused.contains("requires_approval must be"), "names the field: {refused}");
@@ -440,9 +488,17 @@ mod tests {
         let read_only = ToolAnnotations::new().read_only(true);
         let writes = ToolAnnotations::new().read_only(false);
         let unannotated = ToolAnnotations::new().destructive(false);
-        for (approval, asks) in [(ApprovalMode::Always, [true, true, true, true]), (ApprovalMode::Never, [false; 4]), (ApprovalMode::UnlessReadOnly, [false, true, true, true])] {
-            let required = [Some(&read_only), Some(&writes), Some(&unannotated), None].map(|a| approval.required(super::read_only(a)));
-            assert_eq!(required, asks, "{approval:?}: read-only, writing, without readOnlyHint, without annotations");
+        for (approval, asks) in [
+            (ApprovalMode::Always, [true, true, true, true]),
+            (ApprovalMode::Never, [false; 4]),
+            (ApprovalMode::UnlessReadOnly, [false, true, true, true]),
+        ] {
+            let required = [Some(&read_only), Some(&writes), Some(&unannotated), None]
+                .map(|a| approval.required(super::read_only(a)));
+            assert_eq!(
+                required, asks,
+                "{approval:?}: read-only, writing, without readOnlyHint, without annotations"
+            );
         }
     }
 
@@ -456,7 +512,8 @@ mod tests {
             destination: None,
         };
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-        let provider = McpToolProvider::new("github-mcp".to_string(), config, Arc::clone(&secret_manager));
+        let provider =
+            McpToolProvider::new("github-mcp".to_string(), config, Arc::clone(&secret_manager));
 
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();
         assert_eq!(stripped, "search");
@@ -466,9 +523,16 @@ mod tests {
         // unless configured.
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
         let internal = Classification::general(Confidentiality::Internal);
-        let cleared = McpToolProvider::new("github-mcp".to_string(), McpToolConfig { destination: Some(internal.clone()), ..provider.config.clone() }, secret_manager);
+        let cleared = McpToolProvider::new(
+            "github-mcp".to_string(),
+            McpToolConfig { destination: Some(internal.clone()), ..provider.config.clone() },
+            secret_manager,
+        );
         assert_eq!(cleared.destination(), Some(internal));
-        let configured: McpToolConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "destination": { "level": "confidential" } })).unwrap();
+        let configured: McpToolConfig = serde_json::from_value(
+            json!({ "endpoint": { "url": "x" }, "destination": { "level": "confidential" } }),
+        )
+        .unwrap();
         assert!(configured.destination.is_some(), "read from the params");
     }
 

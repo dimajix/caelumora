@@ -11,20 +11,22 @@
 //! past it but through `content`, which hands out only a version it holds.
 
 use crate::access::ArtifactAccess;
-use crate::artifact::{Artifact, ArtifactField, ArtifactId, ArtifactSnapshot, ArtifactVersion, PublicationSnapshot};
+use crate::artifact::{
+    Artifact, ArtifactField, ArtifactId, ArtifactSnapshot, ArtifactVersion, PublicationSnapshot,
+};
 use crate::manager::{ArtifactError, ArtifactManager, ArtifactResult};
 use async_trait::async_trait;
-use caelumora_model::snapshot::DeletedSnapshot;
 use caelumora_model::confidentiality::Reading;
+use caelumora_model::scope::Scope;
+use caelumora_model::snapshot::DeletedSnapshot;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::StoreResultExt;
 use caelumora_runtime::terminal::ByteStream;
-use caelumora_model::scope::Scope;
 use caelumora_runtime::view::{ChannelView, ProjectView, Views};
 use std::collections::BTreeMap;
+use std::mem;
 use std::sync::Arc;
 use tracing::warn;
-use std::mem;
 
 /// The artifacts the views reach (issue 328): what the runtime's `Views`
 /// offer of artifacts, from the plugin.
@@ -69,8 +71,12 @@ impl ArtifactViews for Views {
     async fn artifacts(&self) -> ArtifactResult<Vec<ArtifactView>> {
         let context = self.context();
         let named = Filter::is_in(ArtifactField::Subject, self.subjects().await?);
-        let theirs = Filter::Or(vec![Filter::eq(ArtifactField::Owner, context.principal_id), Filter::any(ArtifactField::Acl, named)]);
-        let artifacts = self.artifact_manager()?.store().list(context, &Query::filtered(theirs)).await?.items;
+        let theirs = Filter::Or(vec![
+            Filter::eq(ArtifactField::Owner, context.principal_id),
+            Filter::any(ArtifactField::Acl, named),
+        ]);
+        let artifacts =
+            self.artifact_manager()?.store().list(context, &Query::filtered(theirs)).await?.items;
         let mut readable = Vec::with_capacity(artifacts.len());
         for artifact in artifacts {
             readable.push(readable_by(self, artifact).await);
@@ -86,7 +92,11 @@ impl ArtifactViews for Views {
     }
 
     async fn deleted_artifacts(&self) -> ArtifactResult<Vec<DeletedSnapshot<ArtifactId>>> {
-        Ok(self.deleted_of(self.artifact_manager()?.store().as_ref(), &Query::all(), |artifact| artifact.name.to_string()).await?)
+        Ok(self
+            .deleted_of(self.artifact_manager()?.store().as_ref(), &Query::all(), |artifact| {
+                artifact.name.to_string()
+            })
+            .await?)
     }
 
     fn artifact_manager(&self) -> ArtifactResult<&Arc<ArtifactManager>> {
@@ -127,10 +137,17 @@ impl ArtifactChannelViews for ChannelView {
             Filter::eq(ArtifactField::VersionSession, session),
             Filter::eq(ArtifactField::VersionChannel, channel),
         ]);
-        let all = views.artifact_manager()?.store().list(views.context(), &Query::filtered(Filter::any(ArtifactField::Versions, here))).await?.items;
+        let all = views
+            .artifact_manager()?
+            .store()
+            .list(views.context(), &Query::filtered(Filter::any(ArtifactField::Versions, here)))
+            .await?
+            .items;
         let mut published = Vec::new();
         for mut artifact in all {
-            artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
+            artifact
+                .versions
+                .retain(|version| version.session_id == session && version.channel_id == channel);
             let view = readable_by(views, artifact).await;
             if !view.artifact().versions.is_empty() {
                 published.push(view);
@@ -157,8 +174,10 @@ pub trait ArtifactProjectViews {
 impl ArtifactProjectViews for ProjectView {
     async fn artifacts(&self) -> ArtifactResult<Vec<ArtifactView>> {
         let views = self.views();
-        let lying_here = Query::filtered(Filter::lying_within(&Scope::ProjectScope { project_id: self.id() }));
-        let artifacts = views.artifact_manager()?.store().list(views.context(), &lying_here).await?.items;
+        let lying_here =
+            Query::filtered(Filter::lying_within(&Scope::ProjectScope { project_id: self.id() }));
+        let artifacts =
+            views.artifact_manager()?.store().list(views.context(), &lying_here).await?.items;
         let mut readable = Vec::with_capacity(artifacts.len());
         for artifact in artifacts {
             readable.push(readable_by(views, artifact).await);
@@ -174,7 +193,11 @@ async fn readable_by(views: &Views, mut artifact: Artifact) -> ArtifactView {
     let context = views.context();
     let mut readable = Vec::with_capacity(artifact.versions.len());
     for version in mem::take(&mut artifact.versions) {
-        if views.access_policy().may_read_artifact(context, &artifact.version_attributes(&version)).await {
+        if views
+            .access_policy()
+            .may_read_artifact(context, &artifact.version_attributes(&version))
+            .await
+        {
             readable.push(version);
         }
     }
@@ -203,7 +226,10 @@ impl ArtifactView {
     /// `Content`; `NotJoined` without the plugin.
     pub async fn content(&self, number: u32) -> ArtifactResult<(u64, ByteStream)> {
         if self.artifact.version(number).is_none() {
-            return Err(ArtifactError::VersionNotFound { artifact: self.artifact.id, version: number });
+            return Err(ArtifactError::VersionNotFound {
+                artifact: self.artifact.id,
+                version: number,
+            });
         }
         self.views.artifact_manager()?.content_of(&self.artifact, number).await
     }
@@ -229,19 +255,32 @@ impl ArtifactView {
         self.snapshot_of(publications).await
     }
 
-    async fn snapshot_of(&self, publications: BTreeMap<u32, PublicationSnapshot>) -> ArtifactSnapshot {
+    async fn snapshot_of(
+        &self,
+        publications: BTreeMap<u32, PublicationSnapshot>,
+    ) -> ArtifactSnapshot {
         let context = self.views.context();
         let access_policy = self.views.access_policy();
-        let can_change = access_policy.may_change_artifact(context, &self.artifact.security_attributes).await;
-        let can_write = access_policy.may_write_artifact(context, &self.artifact.security_attributes).await;
+        let can_change =
+            access_policy.may_change_artifact(context, &self.artifact.security_attributes).await;
+        let can_write =
+            access_policy.may_write_artifact(context, &self.artifact.security_attributes).await;
         let (mut access, mut version_access) = (Vec::new(), BTreeMap::new());
         if can_change {
             access = self.views.access_snapshots(&self.artifact.security_attributes.acl).await;
             for version in &self.artifact.versions {
-                version_access.insert(version.number, self.views.access_snapshots(&version.acl).await);
+                version_access
+                    .insert(version.number, self.views.access_snapshots(&version.acl).await);
             }
         }
-        ArtifactSnapshot { artifact: self.artifact.clone(), can_change, can_write, access, version_access, publications }
+        ArtifactSnapshot {
+            artifact: self.artifact.clone(),
+            can_change,
+            can_write,
+            access,
+            version_access,
+            publications,
+        }
     }
 
     /// Where `version` was published and by whom, if the viewer may read
@@ -260,6 +299,10 @@ impl ArtifactView {
             Ok(participant) => participant.name().map(str::to_string),
             Err(_) => None,
         };
-        Some(PublicationSnapshot { session_name: channel.session().name().to_string(), channel_name: channel.name().to_string(), published_by })
+        Some(PublicationSnapshot {
+            session_name: channel.session().name().to_string(),
+            channel_name: channel.name().to_string(),
+            published_by,
+        })
     }
 }

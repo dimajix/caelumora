@@ -1,14 +1,16 @@
 //! The `calculator_tool` component: a tool that evaluates mathematical
 //! expressions.
 
-use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
+use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
+use crate::tool::{
+    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+};
 use crate::turn::Turn;
-use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -31,19 +33,28 @@ impl CalculatorToolProvider {
     /// # Errors
     /// `PromptError` if one of them cannot be had.
     pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
-        let tools = vec![described(prompts, NAMESPACE, CALCULATOR_TOOL_KIND, Tool {
-            name: CALCULATE_TOOL_NAME.to_string(),
-            description: String::new(),
-            parameters: ToolParameters::object(
-                vec![("expression", ToolParameters::string())],
-                vec!["expression"],
-            ),
-            requires_approval: false,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: Default::default(),
-        }, ())?];
-        Ok(Self { description: tool_text(prompts, NAMESPACE, CALCULATOR_TOOL_KIND, "description", ())?, tools })
+        let tools = vec![described(
+            prompts,
+            NAMESPACE,
+            CALCULATOR_TOOL_KIND,
+            Tool {
+                name: CALCULATE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    vec![("expression", ToolParameters::string())],
+                    vec!["expression"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: Default::default(),
+            },
+            (),
+        )?];
+        Ok(Self {
+            description: tool_text(prompts, NAMESPACE, CALCULATOR_TOOL_KIND, "description", ())?,
+            tools,
+        })
     }
 }
 
@@ -57,17 +68,27 @@ impl ToolProvider for CalculatorToolProvider {
         self.tools.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(
+        &self,
+        name: &str,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
         if name == CALCULATE_TOOL_NAME {
             #[derive(Deserialize)]
-            struct Calculate { expression: String }
+            struct Calculate {
+                expression: String,
+            }
             let Calculate { expression } = arguments(params)?;
 
-            let result = meval::eval_str(&expression)
-                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e)))?;
+            let result = meval::eval_str(&expression).map_err(|e| {
+                ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e))
+            })?;
 
             // Derived from the arguments alone: classified as the turn (issue 168).
-            let value = serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            let value = serde_json::to_value(result)
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
             Ok(ToolOutput::classified(value, turn.situation().label()))
         } else {
             Err(ToolError::UnknownTool(name.to_string()))
@@ -77,7 +98,9 @@ impl ToolProvider for CalculatorToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(CALCULATOR_TOOL_KIND).provides::<dyn ToolProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(CALCULATOR_TOOL_KIND).provides::<dyn ToolProvider>(),
+        ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
@@ -111,9 +134,16 @@ mod tests {
 
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
-            let result = provider.execute(CALCULATE_TOOL_NAME, &params, None, &mut turn).await.unwrap();
+            let result =
+                provider.execute(CALCULATE_TOOL_NAME, &params, None, &mut turn).await.unwrap();
             let val = result.value.as_f64().unwrap();
-            assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
+            assert!(
+                (val - expected).abs() < 1e-10,
+                "Expression {} failed: expected {}, got {}",
+                expr,
+                expected,
+                val
+            );
         }
     }
 

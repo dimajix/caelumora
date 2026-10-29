@@ -10,19 +10,19 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::Personality;
 use caelumora_model::component::ComponentBundle;
-use caelumora_model::config::parse_yaml;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
+use caelumora_model::config::parse_yaml;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, Stored};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
-use serde_json::Value;
-use std::fs;
 
 /// The documents of one seed file. A key it does not know is a section of
 /// a plugin's; one that no plugin claims is an error when it is seeded.
@@ -92,7 +92,8 @@ impl Seed {
     pub fn read(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Cannot read the seed file {}", path.display()))?;
-        parse_yaml(&content).with_context(|| format!("Cannot parse the seed file {}", path.display()))
+        parse_yaml(&content)
+            .with_context(|| format!("Cannot parse the seed file {}", path.display()))
     }
 
     /// Puts every document into `stores` whose id they do not have yet (`create_unless_taken`) - so
@@ -106,7 +107,12 @@ impl Seed {
     /// A section no plugin claims, before anything is stored; a role that
     /// is not configured; whatever the stores report. What was stored
     /// before stays.
-    pub async fn apply(&self, stores: &EntityStores, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>) -> Result<()> {
+    pub async fn apply(
+        &self,
+        stores: &EntityStores,
+        confidentiality: &dyn ConfidentialityPolicy,
+        sections: &BTreeMap<String, Arc<dyn SeedSection>>,
+    ) -> Result<()> {
         if let Some(name) = self.plugins.keys().find(|name| !sections.contains_key(*name)) {
             bail!("The seed has a section '{name}' that no plugin claims");
         }
@@ -128,7 +134,10 @@ impl Seed {
         }
         for (name, section) in &self.plugins {
             if let Some(seeder) = sections.get(name) {
-                seeder.seed(section.clone()).await.with_context(|| format!("Cannot seed the section '{name}'"))?;
+                seeder
+                    .seed(section.clone())
+                    .await
+                    .with_context(|| format!("Cannot seed the section '{name}'"))?;
             }
         }
         Ok(())
@@ -143,7 +152,10 @@ impl Seed {
 ///
 /// # Errors
 /// Whatever the store reports but a taken id - also a name another has (`StoreError::NameTaken`).
-pub async fn create_unless_taken<T: Stored>(store: &dyn EntityStore<T>, value: &T) -> StoreResult<bool> {
+pub async fn create_unless_taken<T: Stored>(
+    store: &dyn EntityStore<T>,
+    value: &T,
+) -> StoreResult<bool> {
     match store.create(&SecurityContext::system(), value).await {
         Ok(()) => Ok(true),
         Err(StoreError::Conflict(_)) => Ok(false),
@@ -157,9 +169,16 @@ pub async fn create_unless_taken<T: Stored>(store: &dyn EntityStore<T>, value: &
 ///
 /// # Errors
 /// As `Seed::read` and `Seed::apply`.
-pub async fn load(stores: &EntityStores, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>, paths: &[PathBuf]) -> Result<()> {
+pub async fn load(
+    stores: &EntityStores,
+    confidentiality: &dyn ConfidentialityPolicy,
+    sections: &BTreeMap<String, Arc<dyn SeedSection>>,
+    paths: &[PathBuf],
+) -> Result<()> {
     for path in paths {
-        Seed::read(path)?.apply(stores, confidentiality, sections).await
+        Seed::read(path)?
+            .apply(stores, confidentiality, sections)
+            .await
             .with_context(|| format!("Cannot seed the stores from {}", path.display()))?;
     }
     Ok(())
@@ -168,21 +187,19 @@ pub async fn load(stores: &EntityStores, confidentiality: &dyn ConfidentialityPo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use caelumora_model::store::query::Query;
-    
-    
-    
+    use std::sync::Mutex;
+
     use caelumora_model::store::Persistence;
-    
-    
+
     use caelumora_model::config::AppConfig;
-    
 
     /// The policy of the example configuration, which knows the roles the
     /// example seed names.
     fn policy() -> Arc<dyn ConfidentialityPolicy> {
-        let config = AppConfig::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml")).unwrap();
+        let config =
+            AppConfig::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml"))
+                .unwrap();
         config.create_confidentiality_policy()
     }
 
@@ -191,11 +208,27 @@ mod tests {
         let seed: Seed = parse_yaml("personalities:\n- id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: limited\n  roles: [staff]\n").unwrap();
         let store = Persistence::in_memory();
         let policy = policy();
-        seed.apply(&store.entity_stores().unwrap(), policy.as_ref(), &BTreeMap::new()).await.unwrap();
-        let stored = store.entity_stores().unwrap().personalities.list(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
-        assert_eq!(stored[0].roles, Some(vec![policy.roles().unwrap().id_of("staff").unwrap()]), "by the id the configuration gives it");
+        seed.apply(&store.entity_stores().unwrap(), policy.as_ref(), &BTreeMap::new())
+            .await
+            .unwrap();
+        let stored = store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .list(&SecurityContext::system(), &Query::all())
+            .await
+            .map(|page| page.items)
+            .unwrap();
+        assert_eq!(
+            stored[0].roles,
+            Some(vec![policy.roles().unwrap().id_of("staff").unwrap()]),
+            "by the id the configuration gives it"
+        );
         let unknown: Seed = parse_yaml("personalities:\n- id: 1f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: typo\n  roles: [staf]\n").unwrap();
-        let error = unknown.apply(&store.entity_stores().unwrap(), policy.as_ref(), &BTreeMap::new()).await.expect_err("a role not configured");
+        let error = unknown
+            .apply(&store.entity_stores().unwrap(), policy.as_ref(), &BTreeMap::new())
+            .await
+            .expect_err("a role not configured");
         assert!(error.to_string().contains("staf"), "{error}");
     }
 
@@ -212,19 +245,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_plugins_section_is_seeded_by_it_and_one_nobody_claims_is_refused_before_anything_is_stored() {
+    async fn a_plugins_section_is_seeded_by_it_and_one_nobody_claims_is_refused_before_anything_is_stored(
+    ) {
         let store = Persistence::in_memory();
         let policy = policy();
         let given = Arc::new(Given::default());
-        let sections: BTreeMap<String, Arc<dyn SeedSection>> = [("notes".to_string(), Arc::<Given>::clone(&given) as Arc<dyn SeedSection>)].into();
+        let sections: BTreeMap<String, Arc<dyn SeedSection>> =
+            [("notes".to_string(), Arc::<Given>::clone(&given) as Arc<dyn SeedSection>)].into();
         let seed: Seed = parse_yaml("notes:\n- text: remember\n").unwrap();
         seed.apply(&store.entity_stores().unwrap(), policy.as_ref(), &sections).await.unwrap();
         assert_eq!(*given.0.lock().unwrap(), [serde_json::json!([{"text": "remember"}])]);
 
         let typo: Seed = parse_yaml("personalites: []\npersonalities:\n- id: 2f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: kept-out\n").unwrap();
-        let error = typo.apply(&store.entity_stores().unwrap(), policy.as_ref(), &sections).await.expect_err("a typo");
+        let error = typo
+            .apply(&store.entity_stores().unwrap(), policy.as_ref(), &sections)
+            .await
+            .expect_err("a typo");
         assert!(error.to_string().contains("'personalites'"), "{error}");
-        let stored = store.entity_stores().unwrap().personalities.list(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
+        let stored = store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .list(&SecurityContext::system(), &Query::all())
+            .await
+            .map(|page| page.items)
+            .unwrap();
         assert!(stored.is_empty(), "nothing stored");
     }
 }

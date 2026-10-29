@@ -63,7 +63,10 @@ impl<R: TextRule> Text<R> {
             return Err(ValueError::ControlCharacter { field: R::FIELD });
         }
         if R::FILE_NAME && (text.contains(['/', '\\']) || matches!(text, "." | "..")) {
-            return Err(ValueError::Malformed { field: R::FIELD, expected: "the name of a file, without a path" });
+            return Err(ValueError::Malformed {
+                field: R::FIELD,
+                expected: "the name of a file, without a path",
+            });
         }
         Ok(Self { text: text.to_string(), rule: PhantomData })
     }
@@ -186,35 +189,79 @@ mod tests {
     fn a_file_name_names_one_file_without_a_path() {
         assert_eq!(FileName::new("report 2026.pdf").unwrap().as_str(), "report 2026.pdf");
         for path in ["a/b.png", "..\\up.png", ".", "..", "/etc/passwd"] {
-            assert!(matches!(FileName::new(path), Err(ValueError::Malformed { field: "file name", .. })), "{path:?}");
+            assert!(
+                matches!(
+                    FileName::new(path),
+                    Err(ValueError::Malformed { field: "file name", .. })
+                ),
+                "{path:?}"
+            );
         }
         assert!(FileName::new("..dots.png").is_ok(), "dots in a name are no path");
     }
 
     #[test]
     fn a_text_is_bounded_and_kept_free_of_control_characters_and_as_written() {
-        assert_eq!(Text::<Lines>::new(" Brief.\n").unwrap().as_str(), " Brief.\n", "checked, not changed");
+        assert_eq!(
+            Text::<Lines>::new(" Brief.\n").unwrap().as_str(),
+            " Brief.\n",
+            "checked, not changed"
+        );
         assert_eq!(Text::<Line>::new(""), Err(ValueError::Empty { field: "summary" }));
         for blank in [" ", "\t", "\n", "\r\n", " \n "] {
-            assert_eq!(Text::<Lines>::new(blank), Err(ValueError::Blank { field: "briefing" }), "{blank:?}");
+            assert_eq!(
+                Text::<Lines>::new(blank),
+                Err(ValueError::Blank { field: "briefing" }),
+                "{blank:?}"
+            );
         }
         assert_eq!(Text::<Line>::optional(Some("")), Ok(None), "empty is none");
-        assert_eq!(Text::<Line>::optional(Some(" ")), Err(ValueError::Blank { field: "summary" }), "whitespace is refused, not taken for nothing");
+        assert_eq!(
+            Text::<Line>::optional(Some(" ")),
+            Err(ValueError::Blank { field: "summary" }),
+            "whitespace is refused, not taken for nothing"
+        );
         assert_eq!(Text::<Line>::optional(None), Ok(None));
-        assert_eq!(Text::<Line>::new("eleven char"), Err(ValueError::TooLong { field: "summary", max_chars: 10 }));
+        assert_eq!(
+            Text::<Line>::new("eleven char"),
+            Err(ValueError::TooLong { field: "summary", max_chars: 10 })
+        );
         assert_eq!(Text::<Line>::new("one\ntwo"), Err(ValueError::LineBreak { field: "summary" }));
-        assert_eq!(Text::<Line>::new("one\n"), Err(ValueError::LineBreak { field: "summary" }), "a line break at its end, too");
-        assert!(Text::<Lines>::new("one\ntwo\tx").is_ok(), "lines and tabs where it is not one line");
-        assert_eq!(Text::<Lines>::new("bell\u{7}"), Err(ValueError::ControlCharacter { field: "briefing" }));
-        assert_eq!(ValueError::LineBreak { field: "summary" }.to_string(), "the summary must be one line", "naming the field");
+        assert_eq!(
+            Text::<Line>::new("one\n"),
+            Err(ValueError::LineBreak { field: "summary" }),
+            "a line break at its end, too"
+        );
+        assert!(
+            Text::<Lines>::new("one\ntwo\tx").is_ok(),
+            "lines and tabs where it is not one line"
+        );
+        assert_eq!(
+            Text::<Lines>::new("bell\u{7}"),
+            Err(ValueError::ControlCharacter { field: "briefing" })
+        );
+        assert_eq!(
+            ValueError::LineBreak { field: "summary" }.to_string(),
+            "the summary must be one line",
+            "naming the field"
+        );
     }
 
     #[test]
     fn a_text_is_written_as_a_string_and_checked_when_read() {
         let summary = Summary::new("Release 2.0").unwrap();
         assert_eq!(serde_json::to_value(&summary).unwrap(), serde_json::json!("Release 2.0"));
-        assert_eq!(serde_json::from_value::<Summary>(serde_json::json!("Release 2.0")).unwrap(), summary);
-        assert!(serde_json::from_value::<Summary>(serde_json::json!("one\ntwo")).is_err(), "a summary is one line");
-        assert!(serde_json::from_value::<Summary>(serde_json::json!("")).is_err(), "only none is stored for nothing");
+        assert_eq!(
+            serde_json::from_value::<Summary>(serde_json::json!("Release 2.0")).unwrap(),
+            summary
+        );
+        assert!(
+            serde_json::from_value::<Summary>(serde_json::json!("one\ntwo")).is_err(),
+            "a summary is one line"
+        );
+        assert!(
+            serde_json::from_value::<Summary>(serde_json::json!("")).is_err(),
+            "only none is stored for nothing"
+        );
     }
 }

@@ -13,8 +13,10 @@
 //! of participant, and joins it as a plugin (`plugin::AgentsPlugin`) - an
 //! essential one: without it, the program is a chat between users.
 
-pub(crate) mod actor;
 pub mod activity;
+pub(crate) mod actor;
+#[cfg(test)]
+mod channel_tests;
 pub mod command;
 pub mod components;
 pub mod error;
@@ -26,9 +28,7 @@ pub(crate) mod notes;
 pub mod plugin;
 pub mod prompt;
 pub mod situation;
-pub mod tool;
-pub mod turn;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
-#[cfg(test)]
-mod channel_tests;
+pub mod tool;
+pub mod turn;

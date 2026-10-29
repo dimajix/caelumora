@@ -72,7 +72,11 @@ impl Agent {
     /// (issues 255, 341).
     pub fn security_context(&self, session: SessionId, channel: ChannelId) -> SecurityContext {
         let agent = ActorId::Agent(self.id);
-        SecurityContext::new(agent, session, channel).next(agent, self.security_attributes.owner_id, self.principal_id)
+        SecurityContext::new(agent, session, channel).next(
+            agent,
+            self.security_attributes.owner_id,
+            self.principal_id,
+        )
     }
 
     /// A new agent of the personality `personality_id`, owned by `owner` -
@@ -170,11 +174,23 @@ mod tests {
     #[test]
     fn an_agent_acting_on_its_own_initiates_it_for_its_owner() {
         let owner = ActorId::User(UserId::new());
-        let agent = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), PersonalityId::new(), owner);
+        let agent = Agent::new(
+            ScopedName::new("helper", Default::default()).unwrap(),
+            PersonalityId::new(),
+            owner,
+        );
         let context = agent.security_context(Default::default(), Default::default());
         let itself = ActorId::Agent(agent.id);
-        assert_eq!((context.caller_id, context.initiator_id), (itself, itself), "it acts, and caused it");
-        assert_eq!((context.owner_id, context.principal_id), (owner, owner), "answered for by its owner, in their name");
+        assert_eq!(
+            (context.caller_id, context.initiator_id),
+            (itself, itself),
+            "it acts, and caused it"
+        );
+        assert_eq!(
+            (context.owner_id, context.principal_id),
+            (owner, owner),
+            "answered for by its owner, in their name"
+        );
     }
 
     /// Issue 341: an agent is made acting in its owner's name, and cannot
@@ -183,7 +199,11 @@ mod tests {
     #[test]
     fn an_agent_acts_in_its_owners_name() {
         let owner = ActorId::User(UserId::new());
-        let mut agent = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), PersonalityId::new(), owner);
+        let mut agent = Agent::new(
+            ScopedName::new("helper", Default::default()).unwrap(),
+            PersonalityId::new(),
+            owner,
+        );
         assert_eq!(agent.principal_id, owner, "its owner's when made");
         assert!(agent.validate().is_ok());
         agent.principal_id = ActorId::User(UserId::new());
@@ -195,7 +215,11 @@ mod tests {
     #[test]
     fn an_agent_lies_in_no_project_s_scope() {
         let project = Scope::ProjectScope { project_id: ProjectId::new() };
-        let agent = Agent::new(ScopedName::new("helper", project).unwrap(), PersonalityId::new(), ActorId::User(UserId::new()));
+        let agent = Agent::new(
+            ScopedName::new("helper", project).unwrap(),
+            PersonalityId::new(),
+            ActorId::User(UserId::new()),
+        );
         assert!(agent.validate().is_err());
     }
 }

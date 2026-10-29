@@ -4,8 +4,8 @@ use crate::access::{entries, Admitted};
 use crate::connection::{quoted, sql, Connection};
 use crate::filter::Condition;
 use async_trait::async_trait;
-use caelumora_model::store::documents::{Document, DocumentStorage};
 use caelumora_model::security::Admission;
+use caelumora_model::store::documents::{Document, DocumentStorage};
 use caelumora_model::store::query::{FieldPath, Filter};
 use caelumora_model::store::{EntityKind, Presence, StoreError, StoreResult};
 use caelumora_model::value::name::ScopedName;
@@ -70,14 +70,28 @@ impl PgDocuments {
     /// # Errors
     /// `StoreError::Backend` if the name of the kind is too long for a
     /// table.
-    pub(crate) fn new(connection: Arc<Connection>, kind: EntityKind, groups: Option<Arc<PgDocuments>>) -> StoreResult<Self> {
+    pub(crate) fn new(
+        connection: Arc<Connection>,
+        kind: EntityKind,
+        groups: Option<Arc<PgDocuments>>,
+    ) -> StoreResult<Self> {
         let table = format!("entity_{kind}");
         let name_index = format!("{table}_name");
         if format!("{table}_access_entity").len() > MAX_IDENTIFIER {
-            return Err(StoreError::Backend(format!("the kind {kind} has too long a name for a table")));
+            return Err(StoreError::Backend(format!(
+                "the kind {kind} has too long a name for a table"
+            )));
         }
         let access = quoted(&format!("{table}_access"));
-        Ok(Self { connection, kind, table: quoted(&table), access, name_index, groups, ready: OnceCell::new() })
+        Ok(Self {
+            connection,
+            kind,
+            table: quoted(&table),
+            access,
+            name_index,
+            groups,
+            ready: OnceCell::new(),
+        })
     }
 
     /// The storage of the groups.
@@ -101,8 +115,17 @@ impl PgDocuments {
     async fn make_table(&self, pool: &PgPool) -> StoreResult<()> {
         let kind = self.kind.name();
         let mut tx = pool.begin().await.map_err(|e| self.failed(e))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('caelumora.kind.' || $1))").bind(kind).execute(&mut *tx).await.map_err(|e| self.failed(e))?;
-        let version: Option<i32> = sqlx::query_scalar("SELECT schema_version FROM kinds WHERE name = $1").bind(kind).fetch_optional(&mut *tx).await.map_err(|e| self.failed(e))?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('caelumora.kind.' || $1))")
+            .bind(kind)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| self.failed(e))?;
+        let version: Option<i32> =
+            sqlx::query_scalar("SELECT schema_version FROM kinds WHERE name = $1")
+                .bind(kind)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| self.failed(e))?;
         match version {
             Some(KIND_TABLE_VERSION) => return Ok(()),
             Some(other) => return Err(StoreError::Backend(format!("the table of the kind {kind} has the form {other}, this program knows {KIND_TABLE_VERSION}"))),
@@ -128,8 +151,12 @@ impl PgDocuments {
             sqlx::query(sql(statement)).execute(&mut **tx).await.map_err(|e| self.failed(e))?;
         }
         sqlx::query("INSERT INTO kinds (name, table_name, schema_version) VALUES ($1, $2, $3)")
-            .bind(self.kind.name()).bind(format!("entity_{}", self.kind)).bind(KIND_TABLE_VERSION)
-            .execute(&mut **tx).await.map_err(|e| self.failed(e))?;
+            .bind(self.kind.name())
+            .bind(format!("entity_{}", self.kind))
+            .bind(KIND_TABLE_VERSION)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| self.failed(e))?;
         Ok(())
     }
 
@@ -140,9 +167,18 @@ impl PgDocuments {
         let pool = self.ready().await?;
         let mut tx = pool.begin().await.map_err(|e| self.failed(e))?;
         sqlx::query(sql(statement))
-            .bind(document.id).bind(document.name.as_ref().map(ScopedName::key)).bind(document.removal_id.map(Uuid::from)).bind(&document.body)
-            .execute(&mut *tx).await.map_err(|e| self.refused(e, document.id))?;
-        sqlx::query(sql(format!("DELETE FROM {} WHERE entity_id = $1", self.access))).bind(document.id).execute(&mut *tx).await.map_err(|e| self.failed(e))?;
+            .bind(document.id)
+            .bind(document.name.as_ref().map(ScopedName::key))
+            .bind(document.removal_id.map(Uuid::from))
+            .bind(&document.body)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| self.refused(e, document.id))?;
+        sqlx::query(sql(format!("DELETE FROM {} WHERE entity_id = $1", self.access)))
+            .bind(document.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| self.failed(e))?;
         let (subjects, relations) = entries(&document.security_attributes);
         sqlx::query(sql(format!("INSERT INTO {} (subject, relation, entity_id) SELECT subject, relation, $3 FROM UNNEST($1::uuid[], $2::text[]) AS entry(subject, relation) \
             ON CONFLICT DO NOTHING", self.access)))
@@ -175,13 +211,24 @@ impl PgDocuments {
 impl DocumentStorage for PgDocuments {
     async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
         let pool = self.ready().await?;
-        sqlx::query_scalar(sql(format!("SELECT body FROM {} WHERE id = $1", self.table))).bind(id).fetch_optional(pool).await.map_err(|e| self.failed(e))
+        sqlx::query_scalar(sql(format!("SELECT body FROM {} WHERE id = $1", self.table)))
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| self.failed(e))
     }
 
     /// What of `filter` SQL can judge is judged by the database
     /// (`Condition`), the rest by the store; the admission by the access
     /// entries (`Admitted`).
-    async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
+    async fn scan(
+        &self,
+        filter: Option<&Filter<FieldPath>>,
+        admission: Option<&Admission>,
+        presence: Presence,
+        after: Option<Uuid>,
+        limit: usize,
+    ) -> StoreResult<Vec<(Uuid, Value)>> {
         let pool = self.ready().await?;
         let groups = self.groups();
         if admission.is_some() {
@@ -191,11 +238,16 @@ impl DocumentStorage for PgDocuments {
         let condition = filter.map(|filter| Condition::of(filter, "body", FIRST_SCANNED));
         let meeting = condition.as_ref().map_or("true", |condition| condition.sql.as_str());
         let first = condition.as_ref().map_or(FIRST_SCANNED, Condition::next);
-        let admitted = admission.map(|admission| Admitted::of(admission, &self.access, &groups.table, first));
+        let admitted =
+            admission.map(|admission| Admitted::of(admission, &self.access, &groups.table, first));
         let admitting = admitted.as_ref().map_or("true", |admitted| admitted.sql.as_str());
         let statement = format!("SELECT id, body FROM {} WHERE (removal_id IS NOT NULL) = $1 AND ($2::uuid IS NULL OR removal_id = $2) \
             AND ($3::uuid IS NULL OR id > $3) AND {meeting} AND {admitting} ORDER BY id LIMIT $4", self.table);
-        let query = sqlx::query_as(sql(statement)).bind(presence.marked()).bind(presence.removal_id().map(Uuid::from)).bind(after).bind(limit);
+        let query = sqlx::query_as(sql(statement))
+            .bind(presence.marked())
+            .bind(presence.removal_id().map(Uuid::from))
+            .bind(after)
+            .bind(limit);
         let query = match &condition {
             Some(condition) => condition.bound(query),
             None => query,
@@ -209,15 +261,28 @@ impl DocumentStorage for PgDocuments {
 
     async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
         let pool = self.ready().await?;
-        sqlx::query_scalar(sql(format!("SELECT body FROM {} WHERE name_key = $1 AND removal_id IS NULL", self.table)))
-            .bind(name.key()).fetch_optional(pool).await.map_err(|e| self.failed(e))
+        sqlx::query_scalar(sql(format!(
+            "SELECT body FROM {} WHERE name_key = $1 AND removal_id IS NULL",
+            self.table
+        )))
+        .bind(name.key())
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| self.failed(e))
     }
 
     /// A taken id is answered before a taken name because Postgres checks the unique indexes in
     /// the order they were made, the primary key's with the table first - asked by the store
     /// suite (`lifecycle!`), since `seed::create_unless_taken` relies on it.
     async fn insert(&self, document: Document) -> StoreResult<()> {
-        self.write(format!("INSERT INTO {} (id, name_key, removal_id, body) VALUES ($1, $2, $3, $4)", self.table), document).await
+        self.write(
+            format!(
+                "INSERT INTO {} (id, name_key, removal_id, body) VALUES ($1, $2, $3, $4)",
+                self.table
+            ),
+            document,
+        )
+        .await
     }
 
     async fn replace(&self, document: Document) -> StoreResult<()> {
@@ -229,7 +294,14 @@ impl DocumentStorage for PgDocuments {
     /// Its access entries go with it.
     async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
         let pool = self.ready().await?;
-        let done = sqlx::query(sql(format!("DELETE FROM {} WHERE id = $1 AND removal_id IS NOT NULL", self.table))).bind(id).execute(pool).await.map_err(|e| self.failed(e))?;
+        let done = sqlx::query(sql(format!(
+            "DELETE FROM {} WHERE id = $1 AND removal_id IS NOT NULL",
+            self.table
+        )))
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| self.failed(e))?;
         Ok(done.rows_affected() > 0)
     }
 }

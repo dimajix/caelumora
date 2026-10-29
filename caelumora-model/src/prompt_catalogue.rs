@@ -24,8 +24,8 @@
 use crate::config::parse_yaml;
 use crate::intern::intern;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior};
-use serde::de::{MapAccess, Visitor};
 use serde::de::Error as _;
+use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -65,7 +65,11 @@ impl PromptVariant {
     /// # Errors
     /// `PromptError::VariantNamed` for a name that is none.
     pub fn new(name: &str) -> Result<Self, PromptError> {
-        if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+        {
             return Err(PromptError::VariantNamed(name.to_string()));
         }
         Ok(Self(intern(name)))
@@ -163,13 +167,16 @@ impl PromptCatalogue {
     /// `PromptError::Invalid` naming the first text whose template does not
     /// parse.
     pub fn add(&mut self, namespace: &str, yaml: &str) -> Result<(), PromptError> {
-        let texts: BTreeMap<String, Entry> = parse_yaml(yaml)
-            .map_err(|cause| PromptError::Unreadable { namespace: namespace.to_string(), cause: cause.to_string() })?;
+        let texts: BTreeMap<String, Entry> = parse_yaml(yaml).map_err(|cause| {
+            PromptError::Unreadable { namespace: namespace.to_string(), cause: cause.to_string() }
+        })?;
         if !self.namespaces.insert(namespace.to_string()) {
             return Err(PromptError::NamespaceTaken(namespace.to_string()));
         }
         for (key, template) in flattened(namespace, texts) {
-            self.templates.add_template_owned(key.clone(), template).map_err(|cause| PromptError::Invalid { key, cause })?;
+            self.templates
+                .add_template_owned(key.clone(), template)
+                .map_err(|cause| PromptError::Invalid { key, cause })?;
         }
         Ok(())
     }
@@ -195,8 +202,12 @@ impl PromptCatalogue {
     /// name of a file nor of a value is quoted with a path.
     pub fn add_variant(&mut self, variant: &str, dir: &Path) -> Result<(), PromptError> {
         PromptVariant::new(variant)?;
-        let unreadable = |e: io::Error| PromptError::VariantUnreadable { variant: variant.to_string(), cause: e.kind().to_string() };
-        let mut files: Vec<_> = fs::read_dir(dir).map_err(unreadable)?
+        let unreadable = |e: io::Error| PromptError::VariantUnreadable {
+            variant: variant.to_string(),
+            cause: e.kind().to_string(),
+        };
+        let mut files: Vec<_> = fs::read_dir(dir)
+            .map_err(unreadable)?
             .map(|entry| entry.map(|entry| entry.path()))
             .collect::<Result<_, _>>()
             .map_err(unreadable)?;
@@ -204,29 +215,49 @@ impl PromptCatalogue {
         files.sort();
         let mut texts = Vec::new();
         for file in files {
-            let namespace = file.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default().to_string();
+            let namespace =
+                file.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default().to_string();
             if !self.namespaces.contains(&namespace) {
-                return Err(PromptError::UnknownNamespace { variant: variant.to_string(), namespace });
+                return Err(PromptError::UnknownNamespace {
+                    variant: variant.to_string(),
+                    namespace,
+                });
             }
             let yaml = fs::read_to_string(&file).map_err(unreadable)?;
-            let entries: BTreeMap<String, Entry> = parse_yaml(&yaml)
-                .map_err(|cause| PromptError::Unreadable { namespace: format!("{variant}/{namespace}"), cause: cause.to_string() })?;
+            let entries: BTreeMap<String, Entry> =
+                parse_yaml(&yaml).map_err(|cause| PromptError::Unreadable {
+                    namespace: format!("{variant}/{namespace}"),
+                    cause: cause.to_string(),
+                })?;
             texts.extend(flattened(&namespace, entries));
         }
         // Checked whole before anything is taken.
         let mut checked = Environment::new();
         for (key, template) in &texts {
-            let default = self.templates.get_template(key).map_err(|_| PromptError::UnknownText { variant: variant.to_string(), key: key.clone() })?;
-            checked.add_template_owned(key.clone(), template.clone()).map_err(|cause| PromptError::Invalid { key: variant_key(variant, key), cause })?;
+            let default = self.templates.get_template(key).map_err(|_| {
+                PromptError::UnknownText { variant: variant.to_string(), key: key.clone() }
+            })?;
+            checked
+                .add_template_owned(key.clone(), template.clone())
+                .map_err(|cause| PromptError::Invalid { key: variant_key(variant, key), cause })?;
             let given = default.undeclared_variables(false);
-            let wanted = checked.get_template(key).map(|template| template.undeclared_variables(false)).unwrap_or_default();
+            let wanted = checked
+                .get_template(key)
+                .map(|template| template.undeclared_variables(false))
+                .unwrap_or_default();
             if let Some(name) = wanted.difference(&given).min() {
-                return Err(PromptError::UnknownValue { variant: variant.to_string(), key: key.clone(), name: name.clone() });
+                return Err(PromptError::UnknownValue {
+                    variant: variant.to_string(),
+                    key: key.clone(),
+                    name: name.clone(),
+                });
             }
         }
         for (key, template) in texts {
             let key = variant_key(variant, &key);
-            self.templates.add_template_owned(key.clone(), template).map_err(|cause| PromptError::Invalid { key, cause })?;
+            self.templates
+                .add_template_owned(key.clone(), template)
+                .map_err(|cause| PromptError::Invalid { key, cause })?;
         }
         if variant != DEFAULT_VARIANT {
             self.variants.insert(variant.to_string());
@@ -266,13 +297,25 @@ impl PromptCatalogue {
     ///
     /// # Errors
     /// As `render`.
-    pub fn render_in(&self, variant: Option<PromptVariant>, key: &str, values: impl Serialize) -> Result<String, PromptError> {
-        let of_variant = variant.and_then(|variant| self.templates.get_template(&variant_key(variant.as_str(), key)).ok());
+    pub fn render_in(
+        &self,
+        variant: Option<PromptVariant>,
+        key: &str,
+        values: impl Serialize,
+    ) -> Result<String, PromptError> {
+        let of_variant = variant.and_then(|variant| {
+            self.templates.get_template(&variant_key(variant.as_str(), key)).ok()
+        });
         let template = match of_variant {
             Some(template) => template,
-            None => self.templates.get_template(key).map_err(|_| PromptError::Unknown(key.to_string()))?,
+            None => self
+                .templates
+                .get_template(key)
+                .map_err(|_| PromptError::Unknown(key.to_string()))?,
         };
-        template.render(values).map_err(|cause| PromptError::Invalid { key: key.to_string(), cause })
+        template
+            .render(values)
+            .map_err(|cause| PromptError::Invalid { key: key.to_string(), cause })
     }
 }
 
@@ -340,7 +383,11 @@ pub enum PromptError {
     #[error("the texts of '{0}' are added twice")]
     NamespaceTaken(String),
     #[error("the text '{key}' cannot be rendered")]
-    Invalid { key: String, #[source] cause: minijinja::Error },
+    Invalid {
+        key: String,
+        #[source]
+        cause: minijinja::Error,
+    },
     #[error("'{0}' is no name of a variant of the texts: lower case letters, digits, '_' and '-'")]
     VariantNamed(String),
     #[error("the texts have no variant '{0}': it is not configured (`prompts`)")]
@@ -362,7 +409,9 @@ pub(crate) fn core() -> &'static Arc<PromptCatalogue> {
     static CATALOGUE: OnceLock<Arc<PromptCatalogue>> = OnceLock::new();
     CATALOGUE.get_or_init(|| {
         let mut catalogue = PromptCatalogue::new();
-        catalogue.add(CORE, CORE_PROMPTS).unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
+        catalogue
+            .add(CORE, CORE_PROMPTS)
+            .unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
         Arc::new(catalogue)
     })
 }
@@ -383,40 +432,78 @@ mod tests {
             "roster: |\n  [Who is here]\n  {% for other in others %}\n  - {{ other.name }}{{ \", a person\" if other.person }}\n  {% endfor %}\n",
         );
         let text = catalogue.render("agents.roster", context! { others => vec![context! { name => "Kaya", person => true }, context! { name => "Sassy", person => false }] }).unwrap();
-        assert_eq!(text, "[Who is here]\n- Kaya, a person\n- Sassy\n", "block tags leave no lines behind, the text ends in its line break");
+        assert_eq!(
+            text, "[Who is here]\n- Kaya, a person\n- Sassy\n",
+            "block tags leave no lines behind, the text ends in its line break"
+        );
     }
 
     #[test]
     fn a_group_names_the_texts_it_holds() {
-        let tools = catalogue("tools:\n  notes:\n    description: Notes.\n    write_note.text: What to note\n");
+        let tools = catalogue(
+            "tools:\n  notes:\n    description: Notes.\n    write_note.text: What to note\n",
+        );
         assert_eq!(tools.render("agents.tools.notes.description", ()).unwrap(), "Notes.");
-        assert_eq!(tools.render("agents.tools.notes.write_note.text", ()).unwrap(), "What to note", "a key may hold dots of its own");
+        assert_eq!(
+            tools.render("agents.tools.notes.write_note.text", ()).unwrap(),
+            "What to note",
+            "a key may hold dots of its own"
+        );
         let choices = catalogue("choices:\n  yes: y\n  no: \"no\"\n");
-        assert_eq!(choices.render("agents.choices.yes", ()).unwrap(), "y", "only true and false are no texts");
+        assert_eq!(
+            choices.render("agents.choices.yes", ()).unwrap(),
+            "y",
+            "only true and false are no texts"
+        );
     }
 
     #[test]
     fn nothing_is_escaped_and_a_value_that_is_not_given_is_an_error() {
         let catalogue = catalogue("said: \"{{ name }} said <{{ text }}>\"\n");
-        assert_eq!(catalogue.render("agents.said", context! { name => "Kaya", text => "a & b" }).unwrap(), "Kaya said <a & b>");
-        let refused = catalogue.render("agents.said", context! { name => "Kaya" }).expect_err("no text given");
-        assert!(matches!(&refused, PromptError::Invalid { key, .. } if key == "agents.said"), "{refused}");
+        assert_eq!(
+            catalogue.render("agents.said", context! { name => "Kaya", text => "a & b" }).unwrap(),
+            "Kaya said <a & b>"
+        );
+        let refused = catalogue
+            .render("agents.said", context! { name => "Kaya" })
+            .expect_err("no text given");
+        assert!(
+            matches!(&refused, PromptError::Invalid { key, .. } if key == "agents.said"),
+            "{refused}"
+        );
     }
 
     #[test]
     fn what_cannot_be_had_is_named() {
         let catalogue = catalogue("said: x\n");
-        assert_eq!(catalogue.render("agents.unsaid", ()).expect_err("no such text").to_string(), "the prompt catalogue has no text 'agents.unsaid'");
-        assert_eq!(catalogue.render("skills.said", ()).expect_err("another namespace").to_string(), "the prompt catalogue has no text 'skills.said'");
+        assert_eq!(
+            catalogue.render("agents.unsaid", ()).expect_err("no such text").to_string(),
+            "the prompt catalogue has no text 'agents.unsaid'"
+        );
+        assert_eq!(
+            catalogue.render("skills.said", ()).expect_err("another namespace").to_string(),
+            "the prompt catalogue has no text 'skills.said'"
+        );
 
         let mut catalogue = PromptCatalogue::new();
         catalogue.add("agents", "said: x\n").unwrap();
         let twice = catalogue.add("agents", "other: y\n");
-        assert!(matches!(&twice, Err(PromptError::NamespaceTaken(namespace)) if namespace == "agents"), "{twice:?}");
-        assert!(matches!(catalogue.add("skills", "- a list\n"), Err(PromptError::Unreadable { namespace, .. }) if namespace == "skills"));
-        assert!(matches!(catalogue.add("decision", "limit: 5\n"), Err(PromptError::Unreadable { namespace, .. }) if namespace == "decision"), "a number is to be quoted");
+        assert!(
+            matches!(&twice, Err(PromptError::NamespaceTaken(namespace)) if namespace == "agents"),
+            "{twice:?}"
+        );
+        assert!(
+            matches!(catalogue.add("skills", "- a list\n"), Err(PromptError::Unreadable { namespace, .. }) if namespace == "skills")
+        );
+        assert!(
+            matches!(catalogue.add("decision", "limit: 5\n"), Err(PromptError::Unreadable { namespace, .. }) if namespace == "decision"),
+            "a number is to be quoted"
+        );
         let refused = catalogue.add("tools", "broken: \"{% if %}\"\n").expect_err("does not parse");
-        assert!(matches!(&refused, PromptError::Invalid { key, .. } if key == "tools.broken"), "{refused}");
+        assert!(
+            matches!(&refused, PromptError::Invalid { key, .. } if key == "tools.broken"),
+            "{refused}"
+        );
     }
 
     /// A directory of a variant holding `files`, each a name and its text.
@@ -435,31 +522,80 @@ mod tests {
     #[test]
     fn a_variant_replaces_texts_of_the_default_one_by_one_and_the_default_variant_them_all() {
         let mut catalogue = texts();
-        let gemma = variant_dir(&[("agents.yaml", "greeting: \"Hi {{ name }}!\"\ntools:\n  notes:\n    description: Your notes.\n"), ("README.md", "not read")]);
-        catalogue.add_variant(DEFAULT_VARIANT, variant_dir(&[("agents.yaml", "farewell: Goodbye.\n")]).path()).unwrap();
+        let gemma = variant_dir(&[
+            (
+                "agents.yaml",
+                "greeting: \"Hi {{ name }}!\"\ntools:\n  notes:\n    description: Your notes.\n",
+            ),
+            ("README.md", "not read"),
+        ]);
+        catalogue
+            .add_variant(
+                DEFAULT_VARIANT,
+                variant_dir(&[("agents.yaml", "farewell: Goodbye.\n")]).path(),
+            )
+            .unwrap();
         catalogue.add_variant("gemma4", gemma.path()).unwrap();
         let variant = |name: &str| PromptVariant::new(name).unwrap();
         let catalogue = Arc::new(catalogue);
-        let greeting = |name: Option<&str>| PromptTexts::new(Arc::clone(&catalogue), name.map(variant)).render("agents.greeting", context! { name => "Kaya" }).unwrap();
+        let greeting = |name: Option<&str>| {
+            PromptTexts::new(Arc::clone(&catalogue), name.map(variant))
+                .render("agents.greeting", context! { name => "Kaya" })
+                .unwrap()
+        };
         assert_eq!(greeting(Some("gemma4")), "Hi Kaya!", "the variant's");
         assert_eq!(greeting(None), "Hello, Kaya.", "the default's where none is asked for");
-        assert_eq!(greeting(Some("llama")), "Hello, Kaya.", "and for a variant that has no such text");
+        assert_eq!(
+            greeting(Some("llama")),
+            "Hello, Kaya.",
+            "and for a variant that has no such text"
+        );
         let gemma = PromptTexts::new(Arc::clone(&catalogue), Some(variant("gemma4")));
-        assert_eq!(gemma.render("agents.tools.notes.description", ()).unwrap(), "Your notes.", "in a group, too");
-        assert_eq!(gemma.render("agents.farewell", ()).unwrap(), "Goodbye.", "what a variant leaves out, as the default variant has it");
+        assert_eq!(
+            gemma.render("agents.tools.notes.description", ()).unwrap(),
+            "Your notes.",
+            "in a group, too"
+        );
+        assert_eq!(
+            gemma.render("agents.farewell", ()).unwrap(),
+            "Goodbye.",
+            "what a variant leaves out, as the default variant has it"
+        );
         assert_eq!(catalogue.render("agents.farewell", ()).unwrap(), "Goodbye.");
-        assert!(catalogue.has_variant(variant("gemma4")) && catalogue.has_variant(variant(DEFAULT_VARIANT)) && !catalogue.has_variant(variant("llama")));
-        assert!(catalogue.require_variant(None).is_ok() && catalogue.require_variant(Some(variant("gemma4"))).is_ok());
-        assert_eq!(catalogue.require_variant(Some(variant("llama"))).expect_err("not configured").to_string(), "the texts have no variant 'llama': it is not configured (`prompts`)");
+        assert!(
+            catalogue.has_variant(variant("gemma4"))
+                && catalogue.has_variant(variant(DEFAULT_VARIANT))
+                && !catalogue.has_variant(variant("llama"))
+        );
+        assert!(
+            catalogue.require_variant(None).is_ok()
+                && catalogue.require_variant(Some(variant("gemma4"))).is_ok()
+        );
+        assert_eq!(
+            catalogue
+                .require_variant(Some(variant("llama")))
+                .expect_err("not configured")
+                .to_string(),
+            "the texts have no variant 'llama': it is not configured (`prompts`)"
+        );
     }
 
     #[test]
     fn a_variant_that_does_not_fit_the_defaults_is_refused_whole() {
         for (files, refused) in [
             (&[("skills.yaml", "x: y\n")][..], "a file of 'skills', which is no namespace"),
-            (&[("agents.yaml", "greting: Hi.\n")][..], "a text 'agents.greting', which the defaults do not have"),
-            (&[("agents.yaml", "farewell: \"Bye, {{ name }}.\"\n")][..], "names 'name', which its default is not given"),
-            (&[("agents.yaml", "farewell: \"{% if %}\"\n")][..], "'gemma4/agents.farewell' cannot be rendered"),
+            (
+                &[("agents.yaml", "greting: Hi.\n")][..],
+                "a text 'agents.greting', which the defaults do not have",
+            ),
+            (
+                &[("agents.yaml", "farewell: \"Bye, {{ name }}.\"\n")][..],
+                "names 'name', which its default is not given",
+            ),
+            (
+                &[("agents.yaml", "farewell: \"{% if %}\"\n")][..],
+                "'gemma4/agents.farewell' cannot be rendered",
+            ),
             (&[("agents.yaml", "- a list\n")][..], "the texts of 'gemma4/agents' cannot be read"),
         ] {
             let mut catalogue = texts();
@@ -467,12 +603,27 @@ mod tests {
             let error = catalogue.add_variant("gemma4", dir.path()).expect_err(refused).to_string();
             assert!(error.contains(refused), "{error}");
             assert!(!error.contains(&dir.path().display().to_string()), "no path: {error}");
-            assert_eq!(catalogue.render_in(Some(PromptVariant::new("gemma4").unwrap()), "agents.farewell", ()).unwrap(), "Bye.", "nothing taken");
+            assert_eq!(
+                catalogue
+                    .render_in(Some(PromptVariant::new("gemma4").unwrap()), "agents.farewell", ())
+                    .unwrap(),
+                "Bye.",
+                "nothing taken"
+            );
         }
         let mut catalogue = texts();
-        assert!(matches!(catalogue.add_variant("Gemma 4", variant_dir(&[]).path()), Err(PromptError::VariantNamed(_))));
-        let missing = catalogue.add_variant("gemma4", &variant_dir(&[]).path().join("missing")).expect_err("no directory").to_string();
-        assert!(missing.contains("the texts of the variant 'gemma4' cannot be read") && !missing.contains("missing"), "{missing}");
+        assert!(matches!(
+            catalogue.add_variant("Gemma 4", variant_dir(&[]).path()),
+            Err(PromptError::VariantNamed(_))
+        ));
+        let missing = catalogue
+            .add_variant("gemma4", &variant_dir(&[]).path().join("missing"))
+            .expect_err("no directory")
+            .to_string();
+        assert!(
+            missing.contains("the texts of the variant 'gemma4' cannot be read")
+                && !missing.contains("missing"),
+            "{missing}"
+        );
     }
-
 }

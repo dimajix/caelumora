@@ -38,8 +38,19 @@ where
 {
     /// `document`, which lies at `address`, written to `store` and
     /// announced through `event_publisher`.
-    pub(super) fn new(address: Address<T>, document: T, store: Arc<dyn EntityStore<T>>, event_publisher: Arc<dyn EventPublisher>) -> Self {
-        Self { address, current: ArcSwap::from_pointee(document), store, event_publisher, write_lock: Mutex::new(()) }
+    pub(super) fn new(
+        address: Address<T>,
+        document: T,
+        store: Arc<dyn EntityStore<T>>,
+        event_publisher: Arc<dyn EventPublisher>,
+    ) -> Self {
+        Self {
+            address,
+            current: ArcSwap::from_pointee(document),
+            store,
+            event_publisher,
+            write_lock: Mutex::new(()),
+        }
     }
 
     /// Where it lies: its id, or the id of the entity it lies in and its
@@ -61,7 +72,11 @@ where
     /// `StoreError::Invalid` if what `update` says does not fit, otherwise
     /// whatever the store reports, `StoreError::PermissionDenied` included;
     /// the document is then unchanged.
-    pub(super) async fn update(&self, ctx: &SecurityContext, update: &T::Update) -> StoreResult<Arc<T>> {
+    pub(super) async fn update(
+        &self,
+        ctx: &SecurityContext,
+        update: &T::Update,
+    ) -> StoreResult<Arc<T>> {
         let writing = self.write().await;
         let document = writing.apply(ctx, update).await?;
         writing.announce_update(update, &document);
@@ -117,17 +132,26 @@ where
 /// Takes `event` over into `current`, the live copy of the document at
 /// `address`, if it is an update of it. One that does not fit is left out
 /// rather than taken over half: it was checked where it was made.
-pub(super) fn take_over<T: Updatable>(current: &ArcSwap<T>, address: &Address<T>, event: &GlobalEvent)
-where
+pub(super) fn take_over<T: Updatable>(
+    current: &ArcSwap<T>,
+    address: &Address<T>,
+    event: &GlobalEvent,
+) where
     Address<T>: PartialEq,
 {
-    let Some(update) = event.about::<T>().filter(|(at, _)| at == address).and_then(|(_, change)| change.update::<T::Update>()) else {
+    let Some(update) = event
+        .about::<T>()
+        .filter(|(at, _)| at == address)
+        .and_then(|(_, change)| change.update::<T::Update>())
+    else {
         return;
     };
     let mut document = (**current.load()).clone();
     match document.apply(&update) {
         Ok(()) => current.store(Arc::new(document)),
-        Err(e) => warn!(kind = %T::KIND, id = %document.id(), error = %e, "A change made elsewhere does not fit the document"),
+        Err(e) => {
+            warn!(kind = %T::KIND, id = %document.id(), error = %e, "A change made elsewhere does not fit the document")
+        }
     }
 }
 
@@ -178,7 +202,11 @@ where
     /// # Errors
     /// `StoreError::Invalid` if what `update` says does not fit, otherwise
     /// as `store`.
-    pub(super) async fn apply(&self, ctx: &SecurityContext, update: &T::Update) -> StoreResult<Arc<T>> {
+    pub(super) async fn apply(
+        &self,
+        ctx: &SecurityContext,
+        update: &T::Update,
+    ) -> StoreResult<Arc<T>> {
         let mut document = self.current();
         document.apply(update)?;
         self.store(ctx, document).await
@@ -190,7 +218,11 @@ where
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the document is then unchanged.
-    pub(super) async fn store(&self, ctx: &SecurityContext, mut document: T) -> StoreResult<Arc<T>> {
+    pub(super) async fn store(
+        &self,
+        ctx: &SecurityContext,
+        mut document: T,
+    ) -> StoreResult<Arc<T>> {
         document.touch(Utc::now());
         self.document.store.update(ctx, &document).await?;
         log_changed(ctx, &document);
@@ -203,15 +235,32 @@ where
     /// read it and, if its kind is classified, is cleared for how it was
     /// classified as the change began or how it is now.
     pub(super) fn announce(&self, event: GlobalEvent, document: &T) {
-        self.document.event_publisher.publish_classified(event, document.security_attributes().clone(), &self.classifications(document));
+        self.document.event_publisher.publish_classified(
+            event,
+            document.security_attributes().clone(),
+            &self.classifications(document),
+        );
     }
 
     /// Announces `event` about `document` as `announce` does, and to
     /// `subjects` besides, who may no longer read it: one who left learns so
     /// (issue 23). The grants are never stored.
-    pub(super) fn announce_also_to(&self, event: GlobalEvent, document: &T, subjects: impl IntoIterator<Item = Subject>) {
-        let attributes = subjects.into_iter().fold(document.security_attributes().clone(), |attributes, subject| attributes.granting(subject, Grant::Read));
-        self.document.event_publisher.publish_classified(event, attributes, &self.classifications(document));
+    pub(super) fn announce_also_to(
+        &self,
+        event: GlobalEvent,
+        document: &T,
+        subjects: impl IntoIterator<Item = Subject>,
+    ) {
+        let attributes = subjects
+            .into_iter()
+            .fold(document.security_attributes().clone(), |attributes, subject| {
+                attributes.granting(subject, Grant::Read)
+            });
+        self.document.event_publisher.publish_classified(
+            event,
+            attributes,
+            &self.classifications(document),
+        );
     }
 
     /// Announces `update` of `document`, as `announce` does.

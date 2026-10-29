@@ -20,25 +20,25 @@
 use crate::actor::{ActorId, ActorState};
 use crate::agent::{AgentId, PersonalityId, PersonalityKind};
 use crate::approval::{ApprovalRequest, ApprovalRule};
+use crate::command::Command;
 use crate::confidentiality::Classification;
-use crate::group::GroupId;
-use crate::scope::Scope;
-use crate::value::language::Language;
-use crate::value::text::{Briefing, Description, Summary};
-use crate::value::time_zone::TimeZone;
 use crate::digest::Digest;
+use crate::group::GroupId;
 use crate::message::{MessageId, TokenUsage};
 use crate::note::Note;
 use crate::privacy::PrivacyConfig;
 use crate::project::ProjectId;
-use crate::session::{ChannelId, SessionId};
-use crate::work::TurnId;
-use crate::command::Command;
 use crate::question::QuestionRequest;
 use crate::removal::Removal;
+use crate::scope::Scope;
 use crate::security::{Grant, Subject};
-use crate::workspace::WorkspaceId;
+use crate::session::{ChannelId, SessionId};
 use crate::user::UserId;
+use crate::value::language::Language;
+use crate::value::text::{Briefing, Description, Summary};
+use crate::value::time_zone::TimeZone;
+use crate::work::TurnId;
+use crate::workspace::WorkspaceId;
 use serde::Serialize;
 
 bitflags::bitflags! {
