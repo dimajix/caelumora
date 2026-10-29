@@ -2,8 +2,8 @@
 //! of user records (issue 306).
 
 use super::{AuthError, AuthResult, Credential, UserProvider};
-use crate::event::{EventPublisher, GlobalEvent};
-use crate::security::{Secured, SecurityContext};
+use crate::event::{Announcing, EventPublisher, GlobalEvent};
+use crate::security::SecurityContext;
 use crate::store::{EntityStore, StoreError, StoreResultExt};
 use crate::user::{User, UserId, UserUpdateEvent};
 use std::fmt::Debug;
@@ -114,10 +114,7 @@ impl UserManager {
         let Some(stored) = self.store.get(&system, found.id).await.optional().map_err(backend)?
         else {
             self.store.create(&system, &found).await.map_err(backend)?;
-            self.events.publish(
-                GlobalEvent::created::<User>(&found.id),
-                found.security_attributes().clone(),
-            );
+            self.events.announce(GlobalEvent::created::<User>(&found.id), &found);
             return Ok(found);
         };
         let user = User { deleted: stored.deleted.clone(), ..found };
@@ -128,22 +125,22 @@ impl UserManager {
         }
         self.store.update(&system, &user).await.map_err(backend)?;
         if renamed {
-            self.events.publish(
+            self.events.announce(
                 GlobalEvent::updated::<User>(
                     &user.id,
                     &UserUpdateEvent::NameChanged(user.username.to_string()),
                 ),
-                user.security_attributes().clone(),
+                &user,
             );
         }
         if roles_changed {
             tracing::info!(user = %user.id, "The roles of the user changed");
-            self.events.publish(
+            self.events.announce(
                 GlobalEvent::updated::<User>(
                     &user.id,
                     &UserUpdateEvent::RolesChanged(user.roles.clone()),
                 ),
-                user.security_attributes().clone(),
+                &user,
             );
         }
         Ok(user)

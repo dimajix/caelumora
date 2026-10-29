@@ -178,7 +178,6 @@ impl SessionManager {
     ) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
         let id = session.id;
-        let attributes = session.security_attributes.clone();
         let session_loop =
             SessionLoop::new(session, channels, Arc::clone(&self.runtime_manager)).await?;
         self.sessions.insert(id, Arc::clone(&session_loop));
@@ -191,7 +190,10 @@ impl SessionManager {
         });
         self.handles.insert(id, handle);
 
-        self.events.publish(GlobalEvent::custom::<Session>(&id, session::STARTED, &()), attributes);
+        self.events.announce(
+            GlobalEvent::custom::<Session>(&id, session::STARTED, &()),
+            &**session_loop.session(),
+        );
         Ok(session_loop)
     }
 
@@ -474,8 +476,7 @@ impl SessionManager {
         self.persist(context, &session, own, &channels).await?;
 
         let event_bus = &self.events;
-        event_bus
-            .publish(GlobalEvent::created::<Session>(&id), session.security_attributes.clone());
+        event_bus.announce(GlobalEvent::created::<Session>(&id), &session);
         event_bus.announce(GlobalEvent::created::<Project>(&own.id), own);
         for channel in &channels {
             event_bus.announce(GlobalEvent::created::<Channel>(&(id, channel.id)), channel);
@@ -757,10 +758,8 @@ impl SessionManager {
         }
         if let Some(session_loop) = &removed {
             let session = Arc::clone(&session_loop.session());
-            self.events.publish(
-                GlobalEvent::custom::<Session>(&id, session::STOPPED, &()),
-                session.security_attributes.clone(),
-            );
+            self.events
+                .announce(GlobalEvent::custom::<Session>(&id, session::STOPPED, &()), &*session);
         }
         removed
     }
@@ -857,8 +856,7 @@ impl SessionManager {
         for channel in &channels {
             event_bus.announce(GlobalEvent::deleted::<Channel>(&(id, channel.id)), channel);
         }
-        event_bus
-            .publish(GlobalEvent::deleted::<Session>(&id), session.security_attributes.clone());
+        event_bus.announce(GlobalEvent::deleted::<Session>(&id), &session);
         self.starts.remove(&id);
         Ok(true)
     }
@@ -930,8 +928,7 @@ impl SessionManager {
                 id, e
             );
         }
-        self.events
-            .publish(GlobalEvent::restored::<Session>(&id), session.security_attributes.clone());
+        self.events.announce(GlobalEvent::restored::<Session>(&id), &session);
         info!("Session {} restored by {}", id, context.caller_id);
         Ok(session)
     }

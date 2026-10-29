@@ -68,3 +68,5 @@ otherwise: all of them or none, in the runtime's name. They stay apart.
 - **2026-10-29** — The managers of workspaces and artifacts remove a place or a content in one step
   of their own (`remove_place`, `remove_content`), which their `purge` answers in their error type
   and their `remove_behind` as a `StoreError::Backend`, instead of writing it twice.
+- **2026-10-29** — Found on the way: the unclassified kinds were still announced by `publish`;
+  they moved to `announce`, as issue [351](351-channel-events-announced-by-hand.md) records.

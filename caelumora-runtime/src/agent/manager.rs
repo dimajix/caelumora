@@ -20,7 +20,7 @@ use crate::scoped::ScopeMember;
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::Channel;
-use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
@@ -112,8 +112,7 @@ impl AgentManager {
             return Err(AgentError::PersonalityOutOfScope(personality.name.name));
         }
         self.agents.create(context, &agent).await?;
-        self.events
-            .publish(GlobalEvent::created::<Agent>(&agent.id), agent.security_attributes.clone());
+        self.events.announce(GlobalEvent::created::<Agent>(&agent.id), &agent);
         info!("Agent {} created by {}", agent.id, context.caller_id);
         Ok(agent)
     }
@@ -176,7 +175,7 @@ impl AgentManager {
         if !self.agents.delete(context, id, &Removal::now(context.caller_id)).await? {
             return Ok(false);
         }
-        self.events.publish(GlobalEvent::deleted::<Agent>(&id), agent.security_attributes);
+        self.events.announce(GlobalEvent::deleted::<Agent>(&id), &agent);
         info!("Agent {} deleted by {}", id, context.caller_id);
         Ok(true)
     }
@@ -193,7 +192,7 @@ impl AgentManager {
     /// meanwhile (issue 250).
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> AgentResult<Agent> {
         let agent = self.agents.restore(context, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::restored::<Agent>(&id), agent.security_attributes.clone());
+        self.events.announce(GlobalEvent::restored::<Agent>(&id), &agent);
         info!("Agent {} restored by {}", id, context.caller_id);
         Ok(agent)
     }

@@ -3,10 +3,10 @@ use arc_swap::{ArcSwap, Guard};
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::channel::Channel;
-use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::history::Reader;
 use caelumora_model::message::MessageId;
-use caelumora_model::security::{Secured, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::{EntityStore, EntityStores, StateStore, StoreError, StoreResult};
@@ -188,9 +188,8 @@ impl UserController {
         self.save(ctx, &profile).await?;
         log_changed(ctx, &profile);
         self.profile.store(Arc::new(profile.clone()));
-        let attributes = profile.security_attributes().clone();
         self.event_publisher
-            .publish(GlobalEvent::updated::<UserProfile>(&self.id, &profile), attributes);
+            .announce(GlobalEvent::updated::<UserProfile>(&self.id, &profile), &profile);
         Ok((changed, profile))
     }
 
