@@ -535,6 +535,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [489](489-values-bound-by-a-tuple-made-on-the-spot.md) | done | About 426 `let` lines in 119 files bind independent values by a tuple made only to be taken apart again - `let (alice, bob) = (UserId::new(), UserId::new());` - against the rule of CODING-GUIDELINES.md, and no lint, hook or check finds them. |
 | [490](490-functions-longer-than-100-lines-since-rustfmt.md) | open | Laid out by rustfmt (issue 487), 63 functions - 8 of production code, 55 tests - are longer than the 100 lines `clippy::too_many_lines` allows, and carry an `expect` of the lint instead of being split. |
 | [493](493-reaching-a-channel-in-more-than-one-way.md) | done | The loops hand out their documents as `Guard`s that every caller clones before an `await`, two functions of different meaning share the name `channel_of`, and the question whether someone reads a channel is put together three times by hand. |
+| [497](497-the-purge-of-what-has-something-behind-it-is-written-four-times.md) | open | Begin the purge, remove what lies behind, purge the document: the sequence is written in `WorkspaceManager::purge`, `ArtifactManager::purge` and `AgentManager::purge`, and once more as `scoped::purge_behind`, which alone has a name. |
 
 ## Integrations
 
