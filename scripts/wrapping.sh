@@ -12,16 +12,16 @@
 # them whole.
 #
 # In a Markdown document every line counts; in a Rust file only comments (`//`, `///`, `//!`), since
-# rustfmt keeps the code, and in TypeScript only comments too (`//`, and `/**`, `/*` and `*` of a
-# block). Characters are counted, not bytes. A line is not too long where it may not be wrapped: a
-# heading, a table row, a line in a code block, a field line such as `**Summary:**`, and a line that
-# has no space to break at within its first 100 characters outside a link - a link is not broken,
-# not even in its text. A line that begins with `- ` goes on with the sentence of the line before
-# where that line belongs to the same comment, its prose begins where the dash stands - after the
-# list marker, if it is a list item -, is no heading or table row, and does not end in `.`, `:`,
-# `?`, `!` or `**`; otherwise the dash begins a list item. Every line found is printed as
-# `file:line: 112 characters` or `file:line: begins with a dash`, and the script fails if there is
-# one.
+# rustfmt keeps the code, but for the inside of a macro call it cannot parse, which nothing checks;
+# and in TypeScript only comments too (`//`, and `/**`, `/*` and `*` of a block). Characters are
+# counted, not bytes. A line is not too long where it may not be wrapped: a heading, a table row, a
+# line in a code block, a field line such as `**Summary:**`, and a line that has no space to break
+# at within its first 100 characters outside a link - a link is not broken, not even in its text. A
+# line that begins with `- ` goes on with the sentence of the line before where that line belongs to
+# the same comment, its prose begins where the dash stands - after the list marker, if it is a list
+# item -, is no heading or table row, and does not end in `.`, `:`, `?`, `!` or `**`; otherwise the
+# dash begins a list item. Every line found is printed as `file:line: 112 characters` or `file:line:
+# begins with a dash`, and the script fails if there is one.
 set -eu
 
 max=100

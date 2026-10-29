@@ -57,6 +57,8 @@ against this list, rule by rule, before it is reported (the self-review of
 *   A condition a kind offers for lists is a constructor of `Filter` beside its fields, never a
     function of the entity's type
     ([Conditions are made by `Filter`](#conditions-are-made-by-filter)).
+*   Rust code is laid out by rustfmt: `cargo fmt --all --check` passes
+    ([Comments and documentation](#comments-and-documentation)).
 *   `cargo clippy --workspace --all-targets` stays silent
     ([Comments and documentation](#comments-and-documentation)).
 
@@ -97,6 +99,15 @@ against this list, rule by rule, before it is reported (the self-review of
     changes. Neither is checked by hand or with another tool: other tools count bytes or know no
     exceptions, and clippy's `doc_lazy_continuation` finds a dash in a doc comment only where a line
     follows it in the same paragraph.
+*   **Code is laid out by rustfmt** (issue 487), with the settings of `rustfmt.toml`: `cargo fmt
+    --all` before a commit; the pre-commit hook refuses Rust code that `cargo fmt --all --check`
+    does not pass. Code is not laid out by hand. rustfmt keeps code within 100 characters, as
+    comments are wrapped, but breaks no string literal: a line with one may be longer. It leaves
+    two things as they are written, and their layout is the author's: comments, and the inside of
+    a macro call it cannot parse - `matches!` with a guard, `tokio::select!`, a `macro_rules!` of
+    our own -, which is broken by hand within 100 characters as rustfmt would break it. The commit
+    that laid out the whole code is named in `.git-blame-ignore-revs`, which `git blame` passes over
+    once a clone has it enabled (`git config blame.ignoreRevsFile .git-blame-ignore-revs`).
 *   **No clippy warnings.** `cargo clippy --workspace --all-targets` stays silent; the pre-commit
     hook in `.githooks` refuses a commit of Rust code otherwise, once a clone has it enabled
     (`git config core.hooksPath .githooks`). Where a lint is wrong for a case, say why with
@@ -116,9 +127,10 @@ against this list, rule by rule, before it is reported (the self-review of
     module that only its own crate uses, nor a `pub(crate)` item that only its own module uses.
 *   **Long functions.** `too_many_lines` warns of a function longer than 100 lines. A new function,
     or one that grows past the limit, is split rather than given an `expect`. One that was
-    longer before the lint carries `#[expect(clippy::too_many_lines, reason = "…")]`, which fires
-    as unfulfilled once the function is shorter, and is then removed: these attributes are the
-    list of what is still to be simplified, and it only gets shorter. `cognitive_complexity` is
+    longer before the lint (issue 452), or that rustfmt made longer when it laid out the code
+    (issue 490), carries `#[expect(clippy::too_many_lines, reason = "…")]` naming its issue, which
+    fires as unfulfilled once the function is shorter, and is then removed: these attributes are
+    the list of what is still to be simplified, and it only gets shorter. `cognitive_complexity` is
     not on: it counts what the logging macros expand to, which differs with the features a build
     enables (issue 452).
 

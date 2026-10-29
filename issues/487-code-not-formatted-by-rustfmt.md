@@ -1,6 +1,6 @@
 # 487 — The Rust code is not formatted by rustfmt, and nothing checks how it is laid out
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -54,3 +54,17 @@ look for it. Only `scripts/wrapping.sh` mentions it: it counts only the comments
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request, from the findings of issue 484.
+- **2026-10-29** — Done with rustfmt's default width of 100 and `use_small_heuristics = "Max"` in
+  `rustfmt.toml`, stable settings alone: the defaults made the code 60 % longer and broke 16 tuple
+  bindings over several lines, which `scripts/tuple-bindings.sh` (issue 489) refuses; with `"Max"`,
+  a chain or a call that fits within 100 characters stays on its line, the code grows by 38 % - two
+  thirds of that in tests, mostly assertions with a message - and no tuple binding breaks.
+  Parameters stay one per line as the Rust style guide lays them out, not `fn_params_layout =
+  "Compressed"`. About 675 lines stay longer than 100 characters: some 480 for a string literal
+  rustfmt does not break, the others inside a macro call it cannot parse - `matches!` with a guard,
+  `tokio::select!`, our `macro_rules!` -, laid out by hand. Laid out so, 63 functions grew past the
+  100 lines of `clippy::too_many_lines`: the maintainer kept the limit, and they carry an `expect`
+  naming issue [490](490-functions-longer-than-100-lines-since-rustfmt.md), which is to split them.
+  The layout is one commit of its own, named in `.git-blame-ignore-revs`; the pre-commit hook runs
+  `cargo fmt --all --check` whenever Rust code is part of a commit, and CODING-GUIDELINES.md names
+  the rule beside the wrapping of comments.

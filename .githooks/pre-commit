@@ -1,12 +1,16 @@
 #!/bin/sh
-# Four checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Five checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
 #   added to the commit. An issue file whose fields are missing or unknown refuses the commit.
-# - Clippy stays silent (docs/CODING-GUIDELINES.md): whenever Rust code or a Cargo manifest is part
-#   of a commit, `cargo clippy --workspace --all-targets -- -D warnings` must pass, or the commit
-#   is refused. It checks the working tree, so changes that are not staged count too.
+# - Rust code is laid out by rustfmt (docs/CODING-GUIDELINES.md): whenever Rust code is part of a
+#   commit, or rustfmt.toml, `cargo fmt --all --check` must pass, or the commit is refused. It
+#   checks the working tree, as clippy does.
+# - Clippy stays silent (docs/CODING-GUIDELINES.md): whenever Rust code, a Cargo manifest or
+#   clippy.toml is part of a commit, `cargo clippy --workspace --all-targets -- -D warnings` must
+#   pass, or the commit is refused. It checks the working tree, so changes that are not staged
+#   count too.
 # - Prose is wrapped by the rules of docs/CODING-GUIDELINES.md: `scripts/wrapping.sh` must find no
 #   line too long, and none beginning with a dash, in the Markdown, Rust and TypeScript files a
 #   commit adds or changes, read whole from the working tree; files the commit leaves out are not
@@ -15,7 +19,7 @@
 #   `scripts/tuple-bindings.sh` must find none longer than 100 characters or across lines in the
 #   Rust files a commit adds or changes, read whole from the working tree.
 #
-# `git commit --no-verify` skips all four.
+# `git commit --no-verify` skips all five.
 set -eu
 
 if ! git diff --cached --quiet -- issues/; then
@@ -26,7 +30,11 @@ if ! git diff --cached --quiet -- issues/; then
     git add issues/INDEX.md issues/OPEN.md
 fi
 
-if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock; then
+if ! git diff --cached --quiet -- '*.rs' rustfmt.toml; then
+    cargo fmt --all --check
+fi
+
+if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock clippy.toml; then
     cargo clippy --workspace --all-targets --quiet -- -D warnings
 fi
 
