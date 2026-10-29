@@ -528,6 +528,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [486](486-tests-store-sessions-without-groups-or-project.md) | done | Beyond the security suites and the tests of sessions and views (issue 471), tests store a session's document - often with its channel, and then run it - without the groups of its participants or its own project, so they test a session the runtime never makes, and whether they need one is nowhere said. |
 | [487](487-code-not-formatted-by-rustfmt.md) | open | `cargo fmt --check` differs in 329 of the workspace's Rust files, lines of code run up to more than 500 characters, and no rule, hook or check says how Rust code is laid out, although `scripts/wrapping.sh` leaves code out of its count on the assumption that rustfmt keeps it. |
 | [489](489-values-bound-by-a-tuple-made-on-the-spot.md) | done | About 426 `let` lines in 119 files bind independent values by a tuple made only to be taken apart again - `let (alice, bob) = (UserId::new(), UserId::new());` - against the rule of CODING-GUIDELINES.md, and no lint, hook or check finds them. |
+| [490](490-functions-longer-than-100-lines-since-rustfmt.md) | open | Laid out by rustfmt (issue 487), 63 functions - 8 of production code, 55 tests - are longer than the 100 lines `clippy::too_many_lines` allows, and carry an `expect` of the lint instead of being split. |
 
 ## Integrations
 
