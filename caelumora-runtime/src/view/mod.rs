@@ -831,8 +831,10 @@ impl Views {
             deleted.push(DeletedSnapshot {
                 id: entity.id(),
                 name: name(&entity),
+                // One whose purge is begun is restored by nobody (issue 492).
+                can_restore: !removal.purging
+                    && self.access_policy.may_restore(context, T::KIND, attributes).await,
                 deleted: removal,
-                can_restore: self.access_policy.may_restore(context, T::KIND, attributes).await,
                 can_purge: self.access_policy.may_purge(context, T::KIND, attributes).await,
             });
         }

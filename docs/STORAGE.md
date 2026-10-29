@@ -346,6 +346,7 @@ deleted is reached by operations of its own, each with a permission of its own:
 | `get_deleted`, `list_deleted` | `ReadDeleted` | read the marked documents, each with its mark (`Deleted`); what is not marked is not found |
 | `list_deleted_with` | `ReadDeleted` | lists what was deleted with one deletion, by the id of its mark: what restoring takes back with what it restores |
 | `restore` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
+| `begin_purge` | `ReadDeleted`, then `Purge` | marks the purge begun (`Removal::purging`): no restoring takes it back from then on |
 | `purge` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
 Which of a kind's entities an operation is about - those there, those deleted, or those deleted
@@ -359,11 +360,21 @@ whether the caller is cleared for it, the deleted alike (issue 322, see
 [SECURITY.md](SECURITY.md#how-stores-check)): the store is given a `ConfidentialityPolicy` beside
 its `AccessPolicy`.
 
-Purging only what is still marked keeps a purge from removing what was restored meanwhile. Restoring
-and purging a session are serialised by the `SessionManager`, under the lock it also deletes and
-starts a session with. What the runtime removes for good that is not marked - the channels of a
-session being purged, a document whose creation failed - it marks first, in its own name. The state
-of what was deleted stays in the `StateStore` until it is purged (see [Deleting
+Purging only what is still marked keeps a purge from removing what was restored meanwhile. Where
+something lies behind an entity - an agent's state, a workspace's place, an artifact's content -,
+its purge is begun first (`begin_purge`, issue
+[492](../issues/492-a-document-is-written-under-two-locks.md)): its mark records it, and no
+restoring takes it back from then on; then what lies behind it is removed, then the document. A
+purge that fails between leaves it deleted with its purge begun, for the next purge to finish; the
+mark holds across every writer of the store, as no lock in one process could. A session's channels
+are the exception: restoring and purging a session are serialised by the `SessionManager`, under
+the lock it also deletes and starts a session with, and its purge removes the documents of its
+channels before their states and attachments. Deleting, restoring and purging a project are
+serialised by the `ProjectManager`, under one lock per project id, since each goes through the
+project's sessions, its scope and its group. What the
+runtime removes for good that is not marked - the channels of a session being purged, a document
+whose creation failed - it marks first, in its own name. The state of what was deleted stays in the
+`StateStore` until it is purged (see [Deleting
 state](#deleting-state)).
 
 ### Demo data
@@ -706,4 +717,6 @@ The server is meant to run in several instances one day
 *   **Writes across instances** cannot be serialised by a lock in one process. The stores refuse a
     write made on an outdated revision (issue
     [492](../issues/492-a-document-is-written-under-two-locks.md)); events will have to carry the
-    revision they result in, so that an instance skips one older than what it has.
+    revision they result in, so that an instance skips one older than what it has. A project's
+    deletion, restoring and purge are still serialised by a lock in one process alone: a project
+    does not run in one instance, as a session does.

@@ -1563,3 +1563,41 @@ async fn a_version_published_meanwhile_is_numbered_after_what_was_published() {
     kept.sort();
     assert_eq!(kept, [b"a,b".to_vec(), b"c,d,e".to_vec()], "both kept");
 }
+
+/// Issue 492: an artifact's purge is begun before its content goes, so that one that fails between
+/// is restored by nobody and finished by the next purge.
+#[tokio::test]
+async fn a_purge_that_fails_between_is_restored_by_nobody_and_finished_by_the_next() {
+    let persistence = Persistence::in_memory();
+    let Kept { files: _files, manager, alice, name } = kept_in(persistence.clone()).await;
+    let (artifact, _) = manager
+        .publish(
+            &alice,
+            (SessionId::new(), ChannelId::new()),
+            (3, file("a,b")),
+            &Classification::PUBLIC,
+            &name,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(manager.delete(&alice, artifact.id).await.unwrap());
+    // Another instance, which keeps content nowhere: its content cannot be removed there.
+    let elsewhere = TestRuntime {
+        store: persistence.clone(),
+        plugins: vec![&TestAgents, &ArtifactsPlugin],
+        ..Default::default()
+    }
+    .build();
+    let stranded = Arc::clone(elsewhere.services().get::<ArtifactManager>().unwrap());
+    let system = SecurityContext::system();
+
+    let failed = stranded.purge(&system, artifact.id).await;
+    assert!(matches!(failed, Err(ArtifactError::StorageGone(_))), "{failed:?}");
+    let artifacts = persistence.entity_store::<Artifact>().unwrap();
+    let left = artifacts.get_deleted(&system, artifact.id).await.expect("still deleted");
+    assert!(left.removal.purging, "its purge begun");
+    let refused = manager.restore(&system, artifact.id).await;
+    assert!(matches!(refused, Err(ArtifactError::NotFound(_))), "restored by nobody: {refused:?}");
+    assert!(manager.purge(&system, artifact.id).await.expect("finished"), "purged");
+}

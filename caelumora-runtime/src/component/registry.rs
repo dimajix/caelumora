@@ -943,6 +943,13 @@ mod tests {
         ) -> StoreResult<ComponentBundle> {
             Self::failed()
         }
+        async fn begin_purge(
+            &self,
+            _: &SecurityContext,
+            _: ComponentBundleId,
+        ) -> StoreResult<Option<ComponentBundle>> {
+            Self::failed()
+        }
         async fn purge(&self, _: &SecurityContext, _: ComponentBundleId) -> StoreResult<bool> {
             Self::failed()
         }

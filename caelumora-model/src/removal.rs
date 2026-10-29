@@ -6,6 +6,7 @@
 use crate::actor::ActorId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 
 define_id!(RemovalId);
 
@@ -20,11 +21,15 @@ pub struct Removal {
     pub id: RemovalId,
     pub by: ActorId,
     pub at: DateTime<Utc>,
+    /// Whether its purge has begun (`EntityStore::begin_purge`, issue 492): what lies behind it
+    /// is being removed, and no restoring takes it back any more.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 impl Removal {
     /// A new deletion, by `by`, now.
     pub fn now(by: ActorId) -> Self {
-        Self { id: RemovalId::new(), by, at: Utc::now() }
+        Self { id: RemovalId::new(), by, at: Utc::now(), purging: false }
     }
 }

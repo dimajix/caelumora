@@ -460,7 +460,10 @@ impl<T: Stored> Deleted<T> {
 /// `list_deleted` read it (`ReadDeleted`), each with its mark (`Deleted`), and `list_deleted_with`
 /// what was deleted with one deletion (issue 478); `restore` takes the mark away (`Restore`) and
 /// returns what it restored, and `purge` removes what was deleted for good (`Purge`) - only what
-/// is marked, so that a purge never takes what was restored.
+/// is marked, so that a purge never takes what was restored. Where something lies behind an
+/// entity - a workspace's place, an artifact's content -, its purge is begun first
+/// (`begin_purge`): from then on no restoring takes it back, while what lies behind it is removed
+/// before `purge` (issue 492).
 ///
 /// Every write is judged on the revision that was read (issue 492): `update` writes `value` in
 /// place of the revision it carries, and `Outdated` says that it is no longer the stored one -
@@ -481,6 +484,11 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     ) -> StoreResult<bool>;
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
+    /// Begins the purge of the deleted entity `id`, asked as `purge` asks: its mark says so from
+    /// then on (`Removal::purging`), and `restore` refuses it, so that what lies behind it can be
+    /// removed before `purge` removes it - and again, if that failed, by a purge begun once more.
+    /// Answers the entity as marked; `None` if there is nothing deleted the caller could see.
+    async fn begin_purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Option<T>>;
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>>;
     async fn list_deleted(

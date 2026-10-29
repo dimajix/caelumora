@@ -208,10 +208,14 @@ impl<'a> Access<'a> {
     }
 
     /// `stored`, if the caller may take its mark away: not found if it is
-    /// not marked or they may not read it as deleted, refused if they may
-    /// but not restore it.
+    /// not marked, its purge has begun (issue 492) or they may not read it
+    /// as deleted, refused if they may but not restore it.
     pub(crate) async fn restore<T: Stored>(&self, stored: Option<T>, id: String) -> StoreResult<T> {
-        let stored = self.read(stored, id, Presence::Deleted).await?;
+        let purging = stored.as_ref().and_then(Stored::deleted).is_some_and(|mark| mark.purging);
+        let stored = self.read(stored, id.clone(), Presence::Deleted).await?;
+        if purging {
+            return Err(StoreError::NotFound { entity: T::KIND.name(), id });
+        }
         self.allow(ActionType::restore(T::KIND, stored.security_attributes())).await?;
         Ok(stored)
     }

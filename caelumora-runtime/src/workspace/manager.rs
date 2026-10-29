@@ -15,15 +15,12 @@ use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
-use caelumora_model::store::{
-    Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
-};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use std::fmt;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 pub struct WorkspaceManager {
@@ -39,8 +36,6 @@ pub struct WorkspaceManager {
     /// its own, and the `CommandReaper`.
     storages: Arc<NamedBackends<dyn TerminalProvider>>,
     max_file_bytes: u64,
-    /// Held by every write of a document, so that none is lost to another.
-    writing: Mutex<()>,
 }
 
 impl fmt::Debug for WorkspaceManager {
@@ -71,7 +66,6 @@ impl WorkspaceManager {
             confidentiality,
             storages,
             max_file_bytes: config.max_file_bytes,
-            writing: Mutex::new(()),
         }
     }
 
@@ -145,7 +139,6 @@ impl WorkspaceManager {
         }
         self.holders.require(ctx, &workspace.name.scope).await?;
 
-        let _writing = self.writing.lock().await;
         self.workspaces.create(ctx, &workspace).await?;
         if let Err(e) = provider.create(workspace.id).await {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
@@ -167,7 +160,6 @@ impl WorkspaceManager {
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
-        let _writing = self.writing.lock().await;
         let workspace = match self.reached(ctx, id).await {
             Ok(workspace) => workspace,
             Err(WorkspaceError::NotFound(_)) => return Ok(false),
@@ -186,24 +178,25 @@ impl WorkspaceManager {
     /// the workspace as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to restore, or if
-    /// what holds its scope is gone, or whatever else the store reports -
-    /// `NameTaken` among it.
+    /// `NotFound` if it is not deleted, not the caller's to restore or its
+    /// purge is begun (issue 492), or if what holds its scope is gone, or
+    /// whatever else the store reports - `NameTaken` among it.
     pub async fn restore(
         &self,
         ctx: &SecurityContext,
         id: WorkspaceId,
     ) -> WorkspaceResult<Workspace> {
-        let _writing = self.writing.lock().await;
         let workspace = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Workspace>(&id), &workspace);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
         Ok(workspace)
     }
 
-    /// Removes the deleted workspace `id` for good, its files first
-    /// (`Purge`, asked before anything is removed). A place that cannot be
-    /// removed leaves the document, so that the next purge tries again.
+    /// Removes the deleted workspace `id` for good, its files first: its
+    /// purge begun (`Purge`, asked before anything is removed), so that no
+    /// restoring takes it back while its place goes (issue 492), then its
+    /// place, then the document. A place that cannot be removed leaves the
+    /// document, its purge begun, so that the next purge tries again.
     /// Announces nothing, as no purge does. `false` if there was nothing
     /// deleted the caller could see.
     ///
@@ -211,19 +204,9 @@ impl WorkspaceManager {
     /// `PermissionDenied`, `StorageGone` if its storage is no longer configured, a `TerminalError`
     /// of removing the place, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
-        let _writing = self.writing.lock().await;
-        let Some(Deleted { entity: workspace, .. }) =
-            self.workspaces.get_deleted(ctx, id).await.optional()?
-        else {
+        let Some(workspace) = self.workspaces.begin_purge(ctx, id).await? else {
             return Ok(false);
         };
-        self.access_policy
-            .require(
-                ctx,
-                ActionType::purge(Workspace::KIND, &workspace.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
         self.remove_place(&workspace).await?;
         let purged = self.workspaces.purge(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
@@ -289,8 +272,7 @@ impl WorkspaceManager {
 }
 
 /// Workspaces go with what holds the scope they lie in, their places kept while they are deleted,
-/// announced as `delete` and `restore` announce them, under the lock of writing, and purged with
-/// their places (`scoped`).
+/// announced as `delete` and `restore` announce them, and purged with their places (`scoped`).
 #[async_trait]
 impl ScopeMember for WorkspaceManager {
     type Entity = Workspace;
@@ -301,10 +283,6 @@ impl ScopeMember for WorkspaceManager {
 
     fn events(&self) -> Option<&dyn EventPublisher> {
         Some(self.events.as_ref())
-    }
-
-    fn writing(&self) -> Option<&Mutex<()>> {
-        Some(&self.writing)
     }
 
     /// Removes the place of `workspace`, as `purge` does; it is its storage too.

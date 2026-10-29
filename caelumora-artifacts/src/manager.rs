@@ -29,7 +29,7 @@ use caelumora_model::security::{
     WRITE,
 };
 use caelumora_model::store::{
-    Address, Deleted, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
+    Address, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -47,7 +47,6 @@ use serde::Deserialize;
 use std::fmt;
 use std::slice;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -139,10 +138,6 @@ pub struct ArtifactManager {
     /// The storage new artifacts are made in, with its name.
     keep_in: Option<(String, Arc<dyn ContentStorage>)>,
     max_bytes: u64,
-    /// Held by every write of a document, so that one published into a
-    /// project is listed by the project's deletion or refused after it
-    /// (issue 458) - until issue 492 takes the lock away.
-    writing: Mutex<()>,
 }
 
 impl fmt::Debug for ArtifactManager {
@@ -183,7 +178,6 @@ impl ArtifactManager {
             storages,
             keep_in,
             max_bytes: config.max_bytes,
-            writing: Mutex::new(()),
         })
     }
 
@@ -241,7 +235,6 @@ impl ArtifactManager {
         };
         let description = Description::optional(description)?;
         self.holders.require(ctx, &name.scope).await?;
-        let _writing = self.writing.lock().await;
         // Found whoever's it is, so that one not the caller's to add to is
         // refused as such rather than taken for a name to make anew.
         let existing =
@@ -340,7 +333,8 @@ impl ArtifactManager {
             }
         };
         // A new artifact is kept only if the project is still there (issue 458); one that was
-        // there before went with the project if it was deleted meanwhile, under `writing`.
+        // there before goes with the project if it was written first, and was not found by the
+        // write otherwise - marked deleted, changed since it was read (issue 492).
         if made {
             self.holders.keep_made(self, &artifact).await?;
         }
@@ -468,7 +462,6 @@ impl ArtifactManager {
         acl: Vec<AclEntry>,
         versions: bool,
     ) -> ArtifactResult<Artifact> {
-        let _writing = self.writing.lock().await;
         let artifact = loop {
             let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
             require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl)
@@ -517,7 +510,6 @@ impl ArtifactManager {
         id: ArtifactId,
         description: Option<&str>,
     ) -> ArtifactResult<Artifact> {
-        let _writing = self.writing.lock().await;
         let description = Description::optional(description)?;
         let artifact = loop {
             let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
@@ -545,7 +537,6 @@ impl ArtifactManager {
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
-        let _writing = self.writing.lock().await;
         let Some(artifact) = self.artifacts.get(ctx, id).await.optional()? else {
             return Ok(false);
         };
@@ -562,38 +553,29 @@ impl ArtifactManager {
     /// as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to restore, or if
-    /// its project is gone, or whatever else the store reports - `NameTaken`
-    /// among it.
+    /// `NotFound` if it is not deleted, not the caller's to restore or its
+    /// purge is begun (issue 492), or if its project is gone, or whatever
+    /// else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
-        let _writing = self.writing.lock().await;
         let artifact = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Artifact>(&id), &artifact);
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(artifact)
     }
 
-    /// Removes the deleted artifact `id` for good, its content first
-    /// (`Purge`, asked before anything is removed). Content that cannot be
-    /// removed leaves the document, so that the next purge tries again.
+    /// Removes the deleted artifact `id` for good, its content first: its
+    /// purge begun (`Purge`, asked before anything is removed), so that no
+    /// restoring takes it back while its content goes (issue 492), then its
+    /// content, then the document. Content that cannot be removed leaves the
+    /// document, its purge begun, so that the next purge tries again.
     /// `false` if there was nothing deleted the caller could see.
     ///
     /// # Errors
     /// `PermissionDenied`, `StorageGone`, `Content`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
-        let _writing = self.writing.lock().await;
-        let Some(Deleted { entity: artifact, .. }) =
-            self.artifacts.get_deleted(ctx, id).await.optional()?
-        else {
+        let Some(artifact) = self.artifacts.begin_purge(ctx, id).await? else {
             return Ok(false);
         };
-        self.access_policy
-            .require(
-                ctx,
-                ActionType::purge(Artifact::KIND, &artifact.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
         self.remove_content(&artifact).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
@@ -611,8 +593,7 @@ impl ArtifactManager {
 }
 
 /// Artifacts go with what holds the scope they lie in, their content kept while they are deleted,
-/// announced as `delete` and `restore` announce them, under the lock of writing, and purged with
-/// their content (`scoped`).
+/// announced as `delete` and `restore` announce them, and purged with their content (`scoped`).
 #[async_trait]
 impl ScopeMember for ArtifactManager {
     type Entity = Artifact;
@@ -623,10 +604,6 @@ impl ScopeMember for ArtifactManager {
 
     fn events(&self) -> Option<&dyn EventPublisher> {
         Some(self.events.as_ref())
-    }
-
-    fn writing(&self) -> Option<&Mutex<()>> {
-        Some(&self.writing)
     }
 
     /// Removes the content of `artifact`, as `purge` does; it is its storage too.

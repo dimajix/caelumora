@@ -29,7 +29,6 @@ use caelumora_runtime::scoped::{ScopeHolders, ScopeMember};
 use chrono::Utc;
 use std::fmt;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 
 #[derive(Debug, thiserror::Error)]
@@ -77,8 +76,6 @@ pub struct SkillManager {
     events: Arc<EventBus>,
     /// What may flow where, and who is cleared for what (issue 304).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    /// Held by every write of a document, so that none is lost to another.
-    writing: Mutex<()>,
 }
 
 impl fmt::Debug for SkillManager {
@@ -97,7 +94,7 @@ impl SkillManager {
         events: Arc<EventBus>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
     ) -> Self {
-        Self { skills, holders, events, confidentiality, writing: Mutex::new(()) }
+        Self { skills, holders, events, confidentiality }
     }
 
     /// The store of skills, which the views read (`SkillViews`).
@@ -153,7 +150,6 @@ impl SkillManager {
         // session is read in the caller's name, who learns nothing they could not read.
         self.holders.require(ctx, &skill.name.scope).await?;
 
-        let _writing = self.writing.lock().await;
         self.skills.create(ctx, &skill).await?;
         self.holders.keep_made(self, &skill).await?;
         self.events.announce(GlobalEvent::created::<Skill>(&skill.id), &skill);
@@ -231,7 +227,6 @@ impl SkillManager {
         id: SkillId,
         event: SkillUpdateEvent,
     ) -> SkillResult<Skill> {
-        let _writing = self.writing.lock().await;
         if let SkillUpdateEvent::ClassificationChanged(classification) = &event {
             self.confidentiality
                 .require_classifiable(classification, || SkillError::ClassificationRefused)?;
@@ -281,7 +276,6 @@ impl SkillManager {
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
-        let _writing = self.writing.lock().await;
         let Some(skill) = self.skills.get(ctx, id).await.optional()? else { return Ok(false) };
         if !self.skills.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
@@ -295,11 +289,10 @@ impl SkillManager {
     /// scope is still there (issue 458). Returns the skill as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to restore, or if
-    /// what holds its scope is gone, or whatever else the store reports -
-    /// `NameTaken` among it.
+    /// `NotFound` if it is not deleted, not the caller's to restore or its
+    /// purge is begun (issue 492), or if what holds its scope is gone, or
+    /// whatever else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<Skill> {
-        let _writing = self.writing.lock().await;
         let skill = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Skill>(&id), &skill);
         info!(skill = %id, by = %ctx.caller_id, "Skill restored");
@@ -313,7 +306,6 @@ impl SkillManager {
     /// # Errors
     /// `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
-        let _writing = self.writing.lock().await;
         let purged = self.skills.purge(ctx, id).await?;
         info!(skill = %id, by = %ctx.caller_id, "Skill purged");
         Ok(purged)
@@ -321,7 +313,7 @@ impl SkillManager {
 }
 
 /// Skills go with what holds the scope they lie in, announced as `delete` and `restore` announce
-/// them, under the lock of writing (`scoped`).
+/// them (`scoped`).
 impl ScopeMember for SkillManager {
     type Entity = Skill;
 
@@ -331,9 +323,5 @@ impl ScopeMember for SkillManager {
 
     fn events(&self) -> Option<&dyn EventPublisher> {
         Some(self.events.as_ref())
-    }
-
-    fn writing(&self) -> Option<&Mutex<()>> {
-        Some(&self.writing)
     }
 }

@@ -938,6 +938,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn begins_purges() {
+        let dir = tempdir().unwrap();
+        suite::purges_are_begun(
+            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn keeps_names_unique() {
         let dir = tempdir().unwrap();
         suite::names_are_unique(

@@ -17,9 +17,11 @@ use tracing::{info, warn};
 /// The document a controller is the one writer of in this instance, as it
 /// stands (issue 358): every change of it is stored first - which is where
 /// the permission is checked (issue 11) -, then taken over live and
-/// announced, under a lock, so that no change overwrites another. What a
-/// controller does besides - a group that follows the participants, an
-/// event of its own - it does between the steps of a `Writing`.
+/// announced. The revision keeps a change from overwriting another (issue
+/// 492); the lock held meanwhile keeps the live copy and the announcements
+/// in the order the changes were stored. What a controller does besides - a
+/// group that follows the participants, an event of its own - it does
+/// between the steps of a `Writing`.
 pub(super) struct LiveDocument<T: Updatable> {
     address: Address<T>,
     current: ArcSwap<T>,

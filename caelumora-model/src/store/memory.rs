@@ -862,6 +862,11 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn purges_are_begun() {
+        suite::purges_are_begun(&Persistence::in_memory().entity_stores().unwrap()).await;
+    }
+
+    #[tokio::test]
     async fn keeps_names_unique() {
         suite::names_are_unique(&Persistence::in_memory().entity_stores().unwrap()).await;
         suite::names_are_unique_beyond_what_is_read(&owners().entity_stores().unwrap()).await;

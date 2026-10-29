@@ -286,6 +286,13 @@ mod tests {
             self.fails()?;
             self.inner.restore(ctx, id).await
         }
+        async fn begin_purge(
+            &self,
+            ctx: &SecurityContext,
+            id: GroupId,
+        ) -> StoreResult<Option<Group>> {
+            self.inner.begin_purge(ctx, id).await
+        }
         async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
             self.inner.purge(ctx, id).await
         }

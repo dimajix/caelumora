@@ -164,6 +164,16 @@ async fn judges_writes_on_their_revision() {
 }
 
 #[tokio::test]
+async fn begins_purges() {
+    let Some(database) = Database::new() else { return };
+    suite::purges_are_begun(
+        &database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap(),
+    )
+    .await;
+    database.drop().await;
+}
+
+#[tokio::test]
 async fn keeps_names_unique() {
     let Some(database) = Database::new() else { return };
     suite::names_are_unique(

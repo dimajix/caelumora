@@ -1976,6 +1976,39 @@ pub async fn storage_judges_writes_on_their_revision(backend: &dyn PersistenceBa
     assert!(outdated(storage.replace(next, read.next()).await), "what is gone is not replaced");
 }
 
+/// A purge is begun before what lies behind an entity goes (issue 492): its mark says so, no
+/// restoring takes it back from then on, and it is purged as any deleted entity is. Only what
+/// was deleted is begun, once.
+pub async fn purges_are_begun(stores: &EntityStores) {
+    let system = SecurityContext::system();
+    let kept = session();
+    stores.sessions.create(&system, &kept).await.expect("create");
+    let begun = stores.sessions.begin_purge(&system, kept.id).await.expect("begin");
+    assert!(begun.is_none(), "nothing begun of what is there");
+    assert!(
+        stores.sessions.begin_purge(&system, SessionId::new()).await.expect("begin").is_none(),
+        "nor of what is not"
+    );
+
+    let mark = Removal::now(system.caller_id);
+    assert!(stores.sessions.delete(&system, kept.id, &mark).await.expect("delete"));
+    let begun =
+        stores.sessions.begin_purge(&system, kept.id).await.expect("begin").expect("deleted");
+    assert!(begun.deleted().is_some_and(|mark| mark.purging), "its mark says so");
+    let read = stores.sessions.get_deleted(&system, kept.id).await.expect("still deleted");
+    assert!(read.removal.purging, "as stored");
+    assert_eq!(read.removal.id, mark.id, "still the mark of its deletion");
+    let again = stores.sessions.begin_purge(&system, kept.id).await.expect("again").expect("there");
+    assert_eq!(again.revision(), begun.revision(), "begun once, answered as it is");
+    let restored = stores.sessions.restore(&system, kept.id).await;
+    assert!(
+        matches!(restored, Err(StoreError::NotFound { .. })),
+        "not restored once its purge is begun: {restored:?}"
+    );
+    assert!(stores.sessions.purge(&system, kept.id).await.expect("purge"), "purged");
+    assert!(stores.sessions.get_deleted(&system, kept.id).await.is_err(), "gone");
+}
+
 /// `value` marked deleted, as only deleting may.
 fn marked<T: Stored>(mut value: T) -> T {
     value.set_deleted(Some(Removal::now(ActorId::System)));

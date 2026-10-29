@@ -1,6 +1,6 @@
 # 492 — A document is written under two locks that do not know of each other
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** Persistence
@@ -106,3 +106,20 @@ The first is the goal; the second is acceptable as a step towards it.
   is numbered after the first as the document is written (`Artifact::add_version`), and a
   publication refused as outdated is made again instead of handed back. The second question
   stays as it is: the one writer that held a copy never stored is the profile controller.
+- **2026-10-29** — Step 3 done, after one more decision with the maintainer: the managers' locks
+  held two things the revision does not. A purge removed what lies behind an entity - a
+  workspace's place, an artifact's content - before the document, and a restoring between brought
+  the document back without it; the agents had the gap already, without a lock. The purge is now
+  begun first (`EntityStore::begin_purge`, `Removal::purging`): no restoring takes the entity back
+  from then on, then what lies behind it goes, then the document - across every writer of the
+  store. And a project's deletion, restoring and purge each go through its sessions, its scope and
+  its group: they are serialised by one lock per project id (`ProjectManager::lifecycle_lock`), as
+  a session's are by the `SessionManager`. The `writing` locks of the managers of workspaces,
+  groups, skills and artifacts and `ScopeMember::writing` are gone; `LiveDocument::write_lock`
+  stays, ordering a controller's announcements as it writes. Three things the locks had kept
+  apart within one process were found in review and closed otherwise: a workspace whose place was
+  made after its holder's purge went through it, whose place `keep_made` now removes alone; an
+  entity deleted by another while its holder's scope is gone through, now counted as left only if
+  it is still there; and a group of participants deleted meanwhile with its channel, which is not
+  this deletion's to announce or take back. The views say that one whose purge is begun may not be
+  restored.
