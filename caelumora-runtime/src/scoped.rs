@@ -278,7 +278,21 @@ pub(crate) async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T:
 }
 
 /// The entities of `deleted` that were deleted with `removal` - that carry its mark (issue 469),
-/// which a query does not compare yet.
+/// told by its id (issue 478), which a query does not compare yet.
 pub fn deleted_with<T>(deleted: Vec<Deleted<T>>, removal: &Removal) -> Vec<T> {
-    deleted.into_iter().filter(|d| d.removal == *removal).map(|d| d.entity).collect()
+    deleted.into_iter().filter(|d| d.removal.id == removal.id).map(|d| d.entity).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::removal::RemovalId;
+
+    #[test]
+    fn what_went_with_a_deletion_is_told_by_its_id_not_by_who_or_when() {
+        let removal = Removal::now(ActorId::System);
+        let same_instant = Removal { id: RemovalId::new(), ..removal.clone() };
+        let deleted = vec![Deleted { entity: "with it", removal: removal.clone() }, Deleted { entity: "beside it", removal: same_instant }];
+        assert_eq!(deleted_with(deleted, &removal), vec!["with it"]);
+    }
 }

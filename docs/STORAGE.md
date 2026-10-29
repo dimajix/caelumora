@@ -311,13 +311,14 @@ A marked document is not there for the ordinary operations, before anything is a
 listed, found by name, changed or deleted again - also not by the system, so that no caller has to
 remember to leave it out. Its id stays taken, so seeding does not bring back deleted demo data.
 Nothing created or changed may carry the mark: only deleting sets it. Deleting sets the mark it is
-given (`EntityStore::delete`): a deletion makes its mark once - who, when - and gives it to
+given (`EntityStore::delete`): a deletion makes its mark once - its id, who, when - and gives it to
 everything that goes with what it deletes, so that what went with it is what carries its mark (issue
-469): restoring takes back what carries the mark of what is restored, and a restoring that fails
-puts the mark back as it was, so that it can be tried again. The mark names the caller; only the
-system's names another, as it deletes the groups that go with a session in the runtime's name, by
-whoever deleted the session (`Validation` otherwise). What was deleted is reached by operations of
-its own, each with a permission of its own:
+469), told by the mark's id (`RemovalId`), not by its time, which not every backend keeps exactly:
+restoring takes back what carries the mark of what is restored, and a restoring that fails puts the
+mark back as it was, so that it can be tried again. The mark names the caller; only the system's
+names another, as it deletes the groups that go with a session in the runtime's name, by whoever
+deleted the session (`Validation` otherwise). What was deleted is reached by operations of its own,
+each with a permission of its own:
 
 | Operation | asks | does |
 |---|---|---|

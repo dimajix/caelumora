@@ -1,6 +1,6 @@
 # 478 — What went with a deletion is told apart in code, after every deleted entity was read
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Persistence
@@ -52,6 +52,23 @@ Recommendation: A with C - the mark is a concept of the store, as presence is, a
 the same in every backend. To be weighed when restoring a large project shows the cost, or when the
 storage's columns are changed anyway.
 
+## Decision
+
+A with C, in two steps:
+
+1.  **A deletion has an id.** `Removal` gets `id: RemovalId`, made once with the mark by
+    `Removal::now`, and `scoped::deleted_with` compares it instead of the whole mark. A participant
+    that leaves a channel carries one too: leaving is a `Removal` as deleting is, and a type of its
+    own for it would be one concept more.
+2.  **The storage keeps the mark's id.** `Document` carries `removal_id: Option<RemovalId>` instead
+    of `deleted: bool`, and `Presence` gets `DeletedWith(RemovalId)` beside `Present` and
+    `Deleted`: deleted with one deletion, read by the same verb, `ReadDeleted`. `Deleted`, whichever
+    deletion, stays: for reading one by its id, for the list of the deleted a user sees, and for
+    purging what is deleted in a holder's scope. `EntityStore::list_deleted_with(ctx, removal,
+    query)` lists what was deleted with `removal`, as `T`, since the mark is known; restoring asks
+    it, and `scoped::deleted_with` goes. Postgres keeps the id in a column of its own, and its
+    tables take a new form.
+
 ## Done when
 
 - A deletion's mark is compared by an id, not by a time.
@@ -62,3 +79,7 @@ storage's columns are changed anyway.
 
 - **2026-10-28** — Opened at the maintainer's request from the findings of step 2 of issue 469,
   which made the mark what restoring compares.
+- **2026-10-28** — Decided: A with C, in two steps, on branch `issue-478-deletion-by-id`.
+- **2026-10-28** — Step 1 done: `Removal` has an id (`RemovalId`), made by `Removal::now`, and
+  `scoped::deleted_with` compares it; a participant that leaves carries one too, and the web UI's
+  `Removal` has it.

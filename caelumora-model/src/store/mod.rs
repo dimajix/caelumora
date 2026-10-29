@@ -345,7 +345,8 @@ impl Enclosing for NoEntity {
 pub type Address<T> = <<T as Stored>::Within as Enclosing>::Address<<T as Stored>::Id>;
 
 /// Something deleted as the store hands it out (issues 164, 472): the entity as it is stored, and
-/// the mark it is sure to carry - who deleted it and when, and so what went with it (issue 469).
+/// the mark it is sure to carry - which deletion, who and when -, and so what went with it (issues
+/// 469, 478).
 /// The entity carries the mark as well, as it is stored; `removal` is the one to read, which
 /// needs no check.
 #[derive(Debug, Clone, PartialEq)]
