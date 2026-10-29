@@ -549,7 +549,7 @@ impl ComponentRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::removal::Removal;
+    use caelumora_model::removal::{Removal, RemovalId};
     use crate::component::testing::*;
     use crate::component::ComponentContainer;
     use caelumora_model::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
@@ -710,6 +710,9 @@ mod tests {
                 Self::failed()
             }
             async fn list_deleted(&self, _: &SecurityContext, _: &Query<ScopeField>) -> StoreResult<Page<Deleted<ComponentBundle>>> {
+                Self::failed()
+            }
+            async fn list_deleted_with(&self, _: &SecurityContext, _: RemovalId, _: &Query<ScopeField>) -> StoreResult<Page<ComponentBundle>> {
                 Self::failed()
             }
             async fn find_by_name(&self, _: &SecurityContext, _: &ScopedName) -> StoreResult<ComponentBundle> {

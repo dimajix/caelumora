@@ -26,7 +26,7 @@ use uuid::Uuid;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentBundle;
-use crate::removal::Removal;
+use crate::removal::{Removal, RemovalId};
 use crate::confidentiality::{Classification, ConfidentialityPolicy};
 use crate::security::{Refused, Secured, SecurityContext, AccessPolicy, Verb};
 use crate::session::Session;
@@ -239,30 +239,48 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
 
 /// Which of a kind's entities an operation of a store is about (issue 459): those there, or those
 /// deleted - kept marked so that it can be told later that they were there, who deleted them and
-/// when (issue 164). Reading the deleted is asked by a verb of its own (`Presence::verb`).
+/// when (issue 164) -, whichever deletion or with one (issue 478). Reading the deleted is asked by
+/// a verb of its own (`Presence::verb`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Presence {
     Present,
     Deleted,
+    /// Those deleted with the deletion of this id: what went with it (issue 469).
+    DeletedWith(RemovalId),
 }
 
 impl Presence {
     /// Whether `value` is among them, by its mark (`Stored::deleted`).
     pub(crate) fn holds<T: Stored>(self, value: &T) -> bool {
-        self.marked() == value.deleted().is_some()
+        self.holds_mark(value.deleted().map(|removal| removal.id))
     }
 
-    /// Whether they carry the mark of a deletion: what a storage compares the marks of its
-    /// documents with (`Document::deleted`).
+    /// Whether a document with the mark of the deletion `removal_id` - `None` if it is there - is
+    /// among them: what a storage compares the marks of its documents with
+    /// (`Document::removal_id`).
+    pub(crate) fn holds_mark(self, removal_id: Option<RemovalId>) -> bool {
+        removal_id.is_some() == self.marked() && self.removal_id().is_none_or(|id| removal_id == Some(id))
+    }
+
+    /// Whether they carry the mark of a deletion, whichever: what a storage that compares the mark
+    /// in parts compares first, and `removal_id` next.
     pub fn marked(self) -> bool {
-        self == Self::Deleted
+        self != Self::Present
+    }
+
+    /// The deletion whose mark they carry, if they are those of one.
+    pub fn removal_id(self) -> Option<RemovalId> {
+        match self {
+            Self::DeletedWith(id) => Some(id),
+            Self::Present | Self::Deleted => None,
+        }
     }
 
     /// What reading one of them asks: `Get`, or `ReadDeleted`.
     pub(crate) fn verb(self) -> Verb {
         match self {
             Self::Present => Verb::Get,
-            Self::Deleted => Verb::ReadDeleted,
+            Self::Deleted | Self::DeletedWith(_) => Verb::ReadDeleted,
         }
     }
 }
@@ -373,15 +391,16 @@ impl<T: Stored> Deleted<T> {
 /// also one the caller may not read (`NameTaken`), and is found by it
 /// (`find_by_name`) - `NotFound` for a kind without one.
 ///
-/// Deleting marks (issue 164): `delete` sets the mark it is given - who, when - and keeps the
-/// entity. A deletion makes its mark once and gives it to everything that goes with what it deletes
-/// (issue 469); the mark names the caller, another only if the caller is the system
+/// Deleting marks (issue 164): `delete` sets the mark it is given - which deletion, who, when - and
+/// keeps the entity. A deletion makes its mark once and gives it to everything that goes with what
+/// it deletes (issue 469); the mark names the caller, another only if the caller is the system
 /// (`Validation`). What is marked is not there for `get`, `list`, `update` and `delete`, also not
 /// for the system, and its id is not free for `create`; nothing new or changed may carry the mark
-/// (`Validation`). What was deleted is reached by four operations of its own: `get_deleted` and
-/// `list_deleted` read it (`ReadDeleted`), each with its mark (`Deleted`), `restore` takes the mark
-/// away (`Restore`) and returns what it restored, and `purge` removes what was deleted for good
-/// (`Purge`) - only what is marked, so that a purge never takes what was restored.
+/// (`Validation`). What was deleted is reached by operations of its own: `get_deleted` and
+/// `list_deleted` read it (`ReadDeleted`), each with its mark (`Deleted`), and `list_deleted_with`
+/// what was deleted with one deletion (issue 478); `restore` takes the mark away (`Restore`) and
+/// returns what it restored, and `purge` removes what was deleted for good (`Purge`) - only what
+/// is marked, so that a purge never takes what was restored.
 #[async_trait]
 pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
@@ -393,6 +412,9 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>>;
     async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<Deleted<T>>>;
+    /// Those meeting `query` that were deleted with the deletion `removal_id` - that carry its
+    /// mark -, read as `list_deleted` reads.
+    async fn list_deleted_with(&self, ctx: &SecurityContext, removal_id: RemovalId, query: &Query<T::Field>) -> StoreResult<Page<T>>;
     /// The one of `name`, in exactly that scope, among what the caller may
     /// read (issue 178).
     async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;

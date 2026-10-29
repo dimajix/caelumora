@@ -19,7 +19,7 @@ use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Securi
 use crate::view::{Viewer, Views};
 use caelumora_model::store::{Deleted, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use tracing::{info, warn};
-use caelumora_model::scope::Scope;
+use caelumora_model::scope::{Scope, ScopeField};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::{Group, GroupId};
 use crate::group::{GroupManager, keep_participants};
@@ -27,7 +27,7 @@ use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
 use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::WorkspaceChoice;
-use crate::scoped::{deleted_with, purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::workspace::reaper::CommandReaper;
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
@@ -712,7 +712,7 @@ impl SessionManager {
         // nothing more: what was deleted with it carries it and comes back with it (issues 178,
         // 469), its own project among it.
         let Deleted { entity: deleted, removal } = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
-        let own = deleted_with(self.deleted_own(id).await?, &removal).pop();
+        let own = self.stores.projects.list_deleted_with(&SecurityContext::system(), removal.id, &lying_in(id)).await?.items.pop();
         // A session in a shared project lies where its project is, and comes back with it.
         let lies_in_own = own.as_ref().is_some_and(|own| own.id == deleted.project);
         if !lies_in_own && self.stores.projects.get(&SecurityContext::system(), deleted.project).await.optional()?.is_none() {
@@ -789,8 +789,7 @@ impl SessionManager {
     /// # Errors
     /// Whatever the store reports.
     async fn deleted_own(&self, id: SessionId) -> StoreResult<Vec<Deleted<Project>>> {
-        let query = Query::filtered(Filter::lying_within(&Scope::SessionScope { session_id: id }));
-        Ok(self.stores.projects.list_deleted(&SecurityContext::system(), &query).await?.items)
+        Ok(self.stores.projects.list_deleted(&SecurityContext::system(), &lying_in(id)).await?.items)
     }
 
     /// Removes `own`, the own project of a session purged or whose making failed, for good with
@@ -878,6 +877,11 @@ fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
         StoreError::NotFound { .. } => SessionError::NotFound(id).into(),
         error => error.into(),
     }
+}
+
+/// What lies in the scope of session `id`: of projects, its own.
+fn lying_in(id: SessionId) -> Query<ScopeField> {
+    Query::filtered(Filter::lying_within(&Scope::SessionScope { session_id: id }))
 }
 
 #[cfg(test)]

@@ -459,7 +459,7 @@ impl JsonDocuments {
 
 /// The name `document` takes: its name, unless it is deleted.
 fn named(document: &Document) -> Option<&ScopedName> {
-    document.name.as_ref().filter(|_| !document.deleted)
+    document.name.as_ref().filter(|_| document.removal_id.is_none())
 }
 
 #[async_trait]
@@ -530,7 +530,7 @@ impl DocumentStorage for JsonDocuments {
     async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
         let path = self.path(id);
         let Some(body) = read_json_opt::<Value>(&path).await? else { return Ok(false) };
-        if !(self.document_of)(body)?.deleted {
+        if (self.document_of)(body)?.removal_id.is_none() {
             return Ok(false);
         }
         debug!("Purging {} at {}", self.kind, path.display());

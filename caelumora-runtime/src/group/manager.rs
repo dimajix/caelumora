@@ -4,7 +4,6 @@
 
 use super::{store_error, GroupError, GroupResult};
 use crate::event::EventBus;
-use crate::scoped::deleted_with;
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupField, GroupId, GroupUpdateEvent};
@@ -237,7 +236,7 @@ impl GroupManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut restored = Vec::new();
-        for group in deleted_with(self.groups.list_deleted(&system, &lying_in(holders)).await?.items, removal) {
+        for group in self.groups.list_deleted_with(&system, removal.id, &lying_in(holders)).await?.items {
             match self.groups.restore(&system, group.id).await {
                 Ok(group) => restored.push(group),
                 Err(e) => {

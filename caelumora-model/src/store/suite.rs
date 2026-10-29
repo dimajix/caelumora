@@ -34,7 +34,7 @@ use crate::digest;
 use crate::transcript::TranscriptEntry;
 use crate::history::{Audience, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
-use crate::removal::Removal;
+use crate::removal::{Removal, RemovalId};
 use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
 use crate::message::MessageId;
 use crate::workspace::{Workspace, WorkspaceId};
@@ -1087,6 +1087,18 @@ pub async fn deleting_marks(stores: &EntityStores) {
     assert!(stores.sessions.list_deleted(&system, &Query::all()).await.map(|page| page.items).expect("list deleted").is_empty());
     stores.sessions.create(&system, &gone).await.expect("its id is free again");
 
+    // What went with one deletion (issue 478): told by its id, also from what went with another by
+    // the same caller at the same instant.
+    let one = Removal::now(system.caller_id);
+    let same_instant = Removal { id: RemovalId::new(), ..one.clone() };
+    let (with_one, beside) = (session(), session());
+    for (session, removal) in [(&with_one, &one), (&beside, &same_instant)] {
+        stores.sessions.create(&system, session).await.expect("create");
+        assert!(stores.sessions.delete(&system, session.id, removal).await.expect("delete"));
+    }
+    let listed = stores.sessions.list_deleted_with(&system, one.id, &Query::all()).await.map(|page| page.items).expect("list deleted with one");
+    assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), [with_one.id], "what went with it alone");
+
     let carol = user("carol");
     stores.users.create(&system, &carol).await.expect("create user");
     assert!(stores.users.delete(&system, carol.id, &Removal::now(system.caller_id)).await.expect("delete user"));
@@ -1139,15 +1151,19 @@ pub async fn lists_admit_what_check_decides(stores: &EntityStores, folders: &dyn
             }
         }
     }
+    // Deleted by two deletions, every other one by each.
+    let (one, other) = (Removal::now(system.caller_id), Removal::now(system.caller_id));
     for (index, security_attributes) in made.into_iter().enumerate() {
         let folder = Folder { security_attributes, ..Folder::of(alice) };
         folders.create(&system, &folder).await.expect("create folder");
         if index % 3 == 0 {
-            assert!(folders.delete(&system, folder.id, &Removal::now(system.caller_id)).await.expect("delete folder"));
+            let removal = if index % 2 == 0 { &one } else { &other };
+            assert!(folders.delete(&system, folder.id, removal).await.expect("delete folder"));
         }
     }
     let there = all_folders(folders, &system, Presence::Present).await;
     let deleted = all_folders(folders, &system, Presence::Deleted).await;
+    let with_one = all_folders(folders, &system, Presence::DeletedWith(one.id)).await;
 
     let contexts = [
         SecurityContext::new(hers, SessionId::new(), ChannelId::new()),
@@ -1159,7 +1175,7 @@ pub async fn lists_admit_what_check_decides(stores: &EntityStores, folders: &dyn
         SecurityContext::default(),
     ];
     for context in &contexts {
-        for (presence, verb, stored) in [(Presence::Present, Verb::Get, &there), (Presence::Deleted, Verb::ReadDeleted, &deleted)] {
+        for (presence, verb, stored) in [(Presence::Present, Verb::Get, &there), (Presence::Deleted, Verb::ReadDeleted, &deleted), (Presence::DeletedWith(one.id), Verb::ReadDeleted, &with_one)] {
             let mut readable = Vec::new();
             for folder in stored {
                 if access_policy.check(context, ActionType::entity(Folder::KIND, verb, &folder.security_attributes)).await {
@@ -1181,6 +1197,7 @@ async fn all_folders(folders: &dyn EntityStore<Folder>, context: &SecurityContex
             Presence::Present => folders.list(context, &query).await,
             Presence::Deleted => folders.list_deleted(context, &query).await
                 .map(|Page { items, next }| Page { items: items.into_iter().map(|deleted| deleted.entity).collect(), next }),
+            Presence::DeletedWith(removal_id) => folders.list_deleted_with(context, removal_id, &query).await,
         }.expect("list folders");
         all.extend(page.items);
         let Some(next) = page.next else { return all };

@@ -1,6 +1,6 @@
 # 478 — What went with a deletion is told apart in code, after every deleted entity was read
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Persistence
@@ -83,3 +83,10 @@ A with C, in two steps:
 - **2026-10-28** — Step 1 done: `Removal` has an id (`RemovalId`), made by `Removal::now`, and
   `scoped::deleted_with` compares it; a participant that leaves carries one too, and the web UI's
   `Removal` has it.
+- **2026-10-29** — Step 2 done: `Document` carries `removal_id` instead of `deleted`, `Presence` has
+  `DeletedWith`, and `EntityStore::list_deleted_with` lists what was deleted with one deletion,
+  taking the id alone; restoring asks it, and `scoped::deleted_with` is gone. Postgres keeps the id
+  in the column `removal_id`, with a partial index of it (`KIND_TABLE_VERSION` 4); memory compares
+  it, the JSON files leave it to the store. The store suite lists what went with one deletion
+  beside what went with another by the same caller at the same instant, and admits to it as `check`
+  decides.

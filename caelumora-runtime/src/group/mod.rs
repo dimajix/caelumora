@@ -171,7 +171,7 @@ pub(crate) async fn keep_participants(store: &dyn EntityStore<Group>, participan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::removal::Removal;
+    use caelumora_model::removal::{Removal, RemovalId};
     use crate::event::EventBus;
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::ConfidentialityRules;
@@ -243,6 +243,9 @@ mod tests {
         }
         async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Deleted<Group>>> {
             self.inner.list_deleted(ctx, query).await
+        }
+        async fn list_deleted_with(&self, ctx: &SecurityContext, removal_id: RemovalId, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
+            self.inner.list_deleted_with(ctx, removal_id, query).await
         }
         async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
             self.inner.find_by_name(ctx, name).await
@@ -337,7 +340,7 @@ mod tests {
         groups.purge(&system, purged.id).await.unwrap();
         // Kept as something that is no group, past the store.
         let storage = memory.documents(Group::KIND, |_| Err(StoreError::Backend("not read".to_string()))).unwrap();
-        storage.replace(Document { id: unreadable.id.into(), name: None, deleted: false, security_attributes: Default::default(), body: Value::from("not a group") }).await.unwrap();
+        storage.replace(Document { id: unreadable.id.into(), name: None, removal_id: None, security_attributes: Default::default(), body: Value::from("not a group") }).await.unwrap();
 
         let entry = |group: &Group| AclEntry { subject: Subject::Group(group.id), grant: Grant::Read };
         let everyone = AclEntry { subject: Subject::Everyone, grant: Grant::Read };

@@ -21,12 +21,12 @@ use uuid::Uuid;
 /// `kinds.schema_version` records it: a change of the form that all of them
 /// share counts it up, and a table of an older form is refused - it is
 /// deleted, as stored data that is no longer read is.
-const KIND_TABLE_VERSION: i32 = 3;
+const KIND_TABLE_VERSION: i32 = 4;
 
-/// The number of the first parameter of a scan after its own three - the
-/// mark, the cursor and the limit -, which the filter and the admission
-/// bind from.
-const FIRST_SCANNED: usize = 4;
+/// The number of the first parameter of a scan after its own four - whether
+/// the documents are marked, the deletion they are marked by, the cursor and
+/// the limit -, which the filter and the admission bind from.
+const FIRST_SCANNED: usize = 5;
 
 /// The longest identifier Postgres keeps; a longer one would be cut short,
 /// and two kinds could meet in one table.
@@ -34,9 +34,10 @@ const MAX_IDENTIFIER: usize = 63;
 
 /// The documents of one kind in its table (issue 03), `entity_<kind>`: the
 /// id, a `uuid` - ordered bytewise, as `Uuid` orders it -, the key of the name
-/// (`ScopedName::key`), whether it is marked deleted, and the body. A name is
-/// kept unique among what is not deleted by a partial unique index, the body
-/// searched by a GIN index.
+/// (`ScopedName::key`), the deletion whose mark it carries (issue 478), and
+/// the body. A name is kept unique among what is not deleted by a partial
+/// unique index, what went with one deletion is found by a partial index of
+/// the marks, the body is searched by a GIN index.
 ///
 /// Beside it, the access entries of its documents (issue 332),
 /// `entity_<kind>_access`: a row `(subject, relation, entity_id)` for the
@@ -115,8 +116,9 @@ impl PgDocuments {
     async fn create_table(&self, tx: &mut Transaction<'_, Postgres>) -> StoreResult<()> {
         let table = &self.table;
         let statements = [
-            format!("CREATE TABLE {table} (id uuid PRIMARY KEY, name_key text, deleted boolean NOT NULL, body jsonb NOT NULL)"),
-            format!("CREATE UNIQUE INDEX {} ON {table} (name_key) WHERE NOT deleted", quoted(&self.name_index)),
+            format!("CREATE TABLE {table} (id uuid PRIMARY KEY, name_key text, removal_id uuid, body jsonb NOT NULL)"),
+            format!("CREATE UNIQUE INDEX {} ON {table} (name_key) WHERE removal_id IS NULL", quoted(&self.name_index)),
+            format!("CREATE INDEX {} ON {table} (removal_id) WHERE removal_id IS NOT NULL", quoted(&format!("entity_{}_removal", self.kind))),
             format!("CREATE INDEX {} ON {table} USING gin (body jsonb_path_ops)", quoted(&format!("entity_{}_body", self.kind))),
             format!("CREATE TABLE {} (subject uuid NOT NULL, relation text NOT NULL, entity_id uuid NOT NULL REFERENCES {table} (id) ON DELETE CASCADE, \
                 PRIMARY KEY (subject, relation, entity_id))", self.access),
@@ -138,7 +140,7 @@ impl PgDocuments {
         let pool = self.ready().await?;
         let mut tx = pool.begin().await.map_err(|e| self.failed(e))?;
         sqlx::query(sql(statement))
-            .bind(document.id).bind(document.name.as_ref().map(ScopedName::key)).bind(document.deleted).bind(&document.body)
+            .bind(document.id).bind(document.name.as_ref().map(ScopedName::key)).bind(document.removal_id.map(Uuid::from)).bind(&document.body)
             .execute(&mut *tx).await.map_err(|e| self.refused(e, document.id))?;
         sqlx::query(sql(format!("DELETE FROM {} WHERE entity_id = $1", self.access))).bind(document.id).execute(&mut *tx).await.map_err(|e| self.failed(e))?;
         let (subjects, relations) = entries(&document.security_attributes);
@@ -191,8 +193,9 @@ impl DocumentStorage for PgDocuments {
         let first = condition.as_ref().map_or(FIRST_SCANNED, Condition::next);
         let admitted = admission.map(|admission| Admitted::of(admission, &self.access, &groups.table, first));
         let admitting = admitted.as_ref().map_or("true", |admitted| admitted.sql.as_str());
-        let statement = format!("SELECT id, body FROM {} WHERE deleted = $1 AND ($2::uuid IS NULL OR id > $2) AND {meeting} AND {admitting} ORDER BY id LIMIT $3", self.table);
-        let query = sqlx::query_as(sql(statement)).bind(presence.marked()).bind(after).bind(limit);
+        let statement = format!("SELECT id, body FROM {} WHERE (removal_id IS NOT NULL) = $1 AND ($2::uuid IS NULL OR removal_id = $2) \
+            AND ($3::uuid IS NULL OR id > $3) AND {meeting} AND {admitting} ORDER BY id LIMIT $4", self.table);
+        let query = sqlx::query_as(sql(statement)).bind(presence.marked()).bind(presence.removal_id().map(Uuid::from)).bind(after).bind(limit);
         let query = match &condition {
             Some(condition) => condition.bound(query),
             None => query,
@@ -206,7 +209,7 @@ impl DocumentStorage for PgDocuments {
 
     async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
         let pool = self.ready().await?;
-        sqlx::query_scalar(sql(format!("SELECT body FROM {} WHERE name_key = $1 AND NOT deleted", self.table)))
+        sqlx::query_scalar(sql(format!("SELECT body FROM {} WHERE name_key = $1 AND removal_id IS NULL", self.table)))
             .bind(name.key()).fetch_optional(pool).await.map_err(|e| self.failed(e))
     }
 
@@ -214,19 +217,19 @@ impl DocumentStorage for PgDocuments {
     /// the order they were made, the primary key's with the table first - asked by the store
     /// suite (`lifecycle!`), since `seed::create_unless_taken` relies on it.
     async fn insert(&self, document: Document) -> StoreResult<()> {
-        self.write(format!("INSERT INTO {} (id, name_key, deleted, body) VALUES ($1, $2, $3, $4)", self.table), document).await
+        self.write(format!("INSERT INTO {} (id, name_key, removal_id, body) VALUES ($1, $2, $3, $4)", self.table), document).await
     }
 
     async fn replace(&self, document: Document) -> StoreResult<()> {
-        let upsert = format!("INSERT INTO {} (id, name_key, deleted, body) VALUES ($1, $2, $3, $4) \
-            ON CONFLICT (id) DO UPDATE SET name_key = EXCLUDED.name_key, deleted = EXCLUDED.deleted, body = EXCLUDED.body", self.table);
+        let upsert = format!("INSERT INTO {} (id, name_key, removal_id, body) VALUES ($1, $2, $3, $4) \
+            ON CONFLICT (id) DO UPDATE SET name_key = EXCLUDED.name_key, removal_id = EXCLUDED.removal_id, body = EXCLUDED.body", self.table);
         self.write(upsert, document).await
     }
 
     /// Its access entries go with it.
     async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
         let pool = self.ready().await?;
-        let done = sqlx::query(sql(format!("DELETE FROM {} WHERE id = $1 AND deleted", self.table))).bind(id).execute(pool).await.map_err(|e| self.failed(e))?;
+        let done = sqlx::query(sql(format!("DELETE FROM {} WHERE id = $1 AND removal_id IS NOT NULL", self.table))).bind(id).execute(pool).await.map_err(|e| self.failed(e))?;
         Ok(done.rows_affected() > 0)
     }
 }

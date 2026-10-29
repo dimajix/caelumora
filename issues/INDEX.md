@@ -59,7 +59,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [459](459-deleted-entities-a-flag-not-a-concept.md) | done | Whether an operation of a store is about the entities there or those deleted is a `bool` passed down, and the access checks come in pairs that differ only in it, so that what makes reaching a deleted entity special - kept for the record, asked by a verb of its own - is nowhere one concept; and the documents call it a trash. |
 | [460](460-kinds-kept-in-one-form-in-postgres.md) | open | The Postgres store keeps every kind alike - a table of id, name, mark and body, searched by a GIN index of the body -, so a kind that is reached in a way of its own, such as the groups by their members, cannot have a table or column of its own that answers that faster. |
 | [469](469-a-failed-restore-renews-the-mark.md) | done | When restoring a session, a channel or a project fails part of the way, the roll-back marks it deleted again with a new time, so that a second restoring no longer finds what was deleted with it at the first. |
-| [478](478-what-went-with-a-deletion-is-sorted-in-code.md) | in progress | Restoring what went with a holder lists everything deleted in its scope and keeps in code what carries the holder's mark (`scoped::deleted_with`), since no query can ask for a deletion's mark. |
+| [478](478-what-went-with-a-deletion-is-sorted-in-code.md) | done | Restoring what went with a holder lists everything deleted in its scope and keeps in code what carries the holder's mark (`scoped::deleted_with`), since no query can ask for a deletion's mark. |
 
 ## Sessions and channels
 

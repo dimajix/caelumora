@@ -33,7 +33,7 @@ use caelumora_runtime::backend::{NamedBackends, StorageGone};
 use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
-use caelumora_runtime::scoped::{deleted_with, deleted_unless_refused, restored_unless_refused, ScopeMember};
+use caelumora_runtime::scoped::{deleted_unless_refused, restored_unless_refused, ScopeMember};
 use caelumora_runtime::terminal::ByteStream;
 use chrono::Utc;
 use serde::Deserialize;
@@ -438,7 +438,7 @@ impl ScopeMember for ArtifactManager {
     async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in deleted_with(self.artifacts.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
+        for artifact in self.artifacts.list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
             if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)? {
                 self.events.announce(GlobalEvent::restored::<Artifact>(&restored.id), &restored);
             }
