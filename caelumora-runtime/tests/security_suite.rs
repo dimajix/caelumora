@@ -1484,8 +1484,9 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
     );
 
     let in_main = Scope::ChannelScope { session_id: session.id(), channel_id: main };
-    let (made, asked) =
-        world.asked(agents.create(&World::as_user(world.bob), "minder", in_main, plain.id)).await;
+    let (made, asked) = world
+        .asked(agents.create(&World::as_user(world.bob), "minder", in_main.clone(), plain.id))
+        .await;
     made.expect("he is in the channel");
     assert_eq!(asked[1], "bob: GetChannel(alice's) yes");
     let forged = Scope::ChannelScope { session_id: other.id(), channel_id: main };
@@ -1504,6 +1505,17 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
         .map(|page| page.items)
         .unwrap();
     assert_eq!(made.len(), 2, "only his two");
+
+    // A channel is not marked with its session (issue 458): its session is asked too, in S,
+    // after the channel - its owner reads the channel still, and learns that the session is gone.
+    let alice = World::as_user(world.alice);
+    world.manager.delete(&World::system(), session.id()).await.expect("with his agents");
+    let (refused, asked) = world.asked(agents.create(&alice, "late", in_main, plain.id)).await;
+    assert!(
+        matches!(refused, Err(AgentError::Store(StoreError::NotFound { entity: "session", .. }))),
+        "a channel of a deleted session: {refused:?}"
+    );
+    assert_eq!(asked[1], "alice: GetChannel(alice's) yes");
 }
 
 /// Renaming an agent (issue 227), through the controller this instance

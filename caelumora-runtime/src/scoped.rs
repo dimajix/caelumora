@@ -18,6 +18,11 @@
 //! session templates and component bundles, which have none, are members by their store
 //! (`Unowned`), which marks them alone.
 //!
+//! Nothing is put into a scope whose holder is gone (issue 458): whoever puts something there asks
+//! `ScopeHolders` first that the holder is there and not deleted. A holder is marked deleted before
+//! its scope is gone through, so that who asks afterwards is refused, and what was put there before
+//! is deleted with it.
+//!
 //! What lies in the scope is listed in the runtime's name, so that all of it is found, whatever the
 //! caller may read; nothing of the list reaches the caller. It is deleted and restored in the
 //! caller's name (issue 320): the store asks each as it asks of anything deleted or restored alone,
@@ -32,13 +37,17 @@
 
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
+use caelumora_model::channel::Channel;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
+use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
-    Deleted, EntityKind, EntityStore, NoEntity, StoreError, StoreResult, StoreResultExt, Stored,
+    Deleted, EntityKind, EntityStore, EntityStores, NoEntity, StoreError, StoreResult,
+    StoreResultExt, Stored,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -359,6 +368,59 @@ where
     }
 }
 
+/// The holders of scopes - sessions, channels, projects -: whether one is there for whoever puts
+/// something into its scope (issue 458). Asked before anything is written; a holder is marked
+/// deleted before its scope is gone through (`ScopedEntities::delete_lying_in`), so that who asks
+/// afterwards is refused.
+pub struct ScopeHolders {
+    sessions: Arc<dyn EntityStore<Session>>,
+    channels: Arc<dyn EntityStore<Channel>>,
+    projects: Arc<dyn EntityStore<Project>>,
+}
+
+impl ScopeHolders {
+    /// The holders as `stores` keep them.
+    pub(crate) fn new(stores: &EntityStores) -> Self {
+        Self {
+            sessions: Arc::clone(&stores.sessions),
+            channels: Arc::clone(&stores.channels),
+            projects: Arc::clone(&stores.projects),
+        }
+    }
+
+    /// Requires that `ctx` may put something into `scope`: they read its holder - a session, a
+    /// channel, a project -, and it is not deleted. A channel's session is asked after the channel,
+    /// in the runtime's name, since a channel is not marked with its session - after, so that who
+    /// may not read the channel learns nothing of the session; a scope without a holder - a user's,
+    /// a group's, the global one - asks nothing. Asked whatever the kind, also of a scope the kind
+    /// cannot lie in, which the store then refuses (`Stored::validate`).
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` for a holder `ctx` may not read or that is deleted, or a channel of
+    /// another session than the scope names.
+    pub async fn require(&self, ctx: &SecurityContext, scope: &Scope) -> StoreResult<()> {
+        match scope {
+            Scope::SessionScope { session_id } => {
+                self.sessions.get(ctx, *session_id).await?;
+            }
+            Scope::ChannelScope { session_id, channel_id } => {
+                if self.channels.get(ctx, *channel_id).await?.session_id != *session_id {
+                    return Err(StoreError::NotFound {
+                        entity: Channel::KIND.name(),
+                        id: channel_id.to_string(),
+                    });
+                }
+                self.sessions.get(&SecurityContext::system(), *session_id).await?;
+            }
+            Scope::ProjectScope { project_id } => {
+                self.projects.get(ctx, *project_id).await?;
+            }
+            Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => {}
+        }
+        Ok(())
+    }
+}
+
 /// Whether `deleted` says it was deleted; `false` also if it was not the
 /// caller's to delete (issue 320), which leaves it.
 fn deleted_unless_refused(deleted: StoreResult<bool>) -> StoreResult<bool> {
@@ -405,4 +467,61 @@ pub(crate) async fn purge_for_good<T: Stored>(
         return Ok(false);
     }
     store.purge(&system, id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ScopeHolders;
+    use crate::session::testing::bare_session;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::channel::testing::make_channel;
+    use caelumora_model::project::Project;
+    use caelumora_model::removal::Removal;
+    use caelumora_model::scope::Scope;
+    use caelumora_model::security::SecurityContext;
+    use caelumora_model::session::SessionId;
+    use caelumora_model::store::{Persistence, StoreError};
+    use caelumora_model::user::UserId;
+
+    /// Whether `holders` refuse `scope` for want of its holder.
+    async fn refused(holders: &ScopeHolders, scope: &Scope) -> bool {
+        let asked = holders.require(&SecurityContext::system(), scope).await;
+        matches!(asked, Err(StoreError::NotFound { .. }))
+    }
+
+    /// Issue 458: something is put into a scope only while its holder is there - a channel's
+    /// session among it, which is not marked with the session.
+    #[tokio::test]
+    async fn a_scope_is_entered_only_while_its_holder_is_there() {
+        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let holders = ScopeHolders::new(&stores);
+        let system = SecurityContext::system();
+        let session = bare_session(SessionId::new());
+        let channel = make_channel(session.id, "main");
+        let project = Project::own_of(session.id, UserId::new());
+        stores.sessions.create(&system, &session).await.unwrap();
+        stores.channels.create(&system, &channel).await.unwrap();
+        stores.projects.create(&system, &project).await.unwrap();
+        let in_session = Scope::SessionScope { session_id: session.id };
+        let in_channel = Scope::ChannelScope { session_id: session.id, channel_id: channel.id };
+        let in_project = Scope::ProjectScope { project_id: project.id };
+        let elsewhere =
+            Scope::ChannelScope { session_id: SessionId::new(), channel_id: channel.id };
+
+        for scope in [&in_session, &in_channel, &in_project, &Scope::GlobalScope] {
+            holders.require(&system, scope).await.expect("its holder is there");
+        }
+        assert!(refused(&holders, &elsewhere).await, "a channel of another session is none");
+
+        let mark = Removal::now(ActorId::System);
+        stores.projects.delete(&system, project.id, &mark).await.unwrap();
+        assert!(refused(&holders, &in_project).await, "a deleted project holds nothing new");
+        stores.sessions.delete(&system, session.id, &mark).await.unwrap();
+        assert!(refused(&holders, &in_session).await, "nor a deleted session");
+        assert!(refused(&holders, &in_channel).await, "nor a channel of a deleted session");
+        holders
+            .require(&system, &Scope::GlobalScope)
+            .await
+            .expect("the global scope has no holder");
+    }
 }

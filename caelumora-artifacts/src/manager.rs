@@ -21,7 +21,6 @@ use caelumora_model::confidentiality::{
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{
@@ -29,7 +28,7 @@ use caelumora_model::security::{
     WRITE,
 };
 use caelumora_model::store::{
-    Address, Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
+    Address, Deleted, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -39,7 +38,8 @@ use caelumora_runtime::component::{ComponentError, ComponentResult};
 use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
-use caelumora_runtime::scoped::ScopeMember;
+use caelumora_runtime::runtime::RuntimeBuilder;
+use caelumora_runtime::scoped::{ScopeHolders, ScopeMember};
 use caelumora_runtime::terminal::ByteStream;
 use chrono::Utc;
 use serde::Deserialize;
@@ -127,8 +127,8 @@ fn store_error(id: ArtifactId) -> impl FnOnce(StoreError) -> ArtifactError {
 
 pub struct ArtifactManager {
     artifacts: Arc<dyn EntityStore<Artifact>>,
-    /// The projects artifacts are published into (issue 467), reached in the publisher's name.
-    projects: Arc<dyn EntityStore<Project>>,
+    /// Asked whether an artifact may be published into a project's scope (issue 467).
+    holders: Arc<ScopeHolders>,
     groups: Arc<dyn EntityStore<Group>>,
     events: Arc<EventBus>,
     access_policy: Arc<dyn AccessPolicy>,
@@ -152,34 +152,32 @@ impl fmt::Debug for ArtifactManager {
 }
 
 impl ArtifactManager {
-    /// The manager of the artifacts of `artifacts`, published into the projects of `projects`,
-    /// naming the groups of `groups` in their lists, whose content lies in `storages` by their
-    /// names, new ones in the storage `config` says.
+    /// The manager of the artifacts of `artifacts`, with the services of `runtime` - the holders
+    /// of the projects they are published into, the groups named in their lists, the storages of
+    /// content their versions lie in, by their names -, new ones in the storage `config` says.
+    /// The store and the section are the plugin's to open and to claim (`Plugin::register`),
+    /// which answers for what fails there; the services are the runtime's.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` where `config` names no storage of `storages`, or none among
-    /// several.
+    /// `ComponentError::InvalidConfig` where `config` names no storage of the runtime's, or none
+    /// among several.
     pub fn new(
-        stores: &EntityStores,
+        runtime: &RuntimeBuilder,
         artifacts: Arc<dyn EntityStore<Artifact>>,
-        events: Arc<EventBus>,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
-        storages: Arc<NamedBackends<dyn ContentStorage>>,
         config: &ArtifactsConfig,
     ) -> ComponentResult<Self> {
+        let storages = Arc::clone(runtime.content_storages());
         let keep_in = storages
             .chosen(config.keep_in.as_deref())
             .map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?
             .map(|(name, storage)| (name.to_string(), Arc::clone(storage)));
-        let (projects, groups) = (Arc::clone(&stores.projects), Arc::clone(&stores.groups));
         Ok(Self {
             artifacts,
-            projects,
-            groups,
-            events,
-            access_policy,
-            confidentiality,
+            holders: Arc::clone(runtime.scope_holders()),
+            groups: Arc::clone(&runtime.entity_stores().groups),
+            events: Arc::clone(runtime.event_bus()),
+            access_policy: Arc::clone(runtime.access_policy()),
+            confidentiality: Arc::clone(runtime.confidentiality()),
             storages,
             keep_in,
             max_bytes: config.max_bytes,
@@ -240,7 +238,7 @@ impl ArtifactManager {
             return Err(ArtifactError::InvalidScope);
         };
         let description = Description::optional(description)?;
-        self.projects.get(ctx, project_id).await?;
+        self.holders.require(ctx, &name.scope).await?;
         let _writing = self.writing.lock().await;
         // Found whoever's it is, so that one not the caller's to add to is
         // refused as such rather than taken for a name to make anew.

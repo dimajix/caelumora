@@ -1,6 +1,6 @@
 # 458 — A session or channel is deleted while it runs, and stopped only once it is gone
 
-**Status:** open
+**Status:** in progress
 **Type:** bug
 **Priority:** low
 **Area:** Sessions and channels
@@ -43,6 +43,26 @@ While it is deleted, it runs:
 - **Keep the order, and refuse writes into a scope being deleted**: the session runs on after a
   failure, but every writer into a scope would have to ask whether its holder is being deleted - a
   second state beside the mark.
+- **Keep the order, ask the mark before and after.** No second state: the mark is the one the
+  writers need, asked at the right moments. The holder is marked before its scope is gone
+  through, so whoever puts something into a scope asks first that its holder is there and not
+  deleted (`ScopeHolders::require`), writes, and asks again: if the holder went meanwhile, what
+  was written came after the deletion went through the scope and is taken back - purged with
+  what lies behind it, or marked deleted again with the mark it carried (`keep_made`,
+  `keep_restored`). What was written before the scope was gone through is deleted with the
+  holder and comes back with it. No lock, no wait; one more read per write. Where a deletion is
+  rolled back, what went with it stays deleted, as it does today - a writer may then be answered
+  with an entity that is deleted.
+
+**Decision (2026-10-29):** the last. A lock per holder - writers reading it, a deletion writing
+it - was weighed and dropped: a new type with a table of locks, two guards and an order of
+locking every caller has to know, against a window of one store write. Stopping first would not
+close the window (a REST request writes into a scope as a tool does) and would leave a session
+stopped whose deletion failed. The checks are the managers' - `create`, `restore`, `publish` -,
+where every way into a scope ends: the tools and the REST routes change nothing. A session put
+into a project while the project is deleted (`SessionLoop::update_project`) is the same shape but
+no `ScopeMember`, and is left to an issue of its own. What a stopped session announces reaching
+its owner alone stays, as above.
 
 ## Done when
 
@@ -55,3 +75,7 @@ While it is deleted, it runs:
 - **2026-10-23** — Opened while implementing step 1 of [332](332-policy-as-a-predicate.md): with
   deleted groups admitting nobody, the `STOPPED` events of a deleted session reach its owner alone,
   which showed that it is stopped only once it is deleted.
+- **2026-10-29** — Decided, as above. Step 1: `ScopeHolders::require`, the one check that the
+  holder of a scope is there - a channel's session among it, which is not marked with the
+  session -, in place of the agents', workspaces' and artifacts' own; the managers take it as a
+  service (`RuntimeBuilder::scope_holders`), `ArtifactManager::new` its services from the builder.

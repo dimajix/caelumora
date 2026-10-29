@@ -232,6 +232,7 @@ async fn existing_workspace(
 mod tests {
     use super::*;
     use crate::event::EventBus;
+    use crate::scoped::ScopeHolders;
     use crate::session::testing::bare_session;
     use caelumora_model::agent::Personality;
     use caelumora_model::confidentiality::ConfidentialityRules;
@@ -314,8 +315,10 @@ mod tests {
             Arc::clone(&access_policy),
             Arc::new(ConfidentialityRules::default()),
         ));
+        let stores = store.entity_stores().unwrap();
         let agents = AgentManager::new(
-            &store.entity_stores().unwrap(),
+            &stores,
+            Arc::new(ScopeHolders::new(&stores)),
             store.state_store(),
             events,
             access_policy,
