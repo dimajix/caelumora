@@ -133,6 +133,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [463](463-unavailable-channel-components-keep-the-session-closed.md) | done | A channel whose own components name a bundle that is gone or no longer its owner's to read fails to be built, and with it the session it belongs to, all its other channels included - though a third party must not keep someone's channel from starting. |
 | [467](467-projects-hold-what-outlasts-a-session.md) | done | An artifact lies in the scope of the session it was published in and goes with it, because nothing above a session holds what is meant to outlast one piece of work. |
 | [476](476-making-a-session-in-a-project-is-the-handlers.md) | done | A session asked for in a shared project is made, put into the project and, if that fails, rolled back by the REST handler, so that every other client would have to repeat the sequence. |
+| [494](494-a-session-put-into-a-project-being-deleted.md) | open | `SessionLoop::update_project` reads the project it puts the session into and stores the session afterwards, with nothing against the project being deleted in between: the session then lies in a deleted project, not deleted with it and not restored with it. |
 
 ## Identity and access management
 
