@@ -19,6 +19,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [297](297-orderly-shutdown.md) | done | Caelumora ends without an orderly shutdown: a signal ends turns mid-step, breaks off streams and leaves the `local` shell's commands running. |
 | [307](307-load-and-performance-tests.md) | open | Nothing measures how Caelumora behaves under load, so its bottlenecks are guessed at, and a real model would hide them behind its own latency. |
 | [336](336-errors-of-a-plugin-shown-as-a-failure.md) | done | The core turns an error into what a person is told by the error types it knows, so what a plugin's error says is shown as a failure wherever it travels inside an `anyhow`. |
+| [508](508-bus-queue-unbounded.md) | open | What is published waits for the event bus's dispatcher in a queue without a bound, so when the dispatcher falls behind, memory grows and every subscriber waits longer, and nothing tells. |
 
 ## Persistence
 
