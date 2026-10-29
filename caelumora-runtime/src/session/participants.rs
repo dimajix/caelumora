@@ -193,13 +193,15 @@ impl SessionLoop {
 
 #[cfg(test)]
 mod tests {
+    use crate::channel::ChannelLoop;
+    use crate::runtime::RuntimeManager;
     use crate::session::testing::*;
     use crate::session::{SessionError, SessionManager};
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
-    use caelumora_model::channel::{Channel, HistoryAccess};
+    use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
+    use caelumora_model::channel::{self, Channel, HistoryAccess};
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::group::GroupId;
     use caelumora_model::scope::Scope;
@@ -343,10 +345,8 @@ mod tests {
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
-    #[tokio::test]
-    async fn an_agent_taken_in_later_is_followed_as_one_taken_in_from_the_start() {
-        let runtime = test_runtime();
-        let manager = SessionManager::new(Arc::clone(&runtime));
+    /// An agent of a personality of its own, stored, owned by nobody here.
+    async fn stored_agent(runtime: &RuntimeManager) -> Agent {
         let system = SecurityContext::system();
         let personality = Personality {
             id: PersonalityId::new(),
@@ -369,6 +369,33 @@ mod tests {
             ActorId::User(UserId::new()),
         );
         runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
+        helper
+    }
+
+    /// Deletes `agent` and waits until its actor stopped in `channel`: the
+    /// session heard of the deletion.
+    async fn deleted_stops_in(
+        runtime: &RuntimeManager,
+        ctx: &SecurityContext,
+        agent: AgentId,
+        channel: &ChannelLoop,
+    ) {
+        assert!(runtime.agent_manager().delete(ctx, agent).await.expect("deleted"));
+        let stopped = async {
+            while channel.participant_ids().contains(&ActorId::Agent(agent)) {
+                time::sleep(Duration::from_millis(10)).await
+            }
+        };
+        time::timeout(Duration::from_secs(2), stopped)
+            .await
+            .expect("its actor stops: the session heard of it");
+    }
+
+    #[tokio::test]
+    async fn an_agent_taken_in_later_is_followed_as_one_taken_in_from_the_start() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let helper = stored_agent(&runtime).await;
         let actor = ActorId::Agent(helper.id);
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let main = Arc::clone(&session.channels()[0]);
@@ -389,15 +416,36 @@ mod tests {
         assert!(announced(&drain(&mut events)), "announced");
         time::sleep(Duration::from_millis(50)).await;
 
-        assert!(runtime.agent_manager().delete(&ctx, helper.id).await.expect("deleted"));
-        let stopped = async {
-            while main.participant_ids().contains(&actor) {
-                time::sleep(Duration::from_millis(10)).await
-            }
-        };
-        time::timeout(Duration::from_secs(2), stopped)
+        deleted_stops_in(&runtime, &ctx, helper.id, &main).await;
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    /// Issue 502: an agent taken in among more events than the session's
+    /// subscription holds is followed all the same, its announcement lost.
+    #[tokio::test]
+    async fn an_agent_taken_in_while_events_were_lost_is_followed() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let helper = stored_agent(&runtime).await;
+        let actor = ActorId::Agent(helper.id);
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let main = Arc::clone(&session.channels()[0]);
+        time::sleep(Duration::from_millis(50)).await;
+
+        session
+            .add_participant(&ctx, actor, Some((main.id(), HistoryAccess::All)))
             .await
-            .expect("its actor stops: the session heard of it");
-        manager.stop(&system, session.id()).await.unwrap();
+            .expect("taken in");
+        // More than a subscription holds, published before the session runs
+        // again: the announcement that it was taken in is lost.
+        runtime.event_bus().publish_past_capacity(&GlobalEvent::custom::<Channel>(
+            &(session.id(), main.id()),
+            channel::AGENT_STATE_CHANGED,
+            &helper.id,
+        ));
+        time::sleep(Duration::from_millis(50)).await;
+
+        deleted_stops_in(&runtime, &ctx, helper.id, &main).await;
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }

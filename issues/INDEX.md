@@ -138,7 +138,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [476](476-making-a-session-in-a-project-is-the-handlers.md) | done | A session asked for in a shared project is made, put into the project and, if that fails, rolled back by the REST handler, so that every other client would have to repeat the sequence. |
 | [494](494-a-session-put-into-a-project-being-deleted.md) | open | `SessionLoop::update_project` reads the project it puts the session into and stores the session afterwards, with nothing against the project being deleted in between: the session then lies in a deleted project, not deleted with it and not restored with it. |
 | [495](495-a-lock-per-id-leaves-its-table-while-held.md) | open | `SessionManager::delete` takes a session's lock out of its table while it holds it, so that a caller who comes afterwards is given a new lock while another still waits on the old one, and both tables of locks by id keep an entry for every id ever asked. |
-| [502](502-bus-subscribers-lose-events-silently.md) | open | The `ControllerManager`'s follower and the `ApproverActor` receive the bus through `EventSubscription::recv`, which logs lost events and goes on, so a controller keeps an outdated value and pending approvals are not checked again after a join or a leave that was lost. |
+| [502](502-bus-subscribers-lose-events-silently.md) | done | The `ControllerManager`'s follower and the `ApproverActor` receive the bus through `EventSubscription::recv`, which logs lost events and goes on, so a controller keeps an outdated value and pending approvals are not checked again after a join or a leave that was lost. |
 
 ## Identity and access management
 

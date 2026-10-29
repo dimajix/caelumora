@@ -1,3 +1,6 @@
+//! `UserController`: the live user of this instance, with their profile and their states in
+//! channels (issues 121, 404).
+
 use super::document::{log_changed, take_over};
 use arc_swap::{ArcSwap, ArcSwapOption, Guard};
 use caelumora_model::actor::ActorId;
@@ -22,8 +25,9 @@ use tracing::debug;
 /// The live user of this instance, shared by all the user's actors in all
 /// sessions (issue 121), with their profile. The user record is not changed
 /// through it - it belongs to the system (issue 94) and is only kept current
-/// when a change is announced - but the profile is: the controller is its
-/// one writer in this instance (issue 13).
+/// when a change is announced, or read again when announcements were lost
+/// (issue 502) - but the profile is: the controller is its one writer in
+/// this instance (issue 13).
 ///
 /// Unlike the others, it holds no `LiveDocument` (issue 358): the user it
 /// does not write, and the profile is created with its first change rather
@@ -42,6 +46,9 @@ pub struct UserController {
     /// (issue 492).
     profile: ArcSwapOption<UserProfile>,
     event_publisher: Arc<dyn EventPublisher>,
+    /// Where the user is read again, for changes whose announcements were
+    /// lost (issue 502).
+    users: Arc<dyn EntityStore<User>>,
     profiles: Arc<dyn EntityStore<UserProfile>>,
     /// Where a channel the user marks read is reached, as they read it.
     channels: Arc<dyn EntityStore<Channel>>,
@@ -72,6 +79,7 @@ impl UserController {
             user: ArcSwap::from_pointee(user),
             profile: ArcSwapOption::from_pointee(profile),
             event_publisher,
+            users: Arc::clone(&stores.users),
             profiles: Arc::clone(&stores.user_profiles),
             channels: Arc::clone(&stores.channels),
             states,
@@ -293,6 +301,37 @@ impl UserController {
         {
             self.profile.store(Some(Arc::new(profile)));
         }
+    }
+
+    /// The user `id` and their profile as stored, read in the runtime's name - the profile `None`
+    /// while they never wrote one: what a controller of them is made from and read again from.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the user no longer exists, or whatever else the store reports.
+    pub(super) async fn load_stored(
+        users: &dyn EntityStore<User>,
+        profiles: &dyn EntityStore<UserProfile>,
+        id: UserId,
+    ) -> StoreResult<(User, Option<UserProfile>)> {
+        let system = SecurityContext::system();
+        let user = users.get(&system, id).await?;
+        let profile = profiles.get(&system, id).await.optional()?;
+        Ok((user, profile))
+    }
+
+    /// Takes the user and their profile over as they are stored now, read in the runtime's name
+    /// and under the lock of the profile's changes: for changes made elsewhere whose announcements
+    /// were lost (issue 502).
+    ///
+    /// # Errors
+    /// Whatever the store reports; the live user and profile are then unchanged.
+    pub(super) async fn reload(&self) -> StoreResult<()> {
+        let _lock = self.write_lock.lock().await;
+        let (user, profile) =
+            Self::load_stored(self.users.as_ref(), self.profiles.as_ref(), self.id).await?;
+        self.user.store(Arc::new(user));
+        self.profile.store(profile.map(Arc::new));
+        Ok(())
     }
 }
 

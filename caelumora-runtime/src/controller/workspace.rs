@@ -1,3 +1,5 @@
+//! `WorkspaceController`: the one writer of a live workspace in this instance, with its storage.
+
 use super::document::{LiveDocument, Writing};
 use crate::backend::StorageGone;
 use crate::group::{gone_groups, prune_groups, require_nameable};
@@ -344,9 +346,18 @@ impl WorkspaceController {
         if event.about::<Workspace>().is_some_and(|(id, change)| {
             id == self.id() && change.update::<WorkspaceUpdateEvent>().is_some()
         }) {
-            self.workspace.reload().await?;
+            self.reload().await?;
         }
         Ok(())
+    }
+
+    /// Takes the workspace over as it is stored now (`LiveDocument::take_stored`): for a change
+    /// made elsewhere, announced or lost (issue 502).
+    ///
+    /// # Errors
+    /// Whatever the store reports; the live copy is then unchanged.
+    pub(super) async fn reload(&self) -> StoreResult<()> {
+        self.workspace.take_stored().await
     }
 
     /// The workspace as `ctx` reaches it, as stored now: read and cleared

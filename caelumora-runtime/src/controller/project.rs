@@ -239,9 +239,18 @@ impl ProjectController {
         if event.about::<Project>().is_some_and(|(id, change)| {
             id == self.id() && change.update::<ProjectUpdateEvent>().is_some()
         }) {
-            self.project.reload().await?;
+            self.reload().await?;
         }
         Ok(())
+    }
+
+    /// Takes the project over as it is stored now (`LiveDocument::take_stored`): for a change made
+    /// elsewhere, announced or lost (issue 502).
+    ///
+    /// # Errors
+    /// Whatever the store reports; the live copy is then unchanged.
+    pub(super) async fn reload(&self) -> StoreResult<()> {
+        self.project.take_stored().await
     }
 
     /// Applies `event` to the project on behalf of `ctx`: reached as the views reach it, stored,

@@ -81,9 +81,22 @@ kinds have no topic of their own.
 
 Each subscription is a broadcast channel of its own, of bounded capacity. A subscriber that falls
 too far behind loses the oldest events, and it is the subscriber that learns so (`Lagged`), not only
-the log; one that cannot catch up logs the loss and goes on. One that can takes the receiver itself:
-a running session that lost events looks at all its agents again (see
-[CHANNELS.md](CHANNELS.md)).
+the log. Every subscriber makes up for what it lost by reading anew what it keeps (issue 502) - a
+loss between instances will be the rule, not the exception:
+
+*   the `ControllerManager` reads every live agent, user, workspace and project controller again as
+    stored (see [STORAGE.md](STORAGE.md#following-changes));
+*   a running session follows every agent taking part, and looks at all of them again (see
+    [CHANNELS.md](CHANNELS.md)); its own document it does not read again, since a session runs in
+    one instance and its controller is the one writer of it there, which holds every change of it
+    live already;
+*   an approver denies the pending requests of every agent that no longer runs in its channel, and
+    decides the others again (see [APPROVALS.md](APPROVALS.md));
+*   the `CommandReaper` checks the commands, as at any event that may concern them;
+*   a stream sends its client a fresh snapshot (see [REST-SERVER.md](REST-SERVER.md#streams)).
+
+So only tests skip a loss: `EventSubscription::recv`, which logs it and goes on, is built for them
+alone (`test-support`).
 
 ### Publishing with attributes
 

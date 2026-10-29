@@ -1,3 +1,5 @@
+//! `AgentController`: the one writer of an agent's document in this instance (issue 121).
+
 use super::document::LiveDocument;
 use super::UserController;
 use arc_swap::Guard;
@@ -78,6 +80,15 @@ impl AgentController {
     /// is announced (`LiveDocument::take_over`).
     pub fn process_global_event(&self, event: &GlobalEvent) {
         self.agent.take_over(event);
+    }
+
+    /// Takes the agent over as it is stored now (`LiveDocument::take_stored`): for changes made
+    /// elsewhere whose announcements were lost (issue 502).
+    ///
+    /// # Errors
+    /// Whatever the store reports; the live agent is then unchanged.
+    pub(super) async fn reload(&self) -> StoreResult<()> {
+        self.agent.take_stored().await
     }
 }
 
