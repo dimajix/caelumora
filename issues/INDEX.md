@@ -191,6 +191,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [402](402-login-attempts-unlimited.md) | open | `/auth/login` takes any number of attempts from anyone, so passwords can be guessed without limit, and every attempt costs the server an Argon2 verification that a flood of requests turns into exhausted memory and CPU. |
 | [432](432-envelope-carries-whole-security-context.md) | done | An envelope carries the whole `SecurityContext` of its sender - owner, principal, roles, limiting roles - to every actor and every frontend it reaches, though a receiver needs only who began the chain, and the channel takes the roles in it on trust. |
 | [477](477-only-the-system-acts-as-the-system.md) | open | `OwnershipPolicy` allows everything to a context whose principal is the system, whoever its caller is, and `AgentManager::create` lets the system own an agent, which then acts with all the system's rights. |
+| [491](491-every-entity-has-an-owner.md) | open | `SecurityAttributes` defaults to the owner `ActorId::None`, which every seeded component bundle, personality and template without attributes gets, and which `unowned()` and the policies treat as the system's - though everything is to have an owner. |
 
 ## Audit
 
