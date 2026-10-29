@@ -1,13 +1,13 @@
 //! The `echo_tool` component: a tool that echoes its input, for testing.
 
-use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
-use crate::turn::Turn;
-use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
+use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -29,19 +29,28 @@ impl EchoToolProvider {
     /// # Errors
     /// `PromptError` if one of them cannot be had.
     pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
-        let tools = vec![described(prompts, NAMESPACE, ECHO_TOOL_KIND, Tool {
-            name: ECHO_TOOL_NAME.to_string(),
-            description: String::new(),
-            parameters: ToolParameters::object(
-                vec![("message", ToolParameters::string())],
-                vec!["message"],
-            ),
-            requires_approval: false,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: Default::default(),
-        }, ())?];
-        Ok(Self { description: tool_text(prompts, NAMESPACE, ECHO_TOOL_KIND, "description", ())?, tools })
+        let tools = vec![described(
+            prompts,
+            NAMESPACE,
+            ECHO_TOOL_KIND,
+            Tool {
+                name: ECHO_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    vec![("message", ToolParameters::string())],
+                    vec!["message"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: Default::default(),
+            },
+            (),
+        )?];
+        Ok(Self {
+            description: tool_text(prompts, NAMESPACE, ECHO_TOOL_KIND, "description", ())?,
+            tools,
+        })
     }
 }
 
@@ -55,7 +64,13 @@ impl ToolProvider for EchoToolProvider {
         self.tools.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(
+        &self,
+        name: &str,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
         if name == ECHO_TOOL_NAME {
             // The arguments themselves: classified as the turn (issue 168).
             Ok(ToolOutput::classified(params.clone(), turn.situation().label()))

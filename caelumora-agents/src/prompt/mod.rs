@@ -21,14 +21,17 @@ pub mod static_system_prompt_provider;
 pub mod tool_sets_prompt_provider;
 pub mod turn_context_provider;
 
-use caelumora_runtime::component::{ComponentContext, ComponentError, ComponentImpl, ComponentKind, ComponentRegistry, ComponentResult};
 use crate::situation::Situation;
-use caelumora_runtime::view::ViewError;
 use async_trait::async_trait;
-use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptTexts};
 use caelumora_model::store::StoreError;
+use caelumora_runtime::component::{
+    ComponentContext, ComponentError, ComponentImpl, ComponentKind, ComponentRegistry,
+    ComponentResult,
+};
+use caelumora_runtime::view::ViewError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
@@ -74,8 +77,11 @@ impl PromptPosition {
     pub fn of_params_or(params: &Value, default: Self) -> Result<Self, ComponentError> {
         match params.get("position") {
             None => Ok(default),
-            Some(value) => serde_json::from_value(value.clone())
-                .map_err(|_| ComponentError::InvalidConfig("parameter 'position' must be \"start\" or \"before_turn_input\"".to_string())),
+            Some(value) => serde_json::from_value(value.clone()).map_err(|_| {
+                ComponentError::InvalidConfig(
+                    "parameter 'position' must be \"start\" or \"before_turn_input\"".to_string(),
+                )
+            }),
         }
     }
 }
@@ -141,9 +147,13 @@ pub trait PromptProvider: Send + Sync + Debug {
 /// # Errors
 /// `ContextError::Component`, naming the component, if it failed and
 /// fails closed.
-pub(crate) async fn prompt_for(provider: &ComponentImpl<dyn PromptProvider>, situation: &Situation<'_>) -> Result<Option<Prompt>, ContextError> {
-    provider.apply_fail_policy(provider.get_prompt(situation).await)
-        .map_err(|cause| ContextError::Component { component: provider.id.clone(), cause: Box::new(cause) })
+pub(crate) async fn prompt_for(
+    provider: &ComponentImpl<dyn PromptProvider>,
+    situation: &Situation<'_>,
+) -> Result<Option<Prompt>, ContextError> {
+    provider.apply_fail_policy(provider.get_prompt(situation).await).map_err(|cause| {
+        ContextError::Component { component: provider.id.clone(), cause: Box::new(cause) }
+    })
 }
 
 /// Assembles what the model of an agent is given besides the conversation,
@@ -165,7 +175,10 @@ pub trait ContextProvider: Send + Sync + Debug {
     /// # Errors
     /// `ContextError` if what the model is to be given cannot be had - a
     /// prompt provider that fails closed.
-    async fn current_context(&self, situation: &Situation<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
+    async fn current_context(
+        &self,
+        situation: &Situation<'_>,
+    ) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
 }
 
 /// How an agent's model is to be given its context (issue 57): the profile
@@ -224,7 +237,11 @@ pub enum ContextError {
     Prompt(#[from] PromptError),
     /// A prompt provider that fails closed failed with `cause`.
     #[error("component '{component}' failed")]
-    Component { component: String, #[source] cause: Box<ContextError> },
+    Component {
+        component: String,
+        #[source]
+        cause: Box<ContextError>,
+    },
 }
 
 /// Registers the component kinds of this directory with `registry`, and the
@@ -260,20 +277,22 @@ mod tests {
     use caelumora_model::message::{Message, MessageEvent};
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::security::SecurityContext;
+    use caelumora_model::session::SessionId;
     use caelumora_model::store::Persistence;
     use caelumora_model::tool::Tool;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentFacets};
-    use caelumora_runtime::session::testing::{bare_channel, bare_session, detached_actor_runtime_in};
+    use caelumora_runtime::session::testing::{
+        bare_channel, bare_session, detached_actor_runtime_in,
+    };
     use caelumora_runtime::testing::TestRuntime;
-    use caelumora_model::session::SessionId;
+    use futures::stream;
     use futures::stream::BoxStream;
     use futures::StreamExt;
-    use std::sync::Arc;
-    use futures::stream;
     use std::fs;
+    use std::sync::Arc;
 
     /// A model whose profile names the variant `gemma4`, never asked.
     #[derive(Debug)]
@@ -281,14 +300,21 @@ mod tests {
 
     #[async_trait]
     impl LLMClient for Gemma {
-        async fn chat_completion(&self, _: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
+        async fn chat_completion(
+            &self,
+            _: &[Message],
+            _: &[Tool],
+        ) -> BoxStream<'static, LLMResult<MessageEvent>> {
             stream::empty().boxed()
         }
     }
 
     impl ModelProfileProvider for Gemma {
         fn profile(&self) -> ModelProfile {
-            ModelProfile { prompt_texts: Some(PromptVariant::new("gemma4").unwrap()), ..ModelProfile::default() }
+            ModelProfile {
+                prompt_texts: Some(PromptVariant::new("gemma4").unwrap()),
+                ..ModelProfile::default()
+            }
         }
     }
 
@@ -302,26 +328,58 @@ mod tests {
         fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator_tool:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
         let store = Persistence::in_memory();
         let mut registry = test_registry(&store);
-        registry.register(ComponentKind::new("gemma").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), |_, _| {
-            let model = Arc::new(Gemma);
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::<Gemma>::clone(&model));
-            facets.insert::<dyn ModelProfileProvider>(model);
-            Ok(facets)
-        });
-        let config = AppConfig { prompts: [("gemma4".to_string(), dir.path().to_path_buf())].into(), ..AppConfig::default() };
-        let runtime = TestRuntime { store, config, registry: Some(registry), plugins: vec![&TestAgents], ..Default::default() }.build();
+        registry.register(
+            ComponentKind::new("gemma")
+                .provides::<dyn LLMClient>()
+                .provides::<dyn ModelProfileProvider>(),
+            |_, _| {
+                let model = Arc::new(Gemma);
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn LLMClient>(Arc::<Gemma>::clone(&model));
+                facets.insert::<dyn ModelProfileProvider>(model);
+                Ok(facets)
+            },
+        );
+        let config = AppConfig {
+            prompts: [("gemma4".to_string(), dir.path().to_path_buf())].into(),
+            ..AppConfig::default()
+        };
+        let runtime = TestRuntime {
+            store,
+            config,
+            registry: Some(registry),
+            plugins: vec![&TestAgents],
+            ..Default::default()
+        }
+        .build();
 
-        let components = ComponentConfig { component_nodes: vec![
-            ComponentDescriptor::new("model", "gemma"),
-            ComponentDescriptor::new("time", CURRENT_TIME_PROMPT_PROVIDER_KIND),
-            ComponentDescriptor::new("calculator", CALCULATOR_TOOL_KIND),
-        ] };
+        let components = ComponentConfig {
+            component_nodes: vec![
+                ComponentDescriptor::new("model", "gemma"),
+                ComponentDescriptor::new("time", CURRENT_TIME_PROMPT_PROVIDER_KIND),
+                ComponentDescriptor::new("calculator", CALCULATOR_TOOL_KIND),
+            ],
+        };
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
-        let built = ComponentContainer::from_config(&components, &[TypeKey::of::<dyn PromptProvider>(), TypeKey::of::<dyn ToolProvider>()], runtime.component_registry(), &context).await.unwrap();
+        let built = ComponentContainer::from_config(
+            &components,
+            &[TypeKey::of::<dyn PromptProvider>(), TypeKey::of::<dyn ToolProvider>()],
+            runtime.component_registry(),
+            &context,
+        )
+        .await
+        .unwrap();
         let calculator = built.get_all::<dyn ToolProvider>(None).unwrap().remove(0);
-        assert_eq!(calculator.tools()[0].description, "Computes.", "the tool, in its model's variant");
-        assert_eq!(calculator.description(), "Evaluate mathematical expressions.", "what the variant leaves out, as the default");
+        assert_eq!(
+            calculator.tools()[0].description,
+            "Computes.",
+            "the tool, in its model's variant"
+        );
+        assert_eq!(
+            calculator.description(),
+            "Evaluate mathematical expressions.",
+            "what the variant leaves out, as the default"
+        );
 
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
@@ -330,9 +388,22 @@ mod tests {
         let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
         let situation = Situation::new(AgentId::new(), &work, &state, &agent_state, &actor_runtime);
         let time = built.get_all::<dyn PromptProvider>(None).unwrap().remove(0);
-        assert!(time.get_prompt(&situation).await.unwrap().text.starts_with("[Now]\n"), "the prompt part, too");
-        assert!(denied_result(&situation.texts()).contains("Declined."), "and what the work words itself, by its profile");
+        assert!(
+            time.get_prompt(&situation).await.unwrap().text.starts_with("[Now]\n"),
+            "the prompt part, too"
+        );
+        assert!(
+            denied_result(&situation.texts()).contains("Declined."),
+            "and what the work words itself, by its profile"
+        );
         let elsewhere = Work::default();
-        assert!(denied_result(&Situation::new(AgentId::new(), &elsewhere, &state, &agent_state, &actor_runtime).texts()).contains("The user declined"), "work of another profile, as it");
+        assert!(
+            denied_result(
+                &Situation::new(AgentId::new(), &elsewhere, &state, &agent_state, &actor_runtime)
+                    .texts()
+            )
+            .contains("The user declined"),
+            "work of another profile, as it"
+        );
     }
 }

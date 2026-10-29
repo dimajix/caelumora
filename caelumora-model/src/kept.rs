@@ -6,8 +6,8 @@
 //! document (issue 383).
 
 use crate::digest::Digest;
-use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
 
 /// Values by digest, each kept once.
 #[derive(Debug, Clone)]

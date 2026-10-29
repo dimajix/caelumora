@@ -1,19 +1,19 @@
 use crate::approval::ApprovalRule;
 use crate::command::default_commands;
+use crate::component::ComponentConfig;
 use crate::confidentiality::{Compartments, ConfidentialityPolicy, ConfidentialityRules};
 use crate::role::Roles;
-use std::collections::BTreeMap;
-use crate::component::ComponentConfig;
-use crate::security::{AllowAllPolicy, Memberships, OwnershipPolicy, AccessPolicy};
-use serde::Deserialize;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use crate::security::{AccessPolicy, AllowAllPolicy, Memberships, OwnershipPolicy};
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 use serde_saphyr::Options;
+use std::collections::BTreeMap;
+use std::fs;
 use std::io::Error;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -43,7 +43,10 @@ pub struct PersistenceConfig {
 /// memory, gone when the process ends.
 impl Default for PersistenceConfig {
     fn default() -> Self {
-        Self { entity_store: BackendConfig::new("memory", Value::Null), state_store: BackendConfig::new("memory", Value::Null) }
+        Self {
+            entity_store: BackendConfig::new("memory", Value::Null),
+            state_store: BackendConfig::new("memory", Value::Null),
+        }
     }
 }
 
@@ -298,7 +301,13 @@ pub struct AttachmentsConfig {
 
 impl Default for AttachmentsConfig {
     fn default() -> Self {
-        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, max_per_message: 10, keep_in: None, unclaimed_expire_secs: 3600, cache_bytes: 256 * 1024 * 1024 }
+        Self {
+            max_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_per_message: 10,
+            keep_in: None,
+            unclaimed_expire_secs: 3600,
+            cache_bytes: 256 * 1024 * 1024,
+        }
     }
 }
 
@@ -385,7 +394,9 @@ impl AppConfig {
             roles.check(&self.compartments).map_err(|e| ConfigError::Invalid(e.to_string()))?;
         }
         for rule in &self.approvals.rules {
-            rule.check_restricting().map_err(|e| ConfigError::Invalid(format!("an approval rule for `{}`: {e}", rule.matcher.tool)))?;
+            rule.check_restricting().map_err(|e| {
+                ConfigError::Invalid(format!("an approval rule for `{}`: {e}", rule.matcher.tool))
+            })?;
         }
         Ok(())
     }
@@ -430,13 +441,20 @@ persistence:
     type: memory
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.persistence.entity_store, BackendConfig::new("json", serde_json::json!({ "path": "local/entity_store" })));
+        assert_eq!(
+            config.persistence.entity_store,
+            BackendConfig::new("json", serde_json::json!({ "path": "local/entity_store" }))
+        );
         assert_eq!(config.persistence.state_store, BackendConfig::new("memory", Value::Null));
     }
 
     #[test]
     fn a_missing_section_takes_its_default() {
-        for config in [AppConfig::default(), AppConfig::from_yaml("{}").unwrap(), AppConfig::from_yaml("persistence: {}").unwrap()] {
+        for config in [
+            AppConfig::default(),
+            AppConfig::from_yaml("{}").unwrap(),
+            AppConfig::from_yaml("persistence: {}").unwrap(),
+        ] {
             assert_eq!(config.persistence.entity_store, BackendConfig::new("memory", Value::Null));
             assert_eq!(config.persistence.state_store, BackendConfig::new("memory", Value::Null));
             assert_eq!(config.secrets.providers, SecretsConfig::default().providers);
@@ -448,13 +466,25 @@ persistence:
     fn a_backend_is_named_by_its_type_and_keeps_its_parameters_for_its_factory() {
         let config = AppConfig::from_yaml("workspaces:\n  max_file_bytes: 1024\n  storage:\n    dev:\n      type: local\n      root: x\n      shell: true\n      destination: { level: internal }\n").expect("a local storage");
         assert_eq!(config.workspaces.max_file_bytes, 1024);
-        let expected = BackendConfig::new("local", serde_json::json!({ "root": "x", "shell": true, "destination": { "level": "internal" } }));
+        let expected = BackendConfig::new(
+            "local",
+            serde_json::json!({ "root": "x", "shell": true, "destination": { "level": "internal" } }),
+        );
         assert_eq!(config.workspaces.storage.get("dev"), Some(&expected));
         // What the parameters are is the factory's to say, when the runtime
         // is built: a type nobody registers is no error here.
-        let unknown = AppConfig::from_yaml("workspaces:\n  storage:\n    main:\n      type: nfs\n      rot: z\n").expect("read as it is written");
-        assert_eq!(unknown.workspaces.storage.get("main"), Some(&BackendConfig::new("nfs", serde_json::json!({ "rot": "z" }))));
-        assert!(AppConfig::from_yaml("workspaces:\n  storage:\n    main:\n      root: x\n").is_err(), "a type is needed");
+        let unknown = AppConfig::from_yaml(
+            "workspaces:\n  storage:\n    main:\n      type: nfs\n      rot: z\n",
+        )
+        .expect("read as it is written");
+        assert_eq!(
+            unknown.workspaces.storage.get("main"),
+            Some(&BackendConfig::new("nfs", serde_json::json!({ "rot": "z" })))
+        );
+        assert!(
+            AppConfig::from_yaml("workspaces:\n  storage:\n    main:\n      root: x\n").is_err(),
+            "a type is needed"
+        );
         let none = AppConfig::from_yaml("{}\n").expect("nothing configured");
         assert!(none.workspaces.storage.is_empty(), "no storage unless configured");
         assert_eq!(none.workspaces.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
@@ -462,10 +492,9 @@ persistence:
 
     #[test]
     fn an_unknown_key_is_an_error_naming_it() {
-        for yaml in [
-            "persistence:\n  entity_stor:\n    type: memory\n",
-            "auth:\n  token_lifetime: 60\n",
-        ] {
+        for yaml in
+            ["persistence:\n  entity_stor:\n    type: memory\n", "auth:\n  token_lifetime: 60\n"]
+        {
             let message = AppConfig::from_yaml(yaml).expect_err(yaml).to_string();
             assert!(message.contains("unknown field"), "{yaml:?} gave: {message}");
         }
@@ -480,7 +509,11 @@ persistence:
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml");
         let config = AppConfig::load(path).expect("examples/config.yaml is a valid configuration");
         assert_eq!(config.persistence.entity_store.kind, "json");
-        assert_eq!(config.seed, [PathBuf::from("examples/seed.yaml")], "the example seeds the demo data");
+        assert_eq!(
+            config.seed,
+            [PathBuf::from("examples/seed.yaml")],
+            "the example seeds the demo data"
+        );
     }
 
     #[test]
@@ -493,10 +526,13 @@ secrets:
     - type: env
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.secrets.providers, [
-            BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" })),
-            BackendConfig::new("env", Value::Null),
-        ]);
+        assert_eq!(
+            config.secrets.providers,
+            [
+                BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" })),
+                BackendConfig::new("env", Value::Null),
+            ]
+        );
     }
 
     #[test]
@@ -547,9 +583,18 @@ auth:
     fn only_true_and_false_are_booleans() {
         let config = AppConfig::from_yaml("workspaces:\n  storage:\n    main:\n      type: local\n      root: no\n      image: y\n      shell: true\n").unwrap();
         let params = &config.workspaces.storage["main"].params;
-        assert_eq!((params["root"].as_str(), params["image"].as_str(), params["shell"].as_bool()), (Some("no"), Some("y"), Some(true)), "kept as text, read as written");
-        assert!(AppConfig::from_yaml("auth:\n  secure_cookie: off\n").is_err(), "no boolean where one is needed");
-        assert!(!AppConfig::from_yaml("auth:\n  secure_cookie: false\n").unwrap().auth.secure_cookie);
+        assert_eq!(
+            (params["root"].as_str(), params["image"].as_str(), params["shell"].as_bool()),
+            (Some("no"), Some("y"), Some(true)),
+            "kept as text, read as written"
+        );
+        assert!(
+            AppConfig::from_yaml("auth:\n  secure_cookie: off\n").is_err(),
+            "no boolean where one is needed"
+        );
+        assert!(
+            !AppConfig::from_yaml("auth:\n  secure_cookie: false\n").unwrap().auth.secure_cookie
+        );
     }
 
     #[test]
@@ -567,10 +612,16 @@ auth:
     fn the_commands_default_to_the_builtin_ones_and_can_be_switched_off() {
         let expected = default_commands().component_nodes.len();
         assert_eq!(AppConfig::default().commands.component_nodes.len(), expected);
-        assert_eq!(AppConfig::from_yaml("persistence: {}").unwrap().commands.component_nodes.len(), expected);
+        assert_eq!(
+            AppConfig::from_yaml("persistence: {}").unwrap().commands.component_nodes.len(),
+            expected
+        );
 
         let config = AppConfig::from_yaml("commands: []\n").unwrap();
-        assert!(config.commands.component_nodes.is_empty(), "an explicit empty list means no global commands");
+        assert!(
+            config.commands.component_nodes.is_empty(),
+            "an explicit empty list means no global commands"
+        );
     }
 
     #[test]
@@ -578,17 +629,31 @@ auth:
         assert_eq!(AppConfig::default().server.address.to_string(), "127.0.0.1:3000");
         let config = AppConfig::from_yaml("server:\n  address: \"0.0.0.0:8080\"\n").unwrap();
         assert_eq!(config.server.address.to_string(), "0.0.0.0:8080");
-        assert!(AppConfig::from_yaml("server:\n  address: nowhere\n").is_err(), "an address that is none");
+        assert!(
+            AppConfig::from_yaml("server:\n  address: nowhere\n").is_err(),
+            "an address that is none"
+        );
     }
 
     #[test]
     fn compartments_are_checked_when_the_configuration_is_read() {
         use crate::confidentiality::Compartment;
-        let config = AppConfig::from_yaml("compartments:\n  - name: hr\n    reads: [finance]\n  - name: finance\n").unwrap();
-        assert!(config.compartments.may_read(&Compartment::new("hr"), &Compartment::new("finance")));
+        let config = AppConfig::from_yaml(
+            "compartments:\n  - name: hr\n    reads: [finance]\n  - name: finance\n",
+        )
+        .unwrap();
+        assert!(config
+            .compartments
+            .may_read(&Compartment::new("hr"), &Compartment::new("finance")));
         assert_eq!(AppConfig::default().compartments.names().count(), 0, "none unless configured");
-        assert!(AppConfig::from_yaml("compartments:\n  - name: hr\n    reads: [payroll]\n").is_err(), "reads what is not configured");
-        assert!(AppConfig::from_yaml("compartments:\n  - name: hr\n    read: [finance]\n").is_err(), "a misspelt key");
+        assert!(
+            AppConfig::from_yaml("compartments:\n  - name: hr\n    reads: [payroll]\n").is_err(),
+            "reads what is not configured"
+        );
+        assert!(
+            AppConfig::from_yaml("compartments:\n  - name: hr\n    read: [finance]\n").is_err(),
+            "a misspelt key"
+        );
     }
 
     #[test]
@@ -596,7 +661,15 @@ auth:
         let config = AppConfig::from_yaml("approvals:\n  rules:\n    - matcher: { tool: shell, arguments: { command: 'rm .*' } }\n      decision: deny\n    - matcher: { tool: '*' }\n      decision: ask\n").unwrap();
         assert_eq!(config.approvals.rules.len(), 2);
         assert!(AppConfig::default().approvals.rules.is_empty(), "none unless configured");
-        assert!(matches!(AppConfig::from_yaml("approvals:\n  rules:\n    - matcher: { tool: shell }\n      decision: allow\n"), Err(ConfigError::Invalid(_))), "the system does not allow");
+        assert!(
+            matches!(
+                AppConfig::from_yaml(
+                    "approvals:\n  rules:\n    - matcher: { tool: shell }\n      decision: allow\n"
+                ),
+                Err(ConfigError::Invalid(_))
+            ),
+            "the system does not allow"
+        );
         assert!(matches!(AppConfig::from_yaml("approvals:\n  rules:\n    - matcher: { tool: shell, arguments: { command: '(' } }\n      decision: deny\n"), Err(ConfigError::Invalid(_))), "a pattern that cannot be matched");
         assert!(AppConfig::from_yaml("approvals:\n  rule: []\n").is_err(), "a misspelt key");
     }
@@ -607,18 +680,40 @@ auth:
         let hr = RoleId::new();
         let roles = format!("roles:\n  - id: {hr}\n    name: hr\n    clearances:\n      - {{ level: confidential, compartment: hr }}\n");
         let config = AppConfig::from_yaml(&format!("{compartments}{roles}")).unwrap();
-        assert_eq!(config.roles.as_ref().map(|r| r.id_of("hr")), Some(Ok(hr)), "named, kept by its id");
-        assert!(AppConfig::default().roles.is_none(), "none unless configured: clearances are not checked");
+        assert_eq!(
+            config.roles.as_ref().map(|r| r.id_of("hr")),
+            Some(Ok(hr)),
+            "named, kept by its id"
+        );
+        assert!(
+            AppConfig::default().roles.is_none(),
+            "none unless configured: clearances are not checked"
+        );
 
         let typo = format!("roles:\n  - id: {hr}\n    name: hr\n    clearances:\n      - {{ level: confidential, compartment: hrr }}\n");
-        assert!(matches!(AppConfig::from_yaml(&format!("{compartments}{typo}")), Err(ConfigError::Invalid(_))), "a compartment not configured");
-        assert!(AppConfig::from_yaml(&format!("{compartments}roles:\n  - name: hr\n")).is_err(), "a role without an id");
+        assert!(
+            matches!(
+                AppConfig::from_yaml(&format!("{compartments}{typo}")),
+                Err(ConfigError::Invalid(_))
+            ),
+            "a compartment not configured"
+        );
+        assert!(
+            AppConfig::from_yaml(&format!("{compartments}roles:\n  - name: hr\n")).is_err(),
+            "a role without an id"
+        );
     }
 
     #[test]
     fn the_security_policy_defaults_to_ownership() {
         assert_eq!(AppConfig::default().security, SecurityConfig::Ownership);
-        assert_eq!(AppConfig::from_yaml("persistence: {}").unwrap().security, SecurityConfig::Ownership);
-        assert_eq!(AppConfig::from_yaml("security:\n  type: allow_all\n").unwrap().security, SecurityConfig::AllowAll);
+        assert_eq!(
+            AppConfig::from_yaml("persistence: {}").unwrap().security,
+            SecurityConfig::Ownership
+        );
+        assert_eq!(
+            AppConfig::from_yaml("security:\n  type: allow_all\n").unwrap().security,
+            SecurityConfig::AllowAll
+        );
     }
 }

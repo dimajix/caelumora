@@ -3,9 +3,9 @@
 //! says, not the plugin (`ComponentRegistry::default_kind`).
 
 use crate::client;
+use anyhow::Result;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
-use anyhow::Result;
 
 /// Models served by Ollama, as a plugin.
 #[derive(Debug, Default)]

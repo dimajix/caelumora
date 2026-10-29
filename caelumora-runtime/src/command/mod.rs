@@ -20,7 +20,9 @@ use crate::channel::{ChannelLoop, ChannelParticipant};
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
-use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, AccessPolicy};
+use caelumora_model::security::{
+    AccessPolicy, ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext,
+};
 use std::fmt::Debug;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -36,7 +38,11 @@ pub enum CommandError {
     #[error("Unknown command /{0}. Type /help for the list of commands.")]
     Unknown(String),
     #[error("You are not permitted to run /{name}.")]
-    Forbidden { name: String, #[source] refused: Refused },
+    Forbidden {
+        name: String,
+        #[source]
+        refused: Refused,
+    },
     #[error("/{command}: {reason}")]
     InvalidArguments { command: String, reason: String },
     #[error("/{command} failed: {reason}")]
@@ -96,7 +102,12 @@ pub trait ChannelCommandProvider: ProvidesCommands {
     /// `CommandError::InvalidArguments` for arguments it cannot use,
     /// `CommandError::Forbidden` if the action it performs is refused, and
     /// `CommandError::Failed` otherwise.
-    async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput>;
+    async fn execute(
+        &self,
+        name: &str,
+        args: &str,
+        context: &CommandContext<'_>,
+    ) -> CommandResult<CommandOutput>;
 }
 
 /// A command of a set, with the component that provides it and the facet
@@ -146,7 +157,10 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
     /// `ComponentError::InvalidConfig` if two of them provide the same name:
     /// that is a mistake in the configuration, and resolving it by order
     /// would silently hide one.
-    pub fn new(access_policy: Arc<dyn AccessPolicy>, providers: Vec<ComponentImpl<P>>) -> ComponentResult<Self> {
+    pub fn new(
+        access_policy: Arc<dyn AccessPolicy>,
+        providers: Vec<ComponentImpl<P>>,
+    ) -> ComponentResult<Self> {
         let mut entries: Vec<CommandEntry<P>> = Vec::new();
         for provider in providers {
             for command in provider.commands() {
@@ -156,7 +170,11 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
                         command.name, existing.component, provider.id
                     )));
                 }
-                entries.push(CommandEntry { command, component: provider.id.clone(), provider: Arc::clone(&provider.facet) });
+                entries.push(CommandEntry {
+                    command,
+                    component: provider.id.clone(),
+                    provider: Arc::clone(&provider.facet),
+                });
             }
         }
         Ok(Self { access_policy, entries })
@@ -177,7 +195,11 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
     /// dependencies, not the configuration, so it is no order to show. What
     /// `show` asks is the facet's: each facet's owner says how its commands
     /// are seen (`ShowCommand` for the channel's, issue 370).
-    pub async fn visible_by<'c>(&'c self, issuer: &SecurityContext, show: impl Fn(&'c Command) -> ActionType<'c>) -> Vec<Command> {
+    pub async fn visible_by<'c>(
+        &'c self,
+        issuer: &SecurityContext,
+        show: impl Fn(&'c Command) -> ActionType<'c>,
+    ) -> Vec<Command> {
         let mut visible = Vec::new();
         for entry in &self.entries {
             if self.access_policy.check(issuer, show(&entry.command)).await {
@@ -210,8 +232,15 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
         let Some(entry) = entry else {
             return Err(CommandError::Unknown(name.to_string()));
         };
-        self.access_policy.require(issuer, show(&entry.command), |_| CommandError::Unknown(name.to_string())).await?;
-        self.access_policy.require(issuer, execute(&entry.command), |refused| CommandError::Forbidden { name: name.to_string(), refused }).await?;
+        self.access_policy
+            .require(issuer, show(&entry.command), |_| CommandError::Unknown(name.to_string()))
+            .await?;
+        self.access_policy
+            .require(issuer, execute(&entry.command), |refused| CommandError::Forbidden {
+                name: name.to_string(),
+                refused,
+            })
+            .await?;
         Ok(entry)
     }
 }
@@ -223,7 +252,11 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
 impl CommandExecutor<dyn ChannelCommandProvider> {
     /// The commands `issuer` may see in the channel with `channel`
     /// attributes (`ShowCommand`), sorted by name.
-    pub async fn visible(&self, issuer: &SecurityContext, channel: &SecurityAttributes) -> Vec<Command> {
+    pub async fn visible(
+        &self,
+        issuer: &SecurityContext,
+        channel: &SecurityAttributes,
+    ) -> Vec<Command> {
         self.visible_by(issuer, |command| ActionType::ShowCommand { command, channel }).await
     }
 
@@ -233,14 +266,21 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
     /// `CommandError::Empty` for an empty name; `Unknown` if there is no such
     /// command or the issuer may not see it; `Forbidden` if they may see but
     /// not run it; otherwise whatever the command reports.
-    pub async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
+    pub async fn execute(
+        &self,
+        name: &str,
+        args: &str,
+        context: &CommandContext<'_>,
+    ) -> CommandResult<CommandOutput> {
         let channel = context.channel.security_attributes();
-        let entry = self.admit(
-            name,
-            &context.issuer.security_context(),
-            |command| ActionType::ShowCommand { command, channel: &channel },
-            |command| ActionType::ExecuteCommand { command, channel: &channel },
-        ).await?;
+        let entry = self
+            .admit(
+                name,
+                &context.issuer.security_context(),
+                |command| ActionType::ShowCommand { command, channel: &channel },
+                |command| ActionType::ExecuteCommand { command, channel: &channel },
+            )
+            .await?;
         entry.provider.execute(name, args, context).await
     }
 }
@@ -255,14 +295,28 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
 /// `CommandError::InvalidArguments` naming the handles of the participants,
 /// if `wanted` names none, or those it names, if it names several: nobody
 /// is picked.
-pub(crate) fn named_participant(command: &str, wanted: &str, channel: &ChannelLoop) -> CommandResult<ChannelParticipant> {
-    let invalid = |reason: String| CommandError::InvalidArguments { command: command.to_string(), reason };
+pub(crate) fn named_participant(
+    command: &str,
+    wanted: &str,
+    channel: &ChannelLoop,
+) -> CommandResult<ChannelParticipant> {
+    let invalid =
+        |reason: String| CommandError::InvalidArguments { command: command.to_string(), reason };
     match channel.participants_named(wanted).as_slice() {
         [one] => Ok(one.clone()),
         [] => {
-            let mut handles: Vec<String> = channel.participants().into_iter().filter_map(|m| m.handle).map(|h| format!("@{h}")).collect();
+            let mut handles: Vec<String> = channel
+                .participants()
+                .into_iter()
+                .filter_map(|m| m.handle)
+                .map(|h| format!("@{h}"))
+                .collect();
             handles.sort();
-            Err(invalid(format!("nobody '{}' in this channel; the participants are {}", wanted, names(&handles))))
+            Err(invalid(format!(
+                "nobody '{}' in this channel; the participants are {}",
+                wanted,
+                names(&handles)
+            )))
         }
         several => {
             let several: Vec<String> = several.iter().map(|m| m.name.to_string()).collect();
@@ -298,31 +352,62 @@ mod tests {
 
     impl ProvidesCommands for Named {
         fn commands(&self) -> Vec<Command> {
-            vec![Command { name: self.0.to_string(), description: String::new(), usage: None, owners_only: false }]
+            vec![Command {
+                name: self.0.to_string(),
+                description: String::new(),
+                usage: None,
+                owners_only: false,
+            }]
         }
     }
 
     #[async_trait]
     impl ChannelCommandProvider for Named {
-        async fn execute(&self, _name: &str, _args: &str, _context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
+        async fn execute(
+            &self,
+            _name: &str,
+            _args: &str,
+            _context: &CommandContext<'_>,
+        ) -> CommandResult<CommandOutput> {
             Ok(CommandOutput::private(""))
         }
     }
 
     fn provider(id: &str, command: &'static str) -> ComponentImpl<dyn ChannelCommandProvider> {
-        ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet: Arc::new(Named(command)) }
+        ComponentImpl {
+            id: id.to_string(),
+            fail_policy: ComponentFailPolicy::FailOpen,
+            facet: Arc::new(Named(command)),
+        }
     }
 
     #[tokio::test]
     async fn two_components_with_the_same_command_are_a_configuration_error() {
         let access_policy = Arc::new(AllowAllPolicy::new());
-        let error = CommandExecutor::new(Arc::<AllowAllPolicy>::clone(&access_policy), vec![provider("help", "help"), provider("my-help", "help")])
-            .expect_err("the second /help would be hidden by the first");
+        let error = CommandExecutor::new(
+            Arc::<AllowAllPolicy>::clone(&access_policy),
+            vec![provider("help", "help"), provider("my-help", "help")],
+        )
+        .expect_err("the second /help would be hidden by the first");
         let message = error.to_string();
-        assert!(message.contains("/help") && message.contains("'help'") && message.contains("'my-help'"), "{message}");
+        assert!(
+            message.contains("/help")
+                && message.contains("'help'")
+                && message.contains("'my-help'"),
+            "{message}"
+        );
 
-        let executor = CommandExecutor::new(access_policy, vec![provider("wakeup", "wakeup"), provider("help", "help")]).unwrap();
-        let names: Vec<String> = executor.visible(&SecurityContext::default(), &SecurityAttributes::default()).await.into_iter().map(|c| c.name).collect();
+        let executor = CommandExecutor::new(
+            access_policy,
+            vec![provider("wakeup", "wakeup"), provider("help", "help")],
+        )
+        .unwrap();
+        let names: Vec<String> = executor
+            .visible(&SecurityContext::default(), &SecurityAttributes::default())
+            .await
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
         assert_eq!(names, vec!["help", "wakeup"], "sorted by name");
     }
 

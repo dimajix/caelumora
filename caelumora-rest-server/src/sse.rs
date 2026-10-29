@@ -20,16 +20,16 @@ use axum::response::sse::Event;
 use futures::stream::{self, Stream, StreamExt};
 use serde::Serialize;
 use std::convert::Infallible;
+use std::future;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
+use tokio::time;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
-use std::future;
-use tokio::time;
 
 /// How long a client waits before reconnecting after the stream broke. Sent
 /// as the SSE `retry` field, because the browser default (3-5 seconds,
@@ -52,7 +52,10 @@ fn expired_event() -> Event {
 /// `events`, bounded by the lifetime of the token that authenticated the
 /// request: preceded by the reconnect delay, and ended by an `expired` event
 /// shortly before the token is no longer valid.
-pub fn bounded_by_token<S>(user: &AuthenticatedUser, events: S) -> impl Stream<Item = Result<Event, Infallible>> + Send
+pub fn bounded_by_token<S>(
+    user: &AuthenticatedUser,
+    events: S,
+) -> impl Stream<Item = Result<Event, Infallible>> + Send
 where
     S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
 {
@@ -61,7 +64,8 @@ where
     // Subtracting the margin would leave a stream so short that the client
     // would reconnect into another one just as short, over and over until the
     // token finally expired.
-    let lifetime = if remaining > 2 * EXPIRY_MARGIN { remaining - EXPIRY_MARGIN } else { remaining };
+    let lifetime =
+        if remaining > 2 * EXPIRY_MARGIN { remaining - EXPIRY_MARGIN } else { remaining };
 
     // Whether the stream ended because of the deadline or by itself - only
     // the first is an expiry, and only it may tell a client to reconnect.
@@ -127,12 +131,17 @@ where
     F: Future<Output = Option<V>> + Send,
 {
     let snapshot = Arc::new(snapshot);
-    let first = if with_snapshot { snapshot().await.map(|value| named_event("snapshot", &value)) } else { None };
+    let first = if with_snapshot {
+        snapshot().await.map(|value| named_event("snapshot", &value))
+    } else {
+        None
+    };
     let resync = with_snapshot.then_some(move || {
         let snapshot = Arc::clone(&snapshot);
         async move { snapshot().await.map(|value| named_event("snapshot", &value)) }
     });
-    let updates = resync_on_lag(receiver, what, resync).take_until(shutdown.clone().cancelled_owned());
+    let updates =
+        resync_on_lag(receiver, what, resync).take_until(shutdown.clone().cancelled_owned());
     bounded_by_token(user, stream::iter(first.map(Ok)).chain(updates))
 }
 
@@ -166,7 +175,9 @@ where
                         Some(snapshot) => snapshot().await,
                         None => None,
                     };
-                    Ok(resynced.unwrap_or_else(|| Event::default().comment(format!("{} events lost", lost))))
+                    Ok(resynced.unwrap_or_else(|| {
+                        Event::default().comment(format!("{} events lost", lost))
+                    }))
                 }
             }
         }
@@ -176,17 +187,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body;
     use axum::response::{IntoResponse, Sse};
     use caelumora_model::actor::ActorId;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
     use chrono::Utc;
     use tokio::time::Instant;
-    use axum::body;
 
     fn user(expires_in: i64) -> AuthenticatedUser {
         let id = UserId::new();
-        let context = SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
+        let context =
+            SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         AuthenticatedUser { id, context, expires_at: Utc::now().timestamp() + expires_in }
     }
 
@@ -216,21 +228,39 @@ mod tests {
         let body = wire(&user(600), events).await;
 
         assert!(body.contains("data: one"));
-        assert!(!body.contains("expired"), "the token is still valid, the stream just ended: {body}");
+        assert!(
+            !body.contains("expired"),
+            "the token is still valid, the stream just ended: {body}"
+        );
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_stream_ends_as_the_server_shuts_down() {
         let shutdown = CancellationToken::new();
         let started = Instant::now();
-        let ending = { let shutdown = shutdown.clone(); async move { time::sleep(Duration::from_secs(1)).await; shutdown.cancel() } };
+        let ending = {
+            let shutdown = shutdown.clone();
+            async move {
+                time::sleep(Duration::from_secs(1)).await;
+                shutdown.cancel()
+            }
+        };
         let user = user(600);
         let (_still_sending, receiver) = broadcast::channel::<u32>(1);
-        let events = stream(&user, &shutdown, false, receiver, "test".to_string(), || async { None::<u32> }).await;
+        let events =
+            stream(&user, &shutdown, false, receiver, "test".to_string(), || async { None::<u32> })
+                .await;
         let (body, ()) = tokio::join!(wire(&user, events), ending);
 
-        assert_eq!(started.elapsed(), Duration::from_secs(1), "at once, its token still valid (issue 297)");
-        assert!(!body.contains("expired"), "not told to reconnect at once, to a server going away: {body}");
+        assert_eq!(
+            started.elapsed(),
+            Duration::from_secs(1),
+            "at once, its token still valid (issue 297)"
+        );
+        assert!(
+            !body.contains("expired"),
+            "not told to reconnect at once, to a server going away: {body}"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -248,9 +278,11 @@ mod tests {
             tx.send(n).unwrap();
         }
         drop(tx);
-        let snapshot = with_snapshot.then_some(|| async { Some(Event::default().event("snapshot").data("state")) });
+        let snapshot = with_snapshot
+            .then_some(|| async { Some(Event::default().event("snapshot").data("state")) });
         let events = resync_on_lag(rx, "test".to_string(), snapshot);
-        let body = body::to_bytes(Sse::new(events).into_response().into_body(), usize::MAX).await.unwrap();
+        let body =
+            body::to_bytes(Sse::new(events).into_response().into_body(), usize::MAX).await.unwrap();
         String::from_utf8(body.to_vec()).unwrap()
     }
 

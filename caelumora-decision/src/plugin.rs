@@ -1,11 +1,11 @@
 //! How decision models are joined to the runtime (issue 403): by the
 //! component kind `decision_policy`.
 
-use crate::{NAMESPACE, PROMPTS};
 use crate::policy;
+use crate::{NAMESPACE, PROMPTS};
+use anyhow::Result;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
-use anyhow::Result;
 
 /// Decision models, as a plugin.
 #[derive(Debug, Default)]

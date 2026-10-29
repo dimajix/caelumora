@@ -1,3 +1,12 @@
+use super::document::{LiveDocument, Writing};
+use crate::backend::StorageGone;
+use crate::group::{prune_gone_groups, require_nameable};
+use crate::terminal::{Shell, Terminal, TerminalProvider};
+use crate::view::{channel_reading, ChannelReader};
+use crate::workspace::reaper::scope_of;
+use crate::workspace::{
+    require_classification, require_write, store_error, WorkspaceError, WorkspaceResult,
+};
 use arc_swap::Guard;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
@@ -5,19 +14,14 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessQuestions, AclEntry, Grant, SecurityContext, AccessPolicy, Subject};
+use caelumora_model::security::{
+    AccessPolicy, AccessQuestions, AclEntry, Grant, SecurityContext, Subject,
+};
 use caelumora_model::session::{Channel, Session};
 use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt, Updatable};
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
 use std::sync::Arc;
 use tracing::warn;
-use crate::backend::StorageGone;
-use crate::group::{prune_gone_groups, require_nameable};
-use crate::terminal::{Shell, Terminal, TerminalProvider};
-use crate::view::{channel_reading, ChannelReader};
-use crate::workspace::reaper::scope_of;
-use super::document::{LiveDocument, Writing};
-use crate::workspace::{require_classification, require_write, store_error, WorkspaceError, WorkspaceResult};
 
 /// The live workspace in this instance (issue 344), shared by everything
 /// that uses it - a workspace of its owner's or the global scope may be
@@ -54,9 +58,21 @@ pub struct WorkspaceController {
 impl WorkspaceController {
     /// The live `workspace`, whose files lie in `provider`. Made by the
     /// `ControllerManager`, which keeps one per workspace.
-    pub(crate) fn new(workspace: Workspace, provider: Option<Arc<dyn TerminalProvider>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+    pub(crate) fn new(
+        workspace: Workspace,
+        provider: Option<Arc<dyn TerminalProvider>>,
+        event_publisher: Arc<dyn EventPublisher>,
+        stores: &EntityStores,
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+    ) -> Self {
         Self {
-            workspace: LiveDocument::new(workspace.id, workspace, Arc::clone(&stores.workspaces), event_publisher),
+            workspace: LiveDocument::new(
+                workspace.id,
+                workspace,
+                Arc::clone(&stores.workspaces),
+                event_publisher,
+            ),
             provider,
             groups: Arc::clone(&stores.groups),
             access_policy,
@@ -87,7 +103,11 @@ impl WorkspaceController {
     /// `NotFound` if they do not reach it, so that nothing can be probed; `ReadOnly` if they may
     /// not change its files where `need` asks to; `StorageGone`; a `TerminalError` of reaching its
     /// place; or whatever else the store reports.
-    pub async fn terminal(&self, ctx: &SecurityContext, need: Grant) -> WorkspaceResult<Arc<dyn Terminal>> {
+    pub async fn terminal(
+        &self,
+        ctx: &SecurityContext,
+        need: Grant,
+    ) -> WorkspaceResult<Arc<dyn Terminal>> {
         let workspace = self.reached(ctx).await?;
         if need == Grant::Write {
             require_write(self.access_policy.as_ref(), ctx, &workspace).await?;
@@ -108,12 +128,24 @@ impl WorkspaceController {
     ///
     /// # Errors
     /// Whatever reading the workspace reports, other than its absence.
-    pub(crate) async fn usable_in(&self, ctx: &SecurityContext, session: &Session, channel: &Channel) -> WorkspaceResult<Option<Workspace>> {
-        let takes_part = channel.participants.iter().any(|participant| participant.actor_id() == ctx.caller_id);
-        if session.workspace != Some(self.id()) || channel.session_id != session.id || !channel.uses_workspace || !takes_part {
+    pub(crate) async fn usable_in(
+        &self,
+        ctx: &SecurityContext,
+        session: &Session,
+        channel: &Channel,
+    ) -> WorkspaceResult<Option<Workspace>> {
+        let takes_part =
+            channel.participants.iter().any(|participant| participant.actor_id() == ctx.caller_id);
+        if session.workspace != Some(self.id())
+            || channel.session_id != session.id
+            || !channel.uses_workspace
+            || !takes_part
+        {
             return Ok(None);
         }
-        let Some(workspace) = self.workspace.reached(&SecurityContext::system()).await.optional()? else {
+        let Some(workspace) =
+            self.workspace.reached(&SecurityContext::system()).await.optional()?
+        else {
             warn!(session = %session.id, workspace = %self.id(), "The workspace attached to a session is gone");
             return Ok(None);
         };
@@ -125,7 +157,8 @@ impl WorkspaceController {
             return Ok(None);
         }
         let (inside, outside) = (&workspace.classification, &channel.classification);
-        let flows = self.confidentiality.may_publish(ctx, inside, outside) && self.confidentiality.may_publish(ctx, outside, inside);
+        let flows = self.confidentiality.may_publish(ctx, inside, outside)
+            && self.confidentiality.may_publish(ctx, outside, inside);
         Ok(flows.then_some(workspace))
     }
 
@@ -135,7 +168,13 @@ impl WorkspaceController {
     ///
     /// # Errors
     /// What `usable_in_channel` reports, `StorageGone`, or a `TerminalError` of reaching its place.
-    pub(crate) async fn terminal_in(&self, ctx: &SecurityContext, session: &Session, channel: &Channel, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+    pub(crate) async fn terminal_in(
+        &self,
+        ctx: &SecurityContext,
+        session: &Session,
+        channel: &Channel,
+        need: Grant,
+    ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let workspace = self.usable_in_channel(ctx, session, channel, need).await?;
         let terminal = self.provider(&workspace)?.terminal_for(self.id()).await?;
         Ok((workspace, terminal))
@@ -149,7 +188,12 @@ impl WorkspaceController {
     ///
     /// # Errors
     /// What `terminal_in` reports.
-    pub(crate) async fn shell_in(&self, ctx: &SecurityContext, session: &Session, channel: &Channel) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+    pub(crate) async fn shell_in(
+        &self,
+        ctx: &SecurityContext,
+        session: &Session,
+        channel: &Channel,
+    ) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
         let (workspace, terminal) = self.terminal_in(ctx, session, channel, Grant::Write).await?;
         let shell = terminal.shell(&scope_of(channel.id));
         Ok((workspace, shell))
@@ -166,19 +210,42 @@ impl WorkspaceController {
     /// `NotUsableInChannel` if they may not use it there, `ReadOnly` if they
     /// may not change its files where `need` asks to, or what the store
     /// reports.
-    pub(crate) async fn usable_in_channel(&self, ctx: &SecurityContext, session: &Session, channel: &Channel, need: Grant) -> WorkspaceResult<Workspace> {
+    pub(crate) async fn usable_in_channel(
+        &self,
+        ctx: &SecurityContext,
+        session: &Session,
+        channel: &Channel,
+        need: Grant,
+    ) -> WorkspaceResult<Workspace> {
         if !self.access_policy.may_read_session(ctx, &session.security_attributes).await {
             return Err(WorkspaceError::NotUsableInChannel);
         }
-        let at = Place { channel: channel.id, classification: channel.classification.clone(), session: SessionPrivacy::of(session) };
+        let at = Place {
+            channel: channel.id,
+            classification: channel.classification.clone(),
+            session: SessionPrivacy::of(session),
+        };
         let reader = match ctx.caller_id {
             ActorId::Agent(_) => ChannelReader::From(&at),
             _ => ChannelReader::Cleared,
         };
-        if channel_reading(self.access_policy.as_ref(), self.confidentiality.as_ref(), ctx, &channel.security_attributes, &at, reader).await.is_none() {
+        if channel_reading(
+            self.access_policy.as_ref(),
+            self.confidentiality.as_ref(),
+            ctx,
+            &channel.security_attributes,
+            &at,
+            reader,
+        )
+        .await
+        .is_none()
+        {
             return Err(WorkspaceError::NotUsableInChannel);
         }
-        let workspace = self.usable_in(ctx, session, channel).await?.ok_or(WorkspaceError::NotUsableInChannel)?;
+        let workspace = self
+            .usable_in(ctx, session, channel)
+            .await?
+            .ok_or(WorkspaceError::NotUsableInChannel)?;
         if need == Grant::Write {
             require_write(self.access_policy.as_ref(), ctx, &workspace).await?;
         }
@@ -197,8 +264,13 @@ impl WorkspaceController {
     ///
     /// # Errors
     /// As [`Self::update`].
-    pub async fn update_description(&self, ctx: &SecurityContext, description: Option<&str>) -> WorkspaceResult<()> {
-        self.update(ctx, WorkspaceUpdateEvent::DescriptionChanged(description.map(String::from))).await
+    pub async fn update_description(
+        &self,
+        ctx: &SecurityContext,
+        description: Option<&str>,
+    ) -> WorkspaceResult<()> {
+        self.update(ctx, WorkspaceUpdateEvent::DescriptionChanged(description.map(String::from)))
+            .await
     }
 
     /// Reclassifies the workspace as a whole: lowering releases every file
@@ -207,7 +279,11 @@ impl WorkspaceController {
     ///
     /// # Errors
     /// As [`Self::update`].
-    pub async fn update_classification(&self, ctx: &SecurityContext, classification: Classification) -> WorkspaceResult<()> {
+    pub async fn update_classification(
+        &self,
+        ctx: &SecurityContext,
+        classification: Classification,
+    ) -> WorkspaceResult<()> {
         self.update(ctx, WorkspaceUpdateEvent::ClassificationChanged(classification)).await
     }
 
@@ -223,7 +299,11 @@ impl WorkspaceController {
     /// `PermissionDenied` for anyone but its owner, `Validation` for an
     /// entry that names an agent, the system or nobody, or a group the
     /// caller cannot read.
-    pub async fn update_access(&self, ctx: &SecurityContext, acl: Vec<AclEntry>) -> WorkspaceResult<()> {
+    pub async fn update_access(
+        &self,
+        ctx: &SecurityContext,
+        acl: Vec<AclEntry>,
+    ) -> WorkspaceResult<()> {
         let mut writing = self.workspace.write().await;
         let workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         self.store_access(ctx, &writing, workspace, acl).await
@@ -235,7 +315,12 @@ impl WorkspaceController {
     ///
     /// # Errors
     /// As [`Self::update_access`].
-    pub async fn share(&self, ctx: &SecurityContext, subject: Subject, grant: Grant) -> WorkspaceResult<()> {
+    pub async fn share(
+        &self,
+        ctx: &SecurityContext,
+        subject: Subject,
+        grant: Grant,
+    ) -> WorkspaceResult<()> {
         let mut writing = self.workspace.write().await;
         let workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         let mut acl = workspace.security_attributes.acl.clone();
@@ -254,7 +339,9 @@ impl WorkspaceController {
     /// # Errors
     /// Whatever the store reports; the live copy is then unchanged.
     pub async fn process_global_event(&self, event: &GlobalEvent) -> StoreResult<()> {
-        if event.about::<Workspace>().is_some_and(|(id, change)| id == self.id() && change.update::<WorkspaceUpdateEvent>().is_some()) {
+        if event.about::<Workspace>().is_some_and(|(id, change)| {
+            id == self.id() && change.update::<WorkspaceUpdateEvent>().is_some()
+        }) {
             self.workspace.reload().await?;
         }
         Ok(())
@@ -288,12 +375,22 @@ impl WorkspaceController {
     /// `NotFound` if the caller does not reach it, `Invalid` if what `event` says does not fit,
     /// `StorageGone` if its storage is no longer configured, `ClassificationRefused`,
     /// `StorageNotCleared` or `NotCleared` for a classification, or whatever the store reports.
-    async fn update(&self, ctx: &SecurityContext, event: WorkspaceUpdateEvent) -> WorkspaceResult<()> {
+    async fn update(
+        &self,
+        ctx: &SecurityContext,
+        event: WorkspaceUpdateEvent,
+    ) -> WorkspaceResult<()> {
         let mut writing = self.workspace.write().await;
         let mut workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         if let WorkspaceUpdateEvent::ClassificationChanged(classification) = &event {
             let provider = self.provider(&workspace)?;
-            require_classification(self.confidentiality.as_ref(), ctx, &workspace.storage, provider.as_ref(), classification)?;
+            require_classification(
+                self.confidentiality.as_ref(),
+                ctx,
+                &workspace.storage,
+                provider.as_ref(),
+                classification,
+            )?;
         }
         workspace.apply(&event)?;
         let workspace = self.store(ctx, &writing, workspace).await?;
@@ -304,8 +401,15 @@ impl WorkspaceController {
     /// Gives the reached `workspace` the access list `acl`, as
     /// `update_access` says, under `writing`. Announced without the list
     /// (`WorkspaceUpdateEvent::AccessChanged`).
-    async fn store_access(&self, ctx: &SecurityContext, writing: &Writing<'_, Workspace>, mut workspace: Workspace, acl: Vec<AclEntry>) -> WorkspaceResult<()> {
-        require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
+    async fn store_access(
+        &self,
+        ctx: &SecurityContext,
+        writing: &Writing<'_, Workspace>,
+        mut workspace: Workspace,
+        acl: Vec<AclEntry>,
+    ) -> WorkspaceResult<()> {
+        require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl)
+            .await?;
         workspace.security_attributes.acl = acl;
         let workspace = self.store(ctx, writing, workspace).await?;
         writing.announce_update(&WorkspaceUpdateEvent::AccessChanged, &workspace);
@@ -315,7 +419,12 @@ impl WorkspaceController {
     /// Stores `workspace` as changed by `ctx` under `writing` - its access
     /// list without the entries naming a group that is gone (issue 347) -
     /// and takes it over live.
-    async fn store(&self, ctx: &SecurityContext, writing: &Writing<'_, Workspace>, mut workspace: Workspace) -> WorkspaceResult<Arc<Workspace>> {
+    async fn store(
+        &self,
+        ctx: &SecurityContext,
+        writing: &Writing<'_, Workspace>,
+        mut workspace: Workspace,
+    ) -> WorkspaceResult<Arc<Workspace>> {
         prune_gone_groups(self.groups.as_ref(), [&mut workspace.security_attributes.acl]).await;
         writing.store(ctx, workspace).await.map_err(store_error(self.id()))
     }

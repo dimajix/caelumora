@@ -4,11 +4,11 @@
 //! paths inside it - and logged with the endpoint, shown without
 //! credentials.
 
-use caelumora_runtime::terminal::{TerminalError, TerminalResult};
-use caelumora_runtime::remote::describe_request_error;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
+use caelumora_runtime::remote::describe_request_error;
+use caelumora_runtime::terminal::{TerminalError, TerminalResult};
 use reqwest::{Client as HttpClient, Method, RequestBuilder, Response, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use std::fmt;
@@ -59,13 +59,24 @@ impl Client {
     /// `Unavailable` for a URL that is none, or a client that cannot be
     /// made.
     pub(crate) fn new(endpoint: RemoteEndpoint, key: Key, direct: bool) -> TerminalResult<Self> {
-        let base = Url::parse(&endpoint.url).map_err(|_| TerminalError::Unavailable("the storage's endpoint is no URL".to_string()))?;
+        let base = Url::parse(&endpoint.url).map_err(|_| {
+            TerminalError::Unavailable("the storage's endpoint is no URL".to_string())
+        })?;
         if base.cannot_be_a_base() {
             return Err(TerminalError::Unavailable("the storage's endpoint is no URL".to_string()));
         }
         let builder = HttpClient::builder();
-        let http = match direct { true => builder.no_proxy(), false => builder }.build()
-            .map_err(|e| TerminalError::Unavailable(format!("no client for Open Terminal: {}", describe_request_error(e))))?;
+        let http = match direct {
+            true => builder.no_proxy(),
+            false => builder,
+        }
+        .build()
+        .map_err(|e| {
+            TerminalError::Unavailable(format!(
+                "no client for Open Terminal: {}",
+                describe_request_error(e)
+            ))
+        })?;
         Ok(Self { endpoint, base, key, http, used: Mutex::new(Instant::now()) })
     }
 
@@ -105,7 +116,9 @@ impl Client {
         build: impl FnOnce(RequestBuilder) -> RequestBuilder,
     ) -> TerminalResult<Response> {
         *self.used.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
-        let mut request = self.http.request(method, self.url(segments, query))
+        let mut request = self
+            .http
+            .request(method, self.url(segments, query))
             .timeout(self.endpoint.timeout_or(DEFAULT_TIMEOUT) + wait);
         let key = match &self.key {
             // The storage is the operator's, configured as the server's
@@ -131,7 +144,9 @@ impl Client {
         // 403 is a file the instance may not touch, not the key.
         if answer.status() == StatusCode::UNAUTHORIZED {
             warn!(endpoint = %self.endpoint.shown(), "Open Terminal refused the storage's key");
-            return Err(TerminalError::Unavailable("Open Terminal refused the storage's key".to_string()));
+            return Err(TerminalError::Unavailable(
+                "Open Terminal refused the storage's key".to_string(),
+            ));
         }
         Ok(answer)
     }
@@ -143,7 +158,12 @@ impl Client {
     /// not fit, naming what did not.
     pub(crate) async fn parsed<T: DeserializeOwned>(&self, answer: Response) -> TerminalResult<T> {
         let answer = self.success(answer)?;
-        let body = answer.bytes().await.map_err(|e| TerminalError::Unavailable(format!("Open Terminal's answer broke off: {}", describe_request_error(e))))?;
+        let body = answer.bytes().await.map_err(|e| {
+            TerminalError::Unavailable(format!(
+                "Open Terminal's answer broke off: {}",
+                describe_request_error(e)
+            ))
+        })?;
         serde_json::from_slice(&body).map_err(|e| {
             warn!(endpoint = %self.endpoint.shown(), "Open Terminal answered in a form not understood: {e}");
             TerminalError::Unavailable(format!("Open Terminal answered in a form not understood: {e}"))

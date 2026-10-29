@@ -1,45 +1,53 @@
 //! The `mcp_tool` component against an MCP server of the test's own, over streamable HTTP.
-#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test code: what fails here fails the test that runs it"
+)]
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use axum::Router;
+use caelumora_agents::testing::{offered_anywhere, TestAgents};
+use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::turn::Turn;
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_mcp::tool::MCP_TOOL_KIND;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
-use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
+use caelumora_model::channel::Channel;
+use caelumora_model::component::{
+    ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy,
+};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::channel::Channel;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
 use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_model::work::Work;
 use caelumora_runtime::agent::state::AgentStateHandle;
-use caelumora_agents::turn::Turn;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, BUNDLE_REF_KIND};
 use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
 use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
 use caelumora_runtime::testing::{asked_for, TestRuntime, World};
-use caelumora_agents::testing::{offered_anywhere, TestAgents};
-use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-use rmcp::transport::streamable_http_server::tower::{StreamableHttpServerConfig, StreamableHttpService};
+use rmcp::transport::streamable_http_server::tower::{
+    StreamableHttpServerConfig, StreamableHttpService,
+};
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use axum::Router;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use caelumora_model::work::Work;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct EchoArgs {
@@ -56,11 +64,17 @@ struct EchoServer {
 #[tool_router]
 impl EchoServer {
     #[tool(description = "Echoes the provided message back", annotations(read_only_hint = true))]
-    async fn echo(&self, Parameters(EchoArgs { message }): Parameters<EchoArgs>) -> Result<CallToolResult, McpError> {
+    async fn echo(
+        &self,
+        Parameters(EchoArgs { message }): Parameters<EchoArgs>,
+    ) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![ContentBlock::text(message)]))
     }
 
-    #[tool(description = "Forgets every message echoed so far", annotations(destructive_hint = true))]
+    #[tool(
+        description = "Forgets every message echoed so far",
+        annotations(destructive_hint = true)
+    )]
     async fn forget(&self) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![ContentBlock::text("forgotten")]))
     }
@@ -126,11 +140,28 @@ async fn provider(params: Value) -> Arc<dyn ToolProvider> {
 
 /// What `provider` gives for the call of its tool `name` with `params`, in
 /// a turn that reaches no channel.
-async fn executed(provider: &dyn ToolProvider, name: &str, params: Value) -> ToolResult<ToolOutput> {
+async fn executed(
+    provider: &dyn ToolProvider,
+    name: &str,
+    params: Value,
+) -> ToolResult<ToolOutput> {
     let mut state = AgentChannelState::default();
-    state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));
+    state.begin_turn(Work::new(
+        Default::default(),
+        None,
+        Default::default(),
+        Default::default(),
+        Default::default(),
+    ));
     let agent = AgentId::default();
-    let mut turn = Turn::of(agent, "test-agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+    let mut turn = Turn::of(
+        agent,
+        "test-agent".to_string(),
+        &mut state,
+        AgentStateHandle::detached(),
+        detached_actor_runtime(),
+    )
+    .expect("a turn was begun");
     provider.execute(name, &params, None, &mut turn).await
 }
 
@@ -138,7 +169,8 @@ async fn executed(provider: &dyn ToolProvider, name: &str, params: Value) -> Too
 async fn build_container(params: Value) -> ComponentContainer {
     let runtime_manager = runtime(&Persistence::in_memory());
     let registry = runtime_manager.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
+    let context =
+        ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -150,14 +182,28 @@ async fn build_container(params: Value) -> ComponentContainer {
         }],
     };
 
-    ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap()
+    ComponentContainer::from_config(
+        &config,
+        &[TypeKey::of::<dyn ToolProvider>()],
+        registry,
+        &context,
+    )
+    .await
+    .unwrap()
 }
 
 /// What a turn outside of a running session acts through: the runtime of
 /// an actor in a channel that is attached to no session, so it reaches none.
 fn detached_actor_runtime() -> ActorRuntime {
     let session = bare_session(SessionId::new());
-    let channel = Channel::build(session.id, ActorId::None, Name::new("detached").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
+    let channel = Channel::build(
+        session.id,
+        ActorId::None,
+        Name::new("detached").unwrap(),
+        Default::default(),
+        Classification::CHANNEL_DEFAULT,
+        None,
+    );
     detached_actor_runtime_in(runtime(&Persistence::in_memory()), session, channel)
 }
 
@@ -173,13 +219,30 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     assert!(provider.tools().is_empty(), "not discovered while built (issue 126)");
     assert_eq!(provider.description(), "The tools of the MCP server 'test-echo'.");
 
-    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2), "all of them, wherever");
+    assert_eq!(
+        offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()),
+        Ok(2),
+        "all of them, wherever"
+    );
     let tools = provider.tools();
-    assert_eq!(names(&tools), ["test-echo__echo", "test-echo__forget"], "as discovered when offered");
-    assert!(tools.iter().all(|t| t.requires_approval), "approval unless configured otherwise, read-only or not");
-    assert_eq!(provider.description(), "Echo messages back, for testing.", "what the server says of itself");
+    assert_eq!(
+        names(&tools),
+        ["test-echo__echo", "test-echo__forget"],
+        "as discovered when offered"
+    );
+    assert!(
+        tools.iter().all(|t| t.requires_approval),
+        "approval unless configured otherwise, read-only or not"
+    );
+    assert_eq!(
+        provider.description(),
+        "Echo messages back, for testing.",
+        "what the server says of itself"
+    );
 
-    let result = executed(provider.as_ref(), "test-echo__echo", json!({ "message": "hello mcp" })).await.unwrap();
+    let result = executed(provider.as_ref(), "test-echo__echo", json!({ "message": "hello mcp" }))
+        .await
+        .unwrap();
     assert_eq!(result.value, json!("hello mcp"));
     assert!(result.classification.is_none(), "an MCP server does not classify its results");
 }
@@ -193,13 +256,20 @@ async fn a_configured_approval_and_classification_reach_every_discovered_tool() 
         "endpoint": { "url": url },
         "requires_approval": false,
         "classification": { "level": "confidential" },
-    })).await;
+    }))
+    .await;
 
     let tools = offered_anywhere(provider.as_ref()).await.unwrap();
     assert!(!tools.is_empty(), "the server's tools are discovered");
-    assert!(tools.iter().all(|t| !t.requires_approval), "no tool of this server needs approval: {tools:?}");
+    assert!(
+        tools.iter().all(|t| !t.requires_approval),
+        "no tool of this server needs approval: {tools:?}"
+    );
     let confidential = Classification::general(Confidentiality::Confidential);
-    assert!(tools.iter().all(|t| t.classification.as_ref() == Some(&confidential)), "and so does the classification: {tools:?}");
+    assert!(
+        tools.iter().all(|t| t.classification.as_ref() == Some(&confidential)),
+        "and so does the classification: {tools:?}"
+    );
 }
 
 #[tokio::test]
@@ -207,7 +277,9 @@ async fn unless_read_only_the_tools_the_server_says_only_read_need_no_approval()
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let provider = provider(json!({ "endpoint": { "url": url }, "requires_approval": "unless_read_only" })).await;
+    let provider =
+        provider(json!({ "endpoint": { "url": url }, "requires_approval": "unless_read_only" }))
+            .await;
 
     let tools = offered_anywhere(provider.as_ref()).await.unwrap();
     let asks = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.requires_approval);
@@ -229,22 +301,27 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .component_bundles
         .create(
             &SecurityContext::default(),
-            &ComponentBundle::new(ScopedName::new("shared-echo", Scope::GlobalScope).unwrap(), ComponentConfig {
-                component_nodes: vec![ComponentDescriptor {
-                    id: "shared-echo".to_string(),
-                    kind: MCP_TOOL_KIND.to_string(),
-                    params: json!({ "endpoint": { "url": url } }),
-                    tags: vec![],
-                    fail_policy: ComponentFailPolicy::FailOpen,
-                }],
-            }, Default::default()),
+            &ComponentBundle::new(
+                ScopedName::new("shared-echo", Scope::GlobalScope).unwrap(),
+                ComponentConfig {
+                    component_nodes: vec![ComponentDescriptor {
+                        id: "shared-echo".to_string(),
+                        kind: MCP_TOOL_KIND.to_string(),
+                        params: json!({ "endpoint": { "url": url } }),
+                        tags: vec![],
+                        fail_policy: ComponentFailPolicy::FailOpen,
+                    }],
+                },
+                Default::default(),
+            ),
         )
         .await
         .unwrap();
 
     let runtime_manager = runtime(&store);
     let registry = runtime_manager.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
+    let context =
+        ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -258,8 +335,22 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     // Two independent containers (simulating two personalities, each with its own
     // SecurityContext) both referencing the same bundle by name.
-    let container_a = ComponentContainer::from_config(&ref_config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap();
-    let container_b = ComponentContainer::from_config(&ref_config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap();
+    let container_a = ComponentContainer::from_config(
+        &ref_config,
+        &[TypeKey::of::<dyn ToolProvider>()],
+        registry,
+        &context,
+    )
+    .await
+    .unwrap();
+    let container_b = ComponentContainer::from_config(
+        &ref_config,
+        &[TypeKey::of::<dyn ToolProvider>()],
+        registry,
+        &context,
+    )
+    .await
+    .unwrap();
 
     let provider_a = container_a.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
     let provider_b = container_b.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
@@ -280,10 +371,15 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     // Port 1 is reserved and nothing will ever listen there, guaranteeing a
     // connection failure without depending on OS-specific "closed port"
     // behavior.
-    let container = build_container(json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } })).await;
+    let container =
+        build_container(json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } })).await;
     let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
-    assert_eq!(offered_anywhere(providers[0].facet.as_ref()).await, Err("its server cannot be reached".to_string()), "its tool set says so, without the error (issue 32)");
+    assert_eq!(
+        offered_anywhere(providers[0].facet.as_ref()).await,
+        Err("its server cannot be reached".to_string()),
+        "its tool set says so, without the error (issue 32)"
+    );
     assert_eq!(providers[0].tools().len(), 0);
     assert_eq!(providers[0].description(), "The tools of the MCP server 'test-echo'.");
 }
@@ -293,7 +389,10 @@ async fn a_configured_description_replaces_what_the_server_says_of_itself() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let provider = provider(json!({ "endpoint": { "url": url }, "description": "Messages echoed by the test server." })).await;
+    let provider = provider(
+        json!({ "endpoint": { "url": url }, "description": "Messages echoed by the test server." }),
+    )
+    .await;
     offered_anywhere(provider.as_ref()).await.unwrap();
     assert_eq!(provider.description(), "Messages echoed by the test server.");
 }
@@ -310,13 +409,24 @@ async fn the_tools_follow_a_replaced_server_once_those_discovered_expired() {
     let kept = provider(json!({ "endpoint": { "url": url } })).await;
     let refreshed = provider(json!({ "endpoint": { "url": url, "refresh_secs": 0 } })).await;
     for provider in [&kept, &refreshed] {
-        assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| names(&tools)), Ok(vec!["test-echo__echo".to_string(), "test-echo__forget".to_string()]));
+        assert_eq!(
+            offered_anywhere(provider.as_ref()).await.map(|tools| names(&tools)),
+            Ok(vec!["test-echo__echo".to_string(), "test-echo__forget".to_string()])
+        );
     }
 
     replaced.store(true, Ordering::SeqCst);
-    assert_eq!(offered_anywhere(refreshed.as_ref()).await.map(|tools| names(&tools)), Ok(vec!["test-echo__echo".to_string()]), "discovered again");
+    assert_eq!(
+        offered_anywhere(refreshed.as_ref()).await.map(|tools| names(&tools)),
+        Ok(vec!["test-echo__echo".to_string()]),
+        "discovered again"
+    );
     assert_eq!(names(&refreshed.tools()), ["test-echo__echo"], "and so found by a call");
-    assert_eq!(offered_anywhere(kept.as_ref()).await.map(|tools| tools.len()), Ok(2), "kept for five minutes");
+    assert_eq!(
+        offered_anywhere(kept.as_ref()).await.map(|tools| tools.len()),
+        Ok(2),
+        "kept for five minutes"
+    );
 }
 
 /// Issue 126: a call of a tool the server no longer knows fails, and has
@@ -332,8 +442,14 @@ async fn a_tool_the_server_no_longer_knows_has_the_tools_discovered_again() {
 
     replaced.store(true, Ordering::SeqCst);
     let failed = executed(provider.as_ref(), "test-echo__forget", json!({})).await;
-    assert!(matches!(&failed, Err(ToolError::ExecutionFailed(why)) if why.contains("tool not found")), "{failed:?}");
-    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| names(&tools)), Ok(vec!["test-echo__echo".to_string()]));
+    assert!(
+        matches!(&failed, Err(ToolError::ExecutionFailed(why)) if why.contains("tool not found")),
+        "{failed:?}"
+    );
+    assert_eq!(
+        offered_anywhere(provider.as_ref()).await.map(|tools| names(&tools)),
+        Ok(vec!["test-echo__echo".to_string()])
+    );
 }
 
 /// Issue 126: a server that cannot be reached when its tools are first
@@ -344,11 +460,20 @@ async fn a_server_unreachable_at_first_is_followed_once_it_answers() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
-    let provider = provider(json!({ "endpoint": { "url": format!("http://{address}/mcp") } })).await;
-    assert_eq!(offered_anywhere(provider.as_ref()).await, Err("its server cannot be reached".to_string()));
+    let provider =
+        provider(json!({ "endpoint": { "url": format!("http://{address}/mcp") } })).await;
+    assert_eq!(
+        offered_anywhere(provider.as_ref()).await,
+        Err("its server cannot be reached".to_string())
+    );
 
-    let _server = serve(TcpListener::bind(address).await.unwrap(), Arc::new(AtomicBool::new(false)));
-    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2), "asked again");
+    let _server =
+        serve(TcpListener::bind(address).await.unwrap(), Arc::new(AtomicBool::new(false)));
+    assert_eq!(
+        offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()),
+        Ok(2),
+        "asked again"
+    );
     assert_eq!(provider.description(), "Echo messages back, for testing.");
 }
 
@@ -357,7 +482,9 @@ async fn a_server_unreachable_at_first_is_followed_once_it_answers() {
 #[tokio::test]
 async fn a_server_gone_leaves_the_tools_discovered_before() {
     let (addr, server) = start_test_server().await;
-    let provider = provider(json!({ "endpoint": { "url": format!("http://{addr}/mcp"), "refresh_secs": 0 } })).await;
+    let provider =
+        provider(json!({ "endpoint": { "url": format!("http://{addr}/mcp"), "refresh_secs": 0 } }))
+            .await;
     assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2));
 
     server.abort();
@@ -377,19 +504,34 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
         ..ComponentDescriptor::new("tools", MCP_TOOL_KIND)
     };
     let personality = world.personality("working", None, &[]).await;
-    let working = Personality { components: ComponentConfig { component_nodes: vec![mcp] }, ..personality };
+    let working =
+        Personality { components: ComponentConfig { component_nodes: vec![mcp] }, ..personality };
     world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
     let helper = world.agent("helper", world.alice, &working).await;
 
     let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
-    assert!(!asked.iter().any(|line| line.contains("ReadSecret")), "nothing read while built: {asked:?}");
+    assert!(
+        !asked.iter().any(|line| line.contains("ReadSecret")),
+        "nothing read while built: {asked:?}"
+    );
 
     let main = Arc::clone(&session.channels()[0]);
-    let (_, asked) = world.asked(async {
-        main.user_actor(world.bob).expect("he takes part").send_message(Some("@helper do it".to_string()), None, Vec::new()).await.expect("sent");
-        asked_for(&world, "alice as helper, asked by bob: ReadSecret yes").await;
-    }).await;
-    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
-    assert_eq!(read_secret, ["alice as helper, asked by bob: ReadSecret yes"], "with alice's credential, asked by bob");
+    let (_, asked) = world
+        .asked(async {
+            main.user_actor(world.bob)
+                .expect("he takes part")
+                .send_message(Some("@helper do it".to_string()), None, Vec::new())
+                .await
+                .expect("sent");
+            asked_for(&world, "alice as helper, asked by bob: ReadSecret yes").await;
+        })
+        .await;
+    let read_secret: Vec<&String> =
+        asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    assert_eq!(
+        read_secret,
+        ["alice as helper, asked by bob: ReadSecret yes"],
+        "with alice's credential, asked by bob"
+    );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

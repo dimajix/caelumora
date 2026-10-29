@@ -10,8 +10,8 @@ use caelumora_model::define_id;
 use caelumora_model::digest::{Digest, Encoder};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField, Scoped};
-use caelumora_model::snapshot::ScopeSnapshot;
 use caelumora_model::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
+use caelumora_model::snapshot::ScopeSnapshot;
 use caelumora_model::store::{EntityKind, NoEntity, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, Text, TextRule};
@@ -81,7 +81,13 @@ impl Skill {
     /// A new skill of `owner`, of `name` where it lies, for what
     /// `description` says, telling `body`, classified `classification`,
     /// shared with nobody.
-    pub fn new(name: ScopedName, description: Description, body: SkillBody, classification: Classification, owner: ActorId) -> Self {
+    pub fn new(
+        name: ScopedName,
+        description: Description,
+        body: SkillBody,
+        classification: Classification,
+        owner: ActorId,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: SkillId::new(),
@@ -126,10 +132,17 @@ impl Stored for Skill {
         match (self.security_attributes.owner_id, &self.name.scope) {
             (ActorId::User(_), Scope::GlobalScope | Scope::SessionScope { .. }) => Ok(()),
             (ActorId::User(owner), Scope::UserScope { user_id }) if *user_id == owner => Ok(()),
-            (ActorId::User(_), Scope::UserScope { .. }) => Err("a skill lies in no other user's scope than its owner's".to_string()),
-            (ActorId::User(_), Scope::ChannelScope { .. } | Scope::GroupScope { .. } | Scope::ProjectScope { .. }) => Err("a skill lies in the global scope, a session's or its owner's".to_string()),
+            (ActorId::User(_), Scope::UserScope { .. }) => {
+                Err("a skill lies in no other user's scope than its owner's".to_string())
+            }
+            (
+                ActorId::User(_),
+                Scope::ChannelScope { .. } | Scope::GroupScope { .. } | Scope::ProjectScope { .. },
+            ) => Err("a skill lies in the global scope, a session's or its owner's".to_string()),
             (ActorId::System, Scope::GlobalScope) => Ok(()),
-            (ActorId::System, _) => Err("a skill of the system lies in the global scope".to_string()),
+            (ActorId::System, _) => {
+                Err("a skill of the system lies in the global scope".to_string())
+            }
             _ => Err("a skill belongs to a user or to the system".to_string()),
         }
     }
@@ -209,10 +222,17 @@ mod tests {
     fn a_users_skill_lies_in_the_global_scope_a_sessions_or_their_own() {
         let alice = UserId::new();
         let session_id = SessionId::new();
-        for scope in [Scope::GlobalScope, Scope::SessionScope { session_id }, Scope::UserScope { user_id: alice }] {
+        for scope in [
+            Scope::GlobalScope,
+            Scope::SessionScope { session_id },
+            Scope::UserScope { user_id: alice },
+        ] {
             assert!(skill(scope.clone(), ActorId::User(alice)).validate().is_ok(), "{scope:?}");
         }
-        for scope in [Scope::UserScope { user_id: UserId::new() }, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }] {
+        for scope in [
+            Scope::UserScope { user_id: UserId::new() },
+            Scope::ChannelScope { session_id, channel_id: ChannelId::new() },
+        ] {
             assert!(skill(scope.clone(), ActorId::User(alice)).validate().is_err(), "{scope:?}");
         }
     }
@@ -220,8 +240,13 @@ mod tests {
     #[test]
     fn a_skill_of_the_system_lies_in_the_global_scope_and_nobody_elses_is_stored() {
         assert!(skill(Scope::GlobalScope, ActorId::System).validate().is_ok());
-        assert!(skill(Scope::SessionScope { session_id: SessionId::new() }, ActorId::System).validate().is_err());
+        assert!(skill(Scope::SessionScope { session_id: SessionId::new() }, ActorId::System)
+            .validate()
+            .is_err());
         assert!(skill(Scope::GlobalScope, ActorId::None).validate().is_err(), "nobody's");
-        assert!(skill(Scope::GlobalScope, ActorId::Agent(AgentId::new())).validate().is_err(), "an agent's: its owner's");
+        assert!(
+            skill(Scope::GlobalScope, ActorId::Agent(AgentId::new())).validate().is_err(),
+            "an agent's: its owner's"
+        );
     }
 }

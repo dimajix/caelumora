@@ -8,22 +8,24 @@
 //! written as the model is given the times of its own channel's (issue
 //! 424): in the turn's time zone, in the same form.
 
-use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
-use crate::turn::Turn;
-use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::components::notes::READ_NOTES_TOOL_NAME;
-use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
+use crate::tool::{
+    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+};
+use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_model::chain::Position;
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::Answers;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_model::question::Answers;
 use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::Filter;
-use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -54,23 +56,38 @@ impl ChannelHistoryComponent {
     pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
         // What its texts are told.
         let values = context! { max_last => MAX_LAST, default_last => DEFAULT_LAST, read_notes => READ_NOTES_TOOL_NAME };
-        let tools = vec![described(prompts, NAMESPACE, CHANNEL_HISTORY_KIND, Tool {
-            name: READ_HISTORY_TOOL_NAME.to_string(),
-            description: String::new(),
-            parameters: ToolParameters::object(
-                [
-                    ("channel", ToolParameters::string()),
-                    ("last", ToolParameters::number()),
-                    ("query", ToolParameters::string()),
-                ],
-                ["channel"],
-            ),
-            requires_approval: false,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: Default::default(),
-        }, &values)?];
-        Ok(Self { description: tool_text(prompts, NAMESPACE, CHANNEL_HISTORY_KIND, "description", &values)?, tools })
+        let tools = vec![described(
+            prompts,
+            NAMESPACE,
+            CHANNEL_HISTORY_KIND,
+            Tool {
+                name: READ_HISTORY_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [
+                        ("channel", ToolParameters::string()),
+                        ("last", ToolParameters::number()),
+                        ("query", ToolParameters::string()),
+                    ],
+                    ["channel"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: Default::default(),
+            },
+            &values,
+        )?];
+        Ok(Self {
+            description: tool_text(
+                prompts,
+                NAMESPACE,
+                CHANNEL_HISTORY_KIND,
+                "description",
+                &values,
+            )?,
+            tools,
+        })
     }
 }
 
@@ -84,7 +101,13 @@ impl ToolProvider for ChannelHistoryComponent {
         self.tools.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(
+        &self,
+        name: &str,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
         if name != READ_HISTORY_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
@@ -105,7 +128,9 @@ impl ToolProvider for ChannelHistoryComponent {
         let query = query.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
         let Some(session) = turn.situation().session().await? else {
-            return Err(ToolError::ExecutionFailed("the turn is in no session to read from".to_string()));
+            return Err(ToolError::ExecutionFailed(
+                "the turn is in no session to read from".to_string(),
+            ));
         };
         let channel = session.channel_named(channel).await?;
         // Read from the end, only as far back as `last` such messages lie
@@ -115,8 +140,16 @@ impl ToolProvider for ChannelHistoryComponent {
         let more = page.earlier.is_some();
         // What was read is classified as the messages given (issue 168).
         let classification = Classification::join_all(messages.iter().map(|m| &m.classification));
-        let source = KnowledgeSource::History { digest: page.digest, from: Some(channel.visible_from().await?).filter(|from| *from > Position::START) };
-        turn.record_knowledge(KnowledgeRef { channel: channel.id(), session: channel.session().id(), source, classification: classification.clone() });
+        let source = KnowledgeSource::History {
+            digest: page.digest,
+            from: Some(channel.visible_from().await?).filter(|from| *from > Position::START),
+        };
+        turn.record_knowledge(KnowledgeRef {
+            channel: channel.id(),
+            session: channel.session().id(),
+            source,
+            classification: classification.clone(),
+        });
 
         let time_zone = turn.situation().time_zone();
         let value = serde_json::json!({
@@ -150,7 +183,9 @@ fn wanted(query: Option<&str>) -> Filter<HistoryField> {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>(),
+        ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
@@ -164,24 +199,45 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::history::{Audience, Recorded};
     use caelumora_model::content::testing::make_content_ref;
+    use caelumora_model::history::{Audience, Recorded};
     use caelumora_model::message::MessageId;
 
     /// A message saying `content`, recorded as the store keeps it.
     fn said(content: &str) -> Value {
-        let message = Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        serde_json::to_value(Recorded::new(HistoryEntry::Said { message }, ActorId::System, Audience::Everybody)).unwrap()
+        let message = Message {
+            id: MessageId::new(),
+            content: Some(content.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        serde_json::to_value(Recorded::new(
+            HistoryEntry::Said { message },
+            ActorId::System,
+            Audience::Everybody,
+        ))
+        .unwrap()
     }
 
     #[test]
     fn a_message_with_text_containing_the_query_is_wanted_ignoring_case() {
-        assert!(wanted(Some("tea")).matches(&said("Tea time")) && wanted(Some("tea")).matches(&said("More TEA")));
+        assert!(
+            wanted(Some("tea")).matches(&said("Tea time"))
+                && wanted(Some("tea")).matches(&said("More TEA"))
+        );
         assert!(!wanted(Some("tea")).matches(&said("coffee")));
         assert!(wanted(None).matches(&said("coffee")), "any text without a query");
         assert!(!wanted(None).matches(&said("")), "a message without text does not count");
-        let attached = Message { id: MessageId::new(), attachments: vec![make_content_ref("a.png", b"a")], ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let attached = serde_json::to_value(Recorded::new(HistoryEntry::Said { message: attached }, ActorId::System, Audience::Everybody)).unwrap();
+        let attached = Message {
+            id: MessageId::new(),
+            attachments: vec![make_content_ref("a.png", b"a")],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let attached = serde_json::to_value(Recorded::new(
+            HistoryEntry::Said { message: attached },
+            ActorId::System,
+            Audience::Everybody,
+        ))
+        .unwrap();
         assert!(wanted(None).matches(&attached), "unless it has attachments (issue 282)");
         assert!(!wanted(Some("tea")).matches(&attached), "which no query finds");
     }

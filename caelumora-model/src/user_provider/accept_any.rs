@@ -1,4 +1,5 @@
 use crate::role::{RoleError, RoleId, Roles};
+use crate::scope::Scope;
 use crate::security::SecurityContext;
 use crate::store::{EntityStore, StoreError, StoreResultExt};
 use crate::user::{User, UserId};
@@ -8,7 +9,6 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use crate::scope::Scope;
 
 /// **Development only.** Accepts every username with any credential.
 ///
@@ -54,12 +54,20 @@ impl AcceptAnyConfig {
     /// # Errors
     /// `RoleError::UnknownRole` for a role that is not configured - any,
     /// if no roles are.
-    pub fn provider(&self, store: Arc<dyn EntityStore<User>>, roles: Option<&Roles>) -> Result<AcceptAnyUserProvider, RoleError> {
+    pub fn provider(
+        &self,
+        store: Arc<dyn EntityStore<User>>,
+        roles: Option<&Roles>,
+    ) -> Result<AcceptAnyUserProvider, RoleError> {
         let ids = |names: &[String]| match roles {
             Some(roles) => roles.ids_of(names),
-            None => names.first().map_or(Ok(Vec::new()), |name| Err(RoleError::UnknownRole(name.clone()))),
+            None => names
+                .first()
+                .map_or(Ok(Vec::new()), |name| Err(RoleError::UnknownRole(name.clone()))),
         };
-        let assigned = self.roles.iter()
+        let assigned = self
+            .roles
+            .iter()
             .map(|(user, names)| Ok((user.clone(), ids(names)?)))
             .collect::<Result<_, RoleError>>()?;
         Ok(AcceptAnyUserProvider::with_roles(store, assigned, ids(&self.default_roles)?))
@@ -74,14 +82,19 @@ impl AcceptAnyUserProvider {
 
     /// A provider that gives the users named in `roles` theirs, and
     /// everybody else `default_roles`.
-    pub fn with_roles(store: Arc<dyn EntityStore<User>>, roles: BTreeMap<String, Vec<RoleId>>, default_roles: Vec<RoleId>) -> Self {
+    pub fn with_roles(
+        store: Arc<dyn EntityStore<User>>,
+        roles: BTreeMap<String, Vec<RoleId>>,
+        default_roles: Vec<RoleId>,
+    ) -> Self {
         Self { store, roles, default_roles }
     }
 
     /// The roles of `username`, as configured - named as names are
     /// compared (issue 250).
     fn roles_of(&self, username: &Name) -> Vec<RoleId> {
-        self.roles.iter()
+        self.roles
+            .iter()
             .find(|(configured, _)| *username == configured.as_str())
             .map_or_else(|| self.default_roles.clone(), |(_, roles)| roles.clone())
     }
@@ -117,20 +130,31 @@ impl UserProvider for AcceptAnyUserProvider {
     /// what the `UserManager` compares with the record when a token is
     /// renewed.
     async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
-        Ok(Self::found(self.store.get(&Self::context(), id).await)?.map(|user| self.configured(user)))
+        Ok(Self::found(self.store.get(&Self::context(), id).await)?
+            .map(|user| self.configured(user)))
     }
 
     /// Whoever `username` is, without any credential: the user stored under it, or a new one, with
     /// the roles the configuration gives them. Stored - or changed - by the `UserManager` (issue
     /// 306), not here.
-    async fn authenticate(&self, username: &str, _credential: &Credential<'_>) -> AuthResult<Option<User>> {
+    async fn authenticate(
+        &self,
+        username: &str,
+        _credential: &Credential<'_>,
+    ) -> AuthResult<Option<User>> {
         let Ok(username) = Name::new(username.trim()) else {
             return Err(AuthError::InvalidCredentials);
         };
         if let Some(user) = self.find_user(username.as_str()).await? {
             return Ok(Some(self.configured(user)));
         }
-        let user = User { id: UserId::new(), username, email: String::new(), roles: Vec::new(), deleted: None };
+        let user = User {
+            id: UserId::new(),
+            username,
+            email: String::new(),
+            roles: Vec::new(),
+            deleted: None,
+        };
         tracing::warn!("AcceptAnyUserProvider accepted the new user '{}' ({}) without verifying any credential", user.username, user.id);
         Ok(Some(self.configured(user)))
     }
@@ -157,10 +181,15 @@ mod tests {
         let store = store();
         let users = chain(&store, AcceptAnyUserProvider::new(Arc::clone(&store)));
 
-        let first = users.authenticate("alice", &Credential::Password("one")).await.expect("accepted");
-        let second = users.authenticate("alice", &Credential::Password("two")).await.expect("accepted");
+        let first =
+            users.authenticate("alice", &Credential::Password("one")).await.expect("accepted");
+        let second =
+            users.authenticate("alice", &Credential::Password("two")).await.expect("accepted");
         let bob = users.authenticate("bob", &Credential::Password("")).await.expect("accepted");
-        let trusted = users.authenticate("alice", &Credential::Trusted).await.expect("accepted from a trusted frontend, the TUI");
+        let trusted = users
+            .authenticate("alice", &Credential::Trusted)
+            .await
+            .expect("accepted from a trusted frontend, the TUI");
 
         assert_eq!(first.id, second.id, "the same name must map to the same id");
         assert_eq!(first.id, trusted.id, "whatever the credential");
@@ -171,8 +200,15 @@ mod tests {
     async fn writes_nothing_itself() {
         let store = store();
         let provider = AcceptAnyUserProvider::new(Arc::clone(&store));
-        let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().expect("accepted");
-        assert!(provider.find_user("alice").await.unwrap().is_none(), "the manager stores her, not the provider");
+        let alice = provider
+            .authenticate("alice", &Credential::Password("x"))
+            .await
+            .unwrap()
+            .expect("accepted");
+        assert!(
+            provider.find_user("alice").await.unwrap().is_none(),
+            "the manager stores her, not the provider"
+        );
         assert!(provider.get_user(alice.id).await.unwrap().is_none());
     }
 
@@ -182,10 +218,16 @@ mod tests {
         let provider = AcceptAnyUserProvider::new(Arc::clone(&store));
         assert!(provider.find_user("alice").await.unwrap().is_none());
 
-        let alice = chain(&store, AcceptAnyUserProvider::new(Arc::clone(&store))).authenticate("alice", &Credential::Password("x")).await.expect("accepted");
+        let alice = chain(&store, AcceptAnyUserProvider::new(Arc::clone(&store)))
+            .authenticate("alice", &Credential::Password("x"))
+            .await
+            .expect("accepted");
 
         assert_eq!(provider.find_user("alice").await.unwrap().map(|u| u.id), Some(alice.id));
-        assert_eq!(provider.get_user(alice.id).await.unwrap().map(|u| u.username), Some(Name::new("alice").unwrap()));
+        assert_eq!(
+            provider.get_user(alice.id).await.unwrap().map(|u| u.username),
+            Some(Name::new("alice").unwrap())
+        );
         assert!(provider.get_user(UserId::new()).await.unwrap().is_none());
     }
 
@@ -194,22 +236,41 @@ mod tests {
         let store = store();
         let (hr, staff) = (RoleId::new(), RoleId::new());
         let roles = BTreeMap::from([("alice".to_string(), vec![hr])]);
-        let users = chain(&store, AcceptAnyUserProvider::with_roles(Arc::clone(&store), roles, vec![staff]));
+        let users = chain(
+            &store,
+            AcceptAnyUserProvider::with_roles(Arc::clone(&store), roles, vec![staff]),
+        );
         let alice = users.authenticate("alice", &Credential::Password("x")).await.unwrap();
         let bob = users.authenticate("bob", &Credential::Password("x")).await.unwrap();
         assert_eq!((alice.roles, bob.roles), (vec![hr], vec![staff]));
         let shouted = users.authenticate("ALICE", &Credential::Password("x")).await.unwrap();
-        assert_eq!((shouted.id, shouted.roles), (alice.id, vec![hr]), "a username is compared as a name");
+        assert_eq!(
+            (shouted.id, shouted.roles),
+            (alice.id, vec![hr]),
+            "a username is compared as a name"
+        );
 
-        let changed = chain(&store, AcceptAnyUserProvider::with_roles(Arc::clone(&store), BTreeMap::new(), Vec::new()));
+        let changed = chain(
+            &store,
+            AcceptAnyUserProvider::with_roles(Arc::clone(&store), BTreeMap::new(), Vec::new()),
+        );
         let again = changed.get_user(alice.id).await.unwrap().unwrap();
-        assert!(again.roles.is_empty(), "the configuration decides, also for a user already stored, on a renewal too");
-        assert_eq!(store.get(&SecurityContext::system(), alice.id).await.unwrap().roles, Vec::<RoleId>::new(), "and it is stored");
+        assert!(
+            again.roles.is_empty(),
+            "the configuration decides, also for a user already stored, on a renewal too"
+        );
+        assert_eq!(
+            store.get(&SecurityContext::system(), alice.id).await.unwrap().roles,
+            Vec::<RoleId>::new(),
+            "and it is stored"
+        );
     }
 
     #[tokio::test]
     async fn rejects_an_empty_username() {
-        let result = AcceptAnyUserProvider::new(store()).authenticate("  ", &Credential::Password("x")).await;
+        let result = AcceptAnyUserProvider::new(store())
+            .authenticate("  ", &Credential::Password("x"))
+            .await;
         assert!(matches!(result, Err(AuthError::InvalidCredentials)));
     }
 
@@ -226,7 +287,11 @@ mod tests {
         store.create(&SecurityContext::default(), &existing).await.unwrap();
 
         let provider = AcceptAnyUserProvider::new(store);
-        let user = provider.authenticate("user", &Credential::Password("x")).await.unwrap().expect("accepted");
+        let user = provider
+            .authenticate("user", &Credential::Password("x"))
+            .await
+            .unwrap()
+            .expect("accepted");
 
         assert_eq!(user.id, existing.id, "a user already in the store keeps its id");
     }
@@ -234,16 +299,40 @@ mod tests {
     #[tokio::test]
     async fn its_parameters_name_configured_roles_only() {
         let (hr, staff) = (RoleId::new(), RoleId::new());
-        let roles = Roles::new([(hr, "hr".to_string(), vec![]), (staff, "staff".to_string(), vec![])]).unwrap();
-        let config = AcceptAnyConfig { roles: [("alice".to_string(), vec!["hr".to_string()])].into(), default_roles: vec!["staff".to_string()] };
+        let roles =
+            Roles::new([(hr, "hr".to_string(), vec![]), (staff, "staff".to_string(), vec![])])
+                .unwrap();
+        let config = AcceptAnyConfig {
+            roles: [("alice".to_string(), vec!["hr".to_string()])].into(),
+            default_roles: vec!["staff".to_string()],
+        };
         let users_store = store();
-        let users = chain(&users_store, config.provider(Arc::clone(&users_store), Some(&roles)).expect("configured roles"));
-        assert_eq!(users.authenticate("alice", &Credential::Password("x")).await.unwrap().roles, [hr], "by their ids");
-        assert_eq!(users.authenticate("bob", &Credential::Password("x")).await.unwrap().roles, [staff]);
+        let users = chain(
+            &users_store,
+            config.provider(Arc::clone(&users_store), Some(&roles)).expect("configured roles"),
+        );
+        assert_eq!(
+            users.authenticate("alice", &Credential::Password("x")).await.unwrap().roles,
+            [hr],
+            "by their ids"
+        );
+        assert_eq!(
+            users.authenticate("bob", &Credential::Password("x")).await.unwrap().roles,
+            [staff]
+        );
 
-        let unknown = AcceptAnyConfig { default_roles: vec!["boss".to_string()], ..Default::default() };
-        assert!(matches!(unknown.provider(store(), Some(&roles)), Err(RoleError::UnknownRole(role)) if role == "boss"));
-        assert!(matches!(config.provider(store(), None), Err(RoleError::UnknownRole(_))), "roles given, but none configured");
-        assert!(AcceptAnyConfig::default().provider(store(), None).is_ok(), "none given, none needed");
+        let unknown =
+            AcceptAnyConfig { default_roles: vec!["boss".to_string()], ..Default::default() };
+        assert!(
+            matches!(unknown.provider(store(), Some(&roles)), Err(RoleError::UnknownRole(role)) if role == "boss")
+        );
+        assert!(
+            matches!(config.provider(store(), None), Err(RoleError::UnknownRole(_))),
+            "roles given, but none configured"
+        );
+        assert!(
+            AcceptAnyConfig::default().provider(store(), None).is_ok(),
+            "none given, none needed"
+        );
     }
 }

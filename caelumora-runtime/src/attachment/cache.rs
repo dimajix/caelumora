@@ -59,7 +59,11 @@ impl ContentCache {
         }
         held.size += size;
         while held.size > self.budget {
-            let Some(oldest) = held.entries.iter().min_by_key(|(_, (_, used))| *used).map(|(at, _)| at.clone()) else { break };
+            let Some(oldest) =
+                held.entries.iter().min_by_key(|(_, (_, used))| *used).map(|(at, _)| at.clone())
+            else {
+                break;
+            };
             if let Some((left, _)) = held.entries.remove(&oldest) {
                 held.size -= left.len() as u64;
             }
@@ -109,8 +113,14 @@ mod tests {
         cache.put(&third, Bytes::from_static(b"cccc"));
         assert!(cache.get(&second).is_none(), "the least recently used left");
         assert_eq!(cache.get(&first).as_deref(), Some(&b"aaaa"[..]));
-        assert!(cache.get(&ContentRef { storage: "other".to_string(), ..first.clone() }).is_none(), "by storage");
-        assert!(cache.get(&ContentRef { digest: digest::content(b"other"), ..first.clone() }).is_none(), "and by digest: never other bytes than referred to");
+        assert!(
+            cache.get(&ContentRef { storage: "other".to_string(), ..first.clone() }).is_none(),
+            "by storage"
+        );
+        assert!(
+            cache.get(&ContentRef { digest: digest::content(b"other"), ..first.clone() }).is_none(),
+            "and by digest: never other bytes than referred to"
+        );
 
         let large = at_key("attachments/b/4", b"far more than ten bytes");
         cache.put(&large, Bytes::from_static(b"far more than ten bytes"));

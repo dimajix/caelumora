@@ -58,7 +58,9 @@ use caelumora_model::store::{StoreError, StoreResult};
 /// `StoreError::Validation` naming the first rule that does not, and why.
 fn check_restricting(rules: &[ApprovalRule]) -> StoreResult<()> {
     for rule in rules {
-        rule.check_restricting().map_err(|e| StoreError::Validation(format!("the rule for `{}`: {e}", rule.matcher.tool)))?;
+        rule.check_restricting().map_err(|e| {
+            StoreError::Validation(format!("the rule for `{}`: {e}", rule.matcher.tool))
+        })?;
     }
     Ok(())
 }

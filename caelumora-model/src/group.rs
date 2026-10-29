@@ -29,11 +29,11 @@ use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, Session, SessionId};
 use crate::store::query::{Field, FieldValue, Filter};
+use crate::store::{EntityKind, NoEntity, Stored};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::{EntityKind, NoEntity, Stored};
 
 define_id!(GroupId);
 
@@ -91,7 +91,10 @@ impl Filter<GroupField> {
     /// global scope or a user's -, not the participants of a session or
     /// channel, nor the members of a project (`Group::is_team`).
     pub fn teams() -> Self {
-        Filter::is_in(GroupField::Scope, [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")])
+        Filter::is_in(
+            GroupField::Scope,
+            [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")],
+        )
     }
 
     /// The groups `actor` belongs to (`Group::has_member`).
@@ -102,7 +105,10 @@ impl Filter<GroupField> {
     /// The teams of `actor`: those it owns or belongs to (`Filter::teams`,
     /// `Group::has_member`).
     pub fn teams_of(actor: ActorId) -> Self {
-        Filter::all_of([Filter::teams(), Filter::Or(vec![Filter::eq(GroupField::Owner, actor), Filter::with_member(actor)])])
+        Filter::all_of([
+            Filter::teams(),
+            Filter::Or(vec![Filter::eq(GroupField::Owner, actor), Filter::with_member(actor)]),
+        ])
     }
 }
 
@@ -156,22 +162,46 @@ impl Group {
     /// The group of the participants of `session`, as they are now: its
     /// users and agents, owned by the session's owner.
     pub fn of_session(session: &Session) -> Self {
-        let name = ScopedName { name: Self::participants_name(), scope: Scope::SessionScope { session_id: session.id } };
-        Self::new(GroupId::of_session(session.id), name, session.security_attributes.owner_id, Self::members_among(&session.participants))
+        let name = ScopedName {
+            name: Self::participants_name(),
+            scope: Scope::SessionScope { session_id: session.id },
+        };
+        Self::new(
+            GroupId::of_session(session.id),
+            name,
+            session.security_attributes.owner_id,
+            Self::members_among(&session.participants),
+        )
     }
 
     /// The group of the participants of `channel`, as they are now: its
     /// users and agents - not its approver -, owned by the channel's owner.
     pub fn of_channel(channel: &Channel) -> Self {
-        let name = ScopedName { name: Self::participants_name(), scope: Scope::ChannelScope { session_id: channel.session_id, channel_id: channel.id } };
-        Self::new(GroupId::of_channel(channel.id), name, channel.security_attributes.owner_id, Self::members_among(&channel.participants))
+        let name = ScopedName {
+            name: Self::participants_name(),
+            scope: Scope::ChannelScope { session_id: channel.session_id, channel_id: channel.id },
+        };
+        Self::new(
+            GroupId::of_channel(channel.id),
+            name,
+            channel.security_attributes.owner_id,
+            Self::members_among(&channel.participants),
+        )
     }
 
     /// The group of the members of `project`, as they are now: its users,
     /// owned by the project's owner.
     pub fn of_project(project: &Project) -> Self {
-        let name = ScopedName { name: Name::fixed(Self::MEMBERS), scope: Scope::ProjectScope { project_id: project.id } };
-        Self::new(GroupId::of_project(project.id), name, project.security_attributes.owner_id, project.members.iter().map(|member| ActorId::User(*member)).collect())
+        let name = ScopedName {
+            name: Name::fixed(Self::MEMBERS),
+            scope: Scope::ProjectScope { project_id: project.id },
+        };
+        Self::new(
+            GroupId::of_project(project.id),
+            name,
+            project.security_attributes.owner_id,
+            project.members.iter().map(|member| ActorId::User(*member)).collect(),
+        )
     }
 
     fn new(id: GroupId, name: ScopedName, owner: ActorId, members: Vec<ActorId>) -> Self {
@@ -180,7 +210,8 @@ impl Group {
             id,
             name,
             members,
-            security_attributes: SecurityAttributes::owned_by(owner).granting(Subject::Group(id), Grant::Read),
+            security_attributes: SecurityAttributes::owned_by(owner)
+                .granting(Subject::Group(id), Grant::Read),
             created_at: now,
             updated_at: now,
             deleted: None,
@@ -243,18 +274,39 @@ impl Stored for Group {
         }
         let owner = self.security_attributes.owner_id;
         match &self.name.scope {
-            Scope::SessionScope { session_id } if self.id == GroupId::of_session(*session_id) => Ok(()),
-            Scope::ChannelScope { channel_id, .. } if self.id == GroupId::of_channel(*channel_id) => Ok(()),
-            Scope::SessionScope { .. } | Scope::ChannelScope { .. } => Err("a group in a session's or channel's scope is its participants, with its id".to_string()),
-            Scope::ProjectScope { project_id } if self.id != GroupId::of_project(*project_id) => Err("a group in a project's scope is its members, with its id".to_string()),
-            Scope::ProjectScope { .. } if self.members.iter().any(|m| matches!(m, ActorId::Agent(_))) => Err("a project's members are users".to_string()),
+            Scope::SessionScope { session_id } if self.id == GroupId::of_session(*session_id) => {
+                Ok(())
+            }
+            Scope::ChannelScope { channel_id, .. }
+                if self.id == GroupId::of_channel(*channel_id) =>
+            {
+                Ok(())
+            }
+            Scope::SessionScope { .. } | Scope::ChannelScope { .. } => {
+                Err("a group in a session's or channel's scope is its participants, with its id"
+                    .to_string())
+            }
+            Scope::ProjectScope { project_id } if self.id != GroupId::of_project(*project_id) => {
+                Err("a group in a project's scope is its members, with its id".to_string())
+            }
+            Scope::ProjectScope { .. }
+                if self.members.iter().any(|m| matches!(m, ActorId::Agent(_))) =>
+            {
+                Err("a project's members are users".to_string())
+            }
             Scope::ProjectScope { .. } => Ok(()),
             _ if !matches!(owner, ActorId::User(_)) => Err("a team belongs to a user".to_string()),
-            _ if self.members.iter().any(|m| matches!(m, ActorId::Agent(_))) => Err("a team holds users alone".to_string()),
+            _ if self.members.iter().any(|m| matches!(m, ActorId::Agent(_))) => {
+                Err("a team holds users alone".to_string())
+            }
             Scope::GlobalScope => Ok(()),
             Scope::UserScope { user_id } if ActorId::User(*user_id) == owner => Ok(()),
-            Scope::UserScope { .. } => Err("a team lies in no other user's scope than its owner's".to_string()),
-            Scope::GroupScope { .. } => Err("a team lies in the global scope or its owner's".to_string()),
+            Scope::UserScope { .. } => {
+                Err("a team lies in no other user's scope than its owner's".to_string())
+            }
+            Scope::GroupScope { .. } => {
+                Err("a team lies in the global scope or its owner's".to_string())
+            }
         }
     }
 }
@@ -288,8 +340,14 @@ mod tests {
         for scope in [Scope::GlobalScope, Scope::UserScope { user_id: alice }] {
             assert!(team(scope.clone(), alice).validate().is_ok(), "{scope:?}");
         }
-        assert!(team(Scope::UserScope { user_id: UserId::new() }, alice).validate().is_err(), "another's scope");
-        assert!(team(Scope::SessionScope { session_id: SessionId::new() }, alice).validate().is_err(), "a session's scope is its participants'");
+        assert!(
+            team(Scope::UserScope { user_id: UserId::new() }, alice).validate().is_err(),
+            "another's scope"
+        );
+        assert!(
+            team(Scope::SessionScope { session_id: SessionId::new() }, alice).validate().is_err(),
+            "a session's scope is its participants'"
+        );
         let mut with_agent = team(Scope::GlobalScope, alice);
         with_agent.members.push(ActorId::Agent(AgentId::new()));
         assert!(with_agent.validate().is_err(), "an agent is reached through its owner");
@@ -305,13 +363,41 @@ mod tests {
     fn the_teams_are_what_is_no_group_of_participants_or_members() {
         let alice = UserId::new();
         let session = SessionId::new();
-        let mut channel = Channel::build(session, ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None);
+        let mut channel = Channel::build(
+            session,
+            ActorId::User(alice),
+            Name::new("main").unwrap(),
+            Default::default(),
+            Default::default(),
+            None,
+        );
         channel.participants = vec![Participant::User(alice)];
-        let session_group = Group { id: GroupId::of_session(session), name: ScopedName { name: Group::participants_name(), scope: Scope::SessionScope { session_id: session } }, ..team(Scope::GlobalScope, alice) };
-        let members = Group::of_project(&Project::new(ScopedName::new("report", Scope::GlobalScope).unwrap(), alice));
-        for group in [team(Scope::GlobalScope, alice), team(Scope::UserScope { user_id: alice }, alice), Group::of_channel(&channel), session_group, members] {
+        let session_group = Group {
+            id: GroupId::of_session(session),
+            name: ScopedName {
+                name: Group::participants_name(),
+                scope: Scope::SessionScope { session_id: session },
+            },
+            ..team(Scope::GlobalScope, alice)
+        };
+        let members = Group::of_project(&Project::new(
+            ScopedName::new("report", Scope::GlobalScope).unwrap(),
+            alice,
+        ));
+        for group in [
+            team(Scope::GlobalScope, alice),
+            team(Scope::UserScope { user_id: alice }, alice),
+            Group::of_channel(&channel),
+            session_group,
+            members,
+        ] {
             let document = serde_json::to_value(&group).unwrap();
-            assert_eq!(Filter::teams().matches(&document), group.is_team(), "{:?}", group.name.scope);
+            assert_eq!(
+                Filter::teams().matches(&document),
+                group.is_team(),
+                "{:?}",
+                group.name.scope
+            );
         }
     }
 
@@ -325,7 +411,11 @@ mod tests {
         let group = Group { members: vec![bob], ..team(Scope::GlobalScope, alice) };
         let document = serde_json::to_value(&group).unwrap();
         for actor in [bob, ActorId::User(alice), carol] {
-            assert_eq!(Filter::with_member(actor).matches(&document), group.has_member(actor), "{actor}");
+            assert_eq!(
+                Filter::with_member(actor).matches(&document),
+                group.has_member(actor),
+                "{actor}"
+            );
         }
     }
 
@@ -336,13 +426,32 @@ mod tests {
         let (alice, bob, carol) = (UserId::new(), UserId::new(), ActorId::User(UserId::new()));
         let his = ActorId::User(bob);
         let session = SessionId::new();
-        let participants = Group { members: vec![his], id: GroupId::of_session(session), name: ScopedName { name: Group::participants_name(), scope: Scope::SessionScope { session_id: session } }, ..team(Scope::GlobalScope, alice) };
-        let groups = [Group { members: vec![his], ..team(Scope::GlobalScope, alice) }, team(Scope::UserScope { user_id: bob }, bob), team(Scope::GlobalScope, alice), participants];
+        let participants = Group {
+            members: vec![his],
+            id: GroupId::of_session(session),
+            name: ScopedName {
+                name: Group::participants_name(),
+                scope: Scope::SessionScope { session_id: session },
+            },
+            ..team(Scope::GlobalScope, alice)
+        };
+        let groups = [
+            Group { members: vec![his], ..team(Scope::GlobalScope, alice) },
+            team(Scope::UserScope { user_id: bob }, bob),
+            team(Scope::GlobalScope, alice),
+            participants,
+        ];
         for group in groups {
             let document = serde_json::to_value(&group).unwrap();
             for actor in [his, ActorId::User(alice), carol] {
-                let theirs = group.is_team() && (group.security_attributes.owner_id == actor || group.has_member(actor));
-                assert_eq!(Filter::teams_of(actor).matches(&document), theirs, "{actor} of {:?}", group.name);
+                let theirs = group.is_team()
+                    && (group.security_attributes.owner_id == actor || group.has_member(actor));
+                assert_eq!(
+                    Filter::teams_of(actor).matches(&document),
+                    theirs,
+                    "{actor} of {:?}",
+                    group.name
+                );
             }
         }
     }
@@ -356,18 +465,34 @@ mod tests {
     #[test]
     fn a_team_is_read_by_its_members() {
         let group = team(Scope::GlobalScope, UserId::new());
-        assert!(group.security_attributes.acl.iter().any(|entry| entry.subject == Subject::Group(group.id) && entry.grant == Grant::Read));
+        assert!(group
+            .security_attributes
+            .acl
+            .iter()
+            .any(|entry| entry.subject == Subject::Group(group.id) && entry.grant == Grant::Read));
     }
 
     #[test]
     fn the_participants_of_a_channel_have_its_id_and_hold_its_users_and_agents() {
         let (alice, agent) = (UserId::new(), AgentId::new());
-        let mut channel = Channel::build(SessionId::new(), ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None);
+        let mut channel = Channel::build(
+            SessionId::new(),
+            ActorId::User(alice),
+            Name::new("main").unwrap(),
+            Default::default(),
+            Default::default(),
+            None,
+        );
         channel.participants = vec![Participant::User(alice), Participant::Agent(agent)];
-        channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
+        channel.internal_actors =
+            vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
         let group = Group::of_channel(&channel);
         assert_eq!(group.id, GroupId::of_channel(channel.id));
-        assert_eq!(group.members, [ActorId::User(alice), ActorId::Agent(agent)], "its users and agents, no approver (issue 420)");
+        assert_eq!(
+            group.members,
+            [ActorId::User(alice), ActorId::Agent(agent)],
+            "its users and agents, no approver (issue 420)"
+        );
         assert!(!group.is_team());
         assert!(group.validate().is_ok());
         let stray = Group { id: GroupId::new(), ..group };
@@ -379,10 +504,19 @@ mod tests {
     #[test]
     fn the_members_of_a_project_have_its_id_and_hold_its_users() {
         let (alice, bob) = (UserId::new(), UserId::new());
-        let project = Project { members: vec![bob], ..Project::new(ScopedName::new("report", Scope::GlobalScope).unwrap(), alice) };
+        let project = Project {
+            members: vec![bob],
+            ..Project::new(ScopedName::new("report", Scope::GlobalScope).unwrap(), alice)
+        };
         let group = Group::of_project(&project);
-        assert_eq!((group.id, &group.name.scope), (GroupId::of_project(project.id), &Scope::ProjectScope { project_id: project.id }));
-        assert_eq!((group.members.as_slice(), group.security_attributes.owner_id), ([ActorId::User(bob)].as_slice(), ActorId::User(alice)));
+        assert_eq!(
+            (group.id, &group.name.scope),
+            (GroupId::of_project(project.id), &Scope::ProjectScope { project_id: project.id })
+        );
+        assert_eq!(
+            (group.members.as_slice(), group.security_attributes.owner_id),
+            ([ActorId::User(bob)].as_slice(), ActorId::User(alice))
+        );
         assert!(!group.is_team() && group.validate().is_ok());
         let stray = Group { id: GroupId::new(), ..group.clone() };
         assert!(stray.validate().is_err(), "only with the project's id");

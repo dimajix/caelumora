@@ -17,18 +17,20 @@ use std::fmt::Debug;
 use tracing::warn;
 
 use crate::transport::{EventReceiver, EventSender};
-pub use kinds::AgentKinds;
-pub use manager::{ActorManager, Shown};
-use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use caelumora_model::actor::{
+    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext,
+};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;
-use caelumora_model::history::Heard;
 use caelumora_model::component::ComponentConfig;
+use caelumora_model::history::Heard;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::{TurnId, Work};
+pub use kinds::AgentKinds;
+pub use manager::{ActorManager, Shown};
 use uuid::Uuid;
 
 /// A participant of a channel as the channel runs it. The runtime's own are
@@ -53,11 +55,7 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// live and read from the history alike (issue 223).
     fn event_filter(&self) -> fn(&Envelope) -> bool;
 
-    async fn run(
-        &self,
-        rx: Box<dyn EventReceiver>,
-        tx: Box<dyn EventSender>,
-    ) -> Result<()>;
+    async fn run(&self, rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()>;
 
     /// Its security context as it is now (issue 223): what an envelope it
     /// sent is delivered with when it is read from the channel's history -
@@ -186,8 +184,16 @@ impl Answering {
     /// gives it - an agent's owner, with their roles as they are now and its
     /// limit (issues 255, 304, 341). The request's initiator stays the
     /// initiator - the root of the chain - and lends nothing.
-    pub fn to(request: &Envelope, id: ActorId, name: impl Into<String>, own: &SecurityContext) -> Self {
-        let security_context = request.security.next(id, own.owner_id, own.principal_id).with_roles(own.roles.clone(), own.limiting_roles.clone());
+    pub fn to(
+        request: &Envelope,
+        id: ActorId,
+        name: impl Into<String>,
+        own: &SecurityContext,
+    ) -> Self {
+        let security_context = request
+            .security
+            .next(id, own.owner_id, own.principal_id)
+            .with_roles(own.roles.clone(), own.limiting_roles.clone());
         Self { event_context: request.context.next(id, name), security_context }
     }
 
@@ -196,14 +202,20 @@ impl Answering {
     /// later too, is said in them, and stays in the span and the chain of
     /// the request (issue 45).
     pub fn continuing(work: &Work) -> Self {
-        Self { event_context: work.event_context.clone(), security_context: work.security_context.clone() }
+        Self {
+            event_context: work.event_context.clone(),
+            security_context: work.security_context.clone(),
+        }
     }
 
     /// The contexts of the actor `id`, called `name`, speaking of itself
     /// rather than answering - nobody asked: those of its channel, in its
     /// own `security` context.
     pub fn own(id: ActorId, name: impl Into<String>, security: &SecurityContext) -> Self {
-        Self { event_context: EventContext::new(security.session_id, security.channel_id, id, name), security_context: security.clone() }
+        Self {
+            event_context: EventContext::new(security.session_id, security.channel_id, id, name),
+            security_context: security.clone(),
+        }
     }
 
     /// The contexts in which the caller of `security`, called `name`, speaks
@@ -211,8 +223,16 @@ impl Answering {
     /// `security` names - what the channel says in someone's name: that a
     /// participant was removed, in the name of who removed them, and why it
     /// did not let something in, in its own (`SecurityContext::system`).
-    pub(crate) fn in_channel(session_id: SessionId, channel_id: ChannelId, name: impl Into<String>, security: SecurityContext) -> Self {
-        let event_context = EventContext { initiator_id: security.initiator_id, ..EventContext::new(session_id, channel_id, security.caller_id, name) };
+    pub(crate) fn in_channel(
+        session_id: SessionId,
+        channel_id: ChannelId,
+        name: impl Into<String>,
+        security: SecurityContext,
+    ) -> Self {
+        let event_context = EventContext {
+            initiator_id: security.initiator_id,
+            ..EventContext::new(session_id, channel_id, security.caller_id, name)
+        };
         Self { event_context, security_context: security }
     }
 
@@ -247,7 +267,9 @@ impl Answering {
     /// channel records it so, and gives everyone else what they may see of
     /// it (issue 417) - also of an event with nothing left to show them.
     pub async fn send(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
-        output.send(self.envelope(event)).await
+        output
+            .send(self.envelope(event))
+            .await
             .context(format!("actor {} failed to send an event", self.event_context.sender_id))
     }
 
@@ -262,8 +284,6 @@ impl Answering {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,10 +296,20 @@ mod tests {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let answered = EventContext::new(session, channel, ActorId::System, "sender");
 
-        let said = Answering::in_channel(session, channel, "system", SecurityContext::system()).replying_to(&answered).envelope(ActorEvent::WakeupRequested);
+        let said = Answering::in_channel(session, channel, "system", SecurityContext::system())
+            .replying_to(&answered)
+            .envelope(ActorEvent::WakeupRequested);
 
-        assert_eq!((said.context.session_id, said.context.channel_id), (session, channel), "in the channel, not where the system context is");
-        assert_eq!(said.context.sender_id, SecurityContext::system().caller_id, "in the name of who speaks");
+        assert_eq!(
+            (said.context.session_id, said.context.channel_id),
+            (session, channel),
+            "in the channel, not where the system context is"
+        );
+        assert_eq!(
+            said.context.sender_id,
+            SecurityContext::system().caller_id,
+            "in the name of who speaks"
+        );
         assert_eq!(said.context.span_id, answered.span_id, "in the span of what it answers");
         assert_eq!(said.context.correlation_id, answered.event_id, "answering it");
         assert_ne!(said.context.event_id, answered.event_id, "an event of its own");
@@ -289,7 +319,8 @@ mod tests {
     /// an event of its own (issue 352).
     #[test]
     fn every_envelope_is_an_event_of_its_own() {
-        let request = Answering::own(ActorId::System, "user", &SecurityContext::system()).envelope(ActorEvent::WakeupRequested);
+        let request = Answering::own(ActorId::System, "user", &SecurityContext::system())
+            .envelope(ActorEvent::WakeupRequested);
         let turn = Answering::to(&request, ActorId::System, "agent", &SecurityContext::system());
 
         let first = turn.envelope(ActorEvent::WakeupRequested);

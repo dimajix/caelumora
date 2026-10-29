@@ -1,15 +1,15 @@
 //! The `stop_tool` component: tools with which an agent ends its part in a
 //! conversation - `stop`, `bye` and `silence`.
 
-use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
-use crate::turn::Turn;
-use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
+use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_model::actor::ActorState;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
-use caelumora_model::actor::ActorState;
-use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
@@ -34,17 +34,31 @@ impl StopToolProvider {
     /// # Errors
     /// `PromptError` if one of them cannot be had.
     pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
-        let tool = |name: &str| described(prompts, NAMESPACE, STOP_TOOL_KIND, Tool {
-            name: name.to_string(),
-            description: String::new(),
-            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
-            requires_approval: false,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: Default::default(),
-        }, ());
+        let tool = |name: &str| {
+            described(
+                prompts,
+                NAMESPACE,
+                STOP_TOOL_KIND,
+                Tool {
+                    name: name.to_string(),
+                    description: String::new(),
+                    parameters: ToolParameters::object(
+                        Vec::<(String, ToolParameters)>::new(),
+                        Vec::<String>::new(),
+                    ),
+                    requires_approval: false,
+                    visibility: ToolVisibility::SHOWN,
+                    classification: None,
+                    presentation: Default::default(),
+                },
+                (),
+            )
+        };
         let tools = vec![tool(STOP_TOOL_NAME)?, tool(BYE_TOOL_NAME)?, tool(SILENCE_TOOL_NAME)?];
-        Ok(Self { description: tool_text(prompts, NAMESPACE, STOP_TOOL_KIND, "description", ())?, tools })
+        Ok(Self {
+            description: tool_text(prompts, NAMESPACE, STOP_TOOL_KIND, "description", ())?,
+            tools,
+        })
     }
 }
 
@@ -58,22 +72,32 @@ impl ToolProvider for StopToolProvider {
         self.tools.clone()
     }
 
-    async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(
+        &self,
+        name: &str,
+        _params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
         // What it answers tells nothing: classified as the turn (issue 168).
         match name {
             STOP_TOOL_NAME | BYE_TOOL_NAME => {
                 info!("Stopping agent {} {}", turn.situation().agent_id(), turn.agent_name());
                 turn.request_state(ActorState::Sleeping);
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "stopped" }), turn.situation().label()))
-            },
+                Ok(ToolOutput::classified(
+                    serde_json::json!({ "status": "stopped" }),
+                    turn.situation().label(),
+                ))
+            }
             SILENCE_TOOL_NAME => {
                 info!("Silencing agent {} {}", turn.situation().agent_id(), turn.agent_name());
                 turn.request_state(ActorState::Idle);
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "silent" }), turn.situation().label()))
-            },
-            &_ => {
-                Err(ToolError::UnknownTool(name.to_string()))
+                Ok(ToolOutput::classified(
+                    serde_json::json!({ "status": "silent" }),
+                    turn.situation().label(),
+                ))
             }
+            &_ => Err(ToolError::UnknownTool(name.to_string())),
         }
     }
 }
@@ -105,9 +129,17 @@ mod tests {
 
         let result = provider.execute(STOP_TOOL_NAME, &json!({}), None, &mut turn).await.unwrap();
         assert_eq!(result.value["status"], "stopped");
-        assert_eq!(turn.requested_state(), Some(ActorState::Sleeping), "the turn ends, the agent sleeps");
+        assert_eq!(
+            turn.requested_state(),
+            Some(ActorState::Sleeping),
+            "the turn ends, the agent sleeps"
+        );
         provider.execute(SILENCE_TOOL_NAME, &json!({}), None, &mut turn).await.unwrap();
-        assert_eq!(turn.requested_state(), Some(ActorState::Idle), "the turn ends, the agent waits");
+        assert_eq!(
+            turn.requested_state(),
+            Some(ActorState::Idle),
+            "the turn ends, the agent waits"
+        );
 
         let tools = provider.tools();
         assert_eq!(tools.len(), 3);

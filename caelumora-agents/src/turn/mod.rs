@@ -37,36 +37,36 @@ mod tool_calls;
 
 pub(crate) use ending::CommittedTurn;
 
-use caelumora_runtime::actor::Answering;
 use crate::notes::NoteKind;
-use caelumora_runtime::agent::state::AgentStateHandle;
-use tool_calls::ToolCalls;
-use caelumora_runtime::transport::EventSender;
-use caelumora_runtime::terminal::{Shell, Terminal};
-use caelumora_runtime::runtime::ActorRuntime;
+use crate::situation::Situation;
 #[cfg(test)]
 use crate::testing::detached_actor_runtime;
-use caelumora_runtime::workspace::WorkspaceResult;
-use crate::situation::Situation;
 use anyhow::Result;
-use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::content::ContentRef;
+use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::digest::Digest;
+use caelumora_model::memory::{MemoryChange, MemoryOrigin};
+use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::note::NoteChange;
+use caelumora_model::prompt_catalogue::PromptError;
+use caelumora_model::security::Grant;
+use caelumora_model::tool::Tool;
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
 #[cfg(test)]
 use caelumora_model::work::Work;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::digest::Digest;
-use caelumora_model::memory::{MemoryChange, MemoryOrigin};
-use caelumora_model::content::ContentRef;
-use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::note::NoteChange;
-use caelumora_model::security::Grant;
-use caelumora_model::tool::Tool;
 use caelumora_model::workspace::Workspace;
+use caelumora_runtime::actor::Answering;
+use caelumora_runtime::agent::state::AgentStateHandle;
+use caelumora_runtime::runtime::ActorRuntime;
+use caelumora_runtime::terminal::{Shell, Terminal};
+use caelumora_runtime::transport::EventSender;
+use caelumora_runtime::workspace::WorkspaceResult;
 use std::sync::{Arc, LazyLock};
+use tool_calls::ToolCalls;
 
 /// What a turn reads as when none runs.
 static NO_TURN: LazyLock<TurnState> = LazyLock::new(TurnState::default);
@@ -96,7 +96,13 @@ impl<'a> Turn<'a> {
     /// turn is begun on the state (`AgentChannelState::begin_turn`), and
     /// ended through its handle (`commit`, `give_up`). It acts through the
     /// actor's `runtime`.
-    pub fn of(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>, runtime: ActorRuntime) -> Option<Self> {
+    pub fn of(
+        agent_id: AgentId,
+        agent_name: String,
+        agent_channel_state: &'a mut AgentChannelState,
+        agent_state: Arc<AgentStateHandle>,
+        runtime: ActorRuntime,
+    ) -> Option<Self> {
         agent_channel_state.turn.as_ref()?;
         Some(Self { agent_id, agent_name, agent_channel_state, agent_state, runtime })
     }
@@ -106,7 +112,13 @@ impl<'a> Turn<'a> {
     /// work in one.
     #[cfg(test)]
     pub(crate) fn begun(agent_id: AgentId, agent_channel_state: &'a mut AgentChannelState) -> Self {
-        agent_channel_state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));
+        agent_channel_state.begin_turn(Work::new(
+            Default::default(),
+            None,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        ));
         Self::under_way(agent_id, agent_channel_state)
     }
 
@@ -118,8 +130,18 @@ impl<'a> Turn<'a> {
     /// # Panics
     /// If no turn is under way.
     #[cfg(test)]
-    pub(crate) fn under_way(agent_id: AgentId, agent_channel_state: &'a mut AgentChannelState) -> Self {
-        Self::of(agent_id, "agent".to_string(), agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way")
+    pub(crate) fn under_way(
+        agent_id: AgentId,
+        agent_channel_state: &'a mut AgentChannelState,
+    ) -> Self {
+        Self::of(
+            agent_id,
+            "agent".to_string(),
+            agent_channel_state,
+            AgentStateHandle::detached(),
+            detached_actor_runtime(),
+        )
+        .expect("a turn is under way")
     }
 
     /// The situation of the turn, to read (issues 204, 399): what the turn
@@ -127,7 +149,13 @@ impl<'a> Turn<'a> {
     /// what components that only read are given, as an external agent's
     /// work gives it too.
     pub fn situation(&self) -> Situation<'_> {
-        Situation::new(self.agent_id, &self.current().work, self.agent_channel_state, &self.agent_state, &self.runtime)
+        Situation::new(
+            self.agent_id,
+            &self.current().work,
+            self.agent_channel_state,
+            &self.agent_state,
+            &self.runtime,
+        )
     }
 
     /// The workspace of the agent's session and its terminal, for what
@@ -137,7 +165,10 @@ impl<'a> Turn<'a> {
     ///
     /// # Errors
     /// As `ActorRuntime::workspace_terminal`.
-    pub async fn workspace_terminal(&self, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+    pub async fn workspace_terminal(
+        &self,
+        need: Grant,
+    ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         self.runtime.workspace_terminal(self.situation().security_context(), need).await
     }
 
@@ -171,7 +202,10 @@ impl<'a> Turn<'a> {
     /// one is checked in tests; in a release build it would start from an
     /// empty turn rather than fail.
     fn current_mut(&mut self) -> &mut TurnState {
-        debug_assert!(self.agent_channel_state.turn.is_some(), "a turn's working state changed while no turn runs");
+        debug_assert!(
+            self.agent_channel_state.turn.is_some(),
+            "a turn's working state changed while no turn runs"
+        );
         self.agent_channel_state.turn.get_or_insert_with(TurnState::default)
     }
 
@@ -226,11 +260,25 @@ impl<'a> Turn<'a> {
     /// # Errors
     /// `PromptError` if the plan cannot be worded to be named again;
     /// nothing is compacted then.
-    pub fn compact(&mut self, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Result<Option<(Digest, Digest)>, PromptError> {
+    pub fn compact(
+        &mut self,
+        replacement: Vec<(Message, Option<KnowledgeRef>)>,
+        keep_from: Option<Digest>,
+    ) -> Result<Option<(Digest, Digest)>, PromptError> {
         let replaced = replacement.len();
         let wording = self.plan_wording()?;
-        let Some(heads) = self.agent_channel_state.compact(ActorId::Agent(self.agent_id), replacement, keep_from, self.runtime.prompts()) else { return Ok(None) };
-        let replacement_end = replaced.checked_sub(1).and_then(|last| self.agent_channel_state.transcript.entries().nth(last)).map(|node| node.digest);
+        let Some(heads) = self.agent_channel_state.compact(
+            ActorId::Agent(self.agent_id),
+            replacement,
+            keep_from,
+            self.runtime.prompts(),
+        ) else {
+            return Ok(None);
+        };
+        let replacement_end = replaced
+            .checked_sub(1)
+            .and_then(|last| self.agent_channel_state.transcript.entries().nth(last))
+            .map(|node| node.digest);
         self.name_plan_again(replacement_end, wording);
         Ok(Some(heads))
     }
@@ -285,7 +333,10 @@ impl<'a> Turn<'a> {
     /// their bookkeeping off `Turn`. Short-lived on purpose - running a call
     /// needs the whole turn in between.
     pub(crate) fn tool_calls(&mut self) -> ToolCalls<'_> {
-        debug_assert!(self.agent_channel_state.turn.is_some(), "a turn's working state changed while no turn runs");
+        debug_assert!(
+            self.agent_channel_state.turn.is_some(),
+            "a turn's working state changed while no turn runs"
+        );
         let texts = self.situation().texts();
         let turn = self.agent_channel_state.turn.get_or_insert_with(TurnState::default);
         ToolCalls::new(turn, &self.agent_name, texts)
@@ -295,9 +346,12 @@ impl<'a> Turn<'a> {
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
     pub(crate) fn saw_private_knowledge(&self) -> bool {
-        self.current().work.context.frame.knowledge.iter()
-            .any(|k| matches!(k.source,
-                KnowledgeSource::PrivateNotes { .. } | KnowledgeSource::Memory { .. }))
+        self.current().work.context.frame.knowledge.iter().any(|k| {
+            matches!(
+                k.source,
+                KnowledgeSource::PrivateNotes { .. } | KnowledgeSource::Memory { .. }
+            )
+        })
     }
 
     /// Records that the turn read `reference` (issue 17): it is recorded
@@ -344,7 +398,11 @@ impl<'a> Turn<'a> {
     /// sent. Only the actor holds `output`: what the turn says reaches the
     /// channel through it alone, never through a component the turn is
     /// handed to.
-    pub(crate) async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
+    pub(crate) async fn send_event(
+        &self,
+        event: ActorEvent,
+        output: &dyn EventSender,
+    ) -> Result<()> {
         self.answering().send(event, output).await
     }
 
@@ -362,8 +420,15 @@ impl<'a> Turn<'a> {
     /// calling no tools, not a step of a plan - carries what the turn put
     /// aside (`put_aside`), with words or without: what it attaches is
     /// heard all the same.
-    pub(crate) async fn say(&mut self, mut message: Message, output: &dyn EventSender) -> Result<()> {
-        if message.role == MessageRole::Assistant && !message.internal && message.tool_calls.is_empty() {
+    pub(crate) async fn say(
+        &mut self,
+        mut message: Message,
+        output: &dyn EventSender,
+    ) -> Result<()> {
+        if message.role == MessageRole::Assistant
+            && !message.internal
+            && message.tool_calls.is_empty()
+        {
             message.attachments.append(&mut self.current_mut().attachments);
         }
         let said = self.push_message(message);
@@ -396,8 +461,8 @@ mod tests {
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
     use caelumora_model::message::MessageId;
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::message::MessageRole;
+    use caelumora_model::security::SecurityContext;
     use caelumora_runtime::transport::memory::InMemoryEventSender;
     use tokio::sync::mpsc;
 
@@ -411,15 +476,28 @@ mod tests {
     }
 
     fn message_classified(classification: &Classification) -> Message {
-        Message { id: MessageId::new(), role: MessageRole::User, ..Message::new(classification.clone()) }
+        Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            ..Message::new(classification.clone())
+        }
     }
 
     /// What its agent `agent` saw when it produced `said`, as it sent it -
     /// with what it was produced from (issue 417) -, resolved against
     /// `state`; `None` for a message it did not produce.
-    pub(super) fn seen(state: &AgentChannelState, agent: AgentId, said: &Message) -> Option<Vec<ContextItem>> {
+    pub(super) fn seen(
+        state: &AgentChannelState,
+        agent: AgentId,
+        said: &Message,
+    ) -> Option<Vec<ContextItem>> {
         let reference = state.context_of(said)?;
-        Some(ContextResolver::of(state, &testing::catalogue()).resolve(&reference, said.turn_id?, ActorId::Agent(agent)).expect("worded")?.items)
+        Some(
+            ContextResolver::of(state, &testing::catalogue())
+                .resolve(&reference, said.turn_id?, ActorId::Agent(agent))
+                .expect("worded")?
+                .items,
+        )
     }
 
     #[test]
@@ -442,7 +520,11 @@ mod tests {
         let mut stored = serde_json::to_value(&state).unwrap();
         stored["turn"].as_object_mut().unwrap().remove("model_calls");
         let state: AgentChannelState = serde_json::from_value(stored).unwrap();
-        assert_eq!(state.turn.unwrap().model_calls, 0, "a turn stored before the count was kept starts from 0");
+        assert_eq!(
+            state.turn.unwrap().model_calls,
+            0,
+            "a turn stored before the count was kept starts from 0"
+        );
     }
 
     /// Issue 282: what a turn put aside goes with its next message of the model that others hear,
@@ -453,18 +535,43 @@ mod tests {
         use caelumora_model::tool::{ToolCall, ToolVisibility};
         use caelumora_runtime::transport::Discard;
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));
+        state.begin_turn(Work::new(
+            Default::default(),
+            None,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        ));
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
         let aside = make_content_ref("a.png", b"a");
         turn.put_aside(aside.clone());
-        let said = |role, internal| Message { role, internal, content: Some("said".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let call = ToolCall { id: Some("1".to_string()), function_name: "attach".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::default(), presentation: Default::default() };
+        let said = |role, internal| Message {
+            role,
+            internal,
+            content: Some("said".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            function_name: "attach".to_string(),
+            arguments: serde_json::json!({}),
+            visibility: ToolVisibility::default(),
+            presentation: Default::default(),
+        };
         turn.say(said(MessageRole::Assistant, true), &Discard).await.unwrap();
-        turn.say(Message { tool_calls: vec![call], ..said(MessageRole::Assistant, false) }, &Discard).await.unwrap();
+        turn.say(
+            Message { tool_calls: vec![call], ..said(MessageRole::Assistant, false) },
+            &Discard,
+        )
+        .await
+        .unwrap();
         turn.say(said(MessageRole::Tool, false), &Discard).await.unwrap();
-        turn.say(Message { content: None, ..said(MessageRole::Assistant, false) }, &Discard).await.unwrap();
+        turn.say(Message { content: None, ..said(MessageRole::Assistant, false) }, &Discard)
+            .await
+            .unwrap();
         turn.say(said(MessageRole::Assistant, false), &Discard).await.unwrap();
-        let carried: Vec<usize> = state.transcript.messages().iter().map(|message| message.attachments.len()).collect();
+        let carried: Vec<usize> =
+            state.transcript.messages().iter().map(|message| message.attachments.len()).collect();
         assert_eq!(carried, [0, 0, 0, 1, 0], "the answer alone, once, with words or without - not a step of a plan, nor one that calls tools");
     }
 
@@ -478,44 +585,128 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let output = InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));
+        state.begin_turn(Work::new(
+            Default::default(),
+            None,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        ));
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
 
-        let call = ToolCall { id: Some("1".to_string()), function_name: "write_private_note".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
-        let thinking = Message { role: MessageRole::Assistant, reasoning: Some("weighing".to_string()), reasoning_visibility: Visibility::Owner, tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            function_name: "write_private_note".to_string(),
+            arguments: serde_json::json!({"text": "secret"}),
+            visibility: ToolVisibility::HIDDEN,
+            presentation: Default::default(),
+        };
+        let thinking = Message {
+            role: MessageRole::Assistant,
+            reasoning: Some("weighing".to_string()),
+            reasoning_visibility: Visibility::Owner,
+            tool_calls: vec![call],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
         turn.push_message(thinking.clone());
-        turn.send_event(ActorEvent::CompleteMessageGenerated(thinking.clone()), &output).await.unwrap();
-        turn.send_event(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![thinking] }, &output).await.unwrap();
+        turn.send_event(ActorEvent::CompleteMessageGenerated(thinking.clone()), &output)
+            .await
+            .unwrap();
+        turn.send_event(
+            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![thinking] },
+            &output,
+        )
+        .await
+        .unwrap();
 
         match rx.recv().await.map(|e| e.event) {
-            Some(ActorEvent::CompleteMessageGenerated(m)) => assert_eq!((m.tool_calls.len(), m.reasoning.as_deref()), (1, Some("weighing")), "the hidden call and the owner's reasoning go along"),
+            Some(ActorEvent::CompleteMessageGenerated(m)) => assert_eq!(
+                (m.tool_calls.len(), m.reasoning.as_deref()),
+                (1, Some("weighing")),
+                "the hidden call and the owner's reasoning go along"
+            ),
             other => panic!("expected the message, got {other:?}"),
         }
         match rx.recv().await.map(|e| e.event) {
-            Some(ActorEvent::TurnFinished { messages, .. }) => assert_eq!(messages.len(), 1, "and the turn's end carries it"),
+            Some(ActorEvent::TurnFinished { messages, .. }) => {
+                assert_eq!(messages.len(), 1, "and the turn's end carries it")
+            }
             other => panic!("expected the turn's end, got {other:?}"),
         }
-        assert_eq!(turn.situation().agent_channel_state().transcript.messages().last().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");
+        assert_eq!(
+            turn.situation()
+                .agent_channel_state()
+                .transcript
+                .messages()
+                .last()
+                .map(|m| m.tool_calls.len()),
+            Some(1),
+            "the agent keeps it"
+        );
     }
 
     #[test]
     fn a_turn_has_seen_its_transcript_its_prompt_parts_and_its_tool_results() {
         let internal = Classification::general(Confidentiality::Internal);
         let confidential = Classification::general(Confidentiality::Confidential);
-        let said = |classification: &Classification, content: &str| Message { content: Some(content.to_string()), ..message_classified(classification) };
+        let said = |classification: &Classification, content: &str| Message {
+            content: Some(content.to_string()),
+            ..message_classified(classification)
+        };
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);
-        state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), confidential.clone(), Default::default()));
+        state.begin_turn(Work::new(
+            EventContext::default(),
+            None,
+            SecurityContext::default(),
+            confidential.clone(),
+            Default::default(),
+        ));
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
         assert_eq!(turn.situation().label(), Classification::PUBLIC, "a public transcript");
 
-        turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC), source: None }], Vec::new());
+        turn.set_context(
+            vec![PromptPart {
+                role: MessageRole::System,
+                text: "Be brief.".to_string(),
+                after: None,
+                classification: Some(Classification::PUBLIC),
+                source: None,
+            }],
+            Vec::new(),
+        );
         assert_eq!(turn.situation().label(), Classification::PUBLIC);
         state.perceive(vec![said(&internal, "Our numbers are good.")]);
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
         assert_eq!(turn.situation().label(), internal, "what others said during the turn");
-        turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
-        assert_eq!(turn.situation().label(), confidential, "a part that does not say counts as the channel");
-        assert_eq!(turn.situation().agent_channel_state().turn.as_ref().unwrap().work.context.frame.prompts[0].classification, None, "and is recorded so");
+        turn.set_context(
+            vec![PromptPart {
+                role: MessageRole::System,
+                text: "Be brief.".to_string(),
+                after: None,
+                classification: None,
+                source: None,
+            }],
+            Vec::new(),
+        );
+        assert_eq!(
+            turn.situation().label(),
+            confidential,
+            "a part that does not say counts as the channel"
+        );
+        assert_eq!(
+            turn.situation()
+                .agent_channel_state()
+                .turn
+                .as_ref()
+                .unwrap()
+                .work
+                .context
+                .frame
+                .prompts[0]
+                .classification,
+            None,
+            "and is recorded so"
+        );
     }
 }

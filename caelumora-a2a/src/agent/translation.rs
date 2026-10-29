@@ -3,9 +3,11 @@
 //! the remote agent sends - a task, its status and its artifacts, or a
 //! message of its own - as `ExternalEvent`s.
 
-use super::wire::{text_of, StreamResponse, WireMessage, WirePart, WireRole, WireStatus, WireTask, WireTaskState};
-use caelumora_model::external_agent::{ConversationId, TaskId};
+use super::wire::{
+    text_of, StreamResponse, WireMessage, WirePart, WireRole, WireStatus, WireTask, WireTaskState,
+};
 use caelumora_agents::external::{ExternalEvent, OutboundMessage};
+use caelumora_model::external_agent::{ConversationId, TaskId};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -19,13 +21,19 @@ pub(super) const ACCEPTED_OUTPUT_MODES: [&str; 1] = ["text/plain"];
 /// answers, if it asked back. A2A has no system message (issue 204): the
 /// prompt parts are text of the user's message too, set apart by the
 /// heading each has.
-pub(super) fn wire_message(message: &OutboundMessage, conversation: Option<&ConversationId>) -> WireMessage {
+pub(super) fn wire_message(
+    message: &OutboundMessage,
+    conversation: Option<&ConversationId>,
+) -> WireMessage {
     WireMessage {
         message_id: Some(Uuid::new_v4().to_string()),
         role: Some(WireRole::User),
         context_id: conversation.map(|c| c.0.clone()),
         task_id: message.answers.as_ref().map(|t| t.0.clone()),
-        parts: message.prompts.iter().map(|p| WirePart { text: Some(p.clone()) })
+        parts: message
+            .prompts
+            .iter()
+            .map(|p| WirePart { text: Some(p.clone()) })
             // A2A has no sender of a part: the text names it (issue 135).
             .chain(message.said.iter().map(|said| WirePart { text: Some(said.text.clone()) }))
             .collect(),
@@ -132,8 +140,12 @@ fn status_events(status: WireStatus, events: &mut Vec<ExternalEvent>) {
         WireTaskState::Canceled => events.push(ExternalEvent::Canceled),
         WireTaskState::Failed => events.push(ExternalEvent::Failed(or("the task failed"))),
         WireTaskState::Rejected => events.push(ExternalEvent::Failed(or("the task was refused"))),
-        WireTaskState::InputRequired => events.push(ExternalEvent::InputRequired(or("it needs more to go on"))),
-        WireTaskState::AuthRequired => events.push(ExternalEvent::Failed("it asks for an authentication it was not given".to_string())),
+        WireTaskState::InputRequired => {
+            events.push(ExternalEvent::InputRequired(or("it needs more to go on")))
+        }
+        WireTaskState::AuthRequired => events.push(ExternalEvent::Failed(
+            "it asks for an authentication it was not given".to_string(),
+        )),
         // Submitted, working: what it says meanwhile is not the answer.
         WireTaskState::Other => {}
     }
@@ -148,16 +160,31 @@ mod tests {
     fn what_is_said_is_sent_as_the_users_message_one_part_each_as_it_is_given() {
         use caelumora_agents::external::Said;
         let said = |text: &str| Said { sender: "alice".to_string(), text: text.to_string() };
-        let first = OutboundMessage { prompts: Vec::new(), said: vec![said("alice: hello"), said("bob: hi")], answers: None };
+        let first = OutboundMessage {
+            prompts: Vec::new(),
+            said: vec![said("alice: hello"), said("bob: hi")],
+            answers: None,
+        };
         let sent = serde_json::to_value(wire_message(&first, None)).expect("json");
         assert!(sent["messageId"].as_str().is_some_and(|id| !id.is_empty()));
         assert_eq!(sent["role"], "ROLE_USER");
         assert_eq!(sent["parts"], json!([{ "text": "alice: hello" }, { "text": "bob: hi" }]));
-        assert!(sent.get("contextId").is_none() && sent.get("taskId").is_none(), "no conversation yet, no task answered");
+        assert!(
+            sent.get("contextId").is_none() && sent.get("taskId").is_none(),
+            "no conversation yet, no task answered"
+        );
 
-        let reply = OutboundMessage { prompts: Vec::new(), said: vec![said("alice: Berlin")], answers: Some(task("t-1")) };
-        let sent = serde_json::to_value(wire_message(&reply, Some(&conversation("c-1")))).expect("json");
-        assert_eq!((sent["contextId"].as_str(), sent["taskId"].as_str()), (Some("c-1"), Some("t-1")));
+        let reply = OutboundMessage {
+            prompts: Vec::new(),
+            said: vec![said("alice: Berlin")],
+            answers: Some(task("t-1")),
+        };
+        let sent =
+            serde_json::to_value(wire_message(&reply, Some(&conversation("c-1")))).expect("json");
+        assert_eq!(
+            (sent["contextId"].as_str(), sent["taskId"].as_str()),
+            (Some("c-1"), Some("t-1"))
+        );
     }
 
     #[test]
@@ -169,7 +196,10 @@ mod tests {
             answers: None,
         };
         let sent = serde_json::to_value(wire_message(&message, None)).expect("json");
-        assert_eq!(sent["parts"], json!([{ "text": "[Who is in this channel]\nYou are Hermes (@hermes)." }, { "text": "alice: hello" }]));
+        assert_eq!(
+            sent["parts"],
+            json!([{ "text": "[Who is in this channel]\nYou are Hermes (@hermes)." }, { "text": "alice: hello" }])
+        );
     }
 
     fn response(value: Value) -> StreamResponse {
@@ -185,54 +215,131 @@ mod tests {
     }
 
     fn chunk(id: &str, text: &str, append: bool, last: bool) -> StreamResponse {
-        response(json!({ "artifactUpdate": { "contextId": "c-1", "artifact": { "artifactId": id, "parts": [{ "text": text }] }, "append": append, "lastChunk": last } }))
+        response(
+            json!({ "artifactUpdate": { "contextId": "c-1", "artifact": { "artifactId": id, "parts": [{ "text": text }] }, "append": append, "lastChunk": last } }),
+        )
     }
 
     fn ended_in(state: &str, text: Option<&str>) -> Vec<ExternalEvent> {
         let message = text.map(|t| json!({ "parts": [{ "text": t }] }));
-        Translation::default().events(response(json!({ "statusUpdate": { "status": { "state": state, "message": message } } })))
+        Translation::default().events(response(
+            json!({ "statusUpdate": { "status": { "state": state, "message": message } } }),
+        ))
     }
 
     #[test]
     fn an_artifact_in_chunks_is_told_piece_by_piece_and_whole_at_its_last() {
         let mut translation = Translation::default();
-        assert_eq!(translation.events(chunk("a", "Hel", false, false)), vec![ExternalEvent::Conversation(conversation("c-1")), ExternalEvent::Partial("Hel".to_string())]);
-        assert_eq!(translation.events(chunk("a", "lo.", true, true)), vec![ExternalEvent::Message("Hello.".to_string())]);
+        assert_eq!(
+            translation.events(chunk("a", "Hel", false, false)),
+            vec![
+                ExternalEvent::Conversation(conversation("c-1")),
+                ExternalEvent::Partial("Hel".to_string())
+            ]
+        );
+        assert_eq!(
+            translation.events(chunk("a", "lo.", true, true)),
+            vec![ExternalEvent::Message("Hello.".to_string())]
+        );
 
-        assert_eq!(translation.events(chunk("b", "Draft", false, false)), vec![ExternalEvent::Partial("Draft".to_string())]);
-        assert_eq!(translation.events(chunk("b", "Final.", false, true)), vec![ExternalEvent::Message("Final.".to_string())], "a chunk not appended starts over");
+        assert_eq!(
+            translation.events(chunk("b", "Draft", false, false)),
+            vec![ExternalEvent::Partial("Draft".to_string())]
+        );
+        assert_eq!(
+            translation.events(chunk("b", "Final.", false, true)),
+            vec![ExternalEvent::Message("Final.".to_string())],
+            "a chunk not appended starts over"
+        );
     }
 
     #[test]
     fn the_conversation_and_the_task_are_told_once_and_again_when_they_change() {
         let mut translation = Translation::default();
-        let working = |task: &str, context: &str| response(json!({ "task": { "id": task, "contextId": context, "status": { "state": "TASK_STATE_WORKING" } } }));
-        assert_eq!(translation.events(working("t-1", "c-1")), vec![ExternalEvent::Conversation(conversation("c-1")), ExternalEvent::Started(task("t-1"))]);
+        let working = |task: &str, context: &str| {
+            response(
+                json!({ "task": { "id": task, "contextId": context, "status": { "state": "TASK_STATE_WORKING" } } }),
+            )
+        };
+        assert_eq!(
+            translation.events(working("t-1", "c-1")),
+            vec![
+                ExternalEvent::Conversation(conversation("c-1")),
+                ExternalEvent::Started(task("t-1"))
+            ]
+        );
         assert!(translation.events(working("t-1", "c-1")).is_empty(), "nothing new");
-        assert_eq!(translation.events(working("t-2", "c-2")), vec![ExternalEvent::Conversation(conversation("c-2")), ExternalEvent::Started(task("t-2"))]);
+        assert_eq!(
+            translation.events(working("t-2", "c-2")),
+            vec![
+                ExternalEvent::Conversation(conversation("c-2")),
+                ExternalEvent::Started(task("t-2"))
+            ]
+        );
         assert!(translation.events(response(json!({ "statusUpdate": { "contextId": "", "status": { "state": "TASK_STATE_WORKING" } } }))).is_empty(), "an empty context is none");
     }
 
     #[test]
     fn a_message_without_a_task_is_the_whole_answer() {
         let events = Translation::default().events(response(json!({ "message": { "contextId": "c-1", "parts": [{ "text": "Hi." }, { "data": {} }, { "text": "Bye." }] } })));
-        assert_eq!(events, vec![ExternalEvent::Conversation(conversation("c-1")), ExternalEvent::Message("Hi.\nBye.".to_string()), ExternalEvent::Completed], "its text parts, one a line");
-        assert_eq!(Translation::default().events(response(json!({ "message": { "parts": [] } }))), vec![ExternalEvent::Completed], "nothing to say");
+        assert_eq!(
+            events,
+            vec![
+                ExternalEvent::Conversation(conversation("c-1")),
+                ExternalEvent::Message("Hi.\nBye.".to_string()),
+                ExternalEvent::Completed
+            ],
+            "its text parts, one a line"
+        );
+        assert_eq!(
+            Translation::default().events(response(json!({ "message": { "parts": [] } }))),
+            vec![ExternalEvent::Completed],
+            "nothing to say"
+        );
     }
 
     #[test]
     fn a_task_tells_its_end_its_question_or_why_it_failed_and_nothing_while_it_works() {
-        assert_eq!(ended_in("TASK_STATE_COMPLETED", Some("Done.")), vec![ExternalEvent::Message("Done.".to_string()), ExternalEvent::Completed]);
+        assert_eq!(
+            ended_in("TASK_STATE_COMPLETED", Some("Done.")),
+            vec![ExternalEvent::Message("Done.".to_string()), ExternalEvent::Completed]
+        );
         assert_eq!(ended_in("TASK_STATE_COMPLETED", None), vec![ExternalEvent::Completed]);
         assert_eq!(ended_in("TASK_STATE_CANCELED", Some("ignored")), vec![ExternalEvent::Canceled]);
-        assert_eq!(ended_in("TASK_STATE_FAILED", Some("out of coffee")), vec![ExternalEvent::Failed("out of coffee".to_string())]);
-        assert_eq!(ended_in("TASK_STATE_FAILED", None), vec![ExternalEvent::Failed("the task failed".to_string())]);
-        assert_eq!(ended_in("TASK_STATE_REJECTED", None), vec![ExternalEvent::Failed("the task was refused".to_string())]);
-        assert_eq!(ended_in("TASK_STATE_INPUT_REQUIRED", Some("Which city?")), vec![ExternalEvent::InputRequired("Which city?".to_string())]);
-        assert_eq!(ended_in("TASK_STATE_INPUT_REQUIRED", None), vec![ExternalEvent::InputRequired("it needs more to go on".to_string())]);
-        assert_eq!(ended_in("TASK_STATE_AUTH_REQUIRED", Some("log in")), vec![ExternalEvent::Failed("it asks for an authentication it was not given".to_string())]);
-        assert!(ended_in("TASK_STATE_WORKING", Some("thinking")).is_empty(), "what it says meanwhile is not the answer");
-        assert!(ended_in("TASK_STATE_SOMETHING_NEW", Some("?")).is_empty(), "nor is a state not known");
+        assert_eq!(
+            ended_in("TASK_STATE_FAILED", Some("out of coffee")),
+            vec![ExternalEvent::Failed("out of coffee".to_string())]
+        );
+        assert_eq!(
+            ended_in("TASK_STATE_FAILED", None),
+            vec![ExternalEvent::Failed("the task failed".to_string())]
+        );
+        assert_eq!(
+            ended_in("TASK_STATE_REJECTED", None),
+            vec![ExternalEvent::Failed("the task was refused".to_string())]
+        );
+        assert_eq!(
+            ended_in("TASK_STATE_INPUT_REQUIRED", Some("Which city?")),
+            vec![ExternalEvent::InputRequired("Which city?".to_string())]
+        );
+        assert_eq!(
+            ended_in("TASK_STATE_INPUT_REQUIRED", None),
+            vec![ExternalEvent::InputRequired("it needs more to go on".to_string())]
+        );
+        assert_eq!(
+            ended_in("TASK_STATE_AUTH_REQUIRED", Some("log in")),
+            vec![ExternalEvent::Failed(
+                "it asks for an authentication it was not given".to_string()
+            )]
+        );
+        assert!(
+            ended_in("TASK_STATE_WORKING", Some("thinking")).is_empty(),
+            "what it says meanwhile is not the answer"
+        );
+        assert!(
+            ended_in("TASK_STATE_SOMETHING_NEW", Some("?")).is_empty(),
+            "nor is a state not known"
+        );
     }
 
     #[test]
@@ -240,9 +347,16 @@ mod tests {
         let found: WireTask = serde_json::from_value(json!({
             "id": "t-1", "contextId": "c-1", "status": { "state": "TASK_STATE_WORKING" },
             "artifacts": [{ "artifactId": "a", "parts": [{ "text": "so far" }] }],
-        })).expect("a task");
+        }))
+        .expect("a task");
         let mut translation = Translation::default();
-        assert_eq!(translation.started(&found), vec![ExternalEvent::Conversation(conversation("c-1")), ExternalEvent::Started(task("t-1"))]);
+        assert_eq!(
+            translation.started(&found),
+            vec![
+                ExternalEvent::Conversation(conversation("c-1")),
+                ExternalEvent::Started(task("t-1"))
+            ]
+        );
         assert!(translation.started(&found).is_empty(), "told once");
     }
 }

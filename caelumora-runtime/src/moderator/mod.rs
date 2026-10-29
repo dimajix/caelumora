@@ -30,7 +30,7 @@ use caelumora_model::message::{Message, MessageId};
 /// component of the channel, of which it has exactly one (issue 174);
 /// shared like every facet, so it keeps what it changes behind its own lock.
 #[async_trait]
-pub(crate) trait Moderator : Send + Sync + Debug {
+pub(crate) trait Moderator: Send + Sync + Debug {
     /// What becomes of `event` in the channel: whom it is delivered to,
     /// whom to ask to respond, and what the moderator tells of its own.
     /// What a user sees is what is delivered to their actor (issue 220).
@@ -76,7 +76,9 @@ pub(crate) enum Notice {
 impl From<Notice> for ActorEvent {
     fn from(notice: Notice) -> Self {
         match notice {
-            Notice::ChainCutOff { message, max_agent_hops, not_asked } => ActorEvent::ChainCutOff { message, max_agent_hops, not_asked },
+            Notice::ChainCutOff { message, max_agent_hops, not_asked } => {
+                ActorEvent::ChainCutOff { message, max_agent_hops, not_asked }
+            }
             Notice::ResponderUndecided { message } => ActorEvent::ResponderUndecided { message },
         }
     }
@@ -96,7 +98,12 @@ pub trait ResponderPolicy: Send + Sync + Debug {
     /// # Errors
     /// `Undecided` if the policy could not choose (issue 441), saying why without anything that was
     /// said - whom to ask then is the moderator's to decide.
-    async fn choose(&self, event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided>;
+    async fn choose(
+        &self,
+        event: &Envelope,
+        messages: &[Message],
+        candidates: Vec<ActorDescription>,
+    ) -> Result<Vec<ActorId>, Undecided>;
 }
 
 /// Why a `ResponderPolicy` could not choose whom to ask (issue 441): its words for the log, at

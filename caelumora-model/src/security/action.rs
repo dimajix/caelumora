@@ -1,12 +1,12 @@
 //! What the `AccessPolicy` is asked about (issue 323): the actions, among
 //! them the verbs on stored entities.
 
+use super::{Grant, SecurityAttributes};
 use crate::actor::ActorId;
 use crate::command::Command;
 use crate::store::EntityKind;
 use crate::tool::ToolCall;
 use std::fmt::Debug;
-use super::{Grant, SecurityAttributes};
 
 /// Everything the `AccessPolicy` is asked about.
 ///
@@ -47,7 +47,11 @@ pub enum ActionType<'a> {
     ///   it. Changing it is its owner's alone.
     /// - a user: receiving the events about them; a stored user belongs to
     ///   the system (issue 94). A profile belongs to its user (issue 176).
-    Entity { kind: EntityKind, verb: Verb, attributes: &'a SecurityAttributes },
+    Entity {
+        kind: EntityKind,
+        verb: Verb,
+        attributes: &'a SecurityAttributes,
+    },
     /// Listing the entities of a kind.
     List(EntityKind),
     /// Reading what an agent's model saw when it produced a message - its
@@ -58,7 +62,10 @@ pub enum ActionType<'a> {
     /// sets (issue 194): what it can do, not what it did. Carries the
     /// agent's attributes and those of the channel, where its tools are
     /// built.
-    ReadAgentTools { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
+    ReadAgentTools {
+        agent: &'a SecurityAttributes,
+        channel: &'a SecurityAttributes,
+    },
     /// Reading which components an agent was built from in a channel, the
     /// bundles it includes resolved (issue 270): its
     /// configuration, with what was shared with its owner. Carries the
@@ -67,7 +74,10 @@ pub enum ActionType<'a> {
     /// Answering whether a tool call of an agent may run (issue 14): an
     /// answer that counts for the approval it was asked for. Carries the
     /// agent's attributes and those of the channel the call is made in.
-    ApproveToolCall { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
+    ApproveToolCall {
+        agent: &'a SecurityAttributes,
+        channel: &'a SecurityAttributes,
+    },
     /// Stopping a running session - all its channels and actors - without
     /// deleting it, carrying its attributes. It stops for everybody in it.
     StopSession(&'a SecurityAttributes),
@@ -92,10 +102,16 @@ pub enum ActionType<'a> {
     /// who sends the modification, before it is sent and as the channel
     /// admits it; the channel's attributes are there for a policy that lets
     /// someone moderate.
-    ModifyMessage { author: ActorId, channel: &'a SecurityAttributes },
+    ModifyMessage {
+        author: ActorId,
+        channel: &'a SecurityAttributes,
+    },
     /// Taking a message of `author` back in the channel with `channel`
     /// attributes (issue 234), asked as `ModifyMessage`.
-    RevokeMessage { author: ActorId, channel: &'a SecurityAttributes },
+    RevokeMessage {
+        author: ActorId,
+        channel: &'a SecurityAttributes,
+    },
     /// Changing the classification of `target` (issue 133): whether the
     /// actor may - its owner, its author. Whether the new classification may
     /// be given there is the `ConfidentialityPolicy`'s, asked beside it
@@ -105,17 +121,31 @@ pub enum ActionType<'a> {
     /// with `channel` attributes - in `/help` and in completion (issue 28).
     /// Shaped as a command of an agent is, so that both are decided alike
     /// (issue 304).
-    ShowCommand { command: &'a Command, channel: &'a SecurityAttributes },
+    ShowCommand {
+        command: &'a Command,
+        channel: &'a SecurityAttributes,
+    },
     /// Running the session's command `command` in the channel, alike. Whom
     /// the command is for is the command's own word (`Command::owners_only`).
-    ExecuteCommand { command: &'a Command, channel: &'a SecurityAttributes },
+    ExecuteCommand {
+        command: &'a Command,
+        channel: &'a SecurityAttributes,
+    },
     /// Seeing that an agent carries out `command` (issue 269) - in `/help`,
     /// in completion, in the participant's snapshot. Carries the agent's
     /// attributes and those of the channel it is asked in.
-    ShowAgentCommand { command: &'a Command, agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
+    ShowAgentCommand {
+        command: &'a Command,
+        agent: &'a SecurityAttributes,
+        channel: &'a SecurityAttributes,
+    },
     /// Asking the agent to carry out `command` (issue 269), alike. Whom the
     /// command is for is the command's own word (`Command::owners_only`).
-    ExecuteAgentCommand { command: &'a Command, agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
+    ExecuteAgentCommand {
+        command: &'a Command,
+        agent: &'a SecurityAttributes,
+        channel: &'a SecurityAttributes,
+    },
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
 }
@@ -163,7 +193,11 @@ impl<'a> ActionType<'a> {
 
     /// Doing a kind's own `verb` with an entity of `kind` that has
     /// `attributes`, such as using a skill (its verb `USE`).
-    pub const fn custom(kind: EntityKind, verb: &'static CustomVerb, attributes: &'a SecurityAttributes) -> Self {
+    pub const fn custom(
+        kind: EntityKind,
+        verb: &'static CustomVerb,
+        attributes: &'a SecurityAttributes,
+    ) -> Self {
         Self::entity(kind, Verb::Custom(verb), attributes)
     }
 
@@ -188,9 +222,15 @@ impl<'a> ActionType<'a> {
             ActionType::RevokeMessage { author, .. } => format!("RevokeMessage(of {author})"),
             ActionType::Reclassify(target) => format!("Reclassify({target:?})"),
             ActionType::ShowCommand { command, .. } => format!("ShowCommand(/{})", command.name),
-            ActionType::ExecuteCommand { command, .. } => format!("ExecuteCommand(/{})", command.name),
-            ActionType::ShowAgentCommand { command, .. } => format!("ShowAgentCommand(/{})", command.name),
-            ActionType::ExecuteAgentCommand { command, .. } => format!("ExecuteAgentCommand(/{})", command.name),
+            ActionType::ExecuteCommand { command, .. } => {
+                format!("ExecuteCommand(/{})", command.name)
+            }
+            ActionType::ShowAgentCommand { command, .. } => {
+                format!("ShowAgentCommand(/{})", command.name)
+            }
+            ActionType::ExecuteAgentCommand { command, .. } => {
+                format!("ExecuteAgentCommand(/{})", command.name)
+            }
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
             ActionType::ReadSecret(key) => format!("ReadSecret({key})"),
         }
@@ -208,11 +248,15 @@ impl<'a> ActionType<'a> {
             ActionType::StopSession(_) => "session",
             ActionType::CancelChannel(_) => "cancel",
             ActionType::WakeChannel(_) => "channel",
-            ActionType::RetryMessage(_) | ActionType::ModifyMessage { .. } | ActionType::RevokeMessage { .. } => "message",
+            ActionType::RetryMessage(_)
+            | ActionType::ModifyMessage { .. }
+            | ActionType::RevokeMessage { .. } => "message",
             ActionType::AnswerQuestion(_) => "question",
             ActionType::Reclassify(_) => "classification",
-            ActionType::ShowCommand { .. } | ActionType::ExecuteCommand { .. }
-            | ActionType::ShowAgentCommand { .. } | ActionType::ExecuteAgentCommand { .. } => "command",
+            ActionType::ShowCommand { .. }
+            | ActionType::ExecuteCommand { .. }
+            | ActionType::ShowAgentCommand { .. }
+            | ActionType::ExecuteAgentCommand { .. } => "command",
             ActionType::CallTool(_) => "tool",
             ActionType::ReadSecret(_) => "secret",
         };
@@ -308,7 +352,8 @@ pub const JOIN: CustomVerb = CustomVerb { name: "Join", requires: Requirement::G
 /// what an access list grants `Write`. A verb any kind may use, the core's
 /// or a plugin's (issue 328), for what is written to rather than changed
 /// as a whole: a workspace's files, say.
-pub const WRITE: CustomVerb = CustomVerb { name: "Write", requires: Requirement::Grant(Grant::Write) };
+pub const WRITE: CustomVerb =
+    CustomVerb { name: "Write", requires: Requirement::Grant(Grant::Write) };
 
 /// What is reclassified (`ActionType::Reclassify`, issue 133), with who it
 /// belongs to.
@@ -332,8 +377,8 @@ pub enum Reclassified<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::Stored;
     use crate::session::Session;
+    use crate::store::Stored;
 
     #[test]
     fn an_action_is_described_without_its_content() {
@@ -347,6 +392,9 @@ mod tests {
         let described = ActionType::CallTool(&call).describe();
         assert_eq!(described, "CallTool(web_search)");
         assert!(!described.contains("secret plans"), "no arguments in the log");
-        assert_eq!(ActionType::get(Session::KIND, &SecurityAttributes::default()).describe(), "GetSession");
+        assert_eq!(
+            ActionType::get(Session::KIND, &SecurityAttributes::default()).describe(),
+            "GetSession"
+        );
     }
 }

@@ -17,7 +17,12 @@ pub struct MentionsOnlyPolicy;
 
 #[async_trait]
 impl ResponderPolicy for MentionsOnlyPolicy {
-    async fn choose(&self, _event: &Envelope, _messages: &[Message], _candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+    async fn choose(
+        &self,
+        _event: &Envelope,
+        _messages: &[Message],
+        _candidates: Vec<ActorDescription>,
+    ) -> Result<Vec<ActorId>, Undecided> {
         Ok(Vec::new())
     }
 }

@@ -1,11 +1,11 @@
 //! Questions an agent's tool call puts to the users of a running channel.
 
 use super::*;
+use crate::tool::ask_user_tool::ASK_USER_TOOL_KIND;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::question::{QuestionError, QuestionRequest};
 use caelumora_model::tool::{ToolCallResult, ToolResultStatus};
 use caelumora_model::transcript::TranscriptEntry;
-use crate::tool::ask_user_tool::ASK_USER_TOOL_KIND;
 use std::sync::Mutex;
 use tokio::time;
 
@@ -18,17 +18,29 @@ fn a_call_asking(sensitive: bool) -> (Message, Message, ComponentConfig) {
 
     let call = Message {
         role: MessageRole::Assistant,
-        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "asking".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+        tool_calls: vec![ToolCall {
+            id: Some("1".to_string()),
+            function_name: "asking".to_string(),
+            arguments: serde_json::json!({}),
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        }],
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let done = Message { role: MessageRole::Assistant, content: Some("Done.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
-        id: "asking".to_string(),
-        kind: "test_asking_tool".to_string(),
-        params: serde_json::json!({ "sensitive": sensitive }),
-        tags: vec![],
-        fail_policy: ComponentFailPolicy::FailClosed,
-    }] };
+    let done = Message {
+        role: MessageRole::Assistant,
+        content: Some("Done.".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let components = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "asking".to_string(),
+            kind: "test_asking_tool".to_string(),
+            params: serde_json::json!({ "sensitive": sensitive }),
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }],
+    };
     (call, done, components)
 }
 
@@ -41,7 +53,9 @@ async fn questions_requested(events: &mut broadcast::Receiver<Envelope>) -> Ques
                 break request;
             }
         }
-    }).await.expect("the users are asked")
+    })
+    .await
+    .expect("the users are asked")
 }
 
 #[tokio::test]
@@ -57,26 +71,64 @@ async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
 
     // The turn is their record, as for approvals.
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(stored.pending_questions().into_iter().map(|q| q.id).collect::<Vec<_>>(), [asked.id]);
+    assert_eq!(
+        stored.pending_questions().into_iter().map(|q| q.id).collect::<Vec<_>>(),
+        [asked.id]
+    );
 
     let actor = channel.user_actor(alice).unwrap();
-    let error = actor.answer_questions(asked.id, Some(vec![])).await.expect_err("one response per question");
-    assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::Question { .. })), "{error}");
-    actor.answer_questions(asked.id, Some(vec![Response::Text { text: "Kaya".to_string() }])).await.expect("answered");
+    let error = actor
+        .answer_questions(asked.id, Some(vec![]))
+        .await
+        .expect_err("one response per question");
+    assert!(
+        matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::Question { .. })),
+        "{error}"
+    );
+    actor
+        .answer_questions(asked.id, Some(vec![Response::Text { text: "Kaya".to_string() }]))
+        .await
+        .expect("answered");
 
-    let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+    let said: Vec<_> =
+        answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the turn goes on");
     settled(&helper, ActorState::Idle).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call ran");
-    assert!(result.content.contains("Kaya") && result.content.contains("alice"), "the tool gave the model what it was answered: {}", result.content);
-    let recorded = |result: &ToolCallResult| result.answers.as_ref().map(|a| (a.answered_by, a.responses.clone()));
+    let result = stored
+        .transcript
+        .messages()
+        .into_iter()
+        .flat_map(|m| m.tool_results)
+        .next()
+        .expect("the call ran");
+    assert!(
+        result.content.contains("Kaya") && result.content.contains("alice"),
+        "the tool gave the model what it was answered: {}",
+        result.content
+    );
+    let recorded = |result: &ToolCallResult| {
+        result.answers.as_ref().map(|a| (a.answered_by, a.responses.clone()))
+    };
     let kaya = Some((ActorId::User(alice), vec![Response::Text { text: "Kaya".to_string() }]));
     assert_eq!(recorded(&result), kaya, "the transcript keeps the record of the answers");
     let history = channel.whole_history().await;
-    assert_eq!(history.iter().flat_map(|m| &m.tool_results).map(recorded).next(), Some(kaya), "and so does the history");
-    let error = actor.answer_questions(asked.id, Some(vec![Response::Text { text: "again".to_string() }])).await.expect_err("closed");
-    assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: QuestionError::NotOpen, .. })), "{error}");
+    assert_eq!(
+        history.iter().flat_map(|m| &m.tool_results).map(recorded).next(),
+        Some(kaya),
+        "and so does the history"
+    );
+    let error = actor
+        .answer_questions(asked.id, Some(vec![Response::Text { text: "again".to_string() }]))
+        .await
+        .expect_err("closed");
+    assert!(
+        matches!(
+            error.downcast_ref::<ChannelError>(),
+            Some(ChannelError::Question { reason: QuestionError::NotOpen, .. })
+        ),
+        "{error}"
+    );
     running.abort();
 }
 
@@ -88,17 +140,39 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
     questions_requested(&mut events).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
-    channel.user_actor(alice_of(&context)).unwrap().send_message(Some("rather not".to_string()), None, Vec::new()).await.unwrap();
-    let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+    channel
+        .user_actor(alice_of(&context))
+        .unwrap()
+        .send_message(Some("rather not".to_string()), None, Vec::new())
+        .await
+        .unwrap();
+    let said: Vec<_> =
+        answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the turn goes on without the answers");
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call is answered");
+    let result = stored
+        .transcript
+        .messages()
+        .into_iter()
+        .flat_map(|m| m.tool_results)
+        .next()
+        .expect("the call is answered");
     assert_eq!(result.status, ToolResultStatus::Declined);
     time::timeout(Duration::from_secs(5), async {
-        while !channel.stored_agent_channel_state(agent).await.unwrap().transcript.messages().iter().any(|m| m.content.as_deref() == Some("rather not")) {
+        while !channel
+            .stored_agent_channel_state(agent)
+            .await
+            .unwrap()
+            .transcript
+            .messages()
+            .iter()
+            .any(|m| m.content.as_deref() == Some("rather not"))
+        {
             time::sleep(Duration::from_millis(10)).await;
         }
-    }).await.expect("the message is heard after the turn");
+    })
+    .await
+    .expect("the message is heard after the turn");
     running.abort();
 }
 
@@ -112,12 +186,21 @@ async fn sensitive_answers_reach_the_tool_alone_and_are_never_stored() {
     assert_eq!(asked.shown_to(), Some(vec![ActorId::User(alice_of(&context))]));
     settled(&helper, ActorState::WaitingForUser).await;
 
-    channel.user_actor(alice_of(&context)).unwrap().answer_questions(asked.id, Some(vec![Response::Text { text: "hunter2".to_string() }])).await.expect("answered");
+    channel
+        .user_actor(alice_of(&context))
+        .unwrap()
+        .answer_questions(asked.id, Some(vec![Response::Text { text: "hunter2".to_string() }]))
+        .await
+        .expect("answered");
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
-    let stored = serde_json::to_string(&channel.stored_agent_channel_state(agent).await.unwrap()).unwrap();
+    let stored =
+        serde_json::to_string(&channel.stored_agent_channel_state(agent).await.unwrap()).unwrap();
     assert!(!stored.contains("hunter2"), "neither in the turn nor in the transcript");
-    assert!(channel.whole_history().await.iter().all(|m| !format!("{m:?}").contains("hunter2")), "nor in the history");
+    assert!(
+        channel.whole_history().await.iter().all(|m| !format!("{m:?}").contains("hunter2")),
+        "nor in the history"
+    );
     running.abort();
 }
 
@@ -139,26 +222,48 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
         }],
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let done = Message { role: MessageRole::Assistant, content: Some("Done.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("ask", ASK_USER_TOOL_KIND)] };
+    let done = Message {
+        role: MessageRole::Assistant,
+        content: Some("Done.".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let components = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor::new("ask", ASK_USER_TOOL_KIND)],
+    };
     let model = Scripted(Mutex::new([ask("1", "@carol"), ask("2", "@alice"), done].into()));
-    let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), components).await;
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        with_an_agent(Arc::new(model), components).await;
 
     // Nobody called carol takes part: the first call is answered at
     // once, and the model asks alice.
     let asked = questions_requested(&mut events).await;
     assert_eq!(asked.questions.asked(), [ActorId::User(alice_of(&context))]);
     settled(&helper, ActorState::WaitingForUser).await;
-    channel.user_actor(alice_of(&context)).unwrap().answer_questions(asked.id, Some(vec![Response::Text { text: "Caelumora".to_string() }])).await.expect("answered");
-    let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+    channel
+        .user_actor(alice_of(&context))
+        .unwrap()
+        .answer_questions(asked.id, Some(vec![Response::Text { text: "Caelumora".to_string() }]))
+        .await
+        .expect("answered");
+    let said: Vec<_> =
+        answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."]);
 
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let results: Vec<_> = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).collect();
+    let results: Vec<_> =
+        stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).collect();
     let [unknown, answer] = results.as_slice() else { panic!("two calls: {results:?}") };
     assert_eq!(unknown.status, ToolResultStatus::InvalidArguments);
-    assert!(unknown.content.contains("@carol"), "the model is told whom it named: {}", unknown.content);
-    assert!(answer.content.contains("Caelumora") && answer.content.contains("alice"), "{}", answer.content);
+    assert!(
+        unknown.content.contains("@carol"),
+        "the model is told whom it named: {}",
+        unknown.content
+    );
+    assert!(
+        answer.content.contains("Caelumora") && answer.content.contains("alice"),
+        "{}",
+        answer.content
+    );
     running.abort();
 }
 
@@ -175,15 +280,25 @@ async fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_the_turn_goe
     time::timeout(Duration::from_secs(5), async {
         while !matches!(events.recv().await.expect("the channel is running").event, ActorEvent::QuestionClosed { id, .. } if id == asked.id) {}
     }).await.expect("the questions are closed");
-    let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+    let said: Vec<_> =
+        answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the turn goes on without the answers");
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call is answered");
+    let result = stored
+        .transcript
+        .messages()
+        .into_iter()
+        .flat_map(|m| m.tool_results)
+        .next()
+        .expect("the call is answered");
     assert_eq!(result.status, ToolResultStatus::NotExecuted);
     assert!(result.answers.is_none(), "unanswered, not declined by anyone");
     // Noted where it may stand: after the results, never between the call and them (issue 389).
     let entries: Vec<_> = stored.transcript.entries().map(|node| node.entry.clone()).collect();
-    let results = entries.iter().position(|e| matches!(e, TranscriptEntry::Message(m) if !m.tool_results.is_empty())).expect("the results");
+    let results = entries
+        .iter()
+        .position(|e| matches!(e, TranscriptEntry::Message(m) if !m.tool_results.is_empty()))
+        .expect("the results");
     let left = entries.iter().position(|e| matches!(e, TranscriptEntry::ParticipantLeft { participant, .. } if *participant == alice)).expect("noted");
     assert!(left > results, "{entries:?}");
     running.abort();

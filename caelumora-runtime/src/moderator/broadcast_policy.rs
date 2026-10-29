@@ -15,7 +15,12 @@ pub struct BroadcastPolicy;
 
 #[async_trait]
 impl ResponderPolicy for BroadcastPolicy {
-    async fn choose(&self, _event: &Envelope, _messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+    async fn choose(
+        &self,
+        _event: &Envelope,
+        _messages: &[Message],
+        candidates: Vec<ActorDescription>,
+    ) -> Result<Vec<ActorId>, Undecided> {
         Ok(candidates.into_iter().map(|candidate| candidate.id).collect())
     }
 }

@@ -31,7 +31,16 @@ pub struct SkillResponse {
 
 impl From<SkillSnapshot> for SkillResponse {
     fn from(view: SkillSnapshot) -> Self {
-        Self { id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), description: view.description, classification: view.classification, owner: view.owner, can_change: view.can_change, body: None }
+        Self {
+            id: view.id,
+            name: view.name,
+            scope: ScopeResponse::of(&view.scope),
+            description: view.description,
+            classification: view.classification,
+            owner: view.owner,
+            can_change: view.can_change,
+            body: None,
+        }
     }
 }
 
@@ -76,15 +85,22 @@ mod tests {
     fn a_skill_is_answered_with_its_scope_and_its_body_only_alone() {
         let session_id = SessionId::new();
         let snapshot = SkillSnapshot {
-            id: SkillId::new(), name: "deploy".to_string(), scope: ScopeSnapshot { scope: Scope::SessionScope { session_id }, user_name: None },
-            description: Description::new("How we deploy").unwrap(), classification: Classification::CHANNEL_DEFAULT,
-            owner: ActorId::System, can_change: false,
+            id: SkillId::new(),
+            name: "deploy".to_string(),
+            scope: ScopeSnapshot { scope: Scope::SessionScope { session_id }, user_name: None },
+            description: Description::new("How we deploy").unwrap(),
+            classification: Classification::CHANNEL_DEFAULT,
+            owner: ActorId::System,
+            can_change: false,
         };
         let listed = serde_json::to_value(SkillResponse::from(snapshot.clone())).unwrap();
-        assert_eq!((listed["scope"].clone(), listed["session_id"].clone()), (serde_json::json!("session"), serde_json::to_value(session_id).unwrap()));
+        assert_eq!(
+            (listed["scope"].clone(), listed["session_id"].clone()),
+            (serde_json::json!("session"), serde_json::to_value(session_id).unwrap())
+        );
         assert!(listed.get("body").is_none(), "not where skills are listed");
-        let alone = SkillResponse { body: Some(SkillBody::new("1. Build.").unwrap()), ..snapshot.into() };
+        let alone =
+            SkillResponse { body: Some(SkillBody::new("1. Build.").unwrap()), ..snapshot.into() };
         assert_eq!(serde_json::to_value(alone).unwrap()["body"], "1. Build.");
     }
-
 }

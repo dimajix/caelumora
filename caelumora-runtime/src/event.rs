@@ -2,19 +2,21 @@
 //! to the subscribers of its topics and to whoever may read it.
 
 use caelumora_model::agent::{Agent, AgentId};
+use caelumora_model::channel::Channel;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{may_reach, Classification, ConfidentialityPolicy};
 use caelumora_model::event::{EntityChange, EventPublisher, GlobalEvent};
-use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, AccessPolicy};
+use caelumora_model::security::{
+    AccessPolicy, ActionType, Secured, SecurityAttributes, SecurityContext,
+};
+use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserId, UserProfile};
 use dashmap::DashMap;
-use tracing::warn;
 use std::sync::{Arc, Mutex, OnceLock};
-use tokio::sync::{broadcast, mpsc};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use caelumora_model::channel::Channel;
-use caelumora_model::session::Session;
+use tokio::sync::{broadcast, mpsc};
+use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubscriptionTopic {
@@ -59,16 +61,21 @@ impl PublishedEvent {
     fn action_on<'a>(&self, attributes: &'a SecurityAttributes) -> ActionType<'a> {
         match self.event.change {
             EntityChange::Deleted => ActionType::hear_deleted(self.event.kind, attributes),
-            EntityChange::Created | EntityChange::Updated(_) | EntityChange::Restored | EntityChange::Custom { .. } => {
-                ActionType::get(self.event.kind, attributes)
-            }
+            EntityChange::Created
+            | EntityChange::Updated(_)
+            | EntityChange::Restored
+            | EntityChange::Custom { .. } => ActionType::get(self.event.kind, attributes),
         }
     }
 
     /// Whether `context` may receive the event of the part it is about,
     /// besides the entity (issue 316): asked as for the entity, with the
     /// part's attributes. Nothing to ask of an event about the whole.
-    async fn part_receivable(&self, access_policy: &dyn AccessPolicy, context: &SecurityContext) -> bool {
+    async fn part_receivable(
+        &self,
+        access_policy: &dyn AccessPolicy,
+        context: &SecurityContext,
+    ) -> bool {
         match &self.part {
             Some(part) => access_policy.check(context, self.action_on(part)).await,
             None => true,
@@ -128,7 +135,9 @@ impl EventSubscription {
         loop {
             match self.rx.recv().await {
                 Ok(event) => return Some(event),
-                Err(RecvError::Lagged(lost)) => warn!("An event bus subscriber fell behind and lost {} events", lost),
+                Err(RecvError::Lagged(lost)) => {
+                    warn!("An event bus subscriber fell behind and lost {} events", lost)
+                }
                 Err(RecvError::Closed) => return None,
             }
         }
@@ -139,7 +148,9 @@ impl EventSubscription {
         loop {
             match self.rx.try_recv() {
                 Ok(event) => return Some(event),
-                Err(TryRecvError::Lagged(lost)) => warn!("An event bus subscriber fell behind and lost {} events", lost),
+                Err(TryRecvError::Lagged(lost)) => {
+                    warn!("An event bus subscriber fell behind and lost {} events", lost)
+                }
                 Err(TryRecvError::Empty | TryRecvError::Closed) => return None,
             }
         }
@@ -163,7 +174,12 @@ impl EventPublisher for EventBus {
         self.publish(event, attributes);
     }
 
-    fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]) {
+    fn publish_classified(
+        &self,
+        event: GlobalEvent,
+        attributes: SecurityAttributes,
+        classifications: &[Classification],
+    ) {
         self.publish_classified(event, attributes, classifications);
     }
 }
@@ -172,7 +188,10 @@ impl EventBus {
     /// A bus whose `subscribe_as` subscriptions receive what
     /// `access_policy` lets their context read and, of what is
     /// classified, what `confidentiality` clears them for.
-    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+    pub fn new(
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+    ) -> Self {
         Self {
             subscribers: DashMap::new(),
             parties: Arc::new(Mutex::new(Vec::new())),
@@ -207,16 +226,27 @@ impl EventBus {
             while let Some(published) = rx.recv().await {
                 // The parties as they are now; the lock is not held while the
                 // policy is asked.
-                let current: Vec<(SecurityContext, broadcast::Sender<GlobalEvent>)> = match parties.lock() {
-                    Ok(parties) => parties.iter().map(|p| (p.context.clone(), p.tx.clone())).collect(),
-                    Err(_) => continue,
-                };
+                let current: Vec<(SecurityContext, broadcast::Sender<GlobalEvent>)> =
+                    match parties.lock() {
+                        Ok(parties) => {
+                            parties.iter().map(|p| (p.context.clone(), p.tx.clone())).collect()
+                        }
+                        Err(_) => continue,
+                    };
                 let mut gone = Vec::new();
                 for (context, tx) in current {
                     // Reached as the store reaches it: read, and cleared for
                     // what it is, or was (issues 312, 322).
-                    if !may_reach(access_policy.as_ref(), confidentiality.as_ref(), &context, published.action_on(published.security_attributes()), &published.classifications).await
-                        || !published.part_receivable(access_policy.as_ref(), &context).await {
+                    if !may_reach(
+                        access_policy.as_ref(),
+                        confidentiality.as_ref(),
+                        &context,
+                        published.action_on(published.security_attributes()),
+                        &published.classifications,
+                    )
+                    .await
+                        || !published.part_receivable(access_policy.as_ref(), &context).await
+                    {
                         continue;
                     }
                     // A send fails only when the subscription is gone.
@@ -288,7 +318,12 @@ impl EventBus {
     /// as `classifications` says (see `EventPublisher::publish_classified`):
     /// as `publish` does, and to a `subscribe_as` subscription only if it
     /// is cleared for one of them.
-    pub fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]) {
+    pub fn publish_classified(
+        &self,
+        event: GlobalEvent,
+        attributes: SecurityAttributes,
+        classifications: &[Classification],
+    ) {
         self.dispatch(event, attributes, None, classifications);
     }
 
@@ -297,15 +332,32 @@ impl EventBus {
     /// `publish_classified` does, and to a `subscribe_as` subscription only
     /// if it may read the part, with `part`, as well. Reading a part needs
     /// both, as a file in HDFS needs its directory.
-    pub fn publish_classified_part(&self, event: GlobalEvent, attributes: SecurityAttributes, part: SecurityAttributes, classifications: &[Classification]) {
+    pub fn publish_classified_part(
+        &self,
+        event: GlobalEvent,
+        attributes: SecurityAttributes,
+        part: SecurityAttributes,
+        classifications: &[Classification],
+    ) {
         self.dispatch(event, attributes, Some(part), classifications);
     }
 
     /// Hands `event` to the dispatcher with whom it is about, and to the
     /// subscribers of its topics.
-    fn dispatch(&self, event: GlobalEvent, attributes: SecurityAttributes, part: Option<SecurityAttributes>, classifications: &[Classification]) {
+    fn dispatch(
+        &self,
+        event: GlobalEvent,
+        attributes: SecurityAttributes,
+        part: Option<SecurityAttributes>,
+        classifications: &[Classification],
+    ) {
         if let Some(dispatcher) = self.dispatcher.get() {
-            let _ = dispatcher.send(PublishedEvent { event: event.clone(), attributes, part, classifications: classifications.to_vec() });
+            let _ = dispatcher.send(PublishedEvent {
+                event: event.clone(),
+                attributes,
+                part,
+                classifications: classifications.to_vec(),
+            });
         }
 
         let mut topics_to_notify = vec![SubscriptionTopic::All];
@@ -319,7 +371,9 @@ impl EventBus {
             topics_to_notify.push(SubscriptionTopic::Channel(cid));
         } else if let Some((aid, _)) = event.about::<Agent>() {
             topics_to_notify.push(SubscriptionTopic::Agent(aid));
-        } else if let Some((uid, _)) = event.about::<User>().or_else(|| event.about::<UserProfile>()) {
+        } else if let Some((uid, _)) =
+            event.about::<User>().or_else(|| event.about::<UserProfile>())
+        {
             topics_to_notify.push(SubscriptionTopic::User(uid));
         }
         // Other kinds have no topic of their own until something follows
@@ -345,18 +399,18 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy, AclEntry};
     use caelumora_model::actor::ActorId;
-    use caelumora_model::confidentiality::ConfidentialityRules;
-    use std::time::Duration;
     use caelumora_model::channel::{self, ChannelUpdateEvent};
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::scope::Scope;
+    use caelumora_model::security::{AclEntry, AllowAllPolicy, OwnershipPolicy};
     use caelumora_model::security::{Grant, Subject};
     use caelumora_model::store::Stored;
-    use caelumora_model::workspace::{Workspace, WorkspaceId};
-    use caelumora_model::scope::Scope;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::value::text::Introduction;
+    use caelumora_model::workspace::{Workspace, WorkspaceId};
     use std::slice;
+    use std::time::Duration;
     use tokio::time;
 
     fn bus() -> EventBus {
@@ -375,7 +429,10 @@ mod tests {
             bus.publish(created(), Default::default());
         }
 
-        assert!(matches!(receiver.recv().await, Err(RecvError::Lagged(5))), "the loss reaches the subscriber");
+        assert!(
+            matches!(receiver.recv().await, Err(RecvError::Lagged(5))),
+            "the loss reaches the subscriber"
+        );
         assert!(receiver.recv().await.is_ok(), "and the newest events are still there");
     }
 
@@ -396,7 +453,10 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(received, SUBSCRIPTION_CAPACITY, "the oldest events are lost, the rest arrives in order");
+        assert_eq!(
+            received, SUBSCRIPTION_CAPACITY,
+            "the oldest events are lost, the rest arrives in order"
+        );
     }
 
     #[tokio::test]
@@ -414,11 +474,14 @@ mod tests {
     /// What `events` are about: the kind, and the change or the name of a
     /// custom one.
     fn described(events: Vec<GlobalEvent>) -> Vec<String> {
-        events.iter().map(|event| match &event.change {
-            EntityChange::Custom { name, .. } => format!("{} {name}", event.kind),
-            EntityChange::Updated(_) => format!("{} Updated", event.kind),
-            other => format!("{} {other:?}", event.kind),
-        }).collect()
+        events
+            .iter()
+            .map(|event| match &event.change {
+                EntityChange::Custom { name, .. } => format!("{} {name}", event.kind),
+                EntityChange::Updated(_) => format!("{} Updated", event.kind),
+                other => format!("{} {other:?}", event.kind),
+            })
+            .collect()
     }
 
     /// Issue 335: a channel's events, and those of its participants, reach the
@@ -431,18 +494,42 @@ mod tests {
         let mut channels = bus.subscribe_channel(channel);
         let mut others = bus.subscribe_channel(other);
         let agent = AgentId::new();
-        bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::JOINED, &ActorId::Agent(agent)), Default::default());
-        bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::AGENT_STATE_CHANGED, &agent), Default::default());
+        bus.publish(
+            GlobalEvent::custom::<Channel>(
+                &(session, channel),
+                channel::JOINED,
+                &ActorId::Agent(agent),
+            ),
+            Default::default(),
+        );
+        bus.publish(
+            GlobalEvent::custom::<Channel>(
+                &(session, channel),
+                channel::AGENT_STATE_CHANGED,
+                &agent,
+            ),
+            Default::default(),
+        );
 
-        assert_eq!(described(drain(&mut sessions).await), ["channel joined", "channel agent_state_changed"], "its session");
-        assert_eq!(described(drain(&mut channels).await), ["channel joined", "channel agent_state_changed"], "the channel");
+        assert_eq!(
+            described(drain(&mut sessions).await),
+            ["channel joined", "channel agent_state_changed"],
+            "its session"
+        );
+        assert_eq!(
+            described(drain(&mut channels).await),
+            ["channel joined", "channel agent_state_changed"],
+            "the channel"
+        );
         assert!(drain(&mut others).await.is_empty(), "no other channel");
     }
 
     /// Everything that arrives within a short while.
     async fn drain(subscription: &mut EventSubscription) -> Vec<GlobalEvent> {
         let mut events = Vec::new();
-        while let Ok(Some(event)) = time::timeout(Duration::from_millis(100), subscription.recv()).await {
+        while let Ok(Some(event)) =
+            time::timeout(Duration::from_millis(100), subscription.recv()).await
+        {
             events.push(event);
         }
         events
@@ -450,22 +537,41 @@ mod tests {
 
     #[tokio::test]
     async fn a_party_receives_what_it_may_read_and_nothing_else() {
-        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
         let mut carols = bus.subscribe_as(as_user(carol));
 
-        let hers = SecurityAttributes::owned_by(ActorId::User(alice)).granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
+        let hers = SecurityAttributes::owned_by(ActorId::User(alice))
+            .granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let (session, deleted) = (SessionId::new(), SessionId::new());
         bus.publish(GlobalEvent::created::<Session>(&session), hers.clone());
         bus.publish(GlobalEvent::created::<Channel>(&(session, ChannelId::new())), hers.clone());
         bus.publish(GlobalEvent::deleted::<Session>(&deleted), hers.clone());
-        bus.publish(GlobalEvent::created::<User>(&carol), SecurityAttributes::owned_by(ActorId::User(carol)));
+        bus.publish(
+            GlobalEvent::created::<User>(&carol),
+            SecurityAttributes::owned_by(ActorId::User(carol)),
+        );
 
-        assert_eq!(described(drain(&mut alices).await), ["session Created", "channel Created", "session Deleted"], "the owner gets it all, in order - a deletion too");
-        assert_eq!(described(drain(&mut bobs).await), ["session Created", "channel Created", "session Deleted"], "so does a contributor");
-        assert_eq!(described(drain(&mut carols).await), ["user Created"], "a stranger only her own user event");
+        assert_eq!(
+            described(drain(&mut alices).await),
+            ["session Created", "channel Created", "session Deleted"],
+            "the owner gets it all, in order - a deletion too"
+        );
+        assert_eq!(
+            described(drain(&mut bobs).await),
+            ["session Created", "channel Created", "session Deleted"],
+            "so does a contributor"
+        );
+        assert_eq!(
+            described(drain(&mut carols).await),
+            ["user Created"],
+            "a stranger only her own user event"
+        );
     }
 
     #[tokio::test]
@@ -490,10 +596,28 @@ mod tests {
         let attributes = SecurityAttributes::owned_by(ActorId::User(alice));
         bus.publish(GlobalEvent::created::<Session>(&session), attributes.clone());
         bus.publish(GlobalEvent::created::<Channel>(&(session, channel)), attributes.clone());
-        bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::JOINED, &ActorId::User(alice)), attributes.clone());
-        bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::AGENT_STATE_CHANGED, &AgentId::new()), attributes);
+        bus.publish(
+            GlobalEvent::custom::<Channel>(
+                &(session, channel),
+                channel::JOINED,
+                &ActorId::User(alice),
+            ),
+            attributes.clone(),
+        );
+        bus.publish(
+            GlobalEvent::custom::<Channel>(
+                &(session, channel),
+                channel::AGENT_STATE_CHANGED,
+                &AgentId::new(),
+            ),
+            attributes,
+        );
 
-        assert_eq!(described(drain(&mut alices).await), ["channel Created", "channel joined", "channel agent_state_changed"], "asked as reading the channel (issue 304), the session's as reading it");
+        assert_eq!(
+            described(drain(&mut alices).await),
+            ["channel Created", "channel joined", "channel agent_state_changed"],
+            "asked as reading the channel (issue 304), the session's as reading it"
+        );
     }
 
     #[tokio::test]
@@ -520,7 +644,11 @@ mod tests {
         bus.publish(GlobalEvent::deleted::<Session>(&session), attributes.clone());
         bus.publish(GlobalEvent::restored::<Session>(&session), attributes);
 
-        assert_eq!(described(drain(&mut alices).await), ["session Deleted"], "asked as hearing of the deletion (issue 332), the rest as reading");
+        assert_eq!(
+            described(drain(&mut alices).await),
+            ["session Deleted"],
+            "asked as hearing of the deletion (issue 332), the rest as reading"
+        );
     }
 
     #[tokio::test]
@@ -528,7 +656,12 @@ mod tests {
         use caelumora_model::confidentiality::{Clearance, Compartments, Confidentiality};
         use caelumora_model::role::{RoleId, Roles};
         let staff = RoleId::new();
-        let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
+        let roles = Roles::new([(
+            staff,
+            "staff".to_string(),
+            vec![Clearance { level: Confidentiality::Internal, compartment: None }],
+        )])
+        .unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
         let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(rules));
         let (alice, bob) = (UserId::new(), UserId::new());
@@ -536,38 +669,65 @@ mod tests {
         let mut bobs = bus.subscribe_as(as_user(bob));
 
         let (session, channel) = (SessionId::new(), ChannelId::new());
-        let shared = SecurityAttributes::owned_by(ActorId::User(alice)).granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
+        let shared = SecurityAttributes::owned_by(ActorId::User(alice))
+            .granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let public = Classification::general(Confidentiality::Public);
         let internal = Classification::general(Confidentiality::Internal);
-        bus.publish_classified(GlobalEvent::created::<Channel>(&(session, channel)), shared.clone(), slice::from_ref(&internal));
-        bus.publish_classified(GlobalEvent::custom::<Channel>(&(session, channel), channel::STARTED, &()), shared.clone(), slice::from_ref(&public));
+        bus.publish_classified(
+            GlobalEvent::created::<Channel>(&(session, channel)),
+            shared.clone(),
+            slice::from_ref(&internal),
+        );
+        bus.publish_classified(
+            GlobalEvent::custom::<Channel>(&(session, channel), channel::STARTED, &()),
+            shared.clone(),
+            slice::from_ref(&public),
+        );
         let lowered = ChannelUpdateEvent::ClassificationChanged(public.clone());
-        bus.publish_classified(GlobalEvent::updated::<Channel>(&(session, channel), &lowered), shared, &[internal, public]);
+        bus.publish_classified(
+            GlobalEvent::updated::<Channel>(&(session, channel), &lowered),
+            shared,
+            &[internal, public],
+        );
 
-        assert_eq!(described(drain(&mut alices).await), ["channel Created", "channel started", "channel Updated"], "cleared, she gets it all");
+        assert_eq!(
+            described(drain(&mut alices).await),
+            ["channel Created", "channel started", "channel Updated"],
+            "cleared, she gets it all"
+        );
         assert_eq!(described(drain(&mut bobs).await), ["channel started", "channel Updated"], "he reads it, but is cleared only for what is public (issue 312) - and learns of its reclassification");
     }
 
     #[tokio::test]
     async fn a_profile_s_change_reaches_its_user_alone() {
-        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
 
-        let profile = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
+        let profile =
+            UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
         let attributes = Secured::security_attributes(&profile).clone();
         bus.publish(GlobalEvent::updated::<UserProfile>(&alice, &profile), attributes);
 
         assert_eq!(drain(&mut alices).await.len(), 1, "hers");
-        assert!(drain(&mut bobs).await.is_empty(), "not his, although her user record is everybody's");
+        assert!(
+            drain(&mut bobs).await.is_empty(),
+            "not his, although her user record is everybody's"
+        );
     }
 
     /// An event about a part of an entity - a version of an artifact (issue
     /// 316) - reaches whoever may read both the entity and the part.
     #[tokio::test]
     async fn a_part_s_events_reach_whoever_reads_the_entity_and_the_part() {
-        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let alice = UserId::new();
         let bob = UserId::new();
         let carol = UserId::new();
@@ -578,9 +738,18 @@ mod tests {
         let mut daves = bus.subscribe_as(as_user(dave));
 
         let reads = |user| Subject::Actor(ActorId::User(user));
-        let whole = SecurityAttributes::owned_by(ActorId::User(alice)).granting(reads(bob), Grant::Read).granting(reads(carol), Grant::Read);
-        let part = SecurityAttributes::owned_by(ActorId::User(alice)).granting(reads(bob), Grant::Read).granting(reads(dave), Grant::Read);
-        bus.publish_classified_part(GlobalEvent::created::<Workspace>(&WorkspaceId::new()), whole, part, &[]);
+        let whole = SecurityAttributes::owned_by(ActorId::User(alice))
+            .granting(reads(bob), Grant::Read)
+            .granting(reads(carol), Grant::Read);
+        let part = SecurityAttributes::owned_by(ActorId::User(alice))
+            .granting(reads(bob), Grant::Read)
+            .granting(reads(dave), Grant::Read);
+        bus.publish_classified_part(
+            GlobalEvent::created::<Workspace>(&WorkspaceId::new()),
+            whole,
+            part,
+            &[],
+        );
 
         assert_eq!(drain(&mut alices).await.len(), 1, "its owner");
         assert_eq!(drain(&mut bobs).await.len(), 1, "who reads both");
@@ -590,15 +759,26 @@ mod tests {
 
     #[tokio::test]
     async fn a_workspace_s_events_reach_whoever_may_use_it() {
-        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
         let mut carols = bus.subscribe_as(as_user(carol));
         let mut everything = bus.subscribe_all();
 
-        let mut workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: alice }).unwrap(), "main", Default::default(), alice);
-        workspace.security_attributes.acl.push(AclEntry { subject: Subject::Actor(ActorId::User(bob)), grant: Grant::Read });
+        let mut workspace = Workspace::new(
+            ScopedName::new("docs", Scope::UserScope { user_id: alice }).unwrap(),
+            "main",
+            Default::default(),
+            alice,
+        );
+        workspace
+            .security_attributes
+            .acl
+            .push(AclEntry { subject: Subject::Actor(ActorId::User(bob)), grant: Grant::Read });
         let attributes = workspace.security_attributes.clone();
         bus.publish(GlobalEvent::created::<Workspace>(&workspace.id), attributes.clone());
         bus.publish(GlobalEvent::deleted::<Workspace>(&workspace.id), attributes);
@@ -611,18 +791,30 @@ mod tests {
 
     #[tokio::test]
     async fn what_belongs_to_the_system_reaches_every_party() {
-        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let mut someone = bus.subscribe_as(as_user(UserId::new()));
-        bus.publish(GlobalEvent::created::<Session>(&SessionId::new()), SecurityAttributes::default());
+        bus.publish(
+            GlobalEvent::created::<Session>(&SessionId::new()),
+            SecurityAttributes::default(),
+        );
         assert_eq!(drain(&mut someone).await.len(), 1);
     }
 
     #[tokio::test]
     async fn a_dropped_party_is_removed() {
-        let bus = EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         drop(bus.subscribe_as(as_user(UserId::new())));
         let mut kept = bus.subscribe_as(as_user(UserId::new()));
-        bus.publish(GlobalEvent::created::<Session>(&SessionId::new()), SecurityAttributes::default());
+        bus.publish(
+            GlobalEvent::created::<Session>(&SessionId::new()),
+            SecurityAttributes::default(),
+        );
         drain(&mut kept).await;
         assert_eq!(bus.parties.lock().unwrap().len(), 1);
     }

@@ -13,13 +13,15 @@
 //! every turn, so it is not stored with the turn's context; it goes before
 //! the turn's input by default (parameter `position`).
 
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::channel_participants_prompt_provider::participants;
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
+use crate::prompt::{
+    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::PromptTexts;
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use std::sync::Arc;
 
 pub const CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND: &str = "channel_mentions_prompt_provider";
@@ -43,7 +45,11 @@ impl PromptProvider for ChannelMentionsPromptProvider {
     /// The rule, where another agent is in the channel; nothing otherwise.
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         let others = participants(situation).await?.map(|(_, others)| others).unwrap_or_default();
-        let text = if others.iter().any(|participant| !participant.is_person()) { self.prompts.render(TEXT, ())? } else { String::new() };
+        let text = if others.iter().any(|participant| !participant.is_person()) {
+            self.prompts.render(TEXT, ())?
+        } else {
+            String::new()
+        };
         // A rule of the runtime's, no secret of anything.
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
@@ -51,12 +57,19 @@ impl PromptProvider for ChannelMentionsPromptProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND)
+                .provides::<dyn PromptProvider>(),
+        ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let position = PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+            let position =
+                PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(ChannelMentionsPromptProvider { position, prompts }));
+            facets.insert::<dyn PromptProvider>(Arc::new(ChannelMentionsPromptProvider {
+                position,
+                prompts,
+            }));
             Ok(facets)
         },
     );
@@ -74,18 +87,29 @@ mod tests {
         let personality = world.personality("plain", None, &[]).await;
         let jonathan = world.agent("Jonathan", world.alice, &personality).await;
         let sassy = world.agent("Sassy", world.alice, &personality).await;
-        let provider = ChannelMentionsPromptProvider { position: PromptPosition::BeforeTurnInput, prompts: testing::prompts() };
+        let provider = ChannelMentionsPromptProvider {
+            position: PromptPosition::BeforeTurnInput,
+            prompts: testing::prompts(),
+        };
 
         let with_sassy = world.shared_session(&[jonathan, sassy], &[]).await;
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&testing::turn(&with_sassy, jonathan, world.alice, &mut state).situation()).await.unwrap();
+        let prompt = provider
+            .get_prompt(&testing::turn(&with_sassy, jonathan, world.alice, &mut state).situation())
+            .await
+            .unwrap();
         assert_eq!(prompt.text, "[Before you write]\nOnly use an @handle if you require an answer or an action from that participant now. \
                                  Do NOT use one to greet, thank, praise, agree with or refer to someone - write their name.\n");
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
 
         let among_people = world.shared_session(&[jonathan], &[sassy]).await;
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&testing::turn(&among_people, jonathan, world.alice, &mut state).situation()).await.unwrap();
+        let prompt = provider
+            .get_prompt(
+                &testing::turn(&among_people, jonathan, world.alice, &mut state).situation(),
+            )
+            .await
+            .unwrap();
         assert_eq!(prompt.text, "", "a mention of a person asks no agent; an agent waiting outside the channel is not in it");
     }
 }

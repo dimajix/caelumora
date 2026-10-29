@@ -1,23 +1,23 @@
 //! Changing a running session: its name, language, time zone, privacy, approval rules,
 //! description, workspace and project.
 
-use caelumora_model::approval::ApprovalRule;
-use anyhow::{Error, Result};
-use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, Subject};
-use caelumora_model::privacy::PrivacyConfig;
-use caelumora_model::store::{StoreError, StoreResultExt, Stored};
-use tracing::{info, warn};
-use caelumora_model::group::GroupId;
-use caelumora_model::workspace::WorkspaceId;
-use super::{held_workspace, load_own, make_own, SessionError, SessionLoop, require_attachable};
+use super::{held_workspace, load_own, make_own, require_attachable, SessionError, SessionLoop};
+use crate::controller::WorkspaceController;
 use crate::project;
 use crate::scoped::purge_for_good;
+use anyhow::{Error, Result};
+use caelumora_model::approval::ApprovalRule;
 use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::group::GroupId;
+use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::scope::Scope;
+use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, Subject};
 use caelumora_model::session::Session;
-use crate::controller::WorkspaceController;
+use caelumora_model::store::{StoreError, StoreResultExt, Stored};
+use caelumora_model::workspace::WorkspaceId;
 use std::sync::Arc;
+use tracing::{info, warn};
 
 impl SessionLoop {
     /// Renames the session on behalf of `context`.
@@ -40,7 +40,11 @@ impl SessionLoop {
     /// `StoreError::Invalid` if `language` is no language tag,
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// session, or whatever else storing it reports.
-    pub async fn update_language(&self, context: &SecurityContext, language: Option<&str>) -> Result<()> {
+    pub async fn update_language(
+        &self,
+        context: &SecurityContext,
+        language: Option<&str>,
+    ) -> Result<()> {
         Ok(self.session_controller.update_language(context, language).await?)
     }
 
@@ -53,7 +57,11 @@ impl SessionLoop {
     /// `StoreError::Invalid` if `time_zone` is no time zone,
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// session, or whatever else storing it reports.
-    pub async fn update_time_zone(&self, context: &SecurityContext, time_zone: Option<&str>) -> Result<()> {
+    pub async fn update_time_zone(
+        &self,
+        context: &SecurityContext,
+        time_zone: Option<&str>,
+    ) -> Result<()> {
         Ok(self.session_controller.update_time_zone(context, time_zone).await?)
     }
 
@@ -65,7 +73,11 @@ impl SessionLoop {
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// session, or whatever else storing it reports.
-    pub async fn update_privacy(&self, context: &SecurityContext, privacy: PrivacyConfig) -> Result<()> {
+    pub async fn update_privacy(
+        &self,
+        context: &SecurityContext,
+        privacy: PrivacyConfig,
+    ) -> Result<()> {
         Ok(self.session_controller.update_privacy(context, privacy).await?)
     }
 
@@ -78,7 +90,11 @@ impl SessionLoop {
     /// `StoreError::Validation` if a rule does not only ask or deny,
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// session, or whatever else storing it reports.
-    pub async fn update_approval_rules(&self, context: &SecurityContext, rules: Vec<ApprovalRule>) -> Result<()> {
+    pub async fn update_approval_rules(
+        &self,
+        context: &SecurityContext,
+        rules: Vec<ApprovalRule>,
+    ) -> Result<()> {
         Ok(self.session_controller.update_approval_rules(context, rules).await?)
     }
 
@@ -91,7 +107,12 @@ impl SessionLoop {
     /// `StoreError::Validation` if `summary` or `briefing` is too long or
     /// holds what it may not, `StoreError::PermissionDenied` if `context`
     /// may not change the session, or whatever else storing it reports.
-    pub async fn update_description(&self, context: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> Result<()> {
+    pub async fn update_description(
+        &self,
+        context: &SecurityContext,
+        summary: Option<&str>,
+        briefing: Option<&str>,
+    ) -> Result<()> {
         Ok(self.session_controller.update_description(context, summary, briefing).await?)
     }
 
@@ -114,11 +135,29 @@ impl SessionLoop {
     /// is no workspace they may read or are cleared for,
     /// `SessionError::WorkspaceOutOfScope`, or
     /// whatever else storing reports.
-    pub async fn update_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<()> {
+    pub async fn update_workspace(
+        &self,
+        context: &SecurityContext,
+        workspace: Option<WorkspaceId>,
+        share: Option<Grant>,
+    ) -> Result<()> {
         let session = self.session();
-        self.access_policy.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy
+            .require(
+                context,
+                ActionType::update(Session::KIND, &session.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         if let Some(id) = workspace {
-            require_attachable(self.runtime_manager.workspace_manager(), self.access_policy.as_ref(), context, id, self.id).await?;
+            require_attachable(
+                self.runtime_manager.workspace_manager(),
+                self.access_policy.as_ref(),
+                context,
+                id,
+                self.id,
+            )
+            .await?;
         }
         let held = self.attach_workspace(context, workspace).await?;
         if let (Some(controller), Some(grant)) = (held, share) {
@@ -145,27 +184,52 @@ impl SessionLoop {
     /// `ProjectError::NotFound` if there is no project they may read,
     /// `SessionError::ProjectOutOfScope` for another session's own, `SessionError::OwnerNotAUser`
     /// if a new own is needed and the session is no user's, or whatever else storing reports.
-    pub async fn update_project(&self, context: &SecurityContext, project: Option<ProjectId>) -> Result<()> {
+    pub async fn update_project(
+        &self,
+        context: &SecurityContext,
+        project: Option<ProjectId>,
+    ) -> Result<()> {
         let _moving = self.moving.lock().await;
         let session = self.session();
-        self.access_policy.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy
+            .require(
+                context,
+                ActionType::update(Session::KIND, &session.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         let (target, made) = match project {
             Some(id) => (self.reached_project(context, id).await?, false),
             None => match load_own(&self.stores, self.id).await? {
                 Some(own) => (own, false),
-                None => (session.new_own_project().ok_or(SessionError::OwnerNotAUser(session.security_attributes.owner_id))?, true),
+                None => (
+                    session
+                        .new_own_project()
+                        .ok_or(SessionError::OwnerNotAUser(session.security_attributes.owner_id))?,
+                    true,
+                ),
             },
         };
         if target.id == session.project {
             return Ok(());
         }
         let system = SecurityContext::system();
-        let left = self.stores.projects.get(&system, session.project).await.optional()?.filter(|left| !left.is_own());
+        let left = self
+            .stores
+            .projects
+            .get(&system, session.project)
+            .await
+            .optional()?
+            .filter(|left| !left.is_own());
         let participants = Subject::Group(GroupId::of_session(self.id));
         if made {
             make_own(&self.stores, &target).await?;
         } else if !target.is_own() {
-            self.controllers.project_controller(target.id).await?.share(&system, participants, Grant::Read).await?;
+            self.controllers
+                .project_controller(target.id)
+                .await?
+                .share(&system, participants, Grant::Read)
+                .await?;
         }
         if let Err(error) = self.session_controller.update_project(context, target.id).await {
             self.take_back_entering(&target, made).await;
@@ -175,7 +239,13 @@ impl SessionLoop {
             self.events.announce(GlobalEvent::created::<Project>(&target.id), &target);
         }
         if let Some(left) = left {
-            let unshared = async { self.controllers.project_controller(left.id).await?.unshare(&system, participants).await };
+            let unshared = async {
+                self.controllers
+                    .project_controller(left.id)
+                    .await?
+                    .unshare(&system, participants)
+                    .await
+            };
             if let Err(e) = unshared.await {
                 warn!(session = %self.id, project = %left.id, "The project a session left is still shared with its participants: {e}");
             }
@@ -191,7 +261,8 @@ impl SessionLoop {
     /// `ProjectError::NotFound` if there is none they may read, `SessionError::ProjectOutOfScope`
     /// for another session's own.
     async fn reached_project(&self, context: &SecurityContext, id: ProjectId) -> Result<Project> {
-        let target = self.stores.projects.get(context, id).await.map_err(project::store_error(id))?;
+        let target =
+            self.stores.projects.get(context, id).await.map_err(project::store_error(id))?;
         if target.is_own() && target.name.scope != (Scope::SessionScope { session_id: self.id }) {
             return Err(SessionError::ProjectOutOfScope(id).into());
         }
@@ -208,10 +279,15 @@ impl SessionLoop {
                 purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(target.id)).await?;
                 purge_for_good(self.stores.projects.as_ref(), target.id).await?;
             } else if !target.is_own() {
-                self.controllers.project_controller(target.id).await?.unshare(&system, Subject::Group(GroupId::of_session(self.id))).await?;
+                self.controllers
+                    .project_controller(target.id)
+                    .await?
+                    .unshare(&system, Subject::Group(GroupId::of_session(self.id)))
+                    .await?;
             }
             Ok::<_, Error>(())
-        }.await;
+        }
+        .await;
         if let Err(e) = taken_back {
             warn!(session = %self.id, project = %target.id, "What was done for a project a session did not go to stays: {e}");
         }
@@ -226,7 +302,11 @@ impl SessionLoop {
     ///
     /// # Errors
     /// Whatever storing the session or reading the workspace reports.
-    pub(crate) async fn attach_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>) -> Result<Option<Arc<WorkspaceController>>> {
+    pub(crate) async fn attach_workspace(
+        &self,
+        context: &SecurityContext,
+        workspace: Option<WorkspaceId>,
+    ) -> Result<Option<Arc<WorkspaceController>>> {
         self.session_controller.update_workspace(context, workspace).await?;
         let held = held_workspace(&self.controllers, self.id, workspace).await?;
         self.workspace.store(held.clone());
@@ -237,13 +317,10 @@ impl SessionLoop {
 #[cfg(test)]
 mod tests {
 
-    
-    use caelumora_model::security::{SecurityContext, Grant, Subject};
     use crate::view::Viewer;
+    use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::store::StoreError;
     use std::sync::Arc;
-
-    
 
     use crate::session::testing::*;
     use caelumora_model::session::Session;
@@ -258,25 +335,49 @@ mod tests {
         let (_, manager) = owned_runtime(Default::default());
         let runtime = Arc::clone(manager.runtime());
         let (alice, bob) = (user("alice"), user("bob"));
-        let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
+        let as_user = |id: UserId| {
+            SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
+        };
         let mut session = make_session("hers", alice.id);
-        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
+        session.security_attributes = session
+            .security_attributes
+            .clone()
+            .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &as_user(alice.id), session).await.unwrap();
         let mut events = runtime.event_bus().subscribe_all();
 
-        let refused = session.update_privacy(&as_user(bob.id), PrivacyConfig::SharedAudience).await.expect_err("a participant may not");
-        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied(_))), "{refused}");
+        let refused = session
+            .update_privacy(&as_user(bob.id), PrivacyConfig::SharedAudience)
+            .await
+            .expect_err("a participant may not");
+        assert!(
+            matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied(_))),
+            "{refused}"
+        );
         assert_eq!(session.privacy().policy, PrivacyConfig::Private, "unchanged");
 
-        session.update_privacy(&as_user(alice.id), PrivacyConfig::SharedAudience).await.expect("the owner may");
+        session
+            .update_privacy(&as_user(alice.id), PrivacyConfig::SharedAudience)
+            .await
+            .expect("the owner may");
         assert_eq!(session.privacy().policy, PrivacyConfig::SharedAudience);
-        let stored = runtime.entity_stores().sessions.get(&SecurityContext::system(), session.id()).await.unwrap();
+        let stored = runtime
+            .entity_stores()
+            .sessions
+            .get(&SecurityContext::system(), session.id())
+            .await
+            .unwrap();
         assert_eq!(stored.privacy, PrivacyConfig::SharedAudience, "stored");
         assert!(drain(&mut events).iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id() && matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience))))),
                 "announced");
-        let for_bob = manager.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();
-        assert_eq!(for_bob.privacy().policy, PrivacyConfig::SharedAudience, "shown to everyone who takes part");
+        let for_bob =
+            manager.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();
+        assert_eq!(
+            for_bob.privacy().policy,
+            PrivacyConfig::SharedAudience,
+            "shown to everyone who takes part"
+        );
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }

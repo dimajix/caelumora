@@ -81,10 +81,14 @@ impl FieldValue {
     /// Whether `found`, what lies at a field of a document, meets this value.
     pub fn matches(&self, found: &Value) -> bool {
         match self {
-            FieldValue::Uuid(id) => found.as_str().and_then(|text| Uuid::parse_str(text).ok()) == Some(*id),
+            FieldValue::Uuid(id) => {
+                found.as_str().and_then(|text| Uuid::parse_str(text).ok()) == Some(*id)
+            }
             FieldValue::Text(text) => found.as_str() == Some(text.as_str()),
             FieldValue::Bool(flag) => found.as_bool() == Some(*flag),
-            FieldValue::Tagged(tag, value) => found.get(tag).is_some_and(|inner| value.matches(inner)),
+            FieldValue::Tagged(tag, value) => {
+                found.get(tag).is_some_and(|inner| value.matches(inner))
+            }
             FieldValue::Variant(tag) => found.as_str() == Some(tag) || found.get(tag).is_some(),
         }
     }
@@ -203,10 +207,14 @@ impl<F: Field> Filter<F> {
             Filter::Eq(field, value) => Filter::Eq(field.path(), value.clone()),
             Filter::In(field, values) => Filter::In(field.path(), values.clone()),
             Filter::IsNull(field) => Filter::IsNull(field.path()),
-            Filter::And(conditions) => Filter::And(conditions.iter().map(Filter::by_path).collect()),
+            Filter::And(conditions) => {
+                Filter::And(conditions.iter().map(Filter::by_path).collect())
+            }
             Filter::Or(conditions) => Filter::Or(conditions.iter().map(Filter::by_path).collect()),
             Filter::Not(condition) => Filter::Not(Box::new(condition.by_path())),
-            Filter::Any(collection, condition) => Filter::Any(collection.path(), Box::new(condition.by_path())),
+            Filter::Any(collection, condition) => {
+                Filter::Any(collection.path(), Box::new(condition.by_path()))
+            }
             Filter::NamePrefix(field, prefix) => Filter::NamePrefix(field.path(), prefix.clone()),
             Filter::Contains(field, words) => Filter::Contains(field.path(), words.clone()),
             Filter::AtLeast(field, bound) => Filter::AtLeast(field.path(), *bound),
@@ -218,20 +226,33 @@ impl<F: Field> Filter<F> {
     /// a collection in it - meets the condition.
     pub fn matches(&self, document: &Value) -> bool {
         match self {
-            Filter::Eq(field, value) => lookup(document, *field).is_some_and(|found| value.matches(found)),
-            Filter::In(field, values) => lookup(document, *field).is_some_and(|found| values.iter().any(|value| value.matches(found))),
+            Filter::Eq(field, value) => {
+                lookup(document, *field).is_some_and(|found| value.matches(found))
+            }
+            Filter::In(field, values) => lookup(document, *field)
+                .is_some_and(|found| values.iter().any(|value| value.matches(found))),
             Filter::IsNull(field) => lookup(document, *field).is_none_or(Value::is_null),
             Filter::And(conditions) => conditions.iter().all(|c| c.matches(document)),
             Filter::Or(conditions) => conditions.iter().any(|c| c.matches(document)),
             Filter::Not(condition) => !condition.matches(document),
             Filter::Any(collection, condition) => match lookup(document, *collection) {
-                Some(Value::Array(elements)) => elements.iter().any(|element| condition.matches(element)),
+                Some(Value::Array(elements)) => {
+                    elements.iter().any(|element| condition.matches(element))
+                }
                 _ => false,
             },
-            Filter::NamePrefix(field, prefix) => lookup(document, *field).and_then(Value::as_str).is_some_and(|name| fold(name).starts_with(&fold(prefix))),
-            Filter::Contains(field, words) => lookup(document, *field).and_then(Value::as_str).is_some_and(|text| fold(text).contains(&fold(words))),
-            Filter::AtLeast(field, bound) => lookup(document, *field).and_then(|found| compared(found, *bound)).is_some_and(Ordering::is_ge),
-            Filter::Below(field, bound) => lookup(document, *field).and_then(|found| compared(found, *bound)).is_some_and(Ordering::is_lt),
+            Filter::NamePrefix(field, prefix) => lookup(document, *field)
+                .and_then(Value::as_str)
+                .is_some_and(|name| fold(name).starts_with(&fold(prefix))),
+            Filter::Contains(field, words) => lookup(document, *field)
+                .and_then(Value::as_str)
+                .is_some_and(|text| fold(text).contains(&fold(words))),
+            Filter::AtLeast(field, bound) => lookup(document, *field)
+                .and_then(|found| compared(found, *bound))
+                .is_some_and(Ordering::is_ge),
+            Filter::Below(field, bound) => lookup(document, *field)
+                .and_then(|found| compared(found, *bound))
+                .is_some_and(Ordering::is_lt),
         }
     }
 }
@@ -252,19 +273,27 @@ fn compared(found: &Value, bound: u64) -> Option<Ordering> {
 /// which holds the conversion, written by hand, to serde's tags.
 #[cfg(test)]
 pub(crate) fn meets_exactly_its_equals<T>(samples: &[T])
-where T: Clone + PartialEq + Debug + Serialize + Into<FieldValue> {
+where
+    T: Clone + PartialEq + Debug + Serialize + Into<FieldValue>,
+{
     for value in samples {
         let converted: FieldValue = value.clone().into();
         for other in samples {
             let serialized = serde_json::to_value(other).expect("a sample serializes");
-            assert_eq!(converted.matches(&serialized), value == other, "{value:?} against {other:?}");
+            assert_eq!(
+                converted.matches(&serialized),
+                value == other,
+                "{value:?} against {other:?}"
+            );
         }
     }
 }
 
 /// `value` serialized, for a filter to be judged on.
 fn json<T: Serialize + ?Sized>(value: &T) -> StoreResult<Value> {
-    serde_json::to_value(value).map_err(|e| StoreError::Validation(format!("an entity cannot be serialized for a query: {e}")))
+    serde_json::to_value(value).map_err(|e| {
+        StoreError::Validation(format!("an entity cannot be serialized for a query: {e}"))
+    })
 }
 
 /// What lies at `field` in `document`, if anything.
@@ -334,7 +363,10 @@ pub struct Page<T> {
 /// what a storage that holds its documents in no order hands out in a scan
 /// (`DocumentStorage::scan`). Each id comes with what the document is found
 /// by.
-pub fn ordered_after<T>(mut candidates: Vec<(Uuid, T)>, after: Option<Uuid>) -> impl Iterator<Item = (Uuid, T)> {
+pub fn ordered_after<T>(
+    mut candidates: Vec<(Uuid, T)>,
+    after: Option<Uuid>,
+) -> impl Iterator<Item = (Uuid, T)> {
     candidates.sort_by_key(|(id, _)| *id);
     let start = match after {
         Some(after) => candidates.partition_point(|(id, _)| *id <= after),
@@ -348,7 +380,10 @@ pub fn ordered_after<T>(mut candidates: Vec<(Uuid, T)>, after: Option<Uuid>) -> 
 ///
 /// # Errors
 /// `StoreError::Validation` if `value` cannot be serialized.
-pub(crate) fn meeting<T: Serialize, F: Field>(value: T, filter: Option<&Filter<F>>) -> StoreResult<Option<T>> {
+pub(crate) fn meeting<T: Serialize, F: Field>(
+    value: T,
+    filter: Option<&Filter<F>>,
+) -> StoreResult<Option<T>> {
     match filter {
         None => Ok(Some(value)),
         Some(filter) => Ok(filter.matches(&json(&value)?).then_some(value)),
@@ -396,8 +431,14 @@ mod tests {
     fn a_text_contains_words_as_names_are_compared() {
         let written = |text: &str| json!({ "owner": { "id": text } });
         let containing = |words: &str| Filter::contains(Doc::Owner, words);
-        assert!(containing("ZOË").matches(&written("I met zoe today")), "regardless of case and accents");
-        assert!(containing("met  zoe").matches(&written("I met\nZoë")), "and of runs of whitespace");
+        assert!(
+            containing("ZOË").matches(&written("I met zoe today")),
+            "regardless of case and accents"
+        );
+        assert!(
+            containing("met  zoe").matches(&written("I met\nZoë")),
+            "and of runs of whitespace"
+        );
         assert!(!containing("bob").matches(&written("I met Zoë")));
         assert!(containing("").matches(&written("anything")), "no words are in every text");
         assert!(!containing("x").matches(&json!({ "owner": { "id": true } })), "a text only");
@@ -405,22 +446,46 @@ mod tests {
 
     #[test]
     fn a_filter_reads_a_document_by_paths() {
-        let document = json!({ "owner": { "id": "alice" }, "tags": [{ "name": "a" }, { "name": "b" }] });
+        let document =
+            json!({ "owner": { "id": "alice" }, "tags": [{ "name": "a" }, { "name": "b" }] });
         assert!(Filter::eq(Doc::Owner, "alice").matches(&document));
         assert!(!Filter::eq(Doc::Owner, "bob").matches(&document));
         assert!(Filter::is_in(Doc::Owner, ["bob", "alice"]).matches(&document));
-        assert!(Filter::IsNull(Doc::Missing).matches(&document) && !Filter::IsNull(Doc::Owner).matches(&document));
-        assert!(Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "b")).matches(&document), "an element of the collection");
+        assert!(
+            Filter::IsNull(Doc::Missing).matches(&document)
+                && !Filter::IsNull(Doc::Owner).matches(&document)
+        );
+        assert!(
+            Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "b")).matches(&document),
+            "an element of the collection"
+        );
         assert!(!Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "c")).matches(&document));
-        assert!(!Filter::any(Doc::Owner, Filter::eq(Doc::Tag, "a")).matches(&document), "what is no collection has no element");
+        assert!(
+            !Filter::any(Doc::Owner, Filter::eq(Doc::Tag, "a")).matches(&document),
+            "what is no collection has no element"
+        );
         let names = json!({ "tags": ["a", "b"] });
-        assert!(Filter::any(Doc::Tags, Filter::eq(Doc::Itself, "b")).matches(&names), "an element itself, by the empty path");
+        assert!(
+            Filter::any(Doc::Tags, Filter::eq(Doc::Itself, "b")).matches(&names),
+            "an element itself, by the empty path"
+        );
         assert!(!Filter::any(Doc::Tags, Filter::eq(Doc::Itself, "c")).matches(&names));
-        let both = Filter::And(vec![Filter::eq(Doc::Owner, "alice"), Filter::Not(Box::new(Filter::IsNull(Doc::Tags)))]);
+        let both = Filter::And(vec![
+            Filter::eq(Doc::Owner, "alice"),
+            Filter::Not(Box::new(Filter::IsNull(Doc::Tags))),
+        ]);
         assert!(both.matches(&document));
-        assert!(Filter::Or(vec![Filter::eq(Doc::Owner, "bob"), Filter::IsNull(Doc::Missing)]).matches(&document));
-        assert!(Filter::<Doc>::all_of([]).matches(&document) && !Filter::<Doc>::nothing().matches(&document));
-        assert!(Filter::eq(Doc::Owner, true).matches(&json!({ "owner": { "id": true } })) && !Filter::eq(Doc::Owner, true).matches(&document), "a flag");
+        assert!(Filter::Or(vec![Filter::eq(Doc::Owner, "bob"), Filter::IsNull(Doc::Missing)])
+            .matches(&document));
+        assert!(
+            Filter::<Doc>::all_of([]).matches(&document)
+                && !Filter::<Doc>::nothing().matches(&document)
+        );
+        assert!(
+            Filter::eq(Doc::Owner, true).matches(&json!({ "owner": { "id": true } }))
+                && !Filter::eq(Doc::Owner, true).matches(&document),
+            "a flag"
+        );
     }
 
     /// A number is compared with a bound exactly, whatever its form; what
@@ -431,10 +496,23 @@ mod tests {
         let range = Filter::within(Doc::Owner, 3..5);
         assert!(range.matches(&at(json!(3))) && range.matches(&at(json!(4))), "from its start");
         assert!(!range.matches(&at(json!(5))) && !range.matches(&at(json!(2))), "up to its end");
-        assert!(range.matches(&at(json!(4.5))) && !range.matches(&at(json!(2.5))), "a fraction too");
-        assert!(!range.matches(&at(json!(-1))) && Filter::Below(Doc::Owner, 0).matches(&at(json!(-1))), "a negative number below every bound");
-        assert!(Filter::within(Doc::Owner, 3..u64::MAX).matches(&at(json!(u64::MAX))), "open at the end");
-        assert!(!range.matches(&at(json!("4"))) && !Filter::AtLeast(Doc::Missing, 0).matches(&at(json!(4))), "a number only, where there is one");
+        assert!(
+            range.matches(&at(json!(4.5))) && !range.matches(&at(json!(2.5))),
+            "a fraction too"
+        );
+        assert!(
+            !range.matches(&at(json!(-1))) && Filter::Below(Doc::Owner, 0).matches(&at(json!(-1))),
+            "a negative number below every bound"
+        );
+        assert!(
+            Filter::within(Doc::Owner, 3..u64::MAX).matches(&at(json!(u64::MAX))),
+            "open at the end"
+        );
+        assert!(
+            !range.matches(&at(json!("4")))
+                && !Filter::AtLeast(Doc::Missing, 0).matches(&at(json!(4))),
+            "a number only, where there is one"
+        );
         assert!(Filter::negated(Filter::AtLeast(Doc::Missing, 0)).matches(&at(json!(4))));
     }
 
@@ -444,7 +522,10 @@ mod tests {
     fn a_value_meets_the_forms_serde_writes() {
         let id = Uuid::new_v4();
         assert!(FieldValue::from(id).matches(&json!(id.to_string())));
-        assert!(FieldValue::from(id).matches(&json!(id.to_string().to_uppercase())), "a UUID, not its spelling");
+        assert!(
+            FieldValue::from(id).matches(&json!(id.to_string().to_uppercase())),
+            "a UUID, not its spelling"
+        );
         assert!(!FieldValue::from(id).matches(&json!(Uuid::new_v4().to_string())));
         assert!(!FieldValue::from(id).matches(&json!({ "User": id.to_string() })));
         assert!(FieldValue::from("GlobalScope").matches(&json!("GlobalScope")));
@@ -457,9 +538,15 @@ mod tests {
         assert!(channel.matches(&json!({ "ChannelScope": { "session_id": Uuid::new_v4().to_string(), "channel_id": id.to_string() } })), "containment");
         assert!(!channel.matches(&json!({ "SessionScope": { "session_id": id.to_string() } })));
         let users = FieldValue::variant("UserScope");
-        assert!(users.matches(&json!({ "UserScope": { "user_id": id.to_string() } })), "a variant, whatever it holds");
+        assert!(
+            users.matches(&json!({ "UserScope": { "user_id": id.to_string() } })),
+            "a variant, whatever it holds"
+        );
         assert!(!users.matches(&json!({ "SessionScope": { "session_id": id.to_string() } })));
-        assert!(FieldValue::variant("GlobalScope").matches(&json!("GlobalScope")), "also one that holds nothing");
+        assert!(
+            FieldValue::variant("GlobalScope").matches(&json!("GlobalScope")),
+            "also one that holds nothing"
+        );
         assert!(!FieldValue::variant("GlobalScope").matches(&json!("UserScope")));
     }
 

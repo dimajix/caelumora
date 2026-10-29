@@ -53,12 +53,31 @@ pub struct ScopeResponse {
 impl ScopeResponse {
     /// Where `snapshot` lies, as a response answers it.
     pub fn of(snapshot: &ScopeSnapshot) -> Self {
-        let bare = |kind| Self { kind, session_id: None, channel_id: None, project_id: None, user_id: None, user_name: None };
+        let bare = |kind| Self {
+            kind,
+            session_id: None,
+            channel_id: None,
+            project_id: None,
+            user_id: None,
+            user_name: None,
+        };
         match &snapshot.scope {
-            Scope::SessionScope { session_id } => Self { session_id: Some(*session_id), ..bare(ScopeKind::Session) },
-            Scope::ChannelScope { session_id, channel_id } => Self { session_id: Some(*session_id), channel_id: Some(*channel_id), ..bare(ScopeKind::Session) },
-            Scope::ProjectScope { project_id } => Self { project_id: Some(*project_id), ..bare(ScopeKind::Project) },
-            Scope::UserScope { user_id } => Self { user_id: Some(*user_id), user_name: snapshot.user_name.clone(), ..bare(ScopeKind::User) },
+            Scope::SessionScope { session_id } => {
+                Self { session_id: Some(*session_id), ..bare(ScopeKind::Session) }
+            }
+            Scope::ChannelScope { session_id, channel_id } => Self {
+                session_id: Some(*session_id),
+                channel_id: Some(*channel_id),
+                ..bare(ScopeKind::Session)
+            },
+            Scope::ProjectScope { project_id } => {
+                Self { project_id: Some(*project_id), ..bare(ScopeKind::Project) }
+            }
+            Scope::UserScope { user_id } => Self {
+                user_id: Some(*user_id),
+                user_name: snapshot.user_name.clone(),
+                ..bare(ScopeKind::User)
+            },
             Scope::GlobalScope | Scope::GroupScope { .. } => bare(ScopeKind::Global),
         }
     }
@@ -69,10 +88,17 @@ impl ScopeKind {
     /// `channel_id`, as `ScopeResponse` answers them, for something of `user`'s:
     /// `None` if they do not fit - a session's without its session, a
     /// session or channel named for another kind.
-    pub fn place(self, user: UserId, session_id: Option<SessionId>, channel_id: Option<ChannelId>) -> Option<Scope> {
+    pub fn place(
+        self,
+        user: UserId,
+        session_id: Option<SessionId>,
+        channel_id: Option<ChannelId>,
+    ) -> Option<Scope> {
         match (self, session_id, channel_id) {
             (Self::Session, Some(session_id), None) => Some(Scope::SessionScope { session_id }),
-            (Self::Session, Some(session_id), Some(channel_id)) => Some(Scope::ChannelScope { session_id, channel_id }),
+            (Self::Session, Some(session_id), Some(channel_id)) => {
+                Some(Scope::ChannelScope { session_id, channel_id })
+            }
             (Self::User | Self::Global, None, None) => self.of_user(user),
             _ => None,
         }
@@ -116,13 +142,29 @@ mod tests {
         let user = UserId::new();
         let session_id = SessionId::new();
         let channel_id = ChannelId::new();
-        for scope in [Scope::UserScope { user_id: user }, Scope::GlobalScope, Scope::SessionScope { session_id }, Scope::ChannelScope { session_id, channel_id }] {
+        for scope in [
+            Scope::UserScope { user_id: user },
+            Scope::GlobalScope,
+            Scope::SessionScope { session_id },
+            Scope::ChannelScope { session_id, channel_id },
+        ] {
             let answered = ScopeResponse::of(&unnamed(scope.clone()));
-            assert_eq!(answered.kind.place(user, answered.session_id, answered.channel_id), Some(scope));
+            assert_eq!(
+                answered.kind.place(user, answered.session_id, answered.channel_id),
+                Some(scope)
+            );
         }
-        assert_eq!(ScopeKind::Session.place(user, None, None), None, "a session's without its session");
+        assert_eq!(
+            ScopeKind::Session.place(user, None, None),
+            None,
+            "a session's without its session"
+        );
         assert_eq!(ScopeKind::Session.place(user, None, Some(channel_id)), None);
-        assert_eq!(ScopeKind::User.place(user, Some(session_id), None), None, "a session named for another kind");
+        assert_eq!(
+            ScopeKind::User.place(user, Some(session_id), None),
+            None,
+            "a session named for another kind"
+        );
         assert_eq!(ScopeKind::Global.place(user, None, Some(channel_id)), None);
     }
 
@@ -134,11 +176,28 @@ mod tests {
         let channel_id = ChannelId::new();
         let user_id = UserId::new();
         let answered = |snapshot| serde_json::to_value(ScopeResponse::of(&snapshot)).unwrap();
-        let theirs = ScopeSnapshot { scope: Scope::UserScope { user_id }, user_name: Some("bob".to_string()) };
-        assert_eq!(answered(theirs), serde_json::json!({"scope": "user", "user_id": user_id, "user_name": "bob"}));
-        assert_eq!(answered(unnamed(Scope::UserScope { user_id })), serde_json::json!({"scope": "user", "user_id": user_id}), "a user no longer known");
-        assert_eq!(answered(unnamed(Scope::GroupScope { group_id: GroupId::new() })), serde_json::json!({"scope": "global"}), "no place anything lies in yet");
-        assert_eq!(answered(unnamed(Scope::ChannelScope { session_id, channel_id })), serde_json::json!({"scope": "session", "session_id": session_id, "channel_id": channel_id}));
+        let theirs = ScopeSnapshot {
+            scope: Scope::UserScope { user_id },
+            user_name: Some("bob".to_string()),
+        };
+        assert_eq!(
+            answered(theirs),
+            serde_json::json!({"scope": "user", "user_id": user_id, "user_name": "bob"})
+        );
+        assert_eq!(
+            answered(unnamed(Scope::UserScope { user_id })),
+            serde_json::json!({"scope": "user", "user_id": user_id}),
+            "a user no longer known"
+        );
+        assert_eq!(
+            answered(unnamed(Scope::GroupScope { group_id: GroupId::new() })),
+            serde_json::json!({"scope": "global"}),
+            "no place anything lies in yet"
+        );
+        assert_eq!(
+            answered(unnamed(Scope::ChannelScope { session_id, channel_id })),
+            serde_json::json!({"scope": "session", "session_id": session_id, "channel_id": channel_id})
+        );
     }
 
     /// Issue 467: the scope of a project is where its members lie, and nothing is put there by a
@@ -147,7 +206,9 @@ mod tests {
     fn a_project_s_scope_is_shown_and_placed_nothing_in() {
         let user = UserId::new();
         let project_id = ProjectId::new();
-        let answered = serde_json::to_value(ScopeResponse::of(&unnamed(Scope::ProjectScope { project_id }))).unwrap();
+        let answered =
+            serde_json::to_value(ScopeResponse::of(&unnamed(Scope::ProjectScope { project_id })))
+                .unwrap();
         assert_eq!(answered, serde_json::json!({"scope": "project", "project_id": project_id}));
         assert_eq!(ScopeKind::Project.of_user(user), None);
         assert_eq!(ScopeKind::Project.place(user, None, None), None);

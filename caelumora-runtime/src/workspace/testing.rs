@@ -3,26 +3,26 @@
 //! workspace attached that its storage gives a shell.
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
-use crate::testing::TestRuntime;
 use crate::runtime::RuntimeManager;
-use crate::session::{SessionLoop, SessionManager};
 use crate::session::testing::{make_session, user};
+use crate::session::{SessionLoop, SessionManager};
+use crate::testing::TestRuntime;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::channel::{Channel, InternalActor, Participant};
-use caelumora_model::config::{BackendConfig, WorkspacesConfig};
-use serde_json::json;
 use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
+use caelumora_model::config::AppConfig;
+use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
 use caelumora_model::store::Persistence;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::workspace::Workspace;
-use std::sync::Arc;
-use caelumora_model::config::AppConfig;
+use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 /// The largest file the workspace takes.
@@ -41,7 +41,6 @@ pub struct WithWorkspace {
 }
 
 impl WithWorkspace {
-
     /// Where the workspace's files lie on the host.
     pub fn dir(&self) -> PathBuf {
         self.files.path().join(self.workspace.id.to_string())
@@ -55,31 +54,86 @@ pub async fn session_with_workspace() -> WithWorkspace {
     let store = Persistence::in_memory();
     let files = tempfile::tempdir().unwrap();
     let internal = Classification::general(Confidentiality::Internal);
-    let storage = BackendConfig::new("local", json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }));
-    let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
-    let runtime = TestRuntime { store: store.clone(), config: AppConfig { workspaces, ..Default::default() }, ..Default::default() }.build();
+    let storage = BackendConfig::new(
+        "local",
+        json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }),
+    );
+    let workspaces = WorkspacesConfig {
+        storage: [("dev".to_string(), storage)].into(),
+        max_file_bytes: MAX_FILE_BYTES,
+    };
+    let runtime = TestRuntime {
+        store: store.clone(),
+        config: AppConfig { workspaces, ..Default::default() },
+        ..Default::default()
+    }
+    .build();
     let system = SecurityContext::system();
 
     let owner = user("owner");
     store.entity_stores().unwrap().users.create(&system, &owner).await.unwrap();
     let owner = owner.id;
-    let as_owner = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-    let workspace = runtime.workspace_manager().create(&as_owner, "docs", Scope::UserScope { user_id: owner }, "dev", Some("Drafts"), internal.clone()).await.unwrap();
+    let as_owner =
+        SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+    let workspace = runtime
+        .workspace_manager()
+        .create(
+            &as_owner,
+            "docs",
+            Scope::UserScope { user_id: owner },
+            "dev",
+            Some("Drafts"),
+            internal.clone(),
+        )
+        .await
+        .unwrap();
 
     let personality = Personality {
-        description: None, id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
-        kind: Default::default(), roles: None, introduction: None, components: Default::default(),
-        security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, hears_during_turn: Default::default(), deleted: None,
+        description: None,
+        id: PersonalityId::new(),
+        name: ScopedName::new("plain", Default::default()).unwrap(),
+        kind: Default::default(),
+        roles: None,
+        introduction: None,
+        components: Default::default(),
+        security_attributes: Default::default(),
+        reasoning_visibility: Visibility::Channel,
+        hears_during_turn: Default::default(),
+        deleted: None,
     };
     store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
-    let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(owner));
+    let agent = Agent::new(
+        ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),
+        personality.id,
+        ActorId::User(owner),
+    );
     store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
     let session = make_session("s", owner);
-    let mut channel = Channel::build(session.id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None);
+    let mut channel = Channel::build(
+        session.id,
+        ActorId::User(owner),
+        Name::new("main").unwrap(),
+        Default::default(),
+        internal,
+        None,
+    );
     channel.participants = vec![Participant::User(owner), Participant::Agent(agent.id)];
     channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
-    let session = Session { workspace: Some(workspace.id), participants: channel.participants.clone(), channels: vec![channel.id], ..session };
-    let session = SessionManager::new(Arc::clone(&runtime)).create(&as_owner, session, vec![channel]).await.unwrap();
-    let context = SecurityContext::new(ActorId::User(owner), session.id(), session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner), ActorId::User(owner));
+    let session = Session {
+        workspace: Some(workspace.id),
+        participants: channel.participants.clone(),
+        channels: vec![channel.id],
+        ..session
+    };
+    let session = SessionManager::new(Arc::clone(&runtime))
+        .create(&as_owner, session, vec![channel])
+        .await
+        .unwrap();
+    let context = SecurityContext::new(
+        ActorId::User(owner),
+        session.id(),
+        session.channels()[0].id(),
+    )
+    .next(ActorId::Agent(agent.id), ActorId::User(owner), ActorId::User(owner));
     WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }
 }

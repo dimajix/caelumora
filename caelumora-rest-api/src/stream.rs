@@ -50,10 +50,18 @@ mod tests {
     #[test]
     fn a_shown_envelope_names_no_security_context() {
         let alice = ActorId::User(UserId::new());
-        let envelope = Envelope::new(SecurityContext::new(alice, Default::default(), Default::default()), EventContext { sender_id: alice, ..EventContext::default() }, ActorEvent::ResponseStarted { turn_id: TurnId::new() });
+        let envelope = Envelope::new(
+            SecurityContext::new(alice, Default::default(), Default::default()),
+            EventContext { sender_id: alice, ..EventContext::default() },
+            ActorEvent::ResponseStarted { turn_id: TurnId::new() },
+        );
         let shown = serde_json::to_value(ShownEnvelope::from(envelope)).unwrap();
         let mut fields: Vec<_> = shown.as_object().unwrap().keys().cloned().collect();
         fields.sort();
-        assert_eq!(fields, ["context", "event", "timestamp"], "when, in which chain, what - nobody's roles");
+        assert_eq!(
+            fields,
+            ["context", "event", "timestamp"],
+            "when, in which chain, what - nobody's roles"
+        );
     }
 }

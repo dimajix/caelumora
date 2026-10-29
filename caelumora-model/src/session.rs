@@ -1,26 +1,26 @@
 //! A session (issue 88): the container of one interaction - who takes part, its channels, how
 //! private it is, the workspace it is done in and the project its results go to - and its changes.
 
-pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
-use crate::approval::ApprovalRule;
-use crate::component::ComponentConfig;
-use crate::privacy::PrivacyConfig;
 use crate::actor::ActorId;
+use crate::approval::ApprovalRule;
+pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
+use crate::component::ComponentConfig;
 use crate::group::GroupId;
+use crate::privacy::PrivacyConfig;
+use crate::project::{Project, ProjectId};
+use crate::removal::Removal;
 use crate::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
-use crate::user::UserId;
 use crate::store::query::{Field, Filter};
-use chrono::{DateTime, Utc};
+use crate::store::{EntityKind, NoEntity, Stored, Updatable};
+use crate::user::UserId;
 use crate::value::language::Language;
 use crate::value::name::Name;
-use crate::value::time_zone::TimeZone;
 use crate::value::text::{Briefing, Summary};
+use crate::value::time_zone::TimeZone;
 use crate::value::ValueError;
-use crate::project::{Project, ProjectId};
 use crate::workspace::WorkspaceId;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::removal::Removal;
-use crate::store::{EntityKind, NoEntity, Stored, Updatable};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
@@ -59,7 +59,6 @@ pub const STARTED: &str = "started";
 
 /// A session was stopped for everyone in it (`EntityChange::Custom`).
 pub const STOPPED: &str = "stopped";
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -143,11 +142,17 @@ impl Updatable for Session {
     fn apply(&mut self, event: &SessionUpdateEvent) -> Result<(), ValueError> {
         match event {
             SessionUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
-            SessionUpdateEvent::LanguageChanged(language) => self.language = Language::optional(language.as_deref())?,
-            SessionUpdateEvent::TimeZoneChanged(zone) => self.time_zone = TimeZone::optional(zone.as_deref())?,
+            SessionUpdateEvent::LanguageChanged(language) => {
+                self.language = Language::optional(language.as_deref())?
+            }
+            SessionUpdateEvent::TimeZoneChanged(zone) => {
+                self.time_zone = TimeZone::optional(zone.as_deref())?
+            }
             SessionUpdateEvent::PrivacyChanged(privacy) => self.privacy = *privacy,
             SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
-            SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
+            SessionUpdateEvent::DescriptionChanged { summary, briefing } => {
+                self.describe(summary.as_deref(), briefing.as_deref())?
+            }
             SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
             SessionUpdateEvent::ProjectChanged(project) => self.project = *project,
             SessionUpdateEvent::ParticipantJoined(participant) => self.take_in(participant.clone()),
@@ -173,8 +178,12 @@ impl Session {
     /// participants, stored with it (`Group::of_session`) -, and granting
     /// what `access` grants besides, such as whom it lets join (issue 221).
     pub fn attributes_of(id: SessionId, owner: UserId, access: &[AclEntry]) -> SecurityAttributes {
-        let attributes = SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::Group(GroupId::of_session(id)), Grant::Read);
-        SecurityAttributes { acl: attributes.acl.into_iter().chain(access.iter().copied()).collect(), ..attributes }
+        let attributes = SecurityAttributes::owned_by(ActorId::User(owner))
+            .granting(Subject::Group(GroupId::of_session(id)), Grant::Read);
+        SecurityAttributes {
+            acl: attributes.acl.into_iter().chain(access.iter().copied()).collect(),
+            ..attributes
+        }
     }
 
     /// A new own project of the session (issue 467): its owner's, in its scope, read by its
@@ -191,8 +200,13 @@ impl Session {
     /// # Errors
     /// `ValueError` for the first that does not fit; the session is then
     /// unchanged.
-    pub fn describe(&mut self, summary: Option<&str>, briefing: Option<&str>) -> Result<(), ValueError> {
-        (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
+    pub fn describe(
+        &mut self,
+        summary: Option<&str>,
+        briefing: Option<&str>,
+    ) -> Result<(), ValueError> {
+        (self.summary, self.briefing) =
+            (Summary::optional(summary)?, Briefing::optional(briefing)?);
         Ok(())
     }
 
@@ -204,7 +218,9 @@ impl Session {
     /// Whether they may is asked before.
     pub fn take_in(&mut self, participant: Participant) {
         let actor = participant.actor_id();
-        self.security_attributes.acl.retain(|entry| !(entry.grant == Grant::Join && entry.subject == Subject::Actor(actor)));
+        self.security_attributes.acl.retain(|entry| {
+            !(entry.grant == Grant::Join && entry.subject == Subject::Actor(actor))
+        });
         if !self.takes_part(actor) {
             self.participants.push(participant);
         }
@@ -257,7 +273,6 @@ impl Secured for Session {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,9 +283,23 @@ mod tests {
         let id = SessionId::new();
         let now = Utc::now();
         Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants, channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
-            security_attributes: Session::attributes_of(id, owner, access), deleted: None,
+            id,
+            name: Name::new("s").unwrap(),
+            summary: None,
+            briefing: None,
+            language: None,
+            time_zone: None,
+            participants,
+            channels: Vec::new(),
+            commands: Default::default(),
+            privacy: Default::default(),
+            approval_rules: Vec::new(),
+            workspace: None,
+            project: ProjectId::new(),
+            created_at: now,
+            updated_at: now,
+            security_attributes: Session::attributes_of(id, owner, access),
+            deleted: None,
         }
     }
 
@@ -290,9 +319,25 @@ mod tests {
         session.take_in(Participant::User(bob));
         session.take_in(Participant::Agent(AgentId::new()));
         assert_eq!(session.participants.len(), 3, "each once");
-        let joins: Vec<Subject> = session.security_attributes.acl.iter().filter(|e| e.grant == Grant::Join).map(|e| e.subject).collect();
-        assert_eq!(joins, [Subject::Actor(ActorId::User(carol)), Subject::Everyone], "bob's invitation is used up, carol's and the rule stay");
-        assert!(session.security_attributes.acl.contains(&AclEntry { subject: Subject::Group(GroupId::of_session(id)), grant: Grant::Read }), "read by its members");
+        let joins: Vec<Subject> = session
+            .security_attributes
+            .acl
+            .iter()
+            .filter(|e| e.grant == Grant::Join)
+            .map(|e| e.subject)
+            .collect();
+        assert_eq!(
+            joins,
+            [Subject::Actor(ActorId::User(carol)), Subject::Everyone],
+            "bob's invitation is used up, carol's and the rule stay"
+        );
+        assert!(
+            session.security_attributes.acl.contains(&AclEntry {
+                subject: Subject::Group(GroupId::of_session(id)),
+                grant: Grant::Read
+            }),
+            "read by its members"
+        );
     }
 
     /// The condition of the sessions an actor takes part in meets exactly
@@ -301,10 +346,20 @@ mod tests {
     fn the_sessions_with_a_participant_are_those_it_takes_part_in() {
         let alice = UserId::new();
         let agent = AgentId::new();
-        let session = session_of(alice, vec![Participant::User(alice), Participant::Agent(agent)], &[]);
+        let session =
+            session_of(alice, vec![Participant::User(alice), Participant::Agent(agent)], &[]);
         let document = serde_json::to_value(&session).unwrap();
-        for actor in [ActorId::User(alice), ActorId::Agent(agent), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new())] {
-            assert_eq!(Filter::with_participant(actor).matches(&document), session.takes_part(actor), "{actor}");
+        for actor in [
+            ActorId::User(alice),
+            ActorId::Agent(agent),
+            ActorId::User(UserId::new()),
+            ActorId::Agent(AgentId::new()),
+        ] {
+            assert_eq!(
+                Filter::with_participant(actor).matches(&document),
+                session.takes_part(actor),
+                "{actor}"
+            );
         }
     }
 
@@ -318,7 +373,13 @@ mod tests {
         let own = session.new_own_project().expect("a session of a user");
         assert_eq!(own.name, Project::own_name(id));
         assert_eq!(own.owner(), Some(alice));
-        assert!(own.security_attributes.acl.contains(&AclEntry { subject: Subject::Group(GroupId::of_session(id)), grant: Grant::Read }), "read by its participants");
+        assert!(
+            own.security_attributes.acl.contains(&AclEntry {
+                subject: Subject::Group(GroupId::of_session(id)),
+                grant: Grant::Read
+            }),
+            "read by its participants"
+        );
         session.security_attributes.owner_id = ActorId::Agent(AgentId::new());
         assert!(session.new_own_project().is_none(), "a session of no user");
     }
@@ -340,21 +401,45 @@ mod tests {
         let alice = UserId::new();
         let mut session = session_of(alice, vec![Participant::User(alice)], &[]);
         session.apply(&SessionUpdateEvent::NameChanged("planning".to_string())).unwrap();
-        session.apply(&SessionUpdateEvent::DescriptionChanged { summary: Some("What we plan".to_string()), briefing: None }).unwrap();
+        session
+            .apply(&SessionUpdateEvent::DescriptionChanged {
+                summary: Some("What we plan".to_string()),
+                briefing: None,
+            })
+            .unwrap();
         session.apply(&SessionUpdateEvent::ParticipantJoined(Participant::User(alice))).unwrap();
-        assert_eq!((session.name.as_str(), session.summary.as_ref().map(|s| s.as_str())), ("planning", Some("What we plan")));
+        assert_eq!(
+            (session.name.as_str(), session.summary.as_ref().map(|s| s.as_str())),
+            ("planning", Some("What we plan"))
+        );
         assert_eq!(session.participants.len(), 1, "taken in as `take_in` does: once");
         session.apply(&SessionUpdateEvent::LanguageChanged(Some("de".to_string()))).unwrap();
-        assert_eq!(session.language.as_ref().map(Language::as_str), Some("de"), "made into a language");
-        assert!(session.apply(&SessionUpdateEvent::LanguageChanged(Some("no language".to_string()))).is_err(), "no language tag");
+        assert_eq!(
+            session.language.as_ref().map(Language::as_str),
+            Some("de"),
+            "made into a language"
+        );
+        assert!(
+            session
+                .apply(&SessionUpdateEvent::LanguageChanged(Some("no language".to_string())))
+                .is_err(),
+            "no language tag"
+        );
         assert_eq!(session.language.as_ref().map(Language::as_str), Some("de"), "unchanged");
         session.apply(&SessionUpdateEvent::LanguageChanged(None)).unwrap();
         assert_eq!(session.language, None, "taken back");
 
         assert_eq!(session.effective_time_zone(), TimeZone::UTC, "UTC where it names none");
-        session.apply(&SessionUpdateEvent::TimeZoneChanged(Some("Europe/Berlin".to_string()))).unwrap();
+        session
+            .apply(&SessionUpdateEvent::TimeZoneChanged(Some("Europe/Berlin".to_string())))
+            .unwrap();
         assert_eq!(session.effective_time_zone().as_str(), "Europe/Berlin");
-        assert!(session.apply(&SessionUpdateEvent::TimeZoneChanged(Some("Europe/Atlantis".to_string()))).is_err(), "no time zone");
+        assert!(
+            session
+                .apply(&SessionUpdateEvent::TimeZoneChanged(Some("Europe/Atlantis".to_string())))
+                .is_err(),
+            "no time zone"
+        );
         assert_eq!(session.effective_time_zone().as_str(), "Europe/Berlin", "unchanged");
 
         assert!(session.apply(&SessionUpdateEvent::NameChanged(String::new())).is_err(), "no name");

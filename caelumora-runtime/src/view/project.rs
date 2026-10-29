@@ -3,11 +3,11 @@
 //! (`ProjectController`).
 
 use super::{SessionView, ViewResult, Views};
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::actor::ActorId;
+use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::security::AccessQuestions;
 use caelumora_model::snapshot::ProjectSnapshot;
+use caelumora_model::store::query::{Filter, Query};
 
 #[derive(Clone)]
 pub struct ProjectView {
@@ -40,7 +40,10 @@ impl ProjectView {
 
     /// Whether the viewer may change it (`UpdateProject`): its owner.
     pub async fn may_change(&self) -> bool {
-        self.views.access_policy().may_change_project(self.views.context(), &self.project.security_attributes).await
+        self.views
+            .access_policy()
+            .may_change_project(self.views.context(), &self.project.security_attributes)
+            .await
     }
 
     /// The project as the viewer sees it; its members called by their names, read in the

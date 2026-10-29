@@ -38,7 +38,12 @@ pub fn envelope_span(context: &EventContext, event: &'static str) -> Span {
 /// started the turn under way, so the turn can be found by the same
 /// `span_id` as the REST request and the channel dispatch. Without a turn
 /// under way, an `agent` span too.
-pub fn agent_span(agent_id: AgentId, agent: &str, state: ActorState, turn: Option<&EventContext>) -> Span {
+pub fn agent_span(
+    agent_id: AgentId,
+    agent: &str,
+    state: ActorState,
+    turn: Option<&EventContext>,
+) -> Span {
     match turn.filter(|_| state.in_turn()) {
         None => {
             tracing::info_span!("agent", agent_id = %agent_id, agent = %agent, state = ?state)

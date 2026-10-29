@@ -2,9 +2,9 @@
 //! `SecurityContext` every operation is asked in.
 
 use crate::actor::ActorId;
-use crate::session::SessionId;
 use crate::channel::ChannelId;
 use crate::role::RoleId;
+use crate::session::SessionId;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -70,7 +70,8 @@ impl SecurityContext {
     /// Whether `role` counts for the context: the owner holds it, and the
     /// caller's limit, if any, names it.
     pub fn has_role(&self, role: RoleId) -> bool {
-        self.roles.contains(&role) && self.limiting_roles.as_ref().is_none_or(|limit| limit.contains(&role))
+        self.roles.contains(&role)
+            && self.limiting_roles.as_ref().is_none_or(|limit| limit.contains(&role))
     }
 
     /// The roles that count for the context: those of the owner that

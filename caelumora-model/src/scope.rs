@@ -13,11 +13,11 @@
 use crate::group::GroupId;
 use crate::project::ProjectId;
 use crate::session::{ChannelId, SessionId};
+use crate::store::query::{Field, FieldValue, Filter};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
-use crate::store::query::{Field, FieldValue, Filter};
 
 /// Where something lies that is found by name (issue 177): the name space of
 /// a personality, a session template, a component bundle, an agent, a
@@ -30,19 +30,30 @@ use crate::store::query::{Field, FieldValue, Filter};
 pub enum Scope {
     /// A channel, by id: a renamed channel keeps what lies in it (issue
     /// 178).
-    ChannelScope { session_id: SessionId, channel_id: ChannelId },
-    SessionScope { session_id: SessionId },
+    ChannelScope {
+        session_id: SessionId,
+        channel_id: ChannelId,
+    },
+    SessionScope {
+        session_id: SessionId,
+    },
     /// A project's (issue 467): what lies in it goes with the project. It
     /// contains nothing but itself: a session in a project is told by the
     /// session, not by its scope, since sessions change projects and scopes
     /// are stored.
-    ProjectScope { project_id: ProjectId },
-    UserScope { user_id: UserId },
+    ProjectScope {
+        project_id: ProjectId,
+    },
+    UserScope {
+        user_id: UserId,
+    },
     /// Not yet a place anything is looked up from (issue 23): what lies in
     /// it is found from nowhere.
-    GroupScope { group_id: GroupId },
+    GroupScope {
+        group_id: GroupId,
+    },
     #[default]
-    GlobalScope
+    GlobalScope,
 }
 
 impl Scope {
@@ -50,7 +61,11 @@ impl Scope {
     pub fn project(&self) -> Option<ProjectId> {
         match self {
             Scope::ProjectScope { project_id } => Some(*project_id),
-            Scope::GlobalScope | Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::SessionScope { .. } | Scope::ChannelScope { .. } => None,
+            Scope::GlobalScope
+            | Scope::UserScope { .. }
+            | Scope::GroupScope { .. }
+            | Scope::SessionScope { .. }
+            | Scope::ChannelScope { .. } => None,
         }
     }
 
@@ -58,12 +73,24 @@ impl Scope {
     pub fn contains(&self, other: &Scope) -> bool {
         match (self, other) {
             (Scope::GlobalScope, _) => true,
-            (Scope::GroupScope { group_id: id1 }, Scope::GroupScope { group_id: id2 }) => id1 == id2,
+            (Scope::GroupScope { group_id: id1 }, Scope::GroupScope { group_id: id2 }) => {
+                id1 == id2
+            }
             (Scope::UserScope { user_id: id1 }, Scope::UserScope { user_id: id2 }) => id1 == id2,
-            (Scope::ProjectScope { project_id: id1 }, Scope::ProjectScope { project_id: id2 }) => id1 == id2,
-            (Scope::SessionScope { session_id: id1 }, Scope::SessionScope { session_id: id2 }) => id1 == id2,
-            (Scope::SessionScope { session_id: id1 }, Scope::ChannelScope { session_id: id2, .. }) => id1 == id2,
-            (Scope::ChannelScope { session_id: s1, channel_id: c1 }, Scope::ChannelScope { session_id: s2, channel_id: c2 }) => s1 == s2 && c1 == c2,
+            (Scope::ProjectScope { project_id: id1 }, Scope::ProjectScope { project_id: id2 }) => {
+                id1 == id2
+            }
+            (Scope::SessionScope { session_id: id1 }, Scope::SessionScope { session_id: id2 }) => {
+                id1 == id2
+            }
+            (
+                Scope::SessionScope { session_id: id1 },
+                Scope::ChannelScope { session_id: id2, .. },
+            ) => id1 == id2,
+            (
+                Scope::ChannelScope { session_id: s1, channel_id: c1 },
+                Scope::ChannelScope { session_id: s2, channel_id: c2 },
+            ) => s1 == s2 && c1 == c2,
             _ => false,
         }
     }
@@ -89,7 +116,9 @@ impl Scope {
     /// (`ScopedName::key`).
     pub(crate) fn key(&self) -> String {
         match self {
-            Scope::ChannelScope { session_id, channel_id } => format!("channel:{session_id}:{channel_id}"),
+            Scope::ChannelScope { session_id, channel_id } => {
+                format!("channel:{session_id}:{channel_id}")
+            }
             Scope::SessionScope { session_id } => format!("session:{session_id}"),
             Scope::ProjectScope { project_id } => format!("project:{project_id}"),
             Scope::UserScope { user_id } => format!("user:{user_id}"),
@@ -171,10 +200,16 @@ impl<F: ScopedField> Filter<F> {
     pub fn lying_within(scope: &Scope) -> Self {
         match scope {
             Scope::GlobalScope => Filter::all_of([]),
-            Scope::SessionScope { session_id } => Filter::is_in(F::SCOPE, [
-                FieldValue::from(scope),
-                FieldValue::tagged("ChannelScope", FieldValue::tagged("session_id", *session_id)),
-            ]),
+            Scope::SessionScope { session_id } => Filter::is_in(
+                F::SCOPE,
+                [
+                    FieldValue::from(scope),
+                    FieldValue::tagged(
+                        "ChannelScope",
+                        FieldValue::tagged("session_id", *session_id),
+                    ),
+                ],
+            ),
             other => Filter::eq(F::SCOPE, other),
         }
     }
@@ -182,7 +217,11 @@ impl<F: ScopedField> Filter<F> {
     /// What is seen from `place` by `user`, as `Scope::visible_from` says:
     /// what lies in a scope that holds `place`, and in the user's own.
     pub fn seen_from(place: &Scope, user: Option<UserId>) -> Self {
-        let mut seen: Vec<Scope> = place.holders().into_iter().filter(|scope| !matches!(scope, Scope::GroupScope { .. })).collect();
+        let mut seen: Vec<Scope> = place
+            .holders()
+            .into_iter()
+            .filter(|scope| !matches!(scope, Scope::GroupScope { .. }))
+            .collect();
         if let Some(user_id) = user {
             let own = Scope::UserScope { user_id };
             if !seen.contains(&own) {
@@ -198,11 +237,21 @@ impl<F: ScopedField> Filter<F> {
 impl From<&Scope> for FieldValue {
     fn from(scope: &Scope) -> Self {
         match scope {
-            Scope::ChannelScope { channel_id, .. } => FieldValue::tagged("ChannelScope", FieldValue::tagged("channel_id", *channel_id)),
-            Scope::SessionScope { session_id } => FieldValue::tagged("SessionScope", FieldValue::tagged("session_id", *session_id)),
-            Scope::ProjectScope { project_id } => FieldValue::tagged("ProjectScope", FieldValue::tagged("project_id", *project_id)),
-            Scope::UserScope { user_id } => FieldValue::tagged("UserScope", FieldValue::tagged("user_id", *user_id)),
-            Scope::GroupScope { group_id } => FieldValue::tagged("GroupScope", FieldValue::tagged("group_id", *group_id)),
+            Scope::ChannelScope { channel_id, .. } => {
+                FieldValue::tagged("ChannelScope", FieldValue::tagged("channel_id", *channel_id))
+            }
+            Scope::SessionScope { session_id } => {
+                FieldValue::tagged("SessionScope", FieldValue::tagged("session_id", *session_id))
+            }
+            Scope::ProjectScope { project_id } => {
+                FieldValue::tagged("ProjectScope", FieldValue::tagged("project_id", *project_id))
+            }
+            Scope::UserScope { user_id } => {
+                FieldValue::tagged("UserScope", FieldValue::tagged("user_id", *user_id))
+            }
+            Scope::GroupScope { group_id } => {
+                FieldValue::tagged("GroupScope", FieldValue::tagged("group_id", *group_id))
+            }
             Scope::GlobalScope => FieldValue::from("GlobalScope"),
         }
     }
@@ -229,10 +278,18 @@ pub trait Scoped {
 /// the one that lies innermost; of two that lie equally
 /// deep, the first. `None` if none of them is visible from there. Names
 /// are compared as `Name` compares them (issue 248).
-pub fn find_by_name<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, name: &Name, place: &Scope, user: Option<UserId>) -> Option<&'a D> {
-    scoped.into_iter()
+pub fn find_by_name<'a, D: Scoped>(
+    scoped: impl IntoIterator<Item = &'a D>,
+    name: &Name,
+    place: &Scope,
+    user: Option<UserId>,
+) -> Option<&'a D> {
+    scoped
+        .into_iter()
         .map(|d| (d.scoped_name(), d))
-        .filter(|(scoped_name, _)| scoped_name.name == *name && scoped_name.scope.visible_from(place, user))
+        .filter(|(scoped_name, _)| {
+            scoped_name.name == *name && scoped_name.scope.visible_from(place, user)
+        })
         .min_by_key(|(scoped_name, _)| Reverse(scoped_name.scope.depth()))
         .map(|(_, d)| d)
 }
@@ -240,15 +297,22 @@ pub fn find_by_name<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, name
 /// What `user` finds from `place` among `scoped`, by name: for every name
 /// visible from there the one `find_by_name` finds - what a catalogue of
 /// them lists (issue 22). In the order of their names.
-pub fn found_from<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, place: &Scope, user: Option<UserId>) -> Vec<&'a D> {
-    let visible: Vec<(ScopedName, &D)> = scoped.into_iter()
+pub fn found_from<'a, D: Scoped>(
+    scoped: impl IntoIterator<Item = &'a D>,
+    place: &Scope,
+    user: Option<UserId>,
+) -> Vec<&'a D> {
+    let visible: Vec<(ScopedName, &D)> = scoped
+        .into_iter()
         .map(|d| (d.scoped_name(), d))
         .filter(|(scoped_name, _)| scoped_name.scope.visible_from(place, user))
         .collect();
     let mut found: Vec<(ScopedName, &D)> = Vec::new();
     for (scoped_name, d) in visible {
         match found.iter_mut().find(|(other, _)| other.name == scoped_name.name) {
-            Some(entry) if scoped_name.scope.depth() > entry.0.scope.depth() => *entry = (scoped_name, d),
+            Some(entry) if scoped_name.scope.depth() > entry.0.scope.depth() => {
+                *entry = (scoped_name, d)
+            }
             Some(_) => {}
             None => found.push((scoped_name, d)),
         }
@@ -260,8 +324,8 @@ pub fn found_from<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, place:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::store::query::meets_exactly_its_equals;
+    use uuid::Uuid;
 
     #[test]
     fn test_global_scope_contains_all() {
@@ -270,7 +334,10 @@ mod tests {
         assert!(global.contains(&Scope::GroupScope { group_id: GroupId::new() }));
         assert!(global.contains(&Scope::UserScope { user_id: UserId::new() }));
         assert!(global.contains(&Scope::SessionScope { session_id: SessionId::new() }));
-        assert!(global.contains(&Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }));
+        assert!(global.contains(&Scope::ChannelScope {
+            session_id: SessionId::new(),
+            channel_id: ChannelId::new()
+        }));
     }
 
     #[test]
@@ -278,7 +345,7 @@ mod tests {
         let id1 = GroupId::new();
         let id2 = GroupId::new();
         let group1 = Scope::GroupScope { group_id: id1 };
-        
+
         assert!(group1.contains(&Scope::GroupScope { group_id: id1 }));
         assert!(!group1.contains(&Scope::GroupScope { group_id: id2 }));
         assert!(!group1.contains(&Scope::GlobalScope));
@@ -289,7 +356,7 @@ mod tests {
         let id1 = UserId::new();
         let id2 = UserId::new();
         let user1 = Scope::UserScope { user_id: id1 };
-        
+
         assert!(user1.contains(&Scope::UserScope { user_id: id1 }));
         assert!(!user1.contains(&Scope::UserScope { user_id: id2 }));
         assert!(!user1.contains(&Scope::GlobalScope));
@@ -300,11 +367,13 @@ mod tests {
         let s1 = SessionId::new();
         let s2 = SessionId::new();
         let session1 = Scope::SessionScope { session_id: s1 };
-        
+
         assert!(session1.contains(&Scope::SessionScope { session_id: s1 }));
         assert!(!session1.contains(&Scope::SessionScope { session_id: s2 }));
-        assert!(session1.contains(&Scope::ChannelScope { session_id: s1, channel_id: ChannelId::new() }));
-        assert!(!session1.contains(&Scope::ChannelScope { session_id: s2, channel_id: ChannelId::new() }));
+        assert!(session1
+            .contains(&Scope::ChannelScope { session_id: s1, channel_id: ChannelId::new() }));
+        assert!(!session1
+            .contains(&Scope::ChannelScope { session_id: s2, channel_id: ChannelId::new() }));
         assert!(!session1.contains(&Scope::GlobalScope));
     }
 
@@ -314,11 +383,19 @@ mod tests {
     fn a_project_scope_contains_itself_alone() {
         let project_id = ProjectId::new();
         let project = Scope::ProjectScope { project_id };
-        assert_eq!((project.project(), Scope::GlobalScope.project()), (Some(project_id), None), "the project whose it is");
+        assert_eq!(
+            (project.project(), Scope::GlobalScope.project()),
+            (Some(project_id), None),
+            "the project whose it is"
+        );
         assert!(project.contains(&Scope::ProjectScope { project_id }));
         assert!(!project.contains(&Scope::ProjectScope { project_id: ProjectId::new() }));
         let session_id = SessionId::new();
-        for other in [Scope::SessionScope { session_id }, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }, Scope::GlobalScope] {
+        for other in [
+            Scope::SessionScope { session_id },
+            Scope::ChannelScope { session_id, channel_id: ChannelId::new() },
+            Scope::GlobalScope,
+        ] {
             assert!(!project.contains(&other), "{other:?}");
         }
         assert!(Scope::GlobalScope.contains(&project));
@@ -355,7 +432,12 @@ mod tests {
         Item { name: ScopedName::new(name, scope).unwrap(), what }
     }
 
-    fn found(items: &[Item], name: &str, place: &Scope, user: Option<UserId>) -> Option<&'static str> {
+    fn found(
+        items: &[Item],
+        name: &str,
+        place: &Scope,
+        user: Option<UserId>,
+    ) -> Option<&'static str> {
         find_by_name(items, &Name::new(name).unwrap(), place, user).map(|d| d.what)
     }
 
@@ -375,11 +457,41 @@ mod tests {
 
         assert_eq!(found(&items, "helper", &channel, Some(alice)), Some("the channel's"));
         let next_door = Scope::ChannelScope { session_id, channel_id: other_channel };
-        assert_eq!(found(&items, "helper", &next_door, Some(alice)), Some("the session's"), "not another channel's");
-        assert_eq!(found(&items, "helper", &Scope::SessionScope { session_id: SessionId::new() }, Some(alice)), Some("alice's"), "from another session, her own");
-        assert_eq!(found(&items, "helper", &Scope::SessionScope { session_id: SessionId::new() }, Some(bob)), Some("global"), "not somebody else's");
-        assert_eq!(found(&items, "helper", &Scope::SessionScope { session_id: SessionId::new() }, None), Some("global"), "nobody's own");
-        assert_eq!(found(&items, "HELPER", &channel, Some(alice)), Some("the channel's"), "names compare as names do");
+        assert_eq!(
+            found(&items, "helper", &next_door, Some(alice)),
+            Some("the session's"),
+            "not another channel's"
+        );
+        assert_eq!(
+            found(
+                &items,
+                "helper",
+                &Scope::SessionScope { session_id: SessionId::new() },
+                Some(alice)
+            ),
+            Some("alice's"),
+            "from another session, her own"
+        );
+        assert_eq!(
+            found(
+                &items,
+                "helper",
+                &Scope::SessionScope { session_id: SessionId::new() },
+                Some(bob)
+            ),
+            Some("global"),
+            "not somebody else's"
+        );
+        assert_eq!(
+            found(&items, "helper", &Scope::SessionScope { session_id: SessionId::new() }, None),
+            Some("global"),
+            "nobody's own"
+        );
+        assert_eq!(
+            found(&items, "HELPER", &channel, Some(alice)),
+            Some("the channel's"),
+            "names compare as names do"
+        );
         assert_eq!(found(&items, "other", &channel, Some(alice)), None);
     }
 
@@ -387,16 +499,32 @@ mod tests {
     fn what_lies_in_a_scope_not_around_the_place_is_not_found() {
         let session = Scope::SessionScope { session_id: SessionId::new() };
         let items = [
-            item("helper", Scope::SessionScope { session_id: SessionId::new() }, "another session's"),
-            item("helper", Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }, "another channel's"),
+            item(
+                "helper",
+                Scope::SessionScope { session_id: SessionId::new() },
+                "another session's",
+            ),
+            item(
+                "helper",
+                Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() },
+                "another channel's",
+            ),
             item("helper", Scope::GroupScope { group_id: GroupId::new() }, "a group's"),
-            item("helper", Scope::ProjectScope { project_id: ProjectId::new() }, "a project's, which the session's scope does not know"),
+            item(
+                "helper",
+                Scope::ProjectScope { project_id: ProjectId::new() },
+                "a project's, which the session's scope does not know",
+            ),
         ];
         assert_eq!(found(&items, "helper", &session, Some(UserId::new())), None);
 
         let group = Scope::GroupScope { group_id: GroupId::new() };
         let in_group = [item("helper", group.clone(), "the group's")];
-        assert_eq!(found(&in_group, "helper", &group, None), None, "a group is no place yet (issue 23)");
+        assert_eq!(
+            found(&in_group, "helper", &group, None),
+            None,
+            "a group is no place yet (issue 23)"
+        );
     }
 
     #[test]
@@ -405,25 +533,42 @@ mod tests {
         let (channel_id, other_channel) = (ChannelId::new(), ChannelId::new());
         let channel = Scope::ChannelScope { session_id, channel_id };
         let session = Scope::SessionScope { session_id };
-        let elsewhere = Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() };
+        let elsewhere =
+            Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() };
 
-        assert!(session.admits(&channel) && session.admits(&session), "a session's in it and its channels");
+        assert!(
+            session.admits(&channel) && session.admits(&session),
+            "a session's in it and its channels"
+        );
         assert!(!session.admits(&elsewhere), "not in another session");
         assert!(channel.admits(&channel), "a channel's in it");
-        assert!(!channel.admits(&Scope::ChannelScope { session_id, channel_id: other_channel }), "not in another channel of its session");
+        assert!(
+            !channel.admits(&Scope::ChannelScope { session_id, channel_id: other_channel }),
+            "not in another channel of its session"
+        );
         assert!(!channel.admits(&session), "nor in its session at large");
         let project = Scope::ProjectScope { project_id: ProjectId::new() };
         for place in [&channel, &session, &project] {
-            assert!(!project.admits(place), "what lies in a project's is used nowhere yet (issue 467): {place:?}");
+            assert!(
+                !project.admits(place),
+                "what lies in a project's is used nowhere yet (issue 467): {place:?}"
+            );
         }
-        for anywhere in [Scope::UserScope { user_id: UserId::new() }, Scope::GroupScope { group_id: GroupId::new() }, Scope::GlobalScope] {
+        for anywhere in [
+            Scope::UserScope { user_id: UserId::new() },
+            Scope::GroupScope { group_id: GroupId::new() },
+            Scope::GlobalScope,
+        ] {
             assert!(anywhere.admits(&elsewhere), "{anywhere:?} only says where its name is found");
         }
     }
 
     #[test]
     fn of_two_equally_deep_the_first_is_found() {
-        let items = [item("helper", Scope::GlobalScope, "first"), item("Helper", Scope::GlobalScope, "second")];
+        let items = [
+            item("helper", Scope::GlobalScope, "first"),
+            item("Helper", Scope::GlobalScope, "second"),
+        ];
         assert_eq!(found(&items, "helper", &Scope::GlobalScope, None), Some("first"));
     }
 
@@ -436,12 +581,22 @@ mod tests {
             item("notes", Scope::GlobalScope, "the global notes"),
             item("notes", Scope::SessionScope { session_id }, "the session's notes"),
             item("deploy", Scope::UserScope { user_id: alice }, "alice's deploy"),
-            item("audit", Scope::SessionScope { session_id: SessionId::new() }, "another session's"),
+            item(
+                "audit",
+                Scope::SessionScope { session_id: SessionId::new() },
+                "another session's",
+            ),
             item("audit", Scope::UserScope { user_id: UserId::new() }, "another user's"),
         ];
-        let listed: Vec<&str> = found_from(&items, &place, Some(alice)).into_iter().map(|d| d.what).collect();
-        assert_eq!(listed, ["alice's deploy", "the session's notes"], "by name, each the innermost; nothing of another session or user");
-        let as_nobody: Vec<&str> = found_from(&items, &place, None).into_iter().map(|d| d.what).collect();
+        let listed: Vec<&str> =
+            found_from(&items, &place, Some(alice)).into_iter().map(|d| d.what).collect();
+        assert_eq!(
+            listed,
+            ["alice's deploy", "the session's notes"],
+            "by name, each the innermost; nothing of another session or user"
+        );
+        let as_nobody: Vec<&str> =
+            found_from(&items, &place, None).into_iter().map(|d| d.what).collect();
         assert_eq!(as_nobody, ["the session's notes"]);
     }
 
@@ -454,29 +609,42 @@ mod tests {
         let (s1, s2) = (SessionId(Uuid::new_v4()), SessionId(Uuid::new_v4()));
         let (c1, c2) = (ChannelId(Uuid::new_v4()), ChannelId(Uuid::new_v4()));
         let scopes = [
-            Scope::GlobalScope, Scope::UserScope { user_id: alice }, Scope::UserScope { user_id: bob },
-            Scope::SessionScope { session_id: s1 }, Scope::SessionScope { session_id: s2 },
-            Scope::ChannelScope { session_id: s1, channel_id: c1 }, Scope::ChannelScope { session_id: s1, channel_id: c2 },
-            Scope::ChannelScope { session_id: s2, channel_id: ChannelId(Uuid::new_v4()) }, Scope::GroupScope { group_id: GroupId::new() },
-            Scope::ProjectScope { project_id: ProjectId(Uuid::new_v4()) }, Scope::ProjectScope { project_id: ProjectId(Uuid::new_v4()) },
+            Scope::GlobalScope,
+            Scope::UserScope { user_id: alice },
+            Scope::UserScope { user_id: bob },
+            Scope::SessionScope { session_id: s1 },
+            Scope::SessionScope { session_id: s2 },
+            Scope::ChannelScope { session_id: s1, channel_id: c1 },
+            Scope::ChannelScope { session_id: s1, channel_id: c2 },
+            Scope::ChannelScope { session_id: s2, channel_id: ChannelId(Uuid::new_v4()) },
+            Scope::GroupScope { group_id: GroupId::new() },
+            Scope::ProjectScope { project_id: ProjectId(Uuid::new_v4()) },
+            Scope::ProjectScope { project_id: ProjectId(Uuid::new_v4()) },
         ];
         let document = |scope: &Scope| serde_json::json!({ "scope": scope });
         for holder in &scopes {
             let within = Filter::<ScopeField>::lying_within(holder);
             for scope in &scopes {
-                assert_eq!(within.matches(&document(scope)), holder.contains(scope), "{scope:?} within {holder:?}");
+                assert_eq!(
+                    within.matches(&document(scope)),
+                    holder.contains(scope),
+                    "{scope:?} within {holder:?}"
+                );
             }
         }
         for place in &scopes {
             for user in [None, Some(alice)] {
                 let seen = Filter::<ScopeField>::seen_from(place, user);
                 for scope in &scopes {
-                    assert_eq!(seen.matches(&document(scope)), scope.visible_from(place, user), "{scope:?} seen from {place:?} by {user:?}");
+                    assert_eq!(
+                        seen.matches(&document(scope)),
+                        scope.visible_from(place, user),
+                        "{scope:?} seen from {place:?} by {user:?}"
+                    );
                 }
             }
         }
     }
-
 
     /// A scope as a query compares it (issue 293) - a channel's by its
     /// channel alone, whose id is unique, so that no two samples share one.
@@ -484,12 +652,15 @@ mod tests {
     fn a_scope_meets_exactly_the_scopes_equal_to_it() {
         let id = Uuid::new_v4();
         meets_exactly_its_equals(&[
-            Scope::GlobalScope, Scope::UserScope { user_id: UserId(id) }, Scope::GroupScope { group_id: GroupId(id) },
-            Scope::ProjectScope { project_id: ProjectId(id) }, Scope::ProjectScope { project_id: ProjectId::new() },
-            Scope::SessionScope { session_id: SessionId(id) }, Scope::SessionScope { session_id: SessionId::new() },
+            Scope::GlobalScope,
+            Scope::UserScope { user_id: UserId(id) },
+            Scope::GroupScope { group_id: GroupId(id) },
+            Scope::ProjectScope { project_id: ProjectId(id) },
+            Scope::ProjectScope { project_id: ProjectId::new() },
+            Scope::SessionScope { session_id: SessionId(id) },
+            Scope::SessionScope { session_id: SessionId::new() },
             Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId(id) },
             Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId::new() },
         ]);
     }
-
 }

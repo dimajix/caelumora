@@ -19,7 +19,12 @@ pub struct UserDrivenPolicy;
 
 #[async_trait]
 impl ResponderPolicy for UserDrivenPolicy {
-    async fn choose(&self, event: &Envelope, _messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
+    async fn choose(
+        &self,
+        event: &Envelope,
+        _messages: &[Message],
+        candidates: Vec<ActorDescription>,
+    ) -> Result<Vec<ActorId>, Undecided> {
         Ok(match event.context.sender_id {
             ActorId::User(_) => candidates.into_iter().map(|candidate| candidate.id).collect(),
             _ => Vec::new(),

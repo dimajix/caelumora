@@ -2,10 +2,10 @@
 //! the personalities they are made of.
 
 use crate::scope::{ScopeKind, ScopeResponse};
-use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentId, PersonalityId, PersonalityKind};
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::snapshot;
 use caelumora_model::value::text::Description;
 use serde::{Deserialize, Serialize};
 
@@ -49,8 +49,15 @@ pub struct AgentChannelResponse {
 impl From<snapshot::AgentSnapshot> for AgentResponse {
     fn from(view: snapshot::AgentSnapshot) -> Self {
         Self {
-            id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), owner: view.owner, personality_id: view.personality_id,
-            personality: view.personality, can_change: view.can_change, can_delete: view.can_delete, channels: None,
+            id: view.id,
+            name: view.name,
+            scope: ScopeResponse::of(&view.scope),
+            owner: view.owner,
+            personality_id: view.personality_id,
+            personality: view.personality,
+            can_change: view.can_change,
+            can_delete: view.can_delete,
+            channels: None,
         }
     }
 }
@@ -93,6 +100,12 @@ pub struct PersonalityResponse {
 
 impl From<snapshot::PersonalitySnapshot> for PersonalityResponse {
     fn from(view: snapshot::PersonalitySnapshot) -> Self {
-        Self { id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), kind: view.kind, description: view.description }
+        Self {
+            id: view.id,
+            name: view.name,
+            scope: ScopeResponse::of(&view.scope),
+            kind: view.kind,
+            description: view.description,
+        }
     }
 }

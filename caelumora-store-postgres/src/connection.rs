@@ -35,15 +35,29 @@ pub(crate) struct Connection {
 
 impl Debug for Connection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Connection").field("url_secret", &self.url_secret).field("schema", &self.schema).finish_non_exhaustive()
+        f.debug_struct("Connection")
+            .field("url_secret", &self.url_secret)
+            .field("schema", &self.schema)
+            .finish_non_exhaustive()
     }
 }
 
 impl Connection {
     /// The connection the secret `url_secret` names, in `schema`, of at
     /// most `max_connections`, resolved by `secrets`.
-    pub(crate) fn new(url_secret: &str, schema: &str, max_connections: u32, secrets: Arc<SecretManager>) -> Self {
-        Self { url_secret: url_secret.to_string(), schema: schema.to_string(), max_connections, secrets, pool: OnceCell::new() }
+    pub(crate) fn new(
+        url_secret: &str,
+        schema: &str,
+        max_connections: u32,
+        secrets: Arc<SecretManager>,
+    ) -> Self {
+        Self {
+            url_secret: url_secret.to_string(),
+            schema: schema.to_string(),
+            max_connections,
+            secrets,
+            pool: OnceCell::new(),
+        }
     }
 
     /// The pool, made if it is not yet.
@@ -60,7 +74,9 @@ impl Connection {
     /// # Errors
     /// As `pool`, or if the pool has none to give.
     pub(crate) async fn acquire(&self) -> StoreResult<PoolConnection<Postgres>> {
-        self.pool().await?.acquire().await.map_err(|e| StoreError::Backend(format!("no connection of the schema '{}': {e}", self.schema)))
+        self.pool().await?.acquire().await.map_err(|e| {
+            StoreError::Backend(format!("no connection of the schema '{}': {e}", self.schema))
+        })
     }
 
     /// A transaction, for what a put writes.
@@ -68,7 +84,9 @@ impl Connection {
     /// # Errors
     /// As `pool`, or if the transaction cannot be begun.
     pub(crate) async fn begin(&self) -> StoreResult<Transaction<'static, Postgres>> {
-        self.pool().await?.begin().await.map_err(|e| StoreError::Backend(format!("no transaction in the schema '{}': {e}", self.schema)))
+        self.pool().await?.begin().await.map_err(|e| {
+            StoreError::Backend(format!("no transaction in the schema '{}': {e}", self.schema))
+        })
     }
 
     /// The schema its tables are kept in.
@@ -81,17 +99,37 @@ impl Connection {
     /// migrations. No message names the URL: it holds the password.
     async fn connect(&self) -> StoreResult<PgPool> {
         let named = &self.url_secret;
-        let url = self.secrets.resolve(&SecurityContext::system(), named).await
-            .map_err(|e| StoreError::Backend(format!("the URL of the database cannot be resolved from the secret '{named}': {e}")))?;
+        let url = self.secrets.resolve(&SecurityContext::system(), named).await.map_err(|e| {
+            StoreError::Backend(format!(
+                "the URL of the database cannot be resolved from the secret '{named}': {e}"
+            ))
+        })?;
         let options = PgConnectOptions::from_str(&url)
-            .map_err(|_| StoreError::Backend(format!("the secret '{named}' holds no URL of a database")))?
+            .map_err(|_| {
+                StoreError::Backend(format!("the secret '{named}' holds no URL of a database"))
+            })?
             .options([("search_path", self.schema.as_str())]);
-        let pool = PgPoolOptions::new().max_connections(self.max_connections).connect_with(options).await
-            .map_err(|e| StoreError::Backend(format!("the database of the secret '{named}' cannot be reached: {e}")))?;
-        sqlx::query(sql(format!("CREATE SCHEMA IF NOT EXISTS {}", quoted(&self.schema)))).execute(&pool).await
-            .map_err(|e| StoreError::Backend(format!("the schema '{}' cannot be made: {e}", self.schema)))?;
-        MIGRATOR.run(&pool).await
-            .map_err(|e| StoreError::Backend(format!("the migrations of the schema '{}' cannot be applied: {e}", self.schema)))?;
+        let pool = PgPoolOptions::new()
+            .max_connections(self.max_connections)
+            .connect_with(options)
+            .await
+            .map_err(|e| {
+                StoreError::Backend(format!(
+                    "the database of the secret '{named}' cannot be reached: {e}"
+                ))
+            })?;
+        sqlx::query(sql(format!("CREATE SCHEMA IF NOT EXISTS {}", quoted(&self.schema))))
+            .execute(&pool)
+            .await
+            .map_err(|e| {
+                StoreError::Backend(format!("the schema '{}' cannot be made: {e}", self.schema))
+            })?;
+        MIGRATOR.run(&pool).await.map_err(|e| {
+            StoreError::Backend(format!(
+                "the migrations of the schema '{}' cannot be applied: {e}",
+                self.schema
+            ))
+        })?;
         info!("Connected to the database of the secret '{named}', schema '{}'", self.schema);
         Ok(pool)
     }
@@ -107,13 +145,23 @@ pub(crate) struct Connections {
 
 impl Connections {
     /// The connection `config` names, made if it is not yet.
-    pub(crate) fn of(&self, config: &PostgresStoreConfig, secrets: &Arc<SecretManager>) -> Arc<Connection> {
+    pub(crate) fn of(
+        &self,
+        config: &PostgresStoreConfig,
+        secrets: &Arc<SecretManager>,
+    ) -> Arc<Connection> {
         let schema = config.schema.as_deref().unwrap_or(DEFAULT_SCHEMA);
         let mut made = self.made.lock().unwrap_or_else(PoisonError::into_inner);
-        let connection = made.entry((config.url_secret.clone(), schema.to_string())).or_insert_with(|| {
-            let max_connections = config.max_connections.unwrap_or(DEFAULT_MAX_CONNECTIONS);
-            Arc::new(Connection::new(&config.url_secret, schema, max_connections, Arc::clone(secrets)))
-        });
+        let connection =
+            made.entry((config.url_secret.clone(), schema.to_string())).or_insert_with(|| {
+                let max_connections = config.max_connections.unwrap_or(DEFAULT_MAX_CONNECTIONS);
+                Arc::new(Connection::new(
+                    &config.url_secret,
+                    schema,
+                    max_connections,
+                    Arc::clone(secrets),
+                ))
+            });
         Arc::clone(connection)
     }
 }

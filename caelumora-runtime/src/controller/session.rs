@@ -1,22 +1,22 @@
 //! `SessionController`: the one writer of a running session's document.
 
+use super::check_restricting;
+use super::document::LiveDocument;
+use crate::group::keep_participants;
 use arc_swap::Guard;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::Participant;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::privacy::PrivacyConfig;
+use caelumora_model::project::ProjectId;
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
 use caelumora_model::value::name::Name;
 use caelumora_model::workspace::WorkspaceId;
-use caelumora_model::project::ProjectId;
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
 use std::sync::Arc;
 use tracing::error;
-use crate::group::keep_participants;
-use super::check_restricting;
-use super::document::LiveDocument;
 
 /// The one writer of a session's document.
 #[derive(Debug)]
@@ -26,9 +26,18 @@ pub struct SessionController {
 }
 
 impl SessionController {
-    pub fn new(session: Session, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
+    pub fn new(
+        session: Session,
+        event_publisher: Arc<dyn EventPublisher>,
+        stores: &EntityStores,
+    ) -> Self {
         Self {
-            session: LiveDocument::new(session.id, session, Arc::clone(&stores.sessions), event_publisher),
+            session: LiveDocument::new(
+                session.id,
+                session,
+                Arc::clone(&stores.sessions),
+                event_publisher,
+            ),
             groups: Arc::clone(&stores.groups),
         }
     }
@@ -60,7 +69,11 @@ impl SessionController {
     /// # Errors
     /// `StoreError::Invalid` if `language` is no language tag, otherwise see
     /// [`Self::update`].
-    pub async fn update_language(&self, ctx: &SecurityContext, language: Option<&str>) -> StoreResult<()> {
+    pub async fn update_language(
+        &self,
+        ctx: &SecurityContext,
+        language: Option<&str>,
+    ) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::LanguageChanged(language.map(String::from))).await
     }
 
@@ -71,7 +84,11 @@ impl SessionController {
     /// # Errors
     /// `StoreError::Invalid` if `time_zone` is no time zone, otherwise see
     /// [`Self::update`].
-    pub async fn update_time_zone(&self, ctx: &SecurityContext, time_zone: Option<&str>) -> StoreResult<()> {
+    pub async fn update_time_zone(
+        &self,
+        ctx: &SecurityContext,
+        time_zone: Option<&str>,
+    ) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::TimeZoneChanged(time_zone.map(String::from))).await
     }
 
@@ -80,7 +97,11 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_privacy(&self, ctx: &SecurityContext, privacy: PrivacyConfig) -> StoreResult<()> {
+    pub async fn update_privacy(
+        &self,
+        ctx: &SecurityContext,
+        privacy: PrivacyConfig,
+    ) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::PrivacyChanged(privacy)).await
     }
 
@@ -92,7 +113,11 @@ impl SessionController {
     /// # Errors
     /// `StoreError::Validation` if a rule does not only ask or deny
     /// (`ApprovalRule::check_restricting`), otherwise see [`Self::update`].
-    pub async fn update_approval_rules(&self, ctx: &SecurityContext, rules: Vec<ApprovalRule>) -> StoreResult<()> {
+    pub async fn update_approval_rules(
+        &self,
+        ctx: &SecurityContext,
+        rules: Vec<ApprovalRule>,
+    ) -> StoreResult<()> {
         check_restricting(&rules)?;
         self.update(ctx, SessionUpdateEvent::ApprovalRulesChanged(rules)).await
     }
@@ -103,8 +128,16 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
-        let event = SessionUpdateEvent::DescriptionChanged { summary: summary.map(String::from), briefing: briefing.map(String::from) };
+    pub async fn update_description(
+        &self,
+        ctx: &SecurityContext,
+        summary: Option<&str>,
+        briefing: Option<&str>,
+    ) -> StoreResult<()> {
+        let event = SessionUpdateEvent::DescriptionChanged {
+            summary: summary.map(String::from),
+            briefing: briefing.map(String::from),
+        };
         self.update(ctx, event).await
     }
 
@@ -115,7 +148,11 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_workspace(&self, ctx: &SecurityContext, workspace: Option<WorkspaceId>) -> StoreResult<()> {
+    pub async fn update_workspace(
+        &self,
+        ctx: &SecurityContext,
+        workspace: Option<WorkspaceId>,
+    ) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::WorkspaceChanged(workspace)).await
     }
 
@@ -125,7 +162,11 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_project(&self, ctx: &SecurityContext, project: ProjectId) -> StoreResult<()> {
+    pub async fn update_project(
+        &self,
+        ctx: &SecurityContext,
+        project: ProjectId,
+    ) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::ProjectChanged(project)).await
     }
 
@@ -139,7 +180,11 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant) -> StoreResult<()> {
+    pub async fn add_participant(
+        &self,
+        ctx: &SecurityContext,
+        participant: Participant,
+    ) -> StoreResult<()> {
         let event = SessionUpdateEvent::ParticipantJoined(participant);
         let writing = self.session.write().await;
         let session = writing.apply(ctx, &event).await?;
@@ -170,11 +215,16 @@ impl SessionController {
     /// # Errors
     /// `StoreError::NotFound` if the session has no such channel; whatever
     /// the store reports otherwise. The session is then unchanged.
-    pub async fn remove_channel(&self, ctx: &SecurityContext, channel_id: ChannelId) -> StoreResult<()> {
+    pub async fn remove_channel(
+        &self,
+        ctx: &SecurityContext,
+        channel_id: ChannelId,
+    ) -> StoreResult<()> {
         let writing = self.session.write().await;
         let mut session = writing.current();
-        let index = session.channels.iter().position(|c| *c == channel_id)
-            .ok_or_else(|| StoreError::NotFound { entity: "channel", id: channel_id.to_string() })?;
+        let index = session.channels.iter().position(|c| *c == channel_id).ok_or_else(|| {
+            StoreError::NotFound { entity: "channel", id: channel_id.to_string() }
+        })?;
         session.channels.remove(index);
         writing.store(ctx, session).await.map(drop)
     }
@@ -212,9 +262,9 @@ impl SessionController {
 mod tests {
     use super::*;
     use crate::session::testing::bare_session;
+    use caelumora_model::confidentiality::Classification;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Persistence;
-    use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::ValueError;
     use chrono::{Duration, Utc};
     use std::sync::Mutex;
@@ -235,7 +285,12 @@ mod tests {
             self.0.lock().unwrap().push(event);
         }
 
-        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[Classification]) {
+        fn publish_classified(
+            &self,
+            event: GlobalEvent,
+            attributes: SecurityAttributes,
+            _classifications: &[Classification],
+        ) {
             self.publish(event, attributes);
         }
     }
@@ -246,12 +301,16 @@ mod tests {
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
         store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
-        let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
+        let controller =
+            SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
 
         controller.update_name(&ctx, "renamed").await.unwrap();
 
         assert_eq!(controller.name(), "renamed");
-        assert_eq!(store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().name, "renamed");
+        assert_eq!(
+            store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().name,
+            "renamed"
+        );
     }
 
     /// Issue 358: whatever changes the session moves `updated_at`, an update
@@ -263,8 +322,11 @@ mod tests {
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
         store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
-        let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
-        let stored = || async { store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().updated_at };
+        let controller =
+            SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
+        let stored = || async {
+            store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().updated_at
+        };
 
         controller.update_name(&ctx, "renamed").await.unwrap();
         let renamed = stored().await;
@@ -281,19 +343,43 @@ mod tests {
         let ctx = SecurityContext::default();
         store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
         let announced = Arc::new(Announced::default());
-        let controller = SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), &store.entity_stores().unwrap());
+        let controller = SessionController::new(
+            session.clone(),
+            Arc::<Announced>::clone(&announced),
+            &store.entity_stores().unwrap(),
+        );
 
         controller.update_description(&ctx, Some("Release 2.0"), Some("")).await.unwrap();
         let stored = store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap();
-        assert_eq!((stored.summary.as_ref().map(|s| s.as_str()), stored.briefing), (Some("Release 2.0"), None), "empty is none");
-        assert!(matches!(announced.0.lock().unwrap().as_slice(), [event] if matches!(event.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()), Some(SessionUpdateEvent::DescriptionChanged { .. }))), "announced");
+        assert_eq!(
+            (stored.summary.as_ref().map(|s| s.as_str()), stored.briefing),
+            (Some("Release 2.0"), None),
+            "empty is none"
+        );
+        assert!(
+            matches!(announced.0.lock().unwrap().as_slice(), [event] if matches!(event.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()), Some(SessionUpdateEvent::DescriptionChanged { .. }))),
+            "announced"
+        );
 
         let refused = controller.update_description(&ctx, Some("two\nlines"), None).await;
-        assert!(matches!(&refused, Err(StoreError::Invalid(ValueError::LineBreak { field: "summary" }))), "{refused:?}");
+        assert!(
+            matches!(
+                &refused,
+                Err(StoreError::Invalid(ValueError::LineBreak { field: "summary" }))
+            ),
+            "{refused:?}"
+        );
 
         let renamed = controller.update_name(&ctx, " ").await;
-        assert!(matches!(&renamed, Err(StoreError::Invalid(ValueError::Blank { field: "name" }))), "a name is checked so, too: {renamed:?}");
-        assert_eq!(store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().summary, stored.summary, "unchanged by what is refused");
+        assert!(
+            matches!(&renamed, Err(StoreError::Invalid(ValueError::Blank { field: "name" }))),
+            "a name is checked so, too: {renamed:?}"
+        );
+        assert_eq!(
+            store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().summary,
+            stored.summary,
+            "unchanged by what is refused"
+        );
         assert_eq!(announced.0.lock().unwrap().len(), 1);
     }
 }

@@ -3,14 +3,16 @@
 //! every `PromptProvider` of the agent, placed around its transcript
 //! (issues 47, 99). The default `ContextProvider` of an agent run here.
 
-use crate::situation::Situation;
-use caelumora_model::context::{KnowledgeRef, PromptPart};
-use caelumora_runtime::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptPosition, PromptProvider};
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
+use caelumora_runtime::component::{
+    ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry,
+};
 use std::sync::Arc;
 
 pub const TURN_CONTEXT_PROVIDER_KIND: &str = "turn_context_provider";
@@ -26,7 +28,10 @@ pub struct TurnContextProvider {
 
 #[async_trait]
 impl ContextProvider for TurnContextProvider {
-    async fn current_context(&self, situation: &Situation<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
+    async fn current_context(
+        &self,
+        situation: &Situation<'_>,
+    ) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
         let mut knowledge = Vec::new();
@@ -48,22 +53,37 @@ impl ContextProvider for TurnContextProvider {
         let mut parts = Vec::with_capacity(2);
         if !start.is_empty() {
             let (text, classification) = joined(start);
-            parts.push(PromptPart { role: MessageRole::System, text, after: None, classification, source: None });
+            parts.push(PromptPart {
+                role: MessageRole::System,
+                text,
+                after: None,
+                classification,
+                source: None,
+            });
         }
         if !before_input.is_empty() {
             // Before the newest message, which is the turn's input - unless
             // the agent wrote it itself, in a turn that has none (e.g. after
             // `/wakeup`): then at the end.
             let transcript = &situation.agent_channel_state().transcript;
-            let mut messages = transcript.entries().rev().filter_map(|n| n.entry.message().map(|m| (n.digest, m)));
+            let mut messages =
+                transcript.entries().rev().filter_map(|n| n.entry.message().map(|m| (n.digest, m)));
             let own = ActorId::Agent(situation.agent_id());
             let after = match messages.next() {
-                Some((_, input)) if input.sender_id != own => messages.next().map(|(digest, _)| digest),
+                Some((_, input)) if input.sender_id != own => {
+                    messages.next().map(|(digest, _)| digest)
+                }
                 Some((own_message, _)) => Some(own_message),
                 None => None,
             };
             let (text, classification) = joined(before_input);
-            parts.push(PromptPart { role: MessageRole::User, text, after, classification, source: None });
+            parts.push(PromptPart {
+                role: MessageRole::User,
+                text,
+                after,
+                classification,
+                source: None,
+            });
         }
         Ok((parts, knowledge))
     }
@@ -73,14 +93,20 @@ impl ContextProvider for TurnContextProvider {
 /// join of their classifications - `None` if one of them is not known, or
 /// they have no audience in common (issue 168).
 fn joined(parts: Vec<(String, Option<Classification>)>) -> (String, Option<Classification>) {
-    let (texts, classifications): (Vec<String>, Vec<Option<Classification>>) = parts.into_iter().unzip();
-    let classification = classifications.into_iter().collect::<Option<Vec<_>>>().and_then(|c| Classification::join_all(&c));
+    let (texts, classifications): (Vec<String>, Vec<Option<Classification>>) =
+        parts.into_iter().unzip();
+    let classification = classifications
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .and_then(|c| Classification::join_all(&c));
     (texts.join("\n\n"), classification)
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(TURN_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>().needs::<dyn PromptProvider>(),
+        ComponentKind::new(TURN_CONTEXT_PROVIDER_KIND)
+            .provides::<dyn ContextProvider>()
+            .needs::<dyn PromptProvider>(),
         |_descriptor, context| async move {
             // Every prompt part of the agent, in the order of its
             // configuration: the parts of one position are joined in this
@@ -89,9 +115,8 @@ pub fn register(registry: &mut ComponentRegistry) {
             let prompt_providers = context.all::<dyn PromptProvider>().await?;
 
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ContextProvider>(Arc::new(TurnContextProvider {
-                prompt_providers
-            }));
+            facets
+                .insert::<dyn ContextProvider>(Arc::new(TurnContextProvider { prompt_providers }));
             Ok(facets)
         },
     );
@@ -100,15 +125,15 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::executor;
-    use crate::turn::Turn;
-    use caelumora_model::component::ComponentFailPolicy;
     use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::prompt::Prompt;
+    use crate::turn::Turn;
+    use anyhow::Result;
     use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId};
-    use anyhow::Result;
+    use futures::executor;
 
     fn message(content: &str) -> Message {
         Message {
@@ -120,7 +145,10 @@ mod tests {
     }
 
     /// `provider` as a component with `fail_policy`.
-    fn part(provider: Arc<dyn PromptProvider>, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn PromptProvider> {
+    fn part(
+        provider: Arc<dyn PromptProvider>,
+        fail_policy: ComponentFailPolicy,
+    ) -> ComponentImpl<dyn PromptProvider> {
         ComponentImpl { id: "part".to_string(), fail_policy, facet: provider }
     }
 
@@ -147,14 +175,39 @@ mod tests {
     async fn a_failing_prompt_part_is_left_out_or_fails_the_turn_as_its_component_says() {
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::new(), &mut agent_channel_state);
-        let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed);
+        let brief = || {
+            part(
+                Arc::new(StaticSystemPromptProvider {
+                    prompt: "Be brief.".to_string(),
+                    position: PromptPosition::Start,
+                    classification: Classification::PUBLIC,
+                }),
+                ComponentFailPolicy::FailClosed,
+            )
+        };
 
-        let open = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
+        let open = TurnContextProvider {
+            prompt_providers: vec![
+                part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen),
+                brief(),
+            ],
+        };
         assemble(&open, &mut turn).await.expect("a part that fails open is left out");
-        assert_eq!(turn.full_context().await.unwrap().0[0].content.as_deref(), Some("Be brief."), "the others are given");
+        assert_eq!(
+            turn.full_context().await.unwrap().0[0].content.as_deref(),
+            Some("Be brief."),
+            "the others are given"
+        );
 
-        let closed = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
-        let error = assemble(&closed, &mut turn).await.expect_err("a part that fails closed fails the turn");
+        let closed = TurnContextProvider {
+            prompt_providers: vec![
+                part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed),
+                brief(),
+            ],
+        };
+        let error = assemble(&closed, &mut turn)
+            .await
+            .expect_err("a part that fails closed fails the turn");
         assert!(format!("{error:#}").contains("component 'part'"), "{error:#}");
     }
 
@@ -164,13 +217,32 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let provider = TurnContextProvider {
             prompt_providers: vec![
-                part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed),
-                part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed),
+                part(
+                    Arc::new(StaticSystemPromptProvider {
+                        prompt: "Be brief.".to_string(),
+                        position: PromptPosition::Start,
+                        classification: Classification::PUBLIC,
+                    }),
+                    ComponentFailPolicy::FailClosed,
+                ),
+                part(
+                    Arc::new(StaticSystemPromptProvider {
+                        prompt: "Notes: none.".to_string(),
+                        position: PromptPosition::BeforeTurnInput,
+                        classification: Classification::PUBLIC,
+                    }),
+                    ComponentFailPolicy::FailClosed,
+                ),
             ],
         };
-        let contents = |turn: &mut Turn| executor::block_on(turn.full_context()).unwrap().0.iter()
-            .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
-            .collect::<Vec<_>>();
+        let contents = |turn: &mut Turn| {
+            executor::block_on(turn.full_context())
+                .unwrap()
+                .0
+                .iter()
+                .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
+                .collect::<Vec<_>>()
+        };
 
         let mut earlier = message("earlier");
         earlier.role = MessageRole::User;
@@ -179,9 +251,16 @@ mod tests {
         agent_channel_state.perceive(vec![earlier, question]);
         let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
         assemble(&provider, &mut turn).await.unwrap();
-        assert_eq!(contents(&mut turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
-            "the system prompt first, the notes before the turn's input");
-        assert_eq!(turn.situation().agent_channel_state().transcript.messages().len(), 2, "prompt parts are never stored in the context");
+        assert_eq!(
+            contents(&mut turn),
+            ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
+            "the system prompt first, the notes before the turn's input"
+        );
+        assert_eq!(
+            turn.situation().agent_channel_state().transcript.messages().len(),
+            2,
+            "prompt parts are never stored in the context"
+        );
 
         // A turn without new input - the newest message is the agent's own.
         let mut own = message("my answer");
@@ -189,6 +268,10 @@ mod tests {
         agent_channel_state.perceive(vec![own]);
         let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
         assemble(&provider, &mut turn).await.unwrap();
-        assert_eq!(contents(&mut turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
+        assert_eq!(
+            contents(&mut turn).last().map(String::as_str),
+            Some("User:Notes: none."),
+            "then at the end"
+        );
     }
 }

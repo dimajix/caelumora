@@ -1,19 +1,19 @@
-use crate::chain::Position;
 use crate::actor::ActorId;
 use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULES};
-use chrono::{DateTime, Utc};
-use crate::value::language::Language;
-use crate::scope::{Scope, Scoped};
+use crate::chain::Position;
+use crate::message::MessageId;
+use crate::removal::Removal;
 use crate::role::RoleId;
-use crate::security::{SecurityAttributes, Secured};
+use crate::scope::{Scope, Scoped};
+use crate::security::{Secured, SecurityAttributes};
+use crate::store::query::{Field, NoField};
+use crate::store::{EntityKind, Journaled, NoEntity, Stored, Updatable};
+use crate::value::language::Language;
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::value::ValueError;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::removal::Removal;
-use crate::store::{EntityKind, Journaled, NoEntity, Stored, Updatable};
-use crate::message::MessageId;
-use crate::store::query::{Field, NoField};
 
 define_id!(UserId);
 
@@ -54,7 +54,8 @@ pub struct User {
 /// the user providers and the initial setup, creates, changes or deletes
 /// it. Owning it themselves would let users grant themselves `roles`.
 /// Derived rather than stored, so that no record can say otherwise.
-static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId::System, acl: Vec::new() };
+static SYSTEM_OWNED: SecurityAttributes =
+    SecurityAttributes { owner_id: ActorId::System, acl: Vec::new() };
 
 impl Stored for User {
     const KIND: EntityKind = EntityKind::new("user");
@@ -173,7 +174,14 @@ impl UserProfile {
     /// `introduction` says.
     pub fn new(user_id: UserId, introduction: Option<Introduction>) -> Self {
         let security_attributes = SecurityAttributes::owned_by(ActorId::User(user_id));
-        Self { user_id, introduction, preferred_language: None, approval_rules: Vec::new(), deleted: None, security_attributes }
+        Self {
+            user_id,
+            introduction,
+            preferred_language: None,
+            approval_rules: Vec::new(),
+            deleted: None,
+            security_attributes,
+        }
     }
 
     /// Introduces the user as `introduction` says - as nobody if it is
@@ -249,7 +257,12 @@ struct UserProfileFields {
 
 impl From<UserProfileFields> for UserProfile {
     fn from(fields: UserProfileFields) -> Self {
-        UserProfile { preferred_language: fields.preferred_language, approval_rules: fields.approval_rules, deleted: fields.deleted, ..UserProfile::new(fields.user_id, fields.introduction) }
+        UserProfile {
+            preferred_language: fields.preferred_language,
+            approval_rules: fields.approval_rules,
+            deleted: fields.deleted,
+            ..UserProfile::new(fields.user_id, fields.introduction)
+        }
     }
 }
 
@@ -352,15 +365,27 @@ mod tests {
         });
         let profile: UserProfile = serde_json::from_value(stored).unwrap();
         assert_eq!(profile.security_attributes().owner_id, ActorId::User(user));
-        assert_eq!(profile.introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
-        assert_eq!(profile.preferred_language, None, "a profile stored before issue 56 prefers none");
+        assert_eq!(
+            profile.introduction.as_ref().map(Introduction::as_str),
+            Some("I run the budget.")
+        );
+        assert_eq!(
+            profile.preferred_language, None,
+            "a profile stored before issue 56 prefers none"
+        );
         let written = serde_json::to_value(&profile).unwrap();
-        assert!(written.get("security_attributes").is_none(), "the owner is not written: {written}");
+        assert!(
+            written.get("security_attributes").is_none(),
+            "the owner is not written: {written}"
+        );
     }
 
     #[test]
     fn a_preferred_language_is_kept_with_the_profile() {
-        let profile = UserProfile { preferred_language: Some(Language::new("de").unwrap()), ..UserProfile::new(UserId::new(), None) };
+        let profile = UserProfile {
+            preferred_language: Some(Language::new("de").unwrap()),
+            ..UserProfile::new(UserId::new(), None)
+        };
         let written = serde_json::to_value(&profile).unwrap();
         assert_eq!(written["preferred_language"], "de");
         let read: UserProfile = serde_json::from_value(written).unwrap();
@@ -371,50 +396,96 @@ mod tests {
     fn a_stored_introduction_is_checked_when_read() {
         let stored = serde_json::json!({ "user_id": UserId::new(), "introduction": "a\u{1b}[2Jb" });
         let refused = serde_json::from_value::<UserProfile>(stored).unwrap_err();
-        assert!(refused.to_string().contains("the introduction must not contain control characters"), "{refused}");
+        assert!(
+            refused.to_string().contains("the introduction must not contain control characters"),
+            "{refused}"
+        );
     }
 
     #[test]
     fn a_profile_keeps_the_rules_a_person_may_keep() {
         use crate::approval::{Reach, RuleDecision, ToolMatcher};
         let mut profile = UserProfile::new(UserId::new(), None);
-        let shell = |decision, expires_at| ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, decision, Reach::Everywhere, expires_at).unwrap();
+        let shell = |decision, expires_at| {
+            ApprovalRule::new(
+                ToolMatcher { tool: "shell".to_string(), arguments: Default::default() },
+                decision,
+                Reach::Everywhere,
+                expires_at,
+            )
+            .unwrap()
+        };
         let allow = shell(RuleDecision::Allow, None);
         profile.add_approval_rule(allow.clone()).unwrap();
-        assert_eq!(profile.add_approval_rule(shell(RuleDecision::Ask, None)), Err(RuleError::NotAnAnswer), "asking is no answer");
+        assert_eq!(
+            profile.add_approval_rule(shell(RuleDecision::Ask, None)),
+            Err(RuleError::NotAnAnswer),
+            "asking is no answer"
+        );
         let now = Utc::now();
         profile.add_approval_rule(shell(RuleDecision::Deny, Some(now))).unwrap();
         profile.prune_approval_rules(now);
         assert_eq!(profile.approval_rules(), slice::from_ref(&allow), "what expired is dropped");
 
-        let stored: UserProfile = serde_json::from_value(serde_json::to_value(&profile).unwrap()).unwrap();
+        let stored: UserProfile =
+            serde_json::from_value(serde_json::to_value(&profile).unwrap()).unwrap();
         assert_eq!(stored.approval_rules(), slice::from_ref(&allow), "kept with the profile");
         assert!(profile.remove_approval_rule(allow.id));
         assert!(!profile.remove_approval_rule(allow.id), "once");
         for _ in 0..MAX_PERSONAL_RULES {
             profile.add_approval_rule(shell(RuleDecision::Allow, None)).unwrap();
         }
-        assert_eq!(profile.add_approval_rule(shell(RuleDecision::Allow, None)), Err(RuleError::TooMany));
+        assert_eq!(
+            profile.add_approval_rule(shell(RuleDecision::Allow, None)),
+            Err(RuleError::TooMany)
+        );
     }
 
     #[tokio::test]
     async fn a_user_writes_their_own_profile_and_no_one_else_s() {
+        use crate::channel::ChannelId;
         use crate::security::{OwnershipPolicy, SecurityContext};
         use crate::session::SessionId;
-        use crate::channel::ChannelId;
-        use crate::store::StoreError;
         use crate::store::Persistence;
+        use crate::store::StoreError;
         use std::sync::Arc;
 
-        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).entity_stores().unwrap().user_profiles;
+        let store = Persistence::in_memory_with(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        )
+        .entity_stores()
+        .unwrap()
+        .user_profiles;
         let (alice, bob) = (UserId::new(), UserId::new());
-        let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
+        let as_user = |id| {
+            SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default())
+        };
 
         let hers = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
-        assert!(matches!(store.create(&as_user(bob), &hers).await, Err(StoreError::PermissionDenied(_))), "nobody writes a profile of someone else");
+        assert!(
+            matches!(
+                store.create(&as_user(bob), &hers).await,
+                Err(StoreError::PermissionDenied(_))
+            ),
+            "nobody writes a profile of someone else"
+        );
         store.create(&as_user(alice), &hers).await.expect("her own");
-        let changed = UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
-        assert!(matches!(store.update(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })), "nor changes it");
-        assert_eq!(store.get(&SecurityContext::system(), alice).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
+        let changed =
+            UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
+        assert!(
+            matches!(store.update(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })),
+            "nor changes it"
+        );
+        assert_eq!(
+            store
+                .get(&SecurityContext::system(), alice)
+                .await
+                .unwrap()
+                .introduction
+                .as_ref()
+                .map(Introduction::as_str),
+            Some("I run the budget.")
+        );
     }
 }

@@ -90,7 +90,11 @@ impl Project {
     /// the session read its results - and by the group of its members,
     /// none until it is lifted.
     pub fn own_of(session_id: SessionId, owner: UserId) -> Self {
-        Self::of(Self::own_name(session_id), owner, &[Subject::Group(GroupId::of_session(session_id))])
+        Self::of(
+            Self::own_name(session_id),
+            owner,
+            &[Subject::Group(GroupId::of_session(session_id))],
+        )
     }
 
     /// What the own project of session `session_id` is found by: `OWN`, in
@@ -103,9 +107,21 @@ impl Project {
     /// and by `readers`.
     fn of(name: ScopedName, owner: UserId, readers: &[Subject]) -> Self {
         let (id, now) = (ProjectId::new(), Utc::now());
-        let members = SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::Group(GroupId::of_project(id)), Grant::Read);
-        let security_attributes = readers.iter().fold(members, |attributes, reader| attributes.granting(*reader, Grant::Read));
-        Self { id, name, description: None, members: Vec::new(), security_attributes, created_at: now, updated_at: now, deleted: None }
+        let members = SecurityAttributes::owned_by(ActorId::User(owner))
+            .granting(Subject::Group(GroupId::of_project(id)), Grant::Read);
+        let security_attributes = readers
+            .iter()
+            .fold(members, |attributes, reader| attributes.granting(*reader, Grant::Read));
+        Self {
+            id,
+            name,
+            description: None,
+            members: Vec::new(),
+            security_attributes,
+            created_at: now,
+            updated_at: now,
+            deleted: None,
+        }
     }
 
     /// The scope it holds: what lies in it belongs to the project.
@@ -147,17 +163,31 @@ impl Stored for Project {
     /// anything is found from - or another project's. `OWN` is the name of a
     /// session's own alone, so that a lifted one is named anew.
     fn validate(&self) -> Result<(), String> {
-        let Some(owner) = self.owner() else { return Err("a project belongs to a user".to_string()) };
+        let Some(owner) = self.owner() else {
+            return Err("a project belongs to a user".to_string());
+        };
         let own = self.name.name == Name::fixed(Self::OWN);
         match &self.name.scope {
-            Scope::GlobalScope | Scope::UserScope { .. } if own => Err(format!("'{}' is the name of a session's own project", Self::OWN)),
+            Scope::GlobalScope | Scope::UserScope { .. } if own => {
+                Err(format!("'{}' is the name of a session's own project", Self::OWN))
+            }
             Scope::GlobalScope => Ok(()),
             Scope::UserScope { user_id } if *user_id == owner => Ok(()),
-            Scope::UserScope { .. } => Err("a project lies in no other user's scope than its owner's".to_string()),
-            Scope::SessionScope { .. } if !own => Err(format!("a project in a session's scope is its own, named '{}'", Self::OWN)),
-            Scope::SessionScope { .. } if !self.members.is_empty() => Err("a session's own project has no members: who reads the session reads it".to_string()),
+            Scope::UserScope { .. } => {
+                Err("a project lies in no other user's scope than its owner's".to_string())
+            }
+            Scope::SessionScope { .. } if !own => {
+                Err(format!("a project in a session's scope is its own, named '{}'", Self::OWN))
+            }
+            Scope::SessionScope { .. } if !self.members.is_empty() => {
+                Err("a session's own project has no members: who reads the session reads it"
+                    .to_string())
+            }
             Scope::SessionScope { .. } => Ok(()),
-            Scope::ChannelScope { .. } | Scope::GroupScope { .. } | Scope::ProjectScope { .. } => Err("a project lies in the global scope, its owner's or a session's as its own".to_string()),
+            Scope::ChannelScope { .. } | Scope::GroupScope { .. } | Scope::ProjectScope { .. } => {
+                Err("a project lies in the global scope, its owner's or a session's as its own"
+                    .to_string())
+            }
         }
     }
 }
@@ -167,7 +197,10 @@ impl Filter<ScopeField> {
     /// The shared projects: those that lie where a shared one lies - the global scope or a
     /// user's -, not a session's own (`Project::is_own`).
     pub fn shared_projects() -> Self {
-        Filter::is_in(ScopeField::Scope, [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")])
+        Filter::is_in(
+            ScopeField::Scope,
+            [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")],
+        )
     }
 }
 
@@ -180,11 +213,17 @@ impl Updatable for Project {
 
     fn apply(&mut self, event: &ProjectUpdateEvent) -> Result<(), ValueError> {
         match event {
-            ProjectUpdateEvent::NameChanged(name) => self.name = ScopedName::new(name, self.name.scope.clone())?,
-            ProjectUpdateEvent::DescriptionChanged(description) => self.description = Description::optional(description.as_deref())?,
+            ProjectUpdateEvent::NameChanged(name) => {
+                self.name = ScopedName::new(name, self.name.scope.clone())?
+            }
+            ProjectUpdateEvent::DescriptionChanged(description) => {
+                self.description = Description::optional(description.as_deref())?
+            }
             ProjectUpdateEvent::MembersChanged(members) => self.members.clone_from(members),
             ProjectUpdateEvent::AccessChanged => {}
-            ProjectUpdateEvent::Lifted { name, scope } => self.name = ScopedName::new(name, scope.clone())?,
+            ProjectUpdateEvent::Lifted { name, scope } => {
+                self.name = ScopedName::new(name, scope.clone())?
+            }
         }
         Ok(())
     }
@@ -222,11 +261,19 @@ mod tests {
         let owner = UserId::new();
         let projects = [
             Project::new(ScopedName::new("report", Scope::GlobalScope).unwrap(), owner),
-            Project::new(ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(), owner),
+            Project::new(
+                ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(),
+                owner,
+            ),
             Project::own_of(SessionId::new(), owner),
         ];
         for project in projects {
-            assert_eq!(Filter::shared_projects().matches(&serde_json::to_value(&project).unwrap()), !project.is_own(), "{:?}", project.name.scope);
+            assert_eq!(
+                Filter::shared_projects().matches(&serde_json::to_value(&project).unwrap()),
+                !project.is_own(),
+                "{:?}",
+                project.name.scope
+            );
         }
     }
 
@@ -247,7 +294,10 @@ mod tests {
         ] {
             assert!(shared(scope.clone(), alice).validate().is_err(), "not in {scope:?}");
         }
-        let named_own = Project::new(ScopedName::new(Project::OWN, Scope::UserScope { user_id: alice }).unwrap(), alice);
+        let named_own = Project::new(
+            ScopedName::new(Project::OWN, Scope::UserScope { user_id: alice }).unwrap(),
+            alice,
+        );
         assert!(named_own.validate().is_err(), "'own' is a session's own's name alone");
         let mut nobodys = shared(Scope::GlobalScope, alice);
         nobodys.security_attributes.owner_id = ActorId::System;
@@ -260,11 +310,24 @@ mod tests {
         let alice = UserId::new();
         let own = Project::own_of(session_id, alice);
         assert!(own.is_own() && !shared(Scope::GlobalScope, alice).is_own());
-        assert_eq!((own.name.name.as_str(), &own.name.scope, own.owner()), (Project::OWN, &Scope::SessionScope { session_id }, Some(alice)));
-        assert_eq!(own.security_attributes.acl, [
-            AclEntry { subject: Subject::Group(GroupId::of_project(own.id)), grant: Grant::Read },
-            AclEntry { subject: Subject::Group(GroupId::of_session(session_id)), grant: Grant::Read },
-        ], "read by the session's participants, and by its members once it is lifted");
+        assert_eq!(
+            (own.name.name.as_str(), &own.name.scope, own.owner()),
+            (Project::OWN, &Scope::SessionScope { session_id }, Some(alice))
+        );
+        assert_eq!(
+            own.security_attributes.acl,
+            [
+                AclEntry {
+                    subject: Subject::Group(GroupId::of_project(own.id)),
+                    grant: Grant::Read
+                },
+                AclEntry {
+                    subject: Subject::Group(GroupId::of_session(session_id)),
+                    grant: Grant::Read
+                },
+            ],
+            "read by the session's participants, and by its members once it is lifted"
+        );
         let mut with_members = own.clone();
         with_members.members = vec![UserId::new()];
         assert!(with_members.validate().is_err(), "who reads the session reads it");
@@ -273,7 +336,13 @@ mod tests {
     #[test]
     fn a_shared_project_is_read_by_the_group_of_its_members() {
         let project = shared(Scope::GlobalScope, UserId::new());
-        assert_eq!(project.security_attributes.acl, [AclEntry { subject: Subject::Group(GroupId::of_project(project.id)), grant: Grant::Read }]);
+        assert_eq!(
+            project.security_attributes.acl,
+            [AclEntry {
+                subject: Subject::Group(GroupId::of_project(project.id)),
+                grant: Grant::Read
+            }]
+        );
     }
 
     #[test]
@@ -281,19 +350,43 @@ mod tests {
         let session_id = SessionId::new();
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut project = Project::own_of(session_id, alice);
-        project.apply(&ProjectUpdateEvent::DescriptionChanged(Some("The figures of Q3".to_string()))).unwrap();
-        assert_eq!(project.description.as_ref().map(ToString::to_string).as_deref(), Some("The figures of Q3"));
+        project
+            .apply(&ProjectUpdateEvent::DescriptionChanged(Some("The figures of Q3".to_string())))
+            .unwrap();
+        assert_eq!(
+            project.description.as_ref().map(ToString::to_string).as_deref(),
+            Some("The figures of Q3")
+        );
         assert!(project.apply(&ProjectUpdateEvent::NameChanged("report".to_string())).is_ok());
         assert_eq!(project.name.scope, Scope::SessionScope { session_id }, "renamed where it lies");
         assert!(project.validate().is_err(), "a session's own keeps its name");
 
-        let lifted = ProjectUpdateEvent::Lifted { name: "report".to_string(), scope: Scope::UserScope { user_id: alice } };
+        let lifted = ProjectUpdateEvent::Lifted {
+            name: "report".to_string(),
+            scope: Scope::UserScope { user_id: alice },
+        };
         project.apply(&lifted).unwrap();
         project.apply(&ProjectUpdateEvent::MembersChanged(vec![bob])).unwrap();
-        assert!(!project.is_own() && project.validate().is_ok(), "lifted, a shared one with members");
-        assert!(project.apply(&ProjectUpdateEvent::Lifted { name: " ".to_string(), scope: Scope::GlobalScope }).is_err(), "under a name");
+        assert!(
+            !project.is_own() && project.validate().is_ok(),
+            "lifted, a shared one with members"
+        );
+        assert!(
+            project
+                .apply(&ProjectUpdateEvent::Lifted {
+                    name: " ".to_string(),
+                    scope: Scope::GlobalScope
+                })
+                .is_err(),
+            "under a name"
+        );
         let mut kept_its_name = Project::own_of(session_id, alice);
-        kept_its_name.apply(&ProjectUpdateEvent::Lifted { name: Project::OWN.to_string(), scope: Scope::GlobalScope }).unwrap();
+        kept_its_name
+            .apply(&ProjectUpdateEvent::Lifted {
+                name: Project::OWN.to_string(),
+                scope: Scope::GlobalScope,
+            })
+            .unwrap();
         assert!(kept_its_name.validate().is_err(), "named anew as it is lifted");
     }
 

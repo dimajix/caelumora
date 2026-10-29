@@ -23,19 +23,19 @@ pub mod component;
 pub mod plugin;
 pub mod summary_compaction;
 
-use caelumora_agents::turn::Turn;
 use async_trait::async_trait;
-use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::context::KnowledgeRef;
-use caelumora_model::store::EntityKind;
-use std::fmt::Debug;
-use uuid::Uuid;
 #[cfg(test)]
 use caelumora_agents::prompt::{NAMESPACE as AGENTS, PROMPTS as AGENTS_PROMPTS};
+use caelumora_agents::turn::Turn;
+use caelumora_model::context::KnowledgeRef;
+use caelumora_model::prompt_catalogue::PromptError;
 #[cfg(test)]
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
+use caelumora_model::store::EntityKind;
+use std::fmt::Debug;
 #[cfg(test)]
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// The namespace of the texts of compaction in the prompt catalogue (issue 57).
 pub const NAMESPACE: &str = "compaction";
@@ -48,8 +48,11 @@ pub const PROMPTS: &str = include_str!("prompts.yaml");
 #[cfg(test)]
 pub(crate) fn prompts() -> PromptTexts {
     let mut catalogue = PromptCatalogue::new();
-    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)] {
-        catalogue.add(namespace, texts).unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
+    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)]
+    {
+        catalogue
+            .add(namespace, texts)
+            .unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
     }
     PromptTexts::new(Arc::new(catalogue), None)
 }
@@ -83,7 +86,11 @@ pub trait KnowledgeRestorer: Send + Sync + Debug {
     /// # Errors
     /// `KnowledgeUnreadable` if what it gives cannot be read, `NoSession`
     /// if the agent is in none.
-    async fn give_again(&self, turn: &mut Turn<'_>, given: &[Uuid]) -> Result<Vec<GivenAgain>, CompactionError>;
+    async fn give_again(
+        &self,
+        turn: &mut Turn<'_>,
+        given: &[Uuid],
+    ) -> Result<Vec<GivenAgain>, CompactionError>;
 }
 
 /// What a `KnowledgeRestorer` gives again: its name, as the agent's owners
@@ -117,7 +124,10 @@ impl Compaction {
     /// channel: as `/compact` answers, and as the activity of compacting
     /// ends (issue 284).
     pub fn describe(&self, agent_name: &str) -> String {
-        let mut text = format!("{} compacted its context: {} messages replaced, {} kept as they were.", agent_name, self.replaced, self.kept);
+        let mut text = format!(
+            "{} compacted its context: {} messages replaced, {} kept as they were.",
+            agent_name, self.replaced, self.kept
+        );
         if !self.given_again.is_empty() {
             text.push_str(&format!(" Given again: {}.", self.given_again.join(", ")));
         }

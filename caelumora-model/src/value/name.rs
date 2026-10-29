@@ -78,7 +78,11 @@ impl Name {
 pub(crate) fn fold(name: &str) -> String {
     let tidied = |text: String| text.split_whitespace().collect::<Vec<_>>().join(" ");
     let key = tidied(any_ascii::any_ascii(name).to_lowercase());
-    if key.is_empty() { tidied(name.to_lowercase()) } else { key }
+    if key.is_empty() {
+        tidied(name.to_lowercase())
+    } else {
+        key
+    }
 }
 
 impl PartialEq for Name {
@@ -156,8 +160,8 @@ impl fmt::Display for ScopedName {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::SessionId;
     use crate::project::ProjectId;
+    use crate::session::SessionId;
     use crate::user::UserId;
     use std::collections::HashSet;
 
@@ -171,8 +175,18 @@ mod tests {
         // A project's id equal to the session's, so that the kind of scope alone tells their
         // keys apart.
         let project = ProjectId(session.0);
-        let scopes = [Scope::GlobalScope, Scope::SessionScope { session_id: session }, Scope::ProjectScope { project_id: project }, Scope::UserScope { user_id: user }];
-        let all: Vec<ScopedName> = scopes.iter().flat_map(|scope| names.iter().map(|name| ScopedName::new(name, scope.clone()).unwrap())).collect();
+        let scopes = [
+            Scope::GlobalScope,
+            Scope::SessionScope { session_id: session },
+            Scope::ProjectScope { project_id: project },
+            Scope::UserScope { user_id: user },
+        ];
+        let all: Vec<ScopedName> = scopes
+            .iter()
+            .flat_map(|scope| {
+                names.iter().map(|name| ScopedName::new(name, scope.clone()).unwrap())
+            })
+            .collect();
         for left in &all {
             for right in &all {
                 assert_eq!(left.key() == right.key(), left == right, "{left:?} and {right:?}");
@@ -187,15 +201,30 @@ mod tests {
     #[test]
     fn a_name_is_kept_exactly_as_written() {
         assert_eq!(name("  Dr.   Who ").as_str(), "  Dr.   Who ", "checked, not changed");
-        assert_eq!(name("  Dr.   Who "), name("Dr. Who"), "but compared regardless of how whitespace runs");
+        assert_eq!(
+            name("  Dr.   Who "),
+            name("Dr. Who"),
+            "but compared regardless of how whitespace runs"
+        );
         assert_eq!(Name::new(""), Err(ValueError::Empty { field: "name" }));
         assert_eq!(Name::new(" \t "), Err(ValueError::Blank { field: "name" }));
         assert_eq!(Name::new("Dr.\nWho"), Err(ValueError::LineBreak { field: "name" }));
         assert_eq!(Name::new("a\u{7}b"), Err(ValueError::ControlCharacter { field: "name" }));
-        assert_eq!(Name::new("x".repeat(MAX_NAME_CHARS + 1)), Err(ValueError::TooLong { field: "name", max_chars: MAX_NAME_CHARS }));
+        assert_eq!(
+            Name::new("x".repeat(MAX_NAME_CHARS + 1)),
+            Err(ValueError::TooLong { field: "name", max_chars: MAX_NAME_CHARS })
+        );
         assert_eq!(Name::optional(Some("")), Ok(None), "empty is none");
-        assert_eq!(Name::optional(Some("  ")), Err(ValueError::Blank { field: "name" }), "whitespace is no name");
-        assert_eq!(Name::new("").unwrap_err().to_string(), "the name must not be empty", "naming the field");
+        assert_eq!(
+            Name::optional(Some("  ")),
+            Err(ValueError::Blank { field: "name" }),
+            "whitespace is no name"
+        );
+        assert_eq!(
+            Name::new("").unwrap_err().to_string(),
+            "the name must not be empty",
+            "naming the field"
+        );
         assert!(Name::new("x".repeat(MAX_NAME_CHARS)).is_ok());
     }
 
@@ -203,7 +232,10 @@ mod tests {
     fn names_are_one_regardless_of_case_in_a_lookup_and_a_map() {
         assert_eq!(name("Jonathan"), name("jonathan"));
         assert!(name("Zoë") == "ZOË", "beyond ASCII, too");
-        assert!(name("Zoë") == "zoe" && name("Straße") == "STRASSE" && name("Иван") == "ivan", "by their ASCII form");
+        assert!(
+            name("Zoë") == "zoe" && name("Straße") == "STRASSE" && name("Иван") == "ivan",
+            "by their ASCII form"
+        );
         assert_eq!(name("Zoë").as_str(), "Zoë", "kept as written");
         assert!(name("Jonathan") != "", "a text that is no name is none");
         let set: HashSet<Name> = [name("Sassy"), name("sassy")].into_iter().collect();
@@ -221,8 +253,13 @@ mod tests {
             #[serde(flatten)]
             name: ScopedName,
         }
-        let read: Definition = serde_json::from_value(serde_json::json!({ "name": "Jonathan" })).unwrap();
-        assert_eq!(read.name, ScopedName::new("jonathan", Scope::GlobalScope).unwrap(), "global unless named");
+        let read: Definition =
+            serde_json::from_value(serde_json::json!({ "name": "Jonathan" })).unwrap();
+        assert_eq!(
+            read.name,
+            ScopedName::new("jonathan", Scope::GlobalScope).unwrap(),
+            "global unless named"
+        );
         let written = serde_json::to_value(&read).unwrap();
         assert_eq!(written, serde_json::json!({ "name": "Jonathan", "scope": "GlobalScope" }));
     }

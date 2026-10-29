@@ -33,7 +33,9 @@ use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{Deleted, EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{
+    Deleted, EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
+};
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -56,7 +58,10 @@ pub struct ScopeNotEmpty {
 
 impl ScopeNotEmpty {
     /// Refuses the deletion of what holds `holder` if anything is `left`.
-    pub(crate) fn require_empty(holder: &Scope, left: Vec<(EntityKind, usize)>) -> Result<(), Self> {
+    pub(crate) fn require_empty(
+        holder: &Scope,
+        left: Vec<(EntityKind, usize)>,
+    ) -> Result<(), Self> {
         if left.is_empty() {
             return Ok(());
         }
@@ -68,7 +73,9 @@ impl ScopeNotEmpty {
 fn shown_holder(holder: &Scope) -> String {
     match holder {
         Scope::SessionScope { session_id } => format!("session {session_id}"),
-        Scope::ChannelScope { session_id, channel_id } => format!("channel {channel_id} of session {session_id}"),
+        Scope::ChannelScope { session_id, channel_id } => {
+            format!("channel {channel_id} of session {session_id}")
+        }
         Scope::ProjectScope { project_id } => format!("project {project_id}"),
         // Nothing else holds a scope that is deleted with it.
         _ => "holder of the scope".to_string(),
@@ -96,7 +103,12 @@ pub trait ScopeMember: Send + Sync {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize>;
+    async fn delete_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<usize>;
 
     /// Restores what of its kind lies in `holder` or within it and carries `removal`, the holder's
     /// mark - what was deleted with it (issue 469) -, on behalf of `ctx`. One whose name was taken
@@ -105,7 +117,12 @@ pub trait ScopeMember: Send + Sync {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()>;
+    async fn restore_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<()>;
 
     /// Purges what of its kind lies in `holder` or within it and is
     /// deleted, with what its owner purges with it, in the runtime's name.
@@ -150,7 +167,12 @@ impl ScopedEntities {
     ///
     /// # Errors
     /// Whatever the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holders: &[Scope], removal: &Removal) -> StoreResult<Vec<(EntityKind, usize)>> {
+    pub(crate) async fn delete_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holders: &[Scope],
+        removal: &Removal,
+    ) -> StoreResult<Vec<(EntityKind, usize)>> {
         let mut left = Vec::new();
         for member in &self.members {
             let mut count = 0;
@@ -172,7 +194,12 @@ impl ScopedEntities {
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays restored.
-    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holders: &[Scope], removal: &Removal) -> StoreResult<()> {
+    pub(crate) async fn restore_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holders: &[Scope],
+        removal: &Removal,
+    ) -> StoreResult<()> {
         for member in &self.members {
             for holder in holders {
                 member.restore_lying_in(ctx, holder, removal).await?;
@@ -212,16 +239,42 @@ where
         T::KIND
     }
 
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<usize> {
+    async fn delete_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<usize> {
         let mut left = 0;
-        for entity in self.0.list(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder))).await?.items {
-            left += usize::from(!deleted_unless_refused(self.0.delete(ctx, entity.id(), removal).await)?);
+        for entity in self
+            .0
+            .list(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
+            left += usize::from(!deleted_unless_refused(
+                self.0.delete(ctx, entity.id(), removal).await,
+            )?);
         }
         Ok(left)
     }
 
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
-        for entity in self.0.list_deleted_with(&SecurityContext::system(), removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
+    async fn restore_lying_in(
+        &self,
+        ctx: &SecurityContext,
+        holder: &Scope,
+        removal: &Removal,
+    ) -> StoreResult<()> {
+        for entity in self
+            .0
+            .list_deleted_with(
+                &SecurityContext::system(),
+                removal.id,
+                &Query::filtered(Filter::lying_within(holder)),
+            )
+            .await?
+            .items
+        {
             restored_unless_refused(self.0.restore(ctx, entity.id()).await, &entity)?;
         }
         Ok(())
@@ -229,7 +282,12 @@ where
 
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for Deleted { entity, .. } in self.0.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items {
+        for Deleted { entity, .. } in self
+            .0
+            .list_deleted(&system, &Query::filtered(Filter::lying_within(holder)))
+            .await?
+            .items
+        {
             self.0.purge(&system, entity.id()).await?;
         }
         Ok(())
@@ -248,7 +306,10 @@ pub fn deleted_unless_refused(deleted: StoreResult<bool>) -> StoreResult<bool> {
 /// What `restored` says was restored of `deleted`; `None` if it stays
 /// deleted: its name was taken meanwhile, or it is not the caller's to
 /// restore (issue 320).
-pub fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: &D) -> StoreResult<Option<T>> {
+pub fn restored_unless_refused<D: Stored, T>(
+    restored: StoreResult<T>,
+    deleted: &D,
+) -> StoreResult<Option<T>> {
     match restored {
         Ok(value) => Ok(Some(value)),
         Err(StoreError::NameTaken { .. }) => {
@@ -269,9 +330,13 @@ pub fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: 
 ///
 /// # Errors
 /// Whatever else the store reports.
-pub(crate) async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T::Id) -> StoreResult<bool> {
+pub(crate) async fn purge_for_good<T: Stored>(
+    store: &dyn EntityStore<T>,
+    id: T::Id,
+) -> StoreResult<bool> {
     let system = SecurityContext::system();
-    if store.delete(&system, id.clone(), &Removal::now(ActorId::System)).await.optional()?.is_none() {
+    if store.delete(&system, id.clone(), &Removal::now(ActorId::System)).await.optional()?.is_none()
+    {
         return Ok(false);
     }
     store.purge(&system, id).await

@@ -91,17 +91,28 @@ macro_rules! guard {
 }
 
 fn modified(path: &Path) -> f64 {
-    fs::metadata(path).and_then(|m| m.modified()).ok()
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map_or(0.0, |d| d.as_secs_f64())
 }
 
-async fn list(State(instance): State<Instance>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>) -> Response {
+async fn list(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
     guard!(headers);
     let directory = query.get("directory").cloned().unwrap_or_default();
-    let Some(dir) = instance.host(&directory).filter(|d| d.is_dir()) else { return detail(StatusCode::NOT_FOUND, "Directory not found") };
+    let Some(dir) = instance.host(&directory).filter(|d| d.is_dir()) else {
+        return detail(StatusCode::NOT_FOUND, "Directory not found");
+    };
     let mut entries = Vec::new();
-    let mut names: Vec<_> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    let mut names: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
     names.sort();
     for name in names {
         let full = dir.join(&name);
@@ -111,16 +122,32 @@ async fn list(State(instance): State<Instance>, headers: HeaderMap, Query(query)
     Json(json!({ "dir": directory, "writable": true, "entries": entries })).into_response()
 }
 
-async fn view(State(instance): State<Instance>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>) -> Response {
+async fn view(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
     guard!(headers);
-    let Some(file) = query.get("path").and_then(|p| instance.host(p)).filter(|f| f.is_file()) else { return detail(StatusCode::NOT_FOUND, "File not found") };
+    let Some(file) = query.get("path").and_then(|p| instance.host(p)).filter(|f| f.is_file())
+    else {
+        return detail(StatusCode::NOT_FOUND, "File not found");
+    };
     ([("content-type", "application/octet-stream")], fs::read(file).unwrap()).into_response()
 }
 
-async fn upload(State(instance): State<Instance>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>, mut multipart: Multipart) -> Response {
+async fn upload(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+    mut multipart: Multipart,
+) -> Response {
     guard!(headers);
-    let Some(dir) = query.get("directory").and_then(|p| instance.host(p)) else { return detail(StatusCode::FORBIDDEN, "Access denied") };
-    let Ok(Some(field)) = multipart.next_field().await else { return detail(StatusCode::UNPROCESSABLE_ENTITY, "file missing") };
+    let Some(dir) = query.get("directory").and_then(|p| instance.host(p)) else {
+        return detail(StatusCode::FORBIDDEN, "Access denied");
+    };
+    let Ok(Some(field)) = multipart.next_field().await else {
+        return detail(StatusCode::UNPROCESSABLE_ENTITY, "file missing");
+    };
     let name = Path::new(field.file_name().unwrap_or("upload")).file_name().unwrap().to_owned();
     let content = field.bytes().await.unwrap();
     if let Err(e) = fs::create_dir_all(&dir) {
@@ -132,12 +159,24 @@ async fn upload(State(instance): State<Instance>, headers: HeaderMap, Query(quer
     }
 }
 
-async fn remove(State(instance): State<Instance>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>) -> Response {
+async fn remove(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
     guard!(headers);
-    let Some(target) = query.get("path").and_then(|p| instance.host(p)).filter(|t| t.exists()) else { return detail(StatusCode::NOT_FOUND, "Path not found") };
+    let Some(target) = query.get("path").and_then(|p| instance.host(p)).filter(|t| t.exists())
+    else {
+        return detail(StatusCode::NOT_FOUND, "Path not found");
+    };
     let is_dir = target.is_dir();
-    if is_dir { fs::remove_dir_all(&target).unwrap() } else { fs::remove_file(&target).unwrap() }
-    Json(json!({ "path": "...", "type": if is_dir { "directory" } else { "file" } })).into_response()
+    if is_dir {
+        fs::remove_dir_all(&target).unwrap()
+    } else {
+        fs::remove_file(&target).unwrap()
+    }
+    Json(json!({ "path": "...", "type": if is_dir { "directory" } else { "file" } }))
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -145,9 +184,15 @@ struct PathBody {
     path: String,
 }
 
-async fn mkdir(State(instance): State<Instance>, headers: HeaderMap, Json(body): Json<PathBody>) -> Response {
+async fn mkdir(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    Json(body): Json<PathBody>,
+) -> Response {
     guard!(headers);
-    let Some(dir) = instance.host(&body.path) else { return detail(StatusCode::FORBIDDEN, "Access denied") };
+    let Some(dir) = instance.host(&body.path) else {
+        return detail(StatusCode::FORBIDDEN, "Access denied");
+    };
     match fs::create_dir_all(&dir) {
         Ok(()) => Json(json!({ "path": body.path })).into_response(),
         Err(e) => detail(StatusCode::BAD_REQUEST, &format!("{e}: {}", dir.display())),
@@ -160,9 +205,17 @@ struct MoveBody {
     destination: String,
 }
 
-async fn move_entry(State(instance): State<Instance>, headers: HeaderMap, Json(body): Json<MoveBody>) -> Response {
+async fn move_entry(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    Json(body): Json<MoveBody>,
+) -> Response {
     guard!(headers);
-    let (Some(source), Some(destination)) = (instance.host(&body.source), instance.host(&body.destination)) else { return detail(StatusCode::FORBIDDEN, "Access denied") };
+    let (Some(source), Some(destination)) =
+        (instance.host(&body.source), instance.host(&body.destination))
+    else {
+        return detail(StatusCode::FORBIDDEN, "Access denied");
+    };
     if !source.exists() {
         return detail(StatusCode::NOT_FOUND, "Source path not found");
     }
@@ -186,7 +239,10 @@ struct ExecBody {
 fn answer(id: &str, process: &Process, offset: usize, tail: Option<usize>) -> Value {
     let new: Vec<&String> = process.entries.iter().skip(offset).collect();
     let kept = tail.map_or(new.len(), |t| t.min(new.len()));
-    let output: Vec<Value> = new[new.len() - kept..].iter().map(|data| json!({ "type": "output", "data": data })).collect();
+    let output: Vec<Value> = new[new.len() - kept..]
+        .iter()
+        .map(|data| json!({ "type": "output", "data": data }))
+        .collect();
     json!({
         "id": id, "command": "...", "status": process.status, "exit_code": process.exit_code,
         "output": output, "truncated": kept < new.len(), "next_offset": process.entries.len(), "log_path": "/var/log/open-terminal/x.jsonl",
@@ -200,7 +256,12 @@ async fn wait_for(process: &Arc<Mutex<Process>>, wait: f64) {
     }
 }
 
-async fn execute(State(instance): State<Instance>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>, Json(body): Json<ExecBody>) -> Response {
+async fn execute(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+    Json(body): Json<ExecBody>,
+) -> Response {
     guard!(headers);
     let cwd = body.cwd.clone().unwrap_or_default();
     {
@@ -208,13 +269,27 @@ async fn execute(State(instance): State<Instance>, headers: HeaderMap, Query(que
         seen.env.insert(body.command.clone(), body.env.clone().unwrap_or_default());
         seen.cwd.insert(body.command.clone(), cwd.clone());
     }
-    let Some(dir) = instance.host(&cwd) else { return detail(StatusCode::INTERNAL_SERVER_ERROR, "no such directory") };
+    let Some(dir) = instance.host(&cwd) else {
+        return detail(StatusCode::INTERNAL_SERVER_ERROR, "no such directory");
+    };
     let mut command = Command::new("sh");
-    command.arg("-c").arg(&body.command).current_dir(dir).env("OPEN_TERMINAL_API_KEY", KEY)
-        .envs(body.env.unwrap_or_default()).stdout(Stdio::piped()).stderr(Stdio::null()).process_group(0);
+    command
+        .arg("-c")
+        .arg(&body.command)
+        .current_dir(dir)
+        .env("OPEN_TERMINAL_API_KEY", KEY)
+        .envs(body.env.unwrap_or_default())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .process_group(0);
     let mut child = command.spawn().unwrap();
     let id = format!("20261008-120000-{}", &Uuid::new_v4().simple().to_string()[..6]);
-    let process = Arc::new(Mutex::new(Process { session: session(&headers), status: "running".to_string(), group: child.id().map(|p| p as i32), ..Default::default() }));
+    let process = Arc::new(Mutex::new(Process {
+        session: session(&headers),
+        status: "running".to_string(),
+        group: child.id().map(|p| p as i32),
+        ..Default::default()
+    }));
     instance.processes.lock().unwrap().insert(id.clone(), Arc::clone(&process));
     let mut stdout = child.stdout.take().unwrap();
     let running = Arc::clone(&process);
@@ -247,9 +322,16 @@ fn found(instance: &Instance, id: &str, headers: &HeaderMap) -> Option<Arc<Mutex
     same.then_some(process)
 }
 
-async fn status(State(instance): State<Instance>, headers: HeaderMap, RoutePath(id): RoutePath<String>, Query(query): Query<HashMap<String, String>>) -> Response {
+async fn status(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    RoutePath(id): RoutePath<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
     guard!(headers);
-    let Some(process) = found(&instance, &id, &headers) else { return detail(StatusCode::NOT_FOUND, "Process not found") };
+    let Some(process) = found(&instance, &id, &headers) else {
+        return detail(StatusCode::NOT_FOUND, "Process not found");
+    };
     if let Some(wait) = query.get("wait").and_then(|w| w.parse::<f64>().ok()) {
         wait_for(&process, wait).await;
     }
@@ -259,9 +341,15 @@ async fn status(State(instance): State<Instance>, headers: HeaderMap, RoutePath(
     Json(answer(&id, &process, offset, tail)).into_response()
 }
 
-async fn kill(State(instance): State<Instance>, headers: HeaderMap, RoutePath(id): RoutePath<String>) -> Response {
+async fn kill(
+    State(instance): State<Instance>,
+    headers: HeaderMap,
+    RoutePath(id): RoutePath<String>,
+) -> Response {
     guard!(headers);
-    let Some(process) = found(&instance, &id, &headers) else { return detail(StatusCode::NOT_FOUND, "Process not found") };
+    let Some(process) = found(&instance, &id, &headers) else {
+        return detail(StatusCode::NOT_FOUND, "Process not found");
+    };
     let group = {
         let mut process = process.lock().unwrap();
         if process.status != "running" {
@@ -283,7 +371,11 @@ async fn kill(State(instance): State<Instance>, headers: HeaderMap, RoutePath(id
 pub(crate) async fn start() -> StandIn {
     let root = tempfile::tempdir().unwrap();
     let seen = Arc::new(Mutex::new(Seen::default()));
-    let instance = Instance { root: root.path().to_path_buf(), processes: Arc::default(), seen: Arc::clone(&seen) };
+    let instance = Instance {
+        root: root.path().to_path_buf(),
+        processes: Arc::default(),
+        seen: Arc::clone(&seen),
+    };
     let app = Router::new()
         .route("/files/list", get(list))
         .route("/files/view", get(view))

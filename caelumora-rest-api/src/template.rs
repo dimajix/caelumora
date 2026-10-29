@@ -45,8 +45,19 @@ impl From<&SessionTemplate> for TemplateResponse {
                 ScopeTemplate::GlobalScope => ScopeKind::Global,
                 ScopeTemplate::GroupScope => return None,
             };
-            Some(TemplateWorkspaceResponse { name: w.name.to_string(), scope, storage: w.storage.clone() })
+            Some(TemplateWorkspaceResponse {
+                name: w.name.to_string(),
+                scope,
+                storage: w.storage.clone(),
+            })
         });
-        Self { id: template.id, name: template.name.to_string(), description: template.description.as_ref().map(ToString::to_string).unwrap_or_default(), language: template.language.clone(), time_zone: template.time_zone, workspace }
+        Self {
+            id: template.id,
+            name: template.name.to_string(),
+            description: template.description.as_ref().map(ToString::to_string).unwrap_or_default(),
+            language: template.language.clone(),
+            time_zone: template.time_zone,
+            workspace,
+        }
     }
 }

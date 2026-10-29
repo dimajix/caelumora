@@ -76,7 +76,9 @@ impl Field for HistoryField {
             HistoryField::Attachments => &["entry", "said", "message", "attachments"],
             HistoryField::Mentions => &["entry", "said", "message", "mentions"],
             HistoryField::Level => &["entry", "said", "message", "classification", "level"],
-            HistoryField::Compartments => &["entry", "said", "message", "classification", "compartments"],
+            HistoryField::Compartments => {
+                &["entry", "said", "message", "classification", "compartments"]
+            }
             HistoryField::Element => &[],
             HistoryField::Origin => &["sender"],
             HistoryField::ToUsers => &["recipients", "users"],
@@ -103,12 +105,18 @@ impl Filter<HistoryField> {
 
     /// A message with words in it.
     pub fn written() -> Self {
-        Filter::all_of([Filter::negated(Filter::IsNull(HistoryField::Content)), Filter::negated(Filter::eq(HistoryField::Content, ""))])
+        Filter::all_of([
+            Filter::negated(Filter::IsNull(HistoryField::Content)),
+            Filter::negated(Filter::eq(HistoryField::Content, "")),
+        ])
     }
 
     /// A message that says something: words, or attachments (issue 282).
     pub fn saying() -> Self {
-        Filter::any_of([Filter::written(), Filter::negated(Filter::IsNull(HistoryField::Attachments))])
+        Filter::any_of([
+            Filter::written(),
+            Filter::negated(Filter::IsNull(HistoryField::Attachments)),
+        ])
     }
 
     /// A message containing `words` (`Filter::Contains`).
@@ -140,7 +148,9 @@ impl Filter<HistoryField> {
         match reading {
             Reading::Whole => None,
             Reading::Nothing => Some(Filter::nothing()),
-            Reading::Released(into) => Some(Filter::all_of([Filter::said(), Filter::flowing_into(into, compartments)])),
+            Reading::Released(into) => {
+                Some(Filter::all_of([Filter::said(), Filter::flowing_into(into, compartments)]))
+            }
         }
     }
 
@@ -153,10 +163,20 @@ impl Filter<HistoryField> {
         let published = Filter::eq(HistoryField::Published, true);
         match reader {
             Reader::Channel => None,
-            Reader::Outsider => Some(Filter::all_of([published, Filter::eq(HistoryField::ToUsers, true)])),
+            Reader::Outsider => {
+                Some(Filter::all_of([published, Filter::eq(HistoryField::ToUsers, true)]))
+            }
             Reader::Participant(actor) => {
                 let while_a_member = |kind| {
-                    let within = ranges.iter().map(|range| Filter::within(HistoryField::Position, range.start.get()..range.end.get())).collect();
+                    let within = ranges
+                        .iter()
+                        .map(|range| {
+                            Filter::within(
+                                HistoryField::Position,
+                                range.start.get()..range.end.get(),
+                            )
+                        })
+                        .collect();
                     Filter::all_of([Filter::eq(kind, true), Filter::Or(within)])
                 };
                 let of_kind = match actor {
@@ -165,8 +185,14 @@ impl Filter<HistoryField> {
                     ActorId::Approver(_) => Filter::eq(HistoryField::ToApprovers, true),
                     ActorId::System | ActorId::None => Filter::nothing(),
                 };
-                let reaching = Filter::Or(vec![Filter::any(HistoryField::Named, Filter::eq(HistoryField::Element, *actor)), of_kind]);
-                Some(Filter::Or(vec![Filter::eq(HistoryField::Origin, *actor), Filter::all_of([published, reaching])]))
+                let reaching = Filter::Or(vec![
+                    Filter::any(HistoryField::Named, Filter::eq(HistoryField::Element, *actor)),
+                    of_kind,
+                ]);
+                Some(Filter::Or(vec![
+                    Filter::eq(HistoryField::Origin, *actor),
+                    Filter::all_of([published, reaching]),
+                ]))
             }
         }
     }
@@ -178,10 +204,17 @@ impl Filter<HistoryField> {
         let levels = Confidentiality::LEVELS.into_iter().filter(|level| *level <= into.level());
         let meant_for_each = match into.compartments().is_empty() {
             true => Filter::nothing(),
-            false => Filter::all_of(into.compartments().iter()
-                .map(|reader| Filter::any(HistoryField::Compartments, Filter::is_in(HistoryField::Element, compartments.readable_by(reader))))),
+            false => Filter::all_of(into.compartments().iter().map(|reader| {
+                Filter::any(
+                    HistoryField::Compartments,
+                    Filter::is_in(HistoryField::Element, compartments.readable_by(reader)),
+                )
+            })),
         };
-        Filter::all_of([Filter::is_in(HistoryField::Level, levels), Filter::Or(vec![Filter::IsNull(HistoryField::Compartments), meant_for_each])])
+        Filter::all_of([
+            Filter::is_in(HistoryField::Level, levels),
+            Filter::Or(vec![Filter::IsNull(HistoryField::Compartments), meant_for_each]),
+        ])
     }
 }
 
@@ -202,13 +235,26 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// view begins is the store's to know (`memberships`), `from` only
     /// bounds a query - what is new since a reader last read. Read backwards
     /// in the cost of the page and of what it passes over.
-    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, filter: Option<&Filter<HistoryField>>) -> StoreResult<HistoryPage>;
+    async fn page(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        from: Position,
+        before: Option<Position>,
+        limit: usize,
+        filter: Option<&Filter<HistoryField>>,
+    ) -> StoreResult<HistoryPage>;
 
     /// The item that said the message `id` - `HistoryEntry::Said`, its
     /// message as it stands, with what it was produced from - and its
     /// position, as `reader` may see it; `None` if it was never said in the
     /// history, or not to them.
-    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(Position, HistoryEntry)>>;
+    async fn said(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        id: MessageId,
+    ) -> StoreResult<Option<(Position, HistoryEntry)>>;
 
     /// The entries of the chain at the positions `range` holds that `reader`
     /// may see, as they may see them, in the order they were added: what was
@@ -216,7 +262,12 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// its node's position and digest, the chain's, and the head of the
     /// envelope it came in (issue 223): what an envelope is delivered again
     /// from (`Recorded::envelope`).
-    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<Recorded>>>;
+    async fn entries(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        range: Range<Position>,
+    ) -> StoreResult<Vec<Node<Recorded>>>;
 
     /// The answer of the turn whose end is at the position `end` (issue
     /// 223): its messages said that are not internal, as they were said,
@@ -224,12 +275,21 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// was delivered (`ActorEvent::TurnFinished`), and what the history
     /// holds as the messages said before it (`answer_of`). Empty if nothing
     /// at `end` ends a turn.
-    async fn answer(&self, channel: ChannelId, reader: &Reader, end: Position) -> StoreResult<Vec<Message>>;
+    async fn answer(
+        &self,
+        channel: ChannelId,
+        reader: &Reader,
+        end: Position,
+    ) -> StoreResult<Vec<Message>>;
 
     /// The ranges of positions in which `actor` was given what went to
     /// every member of the channel (`Memberships`), oldest first: none if it
     /// never was one, the last open - to `Position::MAX` - while it is.
-    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<Position>>>;
+    async fn memberships(
+        &self,
+        channel: ChannelId,
+        actor: ActorId,
+    ) -> StoreResult<Vec<Range<Position>>>;
 
     /// Derives the items and the memberships anew from the chain: what
     /// repairs them, and what shows that they are derived.
@@ -279,12 +339,20 @@ impl Memberships {
                 self.shared.push((*participant, *from));
             }
             HistoryEntry::ParticipantJoined { participant, .. } => {
-                let from = self.shared.iter().position(|(member, _)| member == participant)
+                let from = self
+                    .shared
+                    .iter()
+                    .position(|(member, _)| member == participant)
                     .map_or(node.seq, |at| self.shared.remove(at).1);
                 self.ranges.push((*participant, from..Position::MAX));
             }
             HistoryEntry::ParticipantLeft { participant, until, .. } => {
-                if let Some((_, range)) = self.ranges.iter_mut().rev().find(|(member, range)| member == participant && range.end == Position::MAX) {
+                if let Some((_, range)) = self
+                    .ranges
+                    .iter_mut()
+                    .rev()
+                    .find(|(member, range)| member == participant && range.end == Position::MAX)
+                {
                     range.end = (*until).max(range.start);
                 }
             }
@@ -363,7 +431,9 @@ impl StandingItems {
             }
             return !self.items.is_empty();
         }
-        let Some(&at) = change.changed().and_then(|id| self.by_message.get(&id)) else { return false };
+        let Some(&at) = change.changed().and_then(|id| self.by_message.get(&id)) else {
+            return false;
+        };
         if let HistoryEntry::Said { message, .. } = &mut self.items[at].1.entry {
             change.fold_into(message);
         }
@@ -394,7 +464,9 @@ impl StandingItems {
 
 impl From<Vec<(Position, Recorded)>> for StandingItems {
     fn from(items: Vec<(Position, Recorded)>) -> Self {
-        let by_message = items.iter().enumerate()
+        let by_message = items
+            .iter()
+            .enumerate()
             .filter_map(|(at, (_, item))| item.entry.said().map(|message| (message.id, at)))
             .collect();
         Self { items, by_message }
@@ -433,7 +505,12 @@ impl KeptItem {
 ///
 /// # Errors
 /// `StoreError::Validation` if the item cannot be judged by `filter`.
-pub fn seen(reader: &Reader, ranges: &[Range<Position>], filter: Option<&Filter<HistoryField>>, (seq, item): &(Position, Recorded)) -> StoreResult<Option<(Position, HistoryEntry)>> {
+pub fn seen(
+    reader: &Reader,
+    ranges: &[Range<Position>],
+    filter: Option<&Filter<HistoryField>>,
+    (seq, item): &(Position, Recorded),
+) -> StoreResult<Option<(Position, HistoryEntry)>> {
     if !item.seen_by(*seq, reader, ranges) {
         return Ok(None);
     }
@@ -448,12 +525,25 @@ pub fn seen(reader: &Reader, ranges: &[Range<Position>], filter: Option<&Filter<
 /// The entries of `nodes` that `reader`, with `ranges` as theirs, may see,
 /// as they may see them, each in its node with what else was recorded of
 /// it: what a store returns of the chain it read.
-pub fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes: impl IntoIterator<Item = &'a Node<Recorded>>) -> Vec<Node<Recorded>> {
-    nodes.into_iter().filter_map(|node| {
-        let Recorded { sender, recipients, context, timestamp, .. } = &node.entry;
-        let entry = node.entry.as_seen_by(node.seq, reader, ranges)?;
-        Some(node.with_entry(Recorded { entry, sender: *sender, recipients: recipients.clone(), context: context.clone(), timestamp: *timestamp }))
-    }).collect()
+pub fn seen_nodes<'a>(
+    reader: &Reader,
+    ranges: &[Range<Position>],
+    nodes: impl IntoIterator<Item = &'a Node<Recorded>>,
+) -> Vec<Node<Recorded>> {
+    nodes
+        .into_iter()
+        .filter_map(|node| {
+            let Recorded { sender, recipients, context, timestamp, .. } = &node.entry;
+            let entry = node.entry.as_seen_by(node.seq, reader, ranges)?;
+            Some(node.with_entry(Recorded {
+                entry,
+                sender: *sender,
+                recipients: recipients.clone(),
+                context: context.clone(),
+                timestamp: *timestamp,
+            }))
+        })
+        .collect()
 }
 
 /// The answer of the turn whose end is `ended` (`HistoryStore::answer`):
@@ -462,12 +552,25 @@ pub fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes: impl I
 /// before its end, newest first - back to the end of the turn before of
 /// the same actor: an agent's turns do not overlap, so none of the turn's
 /// messages lies before it. Empty if `ended` is no turn's end.
-pub fn answer_of<'a>(ended: &HistoryEntry, older: impl IntoIterator<Item = &'a Node<Recorded>>, reader: &Reader, ranges: &[Range<Position>]) -> Vec<Message> {
+pub fn answer_of<'a>(
+    ended: &HistoryEntry,
+    older: impl IntoIterator<Item = &'a Node<Recorded>>,
+    reader: &Reader,
+    ranges: &[Range<Position>],
+) -> Vec<Message> {
     let HistoryEntry::TurnFinished { turn_id, actor, .. } = ended else { return Vec::new() };
-    let mut answer: Vec<Message> = older.into_iter()
+    let mut answer: Vec<Message> = older
+        .into_iter()
         .take_while(|node| !node.entry.entry.ends_turn_of(*actor))
-        .filter(|node| node.entry.entry.said().is_some_and(|message| message.turn_id == Some(*turn_id) && !message.internal))
-        .filter_map(|node| node.entry.as_seen_by(node.seq, reader, ranges).and_then(|entry| entry.said().cloned()))
+        .filter(|node| {
+            node.entry
+                .entry
+                .said()
+                .is_some_and(|message| message.turn_id == Some(*turn_id) && !message.internal)
+        })
+        .filter_map(|node| {
+            node.entry.as_seen_by(node.seq, reader, ranges).and_then(|entry| entry.said().cloned())
+        })
         .collect();
     answer.reverse();
     answer
@@ -481,7 +584,12 @@ pub fn answer_of<'a>(ended: &HistoryEntry, older: impl IntoIterator<Item = &'a N
 ///
 /// # Errors
 /// The first error among the items it reads.
-pub fn page_of(newest: impl IntoIterator<Item = StoreResult<Option<(Position, HistoryEntry)>>>, from: Position, limit: usize, digest: Option<Digest>) -> StoreResult<HistoryPage> {
+pub fn page_of(
+    newest: impl IntoIterator<Item = StoreResult<Option<(Position, HistoryEntry)>>>,
+    from: Position,
+    limit: usize,
+    digest: Option<Digest>,
+) -> StoreResult<HistoryPage> {
     let limit = limit.max(1);
     let mut read: Vec<(Position, HistoryEntry)> = Vec::new();
     for item in newest {
@@ -494,10 +602,12 @@ pub fn page_of(newest: impl IntoIterator<Item = StoreResult<Option<(Position, Hi
         }
         read.push((seq, entry));
     }
-    let earlier = (read.len() > limit).then(|| {
-        read.truncate(limit);
-        read.last().map(|(seq, _)| *seq)
-    }).flatten();
+    let earlier = (read.len() > limit)
+        .then(|| {
+            read.truncate(limit);
+            read.last().map(|(seq, _)| *seq)
+        })
+        .flatten();
     read.reverse();
     Ok(HistoryPage { items: read, earlier, digest })
 }
@@ -506,19 +616,25 @@ pub fn page_of(newest: impl IntoIterator<Item = StoreResult<Option<(Position, Hi
 mod tests {
     use super::*;
     use crate::actor::RequestReason;
-    use crate::history::testing::items_of;
     use crate::confidentiality::Compartment;
-    use crate::user::UserId;
-    use crate::history::{Audience, History};
-    use crate::message::Message;
-    use crate::message::testing::{id, make_message};
     use crate::content::testing::make_content_ref;
+    use crate::history::testing::items_of;
+    use crate::history::{Audience, History};
+    use crate::message::testing::{id, make_message};
+    use crate::message::Message;
+    use crate::user::UserId;
     use chrono::Utc;
 
     fn label(item: &HistoryEntry) -> String {
         match item.said() {
-            Some(message) if message.revoked.is_some() => format!("{} revoked", message.id.0.as_u128()),
-            Some(message) => format!("{} {}", message.id.0.as_u128(), message.content.clone().unwrap_or_default()),
+            Some(message) if message.revoked.is_some() => {
+                format!("{} revoked", message.id.0.as_u128())
+            }
+            Some(message) => format!(
+                "{} {}",
+                message.id.0.as_u128(),
+                message.content.clone().unwrap_or_default()
+            ),
             None => "other".to_string(),
         }
     }
@@ -538,39 +654,97 @@ mod tests {
         for node in history.all_entries() {
             items.take(node);
         }
-        let derived: Vec<String> = items.newest_before(Position::MAX).map(|(_, item)| label(&item.entry)).collect::<Vec<_>>().into_iter().rev().collect();
+        let derived: Vec<String> = items
+            .newest_before(Position::MAX)
+            .map(|(_, item)| label(&item.entry))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         assert_eq!(derived, items_of(&history).iter().map(label).collect::<Vec<_>>());
-        assert_eq!(items.said(id(1)).map(|(seq, item)| (seq.get(), item.entry.said().and_then(|m| m.content.clone()))), Some((0, Some("changed".to_string()))));
+        assert_eq!(
+            items
+                .said(id(1))
+                .map(|(seq, item)| (seq.get(), item.entry.said().and_then(|m| m.content.clone()))),
+            Some((0, Some("changed".to_string())))
+        );
         assert!(items.said(id(9)).is_none());
 
         let again = StandingItems::of(history.all_entries());
-        assert_eq!(serde_json::to_value(&again).unwrap(), serde_json::to_value(&items).unwrap(), "the same, derived at once");
-        let read: StandingItems = serde_json::from_value(serde_json::to_value(&items).unwrap()).unwrap();
-        assert_eq!(read.said(id(3)).map(|(seq, _)| seq.get()), Some(3), "the index is made anew when it is read");
+        assert_eq!(
+            serde_json::to_value(&again).unwrap(),
+            serde_json::to_value(&items).unwrap(),
+            "the same, derived at once"
+        );
+        let read: StandingItems =
+            serde_json::from_value(serde_json::to_value(&items).unwrap()).unwrap();
+        assert_eq!(
+            read.said(id(3)).map(|(seq, _)| seq.get()),
+            Some(3),
+            "the index is made anew when it is read"
+        );
         let node = history.at(Position::new(0)).unwrap().clone();
         items.push(&node);
         assert_eq!(items.newest_before(Position::MAX).count(), 3, "an item is added once");
     }
 
     /// `newest` as a store gives them to `page_of`, each seen.
-    fn all_seen(newest: impl IntoIterator<Item = (Position, HistoryEntry)>) -> impl Iterator<Item = StoreResult<Option<(Position, HistoryEntry)>>> {
+    fn all_seen(
+        newest: impl IntoIterator<Item = (Position, HistoryEntry)>,
+    ) -> impl Iterator<Item = StoreResult<Option<(Position, HistoryEntry)>>> {
         newest.into_iter().map(|item| Ok(Some(item)))
     }
 
     #[test]
     fn a_page_is_cut_from_the_newest_items() {
-        let message = |seq: u64| Message { content: Some(if seq.is_multiple_of(2) { "odd" } else { "even" }.to_string()), ..make_message(id(seq as u128 + 1)) };
-        let newest = |n: u64| (0..n).rev().map(move |seq| (Position::new(seq), HistoryEntry::Said { message: message(seq) }));
+        let message = |seq: u64| Message {
+            content: Some(if seq.is_multiple_of(2) { "odd" } else { "even" }.to_string()),
+            ..make_message(id(seq as u128 + 1))
+        };
+        let newest = |n: u64| {
+            (0..n)
+                .rev()
+                .map(move |seq| (Position::new(seq), HistoryEntry::Said { message: message(seq) }))
+        };
         let page = page_of(all_seen(newest(5)), Position::START, 2, None).unwrap();
-        assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)], Some(Position::new(3))));
+        assert_eq!(
+            (page.entries().map(label).collect::<Vec<_>>(), page.earlier),
+            (
+                vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)],
+                Some(Position::new(3))
+            )
+        );
         let page = page_of(all_seen(newest(5)), Position::new(3), 5, None).unwrap();
-        assert_eq!((page.items.len(), page.earlier), (2, None), "none before where the view begins");
+        assert_eq!(
+            (page.items.len(), page.earlier),
+            (2, None),
+            "none before where the view begins"
+        );
         assert_eq!(page_of(all_seen(newest(0)), Position::START, 5, None).unwrap().items.len(), 0);
-        assert_eq!(page_of(all_seen(newest(3)), Position::START, 0, None).unwrap().items.len(), 1, "at least one");
+        assert_eq!(
+            page_of(all_seen(newest(3)), Position::START, 0, None).unwrap().items.len(),
+            1,
+            "at least one"
+        );
         let odd = Filter::containing("odd");
-        let kept: Vec<(Position, Recorded)> = newest(5).map(|(seq, entry)| (seq, Recorded::new(entry, ActorId::None, Audience::Everybody))).collect();
-        let page = page_of(kept.iter().map(|item| seen(&Reader::Channel, &[], Some(&odd), item)), Position::START, 2, None).unwrap();
-        assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(2).unwrap().1), label(&newest(5).next().unwrap().1)], Some(Position::new(2))), "a page of those kept, full, and an older one kept");
+        let kept: Vec<(Position, Recorded)> = newest(5)
+            .map(|(seq, entry)| (seq, Recorded::new(entry, ActorId::None, Audience::Everybody)))
+            .collect();
+        let page = page_of(
+            kept.iter().map(|item| seen(&Reader::Channel, &[], Some(&odd), item)),
+            Position::START,
+            2,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            (page.entries().map(label).collect::<Vec<_>>(), page.earlier),
+            (
+                vec![label(&newest(5).nth(2).unwrap().1), label(&newest(5).next().unwrap().1)],
+                Some(Position::new(2))
+            ),
+            "a page of those kept, full, and an older one kept"
+        );
     }
 
     /// Whether `filter` keeps `entry`, recorded as everybody was given it.
@@ -585,23 +759,73 @@ mod tests {
     fn a_filter_reads_a_message_as_it_is_recorded() {
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let said = |message: Message| HistoryEntry::Said { message };
-        let by_alice = Message { sender_id: alice, content: Some("Zoë likes tea".to_string()), mentions: vec![bob], ..make_message(id(1)) };
-        let other = HistoryEntry::ResponseRequested { by: alice, reason: RequestReason::Mentioned, at: Utc::now() };
+        let by_alice = Message {
+            sender_id: alice,
+            content: Some("Zoë likes tea".to_string()),
+            mentions: vec![bob],
+            ..make_message(id(1))
+        };
+        let other = HistoryEntry::ResponseRequested {
+            by: alice,
+            reason: RequestReason::Mentioned,
+            at: Utc::now(),
+        };
 
-        assert!(keeps(&Filter::said(), said(by_alice.clone())) && !keeps(&Filter::said(), other.clone()), "a message said");
-        assert!(keeps(&Filter::said_by(alice), said(by_alice.clone())) && !keeps(&Filter::said_by(bob), said(by_alice.clone())));
+        assert!(
+            keeps(&Filter::said(), said(by_alice.clone()))
+                && !keeps(&Filter::said(), other.clone()),
+            "a message said"
+        );
+        assert!(
+            keeps(&Filter::said_by(alice), said(by_alice.clone()))
+                && !keeps(&Filter::said_by(bob), said(by_alice.clone()))
+        );
         assert!(!keeps(&Filter::said_by(alice), other), "whoever asked for it, it is no message");
         assert!(keeps(&Filter::negated(Filter::said_by(bob)), said(by_alice.clone())));
-        assert!(keeps(&Filter::containing("ZOE LIKES"), said(by_alice.clone())) && !keeps(&Filter::containing("coffee"), said(by_alice.clone())), "words, as names are compared");
-        assert!(keeps(&Filter::mentioning(bob), said(by_alice.clone())) && !keeps(&Filter::mentioning(alice), said(by_alice.clone())));
+        assert!(
+            keeps(&Filter::containing("ZOE LIKES"), said(by_alice.clone()))
+                && !keeps(&Filter::containing("coffee"), said(by_alice.clone())),
+            "words, as names are compared"
+        );
+        assert!(
+            keeps(&Filter::mentioning(bob), said(by_alice.clone()))
+                && !keeps(&Filter::mentioning(alice), said(by_alice.clone()))
+        );
 
-        for message in [Message { content: None, ..by_alice.clone() }, Message { content: Some(String::new()), ..by_alice.clone() }] {
-            assert!(!keeps(&Filter::written(), said(message.clone())) && !keeps(&Filter::heard(), said(message)), "without words");
+        for message in [
+            Message { content: None, ..by_alice.clone() },
+            Message { content: Some(String::new()), ..by_alice.clone() },
+        ] {
+            assert!(
+                !keeps(&Filter::written(), said(message.clone()))
+                    && !keeps(&Filter::heard(), said(message)),
+                "without words"
+            );
         }
-        let attached = Message { content: None, attachments: vec![make_content_ref("screen.png", b"png")], ..by_alice.clone() };
-        assert!(!keeps(&Filter::written(), said(attached.clone())) && keeps(&Filter::heard(), said(attached.clone())), "an attachment alone is heard, though nothing is written");
-        for message in [by_alice.clone(), attached, Message { role: MessageRole::Assistant, ..by_alice.clone() }, Message { role: MessageRole::Tool, ..by_alice.clone() }, Message { internal: true, ..by_alice.clone() }] {
-            assert_eq!(keeps(&Filter::heard(), said(message.clone())), message.is_heard(), "heard as {:?}, internal {}", message.role, message.internal);
+        let attached = Message {
+            content: None,
+            attachments: vec![make_content_ref("screen.png", b"png")],
+            ..by_alice.clone()
+        };
+        assert!(
+            !keeps(&Filter::written(), said(attached.clone()))
+                && keeps(&Filter::heard(), said(attached.clone())),
+            "an attachment alone is heard, though nothing is written"
+        );
+        for message in [
+            by_alice.clone(),
+            attached,
+            Message { role: MessageRole::Assistant, ..by_alice.clone() },
+            Message { role: MessageRole::Tool, ..by_alice.clone() },
+            Message { internal: true, ..by_alice.clone() },
+        ] {
+            assert_eq!(
+                keeps(&Filter::heard(), said(message.clone())),
+                message.is_heard(),
+                "heard as {:?}, internal {}",
+                message.role,
+                message.internal
+            );
         }
     }
 
@@ -610,11 +834,29 @@ mod tests {
     /// rule it stands for.
     #[test]
     fn what_may_be_copied_is_read_as_the_flow_rule_decides() {
-        let compartments = Compartments::new([(Compartment::new("hr"), vec![Compartment::new("finance")]), (Compartment::new("finance"), vec![]), (Compartment::new("legal"), vec![])]).unwrap();
-        let classified = |level, names: &[&str]| Classification::new(level, names.iter().map(|name| Compartment::new(*name))).unwrap();
+        let compartments = Compartments::new([
+            (Compartment::new("hr"), vec![Compartment::new("finance")]),
+            (Compartment::new("finance"), vec![]),
+            (Compartment::new("legal"), vec![]),
+        ])
+        .unwrap();
+        let classified = |level, names: &[&str]| {
+            Classification::new(level, names.iter().map(|name| Compartment::new(*name))).unwrap()
+        };
         let mut samples = vec![Classification::PUBLIC];
-        for level in [Confidentiality::Internal, Confidentiality::Confidential, Confidentiality::StrictlyConfidential] {
-            for names in [&[][..], &["hr"], &["finance"], &["legal"], &["hr", "finance"], &["finance", "legal"]] {
+        for level in [
+            Confidentiality::Internal,
+            Confidentiality::Confidential,
+            Confidentiality::StrictlyConfidential,
+        ] {
+            for names in [
+                &[][..],
+                &["hr"],
+                &["finance"],
+                &["legal"],
+                &["hr", "finance"],
+                &["finance", "legal"],
+            ] {
                 samples.push(classified(level, names));
             }
         }
@@ -623,13 +865,33 @@ mod tests {
         for reading in &readings {
             let filter = Filter::readable(reading, &compartments);
             for classification in &samples {
-                let message = HistoryEntry::Said { message: Message { classification: classification.clone(), ..make_message(id(1)) } };
+                let message = HistoryEntry::Said {
+                    message: Message {
+                        classification: classification.clone(),
+                        ..make_message(id(1))
+                    },
+                };
                 let kept = filter.as_ref().is_none_or(|filter| keeps(filter, message));
-                assert_eq!(kept, reading.admits(classification, &compartments), "{classification} under {reading:?}");
+                assert_eq!(
+                    kept,
+                    reading.admits(classification, &compartments),
+                    "{classification} under {reading:?}"
+                );
             }
         }
-        let other = HistoryEntry::ResponseRequested { by: ActorId::System, reason: RequestReason::Chosen, at: Utc::now() };
-        assert!(!keeps(&Filter::readable(&Reading::Released(Classification::PUBLIC), &compartments).unwrap(), other), "messages only");
+        let other = HistoryEntry::ResponseRequested {
+            by: ActorId::System,
+            reason: RequestReason::Chosen,
+            at: Utc::now(),
+        };
+        assert!(
+            !keeps(
+                &Filter::readable(&Reading::Released(Classification::PUBLIC), &compartments)
+                    .unwrap(),
+                other
+            ),
+            "messages only"
+        );
     }
 
     /// Issue 451: the rule of what a reader is given, as a filter over an
@@ -650,25 +912,45 @@ mod tests {
         let entries = [
             HistoryEntry::Said { message: make_message(id(1)) },
             HistoryEntry::Said { message: Message { content: None, ..make_message(id(2)) } },
-            HistoryEntry::ResponseRequested { by: ActorId::System, reason: RequestReason::Chosen, at: Utc::now() },
+            HistoryEntry::ResponseRequested {
+                by: ActorId::System,
+                reason: RequestReason::Chosen,
+                at: Utc::now(),
+            },
         ];
         let audiences = [
-            Recipients::NOBODY, Recipients::members(false), Recipients::members(true), Recipients::APPROVERS,
-            Recipients::only(vec![bob]), Recipients::only(vec![agent]), Recipients { named: vec![agent], ..Recipients::members(false) },
+            Recipients::NOBODY,
+            Recipients::members(false),
+            Recipients::members(true),
+            Recipients::APPROVERS,
+            Recipients::only(vec![bob]),
+            Recipients::only(vec![agent]),
+            Recipients { named: vec![agent], ..Recipients::members(false) },
         ];
-        let rangings = [vec![], vec![Position::new(2)..Position::new(6)], vec![Position::START..Position::new(1), Position::new(8)..Position::MAX]];
+        let rangings = [
+            vec![],
+            vec![Position::new(2)..Position::new(6)],
+            vec![Position::START..Position::new(1), Position::new(8)..Position::MAX],
+        ];
         let mut readers = vec![Reader::Channel, Reader::Outsider];
         readers.extend(actors.iter().map(|actor| Reader::Participant(*actor)));
         let mut decided = [0, 0];
         for entry in &entries {
             for sender in actors {
                 for recipients in &audiences {
-                    let item = Recorded { entry: entry.clone(), sender, recipients: recipients.clone(), context: EventContext::default(), timestamp: Utc::now() };
+                    let item = Recorded {
+                        entry: entry.clone(),
+                        sender,
+                        recipients: recipients.clone(),
+                        context: EventContext::default(),
+                        timestamp: Utc::now(),
+                    };
                     for seq in [Position::START, Position::new(5), Position::new(9)] {
                         let kept = serde_json::to_value(KeptItem::of(seq, item.clone())).unwrap();
                         for reader in &readers {
                             for ranges in &rangings {
-                                let by_filter = Filter::seen_by(reader, ranges).is_none_or(|filter| filter.matches(&kept));
+                                let by_filter = Filter::seen_by(reader, ranges)
+                                    .is_none_or(|filter| filter.matches(&kept));
                                 assert_eq!(by_filter, item.seen_by(seq, reader, ranges), "{reader:?} of {entry:?} from {sender} to {recipients:?} at {seq} in {ranges:?}");
                                 decided[usize::from(by_filter)] += 1;
                             }
@@ -684,12 +966,27 @@ mod tests {
     /// read back as it was recorded; a page's filter may name both.
     #[test]
     fn an_item_is_kept_with_its_position_and_whether_it_is_published() {
-        let item = Recorded::new(HistoryEntry::Said { message: make_message(id(1)) }, ActorId::System, Audience::Everybody);
+        let item = Recorded::new(
+            HistoryEntry::Said { message: make_message(id(1)) },
+            ActorId::System,
+            Audience::Everybody,
+        );
         let kept = KeptItem::of(Position::new(7), item);
         let read: KeptItem = serde_json::from_value(serde_json::to_value(&kept).unwrap()).unwrap();
-        assert_eq!((read.seq, read.published, read.item.entry.said().map(|m| m.id)), (Position::new(7), true, Some(id(1))));
-        let at = |filter: Filter<HistoryField>| seen(&Reader::Channel, &[], Some(&filter), &(kept.seq, kept.item.clone())).unwrap().is_some();
-        assert!(at(Filter::within(HistoryField::Position, 7..8)) && !at(Filter::within(HistoryField::Position, 0..7)), "by its position");
+        assert_eq!(
+            (read.seq, read.published, read.item.entry.said().map(|m| m.id)),
+            (Position::new(7), true, Some(id(1)))
+        );
+        let at = |filter: Filter<HistoryField>| {
+            seen(&Reader::Channel, &[], Some(&filter), &(kept.seq, kept.item.clone()))
+                .unwrap()
+                .is_some()
+        };
+        assert!(
+            at(Filter::within(HistoryField::Position, 7..8))
+                && !at(Filter::within(HistoryField::Position, 0..7)),
+            "by its position"
+        );
         assert!(at(Filter::eq(HistoryField::Published, true)), "and whether it is published");
     }
 
@@ -702,33 +999,88 @@ mod tests {
     fn what_went_to_every_member_is_given_to_who_was_one_then() {
         use crate::user::UserId;
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-        let joined = |participant| HistoryEntry::ParticipantJoined { participant, name: String::new(), by: participant, by_name: String::new(), at: Utc::now() };
-        let said = |n: u128, by: ActorId| HistoryEntry::Said { message: Message { sender_id: by, ..make_message(id(n)) } };
+        let joined = |participant| HistoryEntry::ParticipantJoined {
+            participant,
+            name: String::new(),
+            by: participant,
+            by_name: String::new(),
+            at: Utc::now(),
+        };
+        let said = |n: u128, by: ActorId| HistoryEntry::Said {
+            message: Message { sender_id: by, ..make_message(id(n)) },
+        };
         let mut history = History::default();
         for (entry, sender, audience) in [
-            (joined(alice), alice, Audience::Everybody),                                             // 0
-            (said(1, alice), alice, Audience::Everybody),                                            // 1
-            (HistoryEntry::HistoryShared { participant: bob, from: Position::new(1), by: alice, by_name: String::new(), at: Utc::now() }, ActorId::System, Audience::Everybody), // 2
-            (joined(bob), alice, Audience::Everybody),                                               // 3
-            (said(2, bob), bob, Audience::Everybody),                                                // 4
-            (said(3, alice), alice, Audience::Everybody),                                            // 5: hers, after delivery to her stopped
-            (HistoryEntry::ParticipantLeft { participant: alice, name: String::new(), by: alice, by_name: String::new(), until: Position::new(5), at: Utc::now() }, alice, Audience::Everybody), // 6
-            (said(4, bob), bob, Audience::Everybody),                                                // 7
-            (said(5, bob), bob, Audience::Only(vec![alice])),                                        // 8
+            (joined(alice), alice, Audience::Everybody),  // 0
+            (said(1, alice), alice, Audience::Everybody), // 1
+            (
+                HistoryEntry::HistoryShared {
+                    participant: bob,
+                    from: Position::new(1),
+                    by: alice,
+                    by_name: String::new(),
+                    at: Utc::now(),
+                },
+                ActorId::System,
+                Audience::Everybody,
+            ), // 2
+            (joined(bob), alice, Audience::Everybody),    // 3
+            (said(2, bob), bob, Audience::Everybody),     // 4
+            (said(3, alice), alice, Audience::Everybody), // 5: hers, after delivery to her stopped
+            (
+                HistoryEntry::ParticipantLeft {
+                    participant: alice,
+                    name: String::new(),
+                    by: alice,
+                    by_name: String::new(),
+                    until: Position::new(5),
+                    at: Utc::now(),
+                },
+                alice,
+                Audience::Everybody,
+            ), // 6
+            (said(4, bob), bob, Audience::Everybody),     // 7
+            (said(5, bob), bob, Audience::Only(vec![alice])), // 8
         ] {
             assert!(history.enter(Recorded::new(entry, sender, audience)));
         }
         let memberships = Memberships::of(history.all_entries());
-        let starts_and_ends = |member| memberships.of_member(member).into_iter().map(|range| (range.start.get(), range.end.get())).collect::<Vec<_>>();
+        let starts_and_ends = |member| {
+            memberships
+                .of_member(member)
+                .into_iter()
+                .map(|range| (range.start.get(), range.end.get()))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(starts_and_ends(alice), [(0, 5)], "from her join to where delivery stopped");
-        assert_eq!(starts_and_ends(bob), [(1, u64::MAX)], "from what was shared with him, a member still");
+        assert_eq!(
+            starts_and_ends(bob),
+            [(1, u64::MAX)],
+            "from what was shared with him, a member still"
+        );
         let seen = |reader: ActorId| -> Vec<u64> {
             let reading = Reader::Participant(reader);
             let ranges = memberships.of_reader(&reading);
-            history.all_entries().filter(|node| node.entry.seen_by(node.seq, &reading, &ranges)).map(|node| node.seq.get()).collect()
+            history
+                .all_entries()
+                .filter(|node| node.entry.seen_by(node.seq, &reading, &ranges))
+                .map(|node| node.seq.get())
+                .collect()
         };
-        assert_eq!(seen(alice), [0, 1, 3, 4, 5, 6, 8], "hers, what went to every member while she was one, and what went to her by name");
-        assert_eq!(seen(bob), [1, 2, 3, 4, 5, 6, 7, 8], "what was shared with him, and since - the last his own");
-        assert_eq!(Memberships::of(history.all_entries().chain(history.all_entries())).of_member(bob), memberships.of_member(bob), "an entry taken in twice changes nothing");
+        assert_eq!(
+            seen(alice),
+            [0, 1, 3, 4, 5, 6, 8],
+            "hers, what went to every member while she was one, and what went to her by name"
+        );
+        assert_eq!(
+            seen(bob),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            "what was shared with him, and since - the last his own"
+        );
+        assert_eq!(
+            Memberships::of(history.all_entries().chain(history.all_entries())).of_member(bob),
+            memberships.of_member(bob),
+            "an entry taken in twice changes nothing"
+        );
     }
 }

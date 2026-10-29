@@ -22,8 +22,8 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::{ContentDigest, Digest};
 use futures::StreamExt;
 use std::sync::{Arc, Mutex, PoisonError};
-use tracing::warn;
 use std::{fmt, io};
+use tracing::warn;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContentError {
@@ -89,7 +89,13 @@ pub trait ContentStorage: Send + Sync + fmt::Debug {
 /// # Errors
 /// `TooLarge` for more than `limit` bytes, said or kept, `Changed` for other than `size`, and what
 /// the storage reports.
-pub async fn keep_digested(storage: &dyn ContentStorage, key: &str, size: u64, content: ByteStream, limit: u64) -> ContentResult<Digest> {
+pub async fn keep_digested(
+    storage: &dyn ContentStorage,
+    key: &str,
+    size: u64,
+    content: ByteStream,
+    limit: u64,
+) -> ContentResult<Digest> {
     if size > limit {
         return Err(ContentError::TooLarge { limit });
     }
@@ -102,7 +108,9 @@ pub async fn keep_digested(storage: &dyn ContentStorage, key: &str, size: u64, c
     }));
     let kept = storage.put(key, content, limit).await?;
     match Arc::try_unwrap(digest) {
-        Ok(digest) if kept == size => Ok(digest.into_inner().unwrap_or_else(PoisonError::into_inner).finish()),
+        Ok(digest) if kept == size => {
+            Ok(digest.into_inner().unwrap_or_else(PoisonError::into_inner).finish())
+        }
         _ => {
             if let Err(e) = storage.delete(key).await {
                 warn!("What was kept of content not as large as said stays: {e}");
@@ -133,9 +141,27 @@ mod tests {
     async fn content_is_kept_with_its_digest_or_not_at_all() {
         let root = tempfile::tempdir().unwrap();
         let storage = LocalContentStorage::new(root.path().to_path_buf(), None);
-        assert_eq!(keep_digested(&storage, "a/1", 5, stream(b"hello"), 10).await.unwrap(), digest::content(b"hello"));
-        assert!(matches!(keep_digested(&storage, "a/2", 4, stream(b"hello"), 10).await, Err(ContentError::Changed)), "not as large as said");
-        assert!(matches!(storage.get("a/2").await, Err(ContentError::NotFound(_))), "removed again");
-        assert!(matches!(keep_digested(&storage, "a/3", 11, stream(b"hello"), 10).await, Err(ContentError::TooLarge { limit: 10 })), "said too large");
+        assert_eq!(
+            keep_digested(&storage, "a/1", 5, stream(b"hello"), 10).await.unwrap(),
+            digest::content(b"hello")
+        );
+        assert!(
+            matches!(
+                keep_digested(&storage, "a/2", 4, stream(b"hello"), 10).await,
+                Err(ContentError::Changed)
+            ),
+            "not as large as said"
+        );
+        assert!(
+            matches!(storage.get("a/2").await, Err(ContentError::NotFound(_))),
+            "removed again"
+        );
+        assert!(
+            matches!(
+                keep_digested(&storage, "a/3", 11, stream(b"hello"), 10).await,
+                Err(ContentError::TooLarge { limit: 10 })
+            ),
+            "said too large"
+        );
     }
 }

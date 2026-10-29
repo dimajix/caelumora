@@ -8,12 +8,12 @@
 
 use super::body::AgentBody;
 use crate::message::apply_stage_processors;
-use caelumora_runtime::logging::envelope_span;
-use caelumora_runtime::transport::EventReceiver;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::{AgentChannelState, HearsFrom};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
+use caelumora_runtime::logging::envelope_span;
+use caelumora_runtime::transport::EventReceiver;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
@@ -34,7 +34,13 @@ impl AgentBody {
         };
         state.last_message = Some(last.id);
         let offered = heard.iter().filter_map(Message::as_heard).collect();
-        let perceived = match apply_stage_processors(&self.perceive_in_processors, offered, &self.security_context()).await {
+        let perceived = match apply_stage_processors(
+            &self.perceive_in_processors,
+            offered,
+            &self.security_context(),
+        )
+        .await
+        {
             Ok(perceived) => perceived,
             Err(e) => {
                 warn!("The perceive stage failed: {:#}", e);
@@ -54,11 +60,21 @@ impl AgentBody {
     /// version given before does not stand any more. Returns the change the
     /// transcript did not take, as the agent hears it - a modification of
     /// which nothing passed as taken back - or `None` if it took it.
-    async fn take_in_modified(&self, state: &mut AgentChannelState, modified: Message) -> Option<TranscriptEntry> {
+    async fn take_in_modified(
+        &self,
+        state: &mut AgentChannelState,
+        modified: Message,
+    ) -> Option<TranscriptEntry> {
         let (id, at) = (modified.id, modified.timestamp);
         let perceived = match modified.as_heard() {
             None => None,
-            Some(heard) => match apply_stage_processors(&self.perceive_in_processors, vec![heard], &self.security_context()).await {
+            Some(heard) => match apply_stage_processors(
+                &self.perceive_in_processors,
+                vec![heard],
+                &self.security_context(),
+            )
+            .await
+            {
                 Ok(perceived) => perceived.into_iter().find(|m| m.id == modified.id),
                 Err(e) => {
                     warn!("The perceive stage failed on a modified message: {:#}", e);
@@ -94,7 +110,12 @@ impl AgentBody {
     /// is written into `state` with what it took in (issue 223), so that
     /// every store that follows stores both; when that happens is the
     /// actor's.
-    pub(super) async fn take_in(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>) -> TakenIn {
+    pub(super) async fn take_in(
+        &self,
+        state: &mut AgentChannelState,
+        received: Envelope,
+        rx: &mut Box<dyn EventReceiver>,
+    ) -> TakenIn {
         let mut request = None;
         let mut retries = Vec::new();
         let mut next = Some(received);
@@ -115,7 +136,9 @@ impl AgentBody {
                     }
                     _ => None,
                 }
-            }.instrument(span).await;
+            }
+            .instrument(span)
+            .await;
             request = answered(request, asked);
             next = rx.try_recv().await;
         }
@@ -139,7 +162,11 @@ impl AgentBody {
     /// others, which wait for a turn in theirs. Returns whether it took in
     /// anything. Writes where the agent stands into `state`, as `take_in`
     /// does, and does not store.
-    pub(super) async fn take_in_during_turn(&self, state: &mut AgentChannelState, rx: &mut Box<dyn EventReceiver>) -> bool {
+    pub(super) async fn take_in_during_turn(
+        &self,
+        state: &mut AgentChannelState,
+        rx: &mut Box<dyn EventReceiver>,
+    ) -> bool {
         let hears = self.hears_during_turn();
         let Some(under_way) = state.turn.as_ref().filter(|_| hears.from != HearsFrom::None) else {
             return false;
@@ -149,16 +176,22 @@ impl AgentBody {
         // Where the last request in the turn's authority taken ahead was.
         let mut asked = None;
         loop {
-            while let Some(event) = rx.try_recv_if(&|envelope: &Envelope| hears.pick(&work, envelope, asked)).await {
+            while let Some(event) =
+                rx.try_recv_if(&|envelope: &Envelope| hears.pick(&work, envelope, asked)).await
+            {
                 taken = true;
                 let span = envelope_span(&event.context, event.event.kind());
                 async {
                     debug!("Received {} during a turn", event.describe());
                     // A request left over is answered by the turn under way.
                     self.take_in_said(state, event).await;
-                }.instrument(span).await;
+                }
+                .instrument(span)
+                .await;
             }
-            let Some(request) = rx.try_recv_if(&|envelope: &Envelope| hears.pick_request(&work, envelope)).await else {
+            let Some(request) =
+                rx.try_recv_if(&|envelope: &Envelope| hears.pick_request(&work, envelope)).await
+            else {
                 break;
             };
             debug!("Received {} during a turn, ahead of what waited before it", request.describe());
@@ -177,7 +210,11 @@ impl AgentBody {
     /// message on its active path, and so is who joined or left (issue 408). A modification or
     /// revocation the transcript did not take is handed over (`AgentBody::hand_over`, issue 236),
     /// as the agent hears it. Returns any other event, for the caller to handle.
-    pub(super) async fn take_in_said(&self, state: &mut AgentChannelState, event: Envelope) -> Option<Envelope> {
+    pub(super) async fn take_in_said(
+        &self,
+        state: &mut AgentChannelState,
+        event: Envelope,
+    ) -> Option<Envelope> {
         match event.event {
             ActorEvent::CompleteMessageGenerated(message) => {
                 trace!("Heard {:?}", message.content);
@@ -190,7 +227,12 @@ impl AgentBody {
             }
             ActorEvent::MessageRevoked { message, at } => {
                 if !state.transcript.revoke(message, at) {
-                    (self.hand_over)(&self.runtime, state, TranscriptEntry::Revoked { message, at }).await;
+                    (self.hand_over)(
+                        &self.runtime,
+                        state,
+                        TranscriptEntry::Revoked { message, at },
+                    )
+                    .await;
                 }
             }
             ActorEvent::MessageReclassified { message, classification } => {
@@ -247,29 +289,33 @@ fn answered(earlier: Option<Envelope>, later: Option<Envelope>) -> Option<Envelo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::{HearsDuringTurn, OthersWords};
-    use caelumora_model::chain::Position;
-    use caelumora_runtime::component::ComponentImpl;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
     use caelumora_model::actor::{ActorId, EventContext, RequestReason};
-    use caelumora_model::security::SecurityContext;
-    use caelumora_runtime::runtime::ActorRuntime;
-    use caelumora_runtime::transport::{EventReceiver, InMemoryEventReceiver};
-    use futures::future::BoxFuture;
-    use std::future::ready;
+    use caelumora_model::agent::{HearsDuringTurn, OthersWords};
+    use caelumora_model::chain::Position;
     use caelumora_model::component::ComponentFailPolicy;
-    use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::confidentiality::Classification;
-    use std::sync::Arc;
+    use caelumora_model::message::{MessageId, MessageRole};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
-    use chrono::Utc;
     use caelumora_model::work::Work;
+    use caelumora_runtime::component::ComponentImpl;
+    use caelumora_runtime::runtime::ActorRuntime;
+    use caelumora_runtime::transport::{EventReceiver, InMemoryEventReceiver};
+    use chrono::Utc;
+    use futures::future::BoxFuture;
+    use std::future::ready;
+    use std::sync::Arc;
     use tokio::sync::mpsc;
 
     fn said(text: &str) -> Message {
-        Message { role: MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+        Message {
+            role: MessageRole::User,
+            content: Some(text.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }
     }
 
     fn texts(messages: &[Message]) -> Vec<&str> {
@@ -283,7 +329,12 @@ mod tests {
     #[tokio::test]
     async fn what_others_said_with_text_is_given_once() {
         let alice = ActorId::User(UserId::new());
-        let of_alice = |text: &str| Message { id: MessageId::new(), sender_id: alice, sender_name: "alice".to_string(), ..said(text) };
+        let of_alice = |text: &str| Message {
+            id: MessageId::new(),
+            sender_id: alice,
+            sender_name: "alice".to_string(),
+            ..said(text)
+        };
         let (first, second) = (of_alice("hello"), of_alice("how are you?"));
         let empty = Message { content: None, ..of_alice("") };
         let step = Message { internal: true, ..of_alice("thinking") };
@@ -292,10 +343,18 @@ mod tests {
 
         let mut state = AgentChannelState::default();
         body.perceive(&mut state, vec![first.clone()]).await;
-        assert_eq!(ids(state.transcript.messages()), vec![first.id], "never sent anything: what others said");
+        assert_eq!(
+            ids(state.transcript.messages()),
+            vec![first.id],
+            "never sent anything: what others said"
+        );
         state.transcript.start_anew();
         body.perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()]).await;
-        assert_eq!(ids(state.transcript.messages()), vec![second.id], "after what was sent, with text");
+        assert_eq!(
+            ids(state.transcript.messages()),
+            vec![second.id],
+            "after what was sent, with text"
+        );
         state.transcript.start_anew();
         assert!(state.transcript.messages().is_empty(), "nothing new");
     }
@@ -310,13 +369,27 @@ mod tests {
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
         let mut last = envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned });
         last.security.caller_id = ActorId::System;
-        for event in [envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), heard("two"), envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() }), last, heard("three")] {
+        for event in [
+            envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            heard("two"),
+            envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() }),
+            last,
+            heard("three"),
+        ] {
             tx.try_send(event).expect("room");
         }
 
         let request = body.take_in(&mut state, heard("one"), &mut rx).await.request;
-        assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
-        assert_eq!(request.map(|r| r.security.caller_id), Some(ActorId::System), "the last request");
+        assert_eq!(
+            texts(&state.transcript.messages()),
+            ["one", "two", "three"],
+            "all of it, in order, also what came after the last request"
+        );
+        assert_eq!(
+            request.map(|r| r.security.caller_id),
+            Some(ActorId::System),
+            "the last request"
+        );
         assert!(rx.try_recv().await.is_none(), "nothing left behind");
 
         let request = body.take_in(&mut state, heard("four"), &mut rx).await.request;
@@ -343,16 +416,29 @@ mod tests {
         last.security.caller_id = ActorId::System;
         tx.try_send(last).expect("room");
         let taken = body.take_in(&mut state, asked(RequestReason::Mentioned), &mut rx).await;
-        assert_eq!(taken.request.as_ref().map(|r| r.security.caller_id), Some(ActorId::System), "the last request");
+        assert_eq!(
+            taken.request.as_ref().map(|r| r.security.caller_id),
+            Some(ActorId::System),
+            "the last request"
+        );
         assert_eq!(reason(&taken), Some(RequestReason::Mentioned), "for the mention before it");
 
         tx.try_send(asked(RequestReason::Mentioned)).expect("room");
         let taken = body.take_in(&mut state, asked(RequestReason::Chosen), &mut rx).await;
-        assert_eq!(reason(&taken), Some(RequestReason::Mentioned), "a later mention is the stronger reason as well");
+        assert_eq!(
+            reason(&taken),
+            Some(RequestReason::Mentioned),
+            "a later mention is the stronger reason as well"
+        );
 
         let only_chosen = body.take_in(&mut state, asked(RequestReason::Chosen), &mut rx).await;
         assert_eq!(reason(&only_chosen), Some(RequestReason::Chosen), "chosen alone, chosen");
-        let then = TakenIn { request: Some(asked(RequestReason::Nudged)), retries: Vec::new(), command: None }.then(only_chosen);
+        let then = TakenIn {
+            request: Some(asked(RequestReason::Nudged)),
+            retries: Vec::new(),
+            command: None,
+        }
+        .then(only_chosen);
         assert_eq!(reason(&then), Some(RequestReason::Nudged), "across a command, too");
     }
 
@@ -360,7 +446,13 @@ mod tests {
     /// in `state`.
     fn under_way_for(state: &mut AgentChannelState, initiator: ActorId) {
         let context = EventContext { initiator_id: initiator, ..EventContext::default() };
-        state.begin_turn(Work::new(context, None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
+        state.begin_turn(Work::new(
+            context,
+            None,
+            SecurityContext::default(),
+            Classification::CHANNEL_DEFAULT,
+            Default::default(),
+        ));
     }
 
     #[tokio::test]
@@ -370,23 +462,57 @@ mod tests {
         let alice = ActorId::User(UserId::new());
         let mut state = AgentChannelState::default();
         under_way_for(&mut state, alice);
-        let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
-        let in_her_authority = |event: ActorEvent| Envelope::new(SecurityContext::default(), EventContext { initiator_id: alice, ..EventContext::default() }, event);
-        let of_alice = |text: &str| in_her_authority(ActorEvent::CompleteMessageGenerated(Message { sender_id: alice, ..said(text) }));
-        let command = in_her_authority(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None });
-        for event in [of_alice("one"), in_her_authority(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), of_alice("two"), command, of_alice("three")] {
+        let body = AgentBody::detached(Vec::new())
+            .hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
+        let in_her_authority = |event: ActorEvent| {
+            Envelope::new(
+                SecurityContext::default(),
+                EventContext { initiator_id: alice, ..EventContext::default() },
+                event,
+            )
+        };
+        let of_alice = |text: &str| {
+            in_her_authority(ActorEvent::CompleteMessageGenerated(Message {
+                sender_id: alice,
+                ..said(text)
+            }))
+        };
+        let command = in_her_authority(ActorEvent::CommandRequested {
+            command: "mark".to_string(),
+            args: String::new(),
+            agent: ActorId::None,
+        });
+        for event in [
+            of_alice("one"),
+            in_her_authority(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            of_alice("two"),
+            command,
+            of_alice("three"),
+        ] {
             tx.try_send(event).expect("room");
         }
 
         assert!(body.take_in_during_turn(&mut state, &mut rx).await, "it took something in");
-        assert_eq!(texts(&state.transcript.messages()), ["one", "two"], "what was said before the command");
+        assert_eq!(
+            texts(&state.transcript.messages()),
+            ["one", "two"],
+            "what was said before the command"
+        );
         let turn = state.turn.as_ref().expect("still under way");
-        assert_eq!(turn.work.context.transcript, state.transcript.digest(), "the turn's next call is given it");
+        assert_eq!(
+            turn.work.context.transcript,
+            state.transcript.digest(),
+            "the turn's next call is given it"
+        );
         let mut left = Vec::new();
         while let Some(event) = rx.try_recv().await {
             left.push(event.event.kind());
         }
-        assert_eq!(left, ["CommandRequested", "CompleteMessageGenerated"], "the command and what follows it wait, in order; the request was the turn's");
+        assert_eq!(
+            left,
+            ["CommandRequested", "CompleteMessageGenerated"],
+            "the command and what follows it wait, in order; the request was the turn's"
+        );
     }
 
     /// What bob and alice say during alice's turn, each at its position:
@@ -394,13 +520,30 @@ mod tests {
     /// and request again.
     fn bob_then_alice_then_bob(alice: ActorId, bob: ActorId) -> Vec<Envelope> {
         let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
-            Envelope::new(SecurityContext::default(), EventContext { initiator_id: initiator, position: Some(Position::new(seq)), ..EventContext::default() }, event)
+            Envelope::new(
+                SecurityContext::default(),
+                EventContext {
+                    initiator_id: initiator,
+                    position: Some(Position::new(seq)),
+                    ..EventContext::default()
+                },
+                event,
+            )
         };
-        let of = |seq, sender: ActorId, text: &str| at(seq, sender, ActorEvent::CompleteMessageGenerated(Message { sender_id: sender, ..said(text) }));
+        let of = |seq, sender: ActorId, text: &str| {
+            at(
+                seq,
+                sender,
+                ActorEvent::CompleteMessageGenerated(Message { sender_id: sender, ..said(text) }),
+            )
+        };
         vec![
-            of(0, bob, "his first"), at(1, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
-            of(2, alice, "hers"), at(3, alice, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
-            of(4, bob, "his second"), at(5, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            of(0, bob, "his first"),
+            at(1, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            of(2, alice, "hers"),
+            at(3, alice, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            of(4, bob, "his second"),
+            at(5, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
         ]
     }
 
@@ -409,7 +552,10 @@ mod tests {
     async fn left_in(rx: &mut Box<dyn EventReceiver>) -> Vec<(&'static str, u64)> {
         let mut left = Vec::new();
         while let Some(event) = rx.try_recv().await {
-            left.push((event.event.kind(), event.context.position.map_or(u64::MAX, |seq| seq.get())));
+            left.push((
+                event.event.kind(),
+                event.context.position.map_or(u64::MAX, |seq| seq.get()),
+            ));
         }
         left
     }
@@ -427,12 +573,24 @@ mod tests {
         for event in bob_then_alice_then_bob(alice, bob) {
             tx.try_send(event).expect("room");
         }
-        let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
+        let body = AgentBody::detached(Vec::new())
+            .hearing(HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
 
         assert!(body.take_in_during_turn(&mut state, &mut rx).await, "it took something in");
-        assert_eq!(texts(&state.transcript.messages()), ["his first", "hers"], "what was said before her request, in order");
-        assert!(state.heard.has(Position::new(3)) && !state.heard.has(Position::new(1)), "where it stands: his request not taken");
-        assert_eq!(left_in(&mut rx).await, [("ResponseRequested", 1), ("CompleteMessageGenerated", 4), ("ResponseRequested", 5)], "his requests and what he said after hers wait, in order");
+        assert_eq!(
+            texts(&state.transcript.messages()),
+            ["his first", "hers"],
+            "what was said before her request, in order"
+        );
+        assert!(
+            state.heard.has(Position::new(3)) && !state.heard.has(Position::new(1)),
+            "where it stands: his request not taken"
+        );
+        assert_eq!(
+            left_in(&mut rx).await,
+            [("ResponseRequested", 1), ("CompleteMessageGenerated", 4), ("ResponseRequested", 5)],
+            "his requests and what he said after hers wait, in order"
+        );
     }
 
     /// Issue 435: with `others: wait`, or when only bob asks, nothing he
@@ -440,7 +598,16 @@ mod tests {
     #[tokio::test]
     async fn during_a_turn_anothers_request_or_waiting_lets_it_hear_nothing_of_him() {
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-        for (others, said) in [(OthersWords::Wait, bob_then_alice_then_bob(alice, bob)), (OthersWords::WhenAsked, bob_then_alice_then_bob(alice, bob).into_iter().filter(|e| e.context.initiator_id == bob).collect())] {
+        for (others, said) in [
+            (OthersWords::Wait, bob_then_alice_then_bob(alice, bob)),
+            (
+                OthersWords::WhenAsked,
+                bob_then_alice_then_bob(alice, bob)
+                    .into_iter()
+                    .filter(|e| e.context.initiator_id == bob)
+                    .collect(),
+            ),
+        ] {
             let (tx, rx) = mpsc::channel(8);
             let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
             let mut state = AgentChannelState::default();
@@ -449,8 +616,12 @@ mod tests {
             for event in said {
                 tx.try_send(event).expect("room");
             }
-            let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, others });
-            assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "{others:?}: nothing taken in");
+            let body = AgentBody::detached(Vec::new())
+                .hearing(HearsDuringTurn { from: HearsFrom::Users, others });
+            assert!(
+                !body.take_in_during_turn(&mut state, &mut rx).await,
+                "{others:?}: nothing taken in"
+            );
             assert_eq!(left_in(&mut rx).await.len(), count, "{others:?}: all of it waits");
         }
     }
@@ -465,12 +636,24 @@ mod tests {
         let mut state = AgentChannelState::default();
         under_way_for(&mut state, alice);
         let mut said = bob_then_alice_then_bob(alice, bob);
-        let command = ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None };
-        said.insert(2, Envelope::new(SecurityContext::default(), EventContext { initiator_id: alice, ..EventContext::default() }, command));
+        let command = ActorEvent::CommandRequested {
+            command: "mark".to_string(),
+            args: String::new(),
+            agent: ActorId::None,
+        };
+        said.insert(
+            2,
+            Envelope::new(
+                SecurityContext::default(),
+                EventContext { initiator_id: alice, ..EventContext::default() },
+                command,
+            ),
+        );
         for event in said {
             tx.try_send(event).expect("room");
         }
-        let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
+        let body = AgentBody::detached(Vec::new())
+            .hearing(HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
         assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "nothing taken in");
         assert_eq!(left_in(&mut rx).await.len(), 7, "all of it waits");
     }
@@ -481,7 +664,8 @@ mod tests {
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         tx.try_send(envelope(ActorEvent::CompleteMessageGenerated(said("one")))).expect("room");
-        let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::All, ..Default::default() });
+        let body = AgentBody::detached(Vec::new())
+            .hearing(HearsDuringTurn { from: HearsFrom::All, ..Default::default() });
         assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "no turn, nothing taken");
         assert!(rx.try_recv().await.is_some(), "it waits for take_in");
     }
@@ -493,26 +677,54 @@ mod tests {
         let mut state = AgentChannelState::default();
         let body = AgentBody::detached(Vec::new());
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
-        let command = envelope(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None });
-        for event in [envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), heard("two"), command, heard("three"), envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })] {
+        let command = envelope(ActorEvent::CommandRequested {
+            command: "mark".to_string(),
+            args: String::new(),
+            agent: ActorId::None,
+        });
+        for event in [
+            envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            heard("two"),
+            command,
+            heard("three"),
+            envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+        ] {
             tx.try_send(event).expect("room");
         }
 
         let first = body.take_in(&mut state, heard("one"), &mut rx).await;
-        assert_eq!(texts(&state.transcript.messages()), ["one", "two"], "what was said before the command");
-        assert!(matches!(first.command.as_ref().map(|c| &c.event), Some(ActorEvent::CommandRequested { .. })), "the command that ended the batch");
+        assert_eq!(
+            texts(&state.transcript.messages()),
+            ["one", "two"],
+            "what was said before the command"
+        );
+        assert!(
+            matches!(
+                first.command.as_ref().map(|c| &c.event),
+                Some(ActorEvent::CommandRequested { .. })
+            ),
+            "the command that ended the batch"
+        );
         assert!(first.request.is_some(), "the request before it is kept");
 
         // The actor carries it out here, then takes in the rest.
         let next = rx.try_recv().await.expect("what follows the command stays queued");
         let rest = body.take_in(&mut state, next, &mut rx).await;
-        assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "in the order it was said");
+        assert_eq!(
+            texts(&state.transcript.messages()),
+            ["one", "two", "three"],
+            "in the order it was said"
+        );
         let all = first.then(rest);
-        assert!(all.command.is_none() && all.request.is_some(), "no command left, and the later request");
+        assert!(
+            all.command.is_none() && all.request.is_some(),
+            "no command left, and the later request"
+        );
     }
 
     #[tokio::test]
-    async fn a_change_is_recorded_where_the_transcript_holds_the_message_and_handed_over_where_it_does_not() {
+    async fn a_change_is_recorded_where_the_transcript_holds_the_message_and_handed_over_where_it_does_not(
+    ) {
         let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
@@ -521,12 +733,28 @@ mod tests {
         state.perceive(vec![given.clone()]);
         state.transcript.start_anew();
         state.perceive(vec![kept.clone()]);
-        let modified = |message: &Message, text: &str| envelope(ActorEvent::MessageModified(Message { content: Some(text.to_string()), ..message.clone() }));
-        let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(Message { id: MessageId::new(), ..said(text) }));
+        let modified = |message: &Message, text: &str| {
+            envelope(ActorEvent::MessageModified(Message {
+                content: Some(text.to_string()),
+                ..message.clone()
+            }))
+        };
+        let heard = |text: &str| {
+            envelope(ActorEvent::CompleteMessageGenerated(Message {
+                id: MessageId::new(),
+                ..said(text)
+            }))
+        };
         // Writes down what it is handed, where it is handed it.
-        fn noted<'a>(_: &'a ActorRuntime, state: &'a mut AgentChannelState, change: TranscriptEntry) -> BoxFuture<'a, ()> {
+        fn noted<'a>(
+            _: &'a ActorRuntime,
+            state: &'a mut AgentChannelState,
+            change: TranscriptEntry,
+        ) -> BoxFuture<'a, ()> {
             let text = match change {
-                TranscriptEntry::Modified { message } => format!("modified: {}", message.content.unwrap_or_default()),
+                TranscriptEntry::Modified { message } => {
+                    format!("modified: {}", message.content.unwrap_or_default())
+                }
                 TranscriptEntry::Revoked { .. } => "taken back".to_string(),
                 _ => "something else".to_string(),
             };
@@ -537,8 +765,13 @@ mod tests {
         let noting = AgentBody::detached(Vec::new()).handing_over(noted);
         tx.try_send(modified(&given, "given, corrected")).expect("room");
         tx.try_send(heard("and then")).expect("room");
-        tx.try_send(envelope(ActorEvent::MessageRevoked { message: given.id, at: Utc::now() })).expect("room");
-        tx.try_send(envelope(ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() })).expect("room");
+        tx.try_send(envelope(ActorEvent::MessageRevoked { message: given.id, at: Utc::now() }))
+            .expect("room");
+        tx.try_send(envelope(ActorEvent::MessageRevoked {
+            message: MessageId::new(),
+            at: Utc::now(),
+        }))
+        .expect("room");
         noting.take_in(&mut state, modified(&kept, "kept, corrected"), &mut rx).await;
 
         assert_eq!(texts(&state.transcript.messages()), ["kept, corrected", "modified: given, corrected", "and then", "taken back", "taken back"],
@@ -547,9 +780,20 @@ mod tests {
         // A modification of which nothing passes the processors takes the
         // message back in the transcript; the channel's history keeps what
         // was said (issue 417).
-        let stages: Vec<ComponentImpl<dyn PerceiveInProcessor>> = vec![ComponentImpl { id: "no-spam".to_string(), fail_policy: ComponentFailPolicy::FailClosed, facet: Arc::new(Without(Some("spam"))) }];
-        AgentBody::detached(stages).handing_over(noted).take_in(&mut state, modified(&kept, "kept, spam"), &mut rx).await;
-        assert_eq!(texts(&state.transcript.messages()), ["modified: given, corrected", "and then", "taken back", "taken back"], "no longer given, and nothing handed over");
+        let stages: Vec<ComponentImpl<dyn PerceiveInProcessor>> = vec![ComponentImpl {
+            id: "no-spam".to_string(),
+            fail_policy: ComponentFailPolicy::FailClosed,
+            facet: Arc::new(Without(Some("spam"))),
+        }];
+        AgentBody::detached(stages)
+            .handing_over(noted)
+            .take_in(&mut state, modified(&kept, "kept, spam"), &mut rx)
+            .await;
+        assert_eq!(
+            texts(&state.transcript.messages()),
+            ["modified: given, corrected", "and then", "taken back", "taken back"],
+            "no longer given, and nothing handed over"
+        );
 
         // A reclassification is recorded where the transcript holds the
         // message, and handed over nowhere: a remote agent knows no labels.
@@ -558,11 +802,37 @@ mod tests {
         state.transcript.start_anew();
         let public = Classification::PUBLIC;
         let before = state.transcript.all_entries().len();
-        noting.take_in(&mut state, envelope(ActorEvent::MessageReclassified { message: earlier.id, classification: public.clone() }), &mut rx).await;
-        assert_eq!(state.transcript.all_entries().len(), before, "off the transcript's path: nothing recorded, nothing handed over");
+        noting
+            .take_in(
+                &mut state,
+                envelope(ActorEvent::MessageReclassified {
+                    message: earlier.id,
+                    classification: public.clone(),
+                }),
+                &mut rx,
+            )
+            .await;
+        assert_eq!(
+            state.transcript.all_entries().len(),
+            before,
+            "off the transcript's path: nothing recorded, nothing handed over"
+        );
         let mut on_path = AgentChannelState::default();
         on_path.perceive(vec![earlier.clone()]);
-        noting.take_in(&mut on_path, envelope(ActorEvent::MessageReclassified { message: earlier.id, classification: public.clone() }), &mut rx).await;
-        assert_eq!(on_path.transcript.messages().first().map(|m| m.classification.clone()), Some(public), "on it, recorded");
+        noting
+            .take_in(
+                &mut on_path,
+                envelope(ActorEvent::MessageReclassified {
+                    message: earlier.id,
+                    classification: public.clone(),
+                }),
+                &mut rx,
+            )
+            .await;
+        assert_eq!(
+            on_path.transcript.messages().first().map(|m| m.classification.clone()),
+            Some(public),
+            "on it, recorded"
+        );
     }
 }

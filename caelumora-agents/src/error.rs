@@ -7,13 +7,13 @@
 //! whoever defines them; everything else as the runtime judges it
 //! (`caelumora_runtime::error::user_message_with`).
 
-use caelumora_runtime::error::{store_message, user_message_with, view_message};
 use crate::activity::ActivityError;
 use crate::external::ExternalAgentError;
 use crate::llm::LLMError;
 use crate::message::ProcessingError;
 use crate::prompt::ContextError;
 use crate::tool::ToolError;
+use caelumora_runtime::error::{store_message, user_message_with, view_message};
 use std::error::Error;
 
 /// The message to show a user for `error`: the outermost error in its chain
@@ -28,7 +28,8 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
 /// are in the server log - which has them, and nothing else about the
 /// server.
 pub(crate) fn failure_message(error: &anyhow::Error) -> String {
-    user_message(error).unwrap_or_else(|| "internal error - the details are in the server log".to_string())
+    user_message(error)
+        .unwrap_or_else(|| "internal error - the details are in the server log".to_string())
 }
 
 /// What is shown of `e`, if it is of a type of the agents' logic that may be
@@ -65,16 +66,18 @@ fn context_message(error: &ContextError) -> Option<String> {
         ContextError::Failed(_) | ContextError::Prompt(_) => Some(error.to_string()),
         ContextError::View(e) => view_message(e),
         ContextError::Store(e) => store_message(e),
-        ContextError::Component { cause, .. } => context_message(cause).map(|cause| format!("{error}: {cause}")),
+        ContextError::Component { cause, .. } => {
+            context_message(cause).map(|cause| format!("{error}: {cause}"))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::component::ComponentError;
-    use caelumora_model::store::StoreError;
     use anyhow::Error;
+    use caelumora_model::store::StoreError;
+    use caelumora_runtime::component::ComponentError;
 
     #[test]
     fn finds_the_disclosable_error_inside_a_context_chain() {
@@ -92,13 +95,23 @@ mod tests {
 
     #[test]
     fn a_prompt_part_that_failed_names_its_component_before_what_it_says() {
-        let failed = |cause| Error::new(ContextError::Component { component: "skills".to_string(), cause: Box::new(cause) })
-            .context("component 'context' could not assemble the context");
+        let failed = |cause| {
+            Error::new(ContextError::Component {
+                component: "skills".to_string(),
+                cause: Box::new(cause),
+            })
+            .context("component 'context' could not assemble the context")
+        };
 
         let error = failed(ContextError::Failed("skills are not offered here".to_string()));
-        assert_eq!(user_message(&error).as_deref(), Some("component 'skills' failed: skills are not offered here"));
+        assert_eq!(
+            user_message(&error).as_deref(),
+            Some("component 'skills' failed: skills are not offered here")
+        );
         // What the store reported is judged as store errors are.
-        let error = failed(ContextError::Store(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string())));
+        let error = failed(ContextError::Store(StoreError::Backend(
+            "/home/someone/local/entity_store: permission denied".to_string(),
+        )));
         assert_eq!(user_message(&error), None);
     }
 
@@ -108,8 +121,13 @@ mod tests {
         let component = ComponentError::InvalidConfig("missing field `url`".to_string());
         let shown = component.to_string();
         assert_eq!(user_message(&Error::new(component).context("building the agent")), Some(shown));
-        let backend = Error::new(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string()));
+        let backend = Error::new(StoreError::Backend(
+            "/home/someone/local/entity_store: permission denied".to_string(),
+        ));
         assert_eq!(user_message(&backend), None, "not what the runtime does not show");
-        assert_eq!(failure_message(&anyhow::anyhow!("something internal")), "internal error - the details are in the server log");
+        assert_eq!(
+            failure_message(&anyhow::anyhow!("something internal")),
+            "internal error - the details are in the server log"
+        );
     }
 }

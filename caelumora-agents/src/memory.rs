@@ -14,20 +14,22 @@
 //! come from - it reads through the turn's views (`Situation::session`, issue
 //! 163).
 
-use crate::turn::Turn;
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
+use crate::turn::Turn;
 use caelumora_model::actor::ActorId;
-use caelumora_model::digest::Digest;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
+use caelumora_model::digest::Digest;
 use caelumora_model::ledger::Staged;
 use caelumora_model::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::security::{
+    AccessPolicy, ActionType, Enforcement, Reclassified, SecurityContext,
+};
 use caelumora_model::session::SessionId;
 use caelumora_runtime::view::{SessionView, Views};
 use tracing::warn;
-use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
-use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, AccessPolicy};
 
 /// An agent's memory as a turn sees it: every function takes the turn.
 pub(crate) struct AgentMemory;
@@ -46,7 +48,10 @@ impl AgentMemory {
     /// now permit it - looked up through the turn's views. Of a session
     /// that is gone, the one it had decides; one that cannot be looked up
     /// recalls nothing. A turn in no session recalls nothing.
-    pub(crate) async fn recalled(situation: &Situation<'_>, confidentiality: &dyn ConfidentialityPolicy) -> Vec<Memory> {
+    pub(crate) async fn recalled(
+        situation: &Situation<'_>,
+        confidentiality: &dyn ConfidentialityPolicy,
+    ) -> Vec<Memory> {
         let context = situation.security_context();
         let Some(own) = Self::own_session(situation).await else { return Vec::new() };
         let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
@@ -55,13 +60,22 @@ impl AgentMemory {
         let mut decided: Vec<(MemoryOrigin, Classification, bool)> = Vec::new();
         let mut recalled = Vec::new();
         for entry in memory {
-            let known = decided.iter()
+            let known = decided
+                .iter()
                 .find(|(origin, c, _)| *origin == entry.origin && *c == entry.classification)
                 .map(|(.., readable)| *readable);
             let readable = match known {
                 Some(readable) => readable,
                 None => {
-                    let readable = Self::may_recall(&entry, &here, own.views(), &mut sessions, confidentiality, context).await;
+                    let readable = Self::may_recall(
+                        &entry,
+                        &here,
+                        own.views(),
+                        &mut sessions,
+                        confidentiality,
+                        context,
+                    )
+                    .await;
                     decided.push((entry.origin.clone(), entry.classification.clone(), readable));
                     readable
                 }
@@ -86,9 +100,17 @@ impl AgentMemory {
     ) -> bool {
         let origin = &entry.origin;
         // Where it was written, with its session as privacy sees it then or now.
-        let source = |session: SessionPrivacy| Place { channel: origin.channel, classification: entry.classification.clone(), session };
+        let source = |session: SessionPrivacy| Place {
+            channel: origin.channel,
+            classification: entry.classification.clone(),
+            session,
+        };
         if origin.session.id == here.session.id {
-            return confidentiality.may_copy_information(context, &source(here.session.clone()), here);
+            return confidentiality.may_copy_information(
+                context,
+                &source(here.session.clone()),
+                here,
+            );
         }
         if !confidentiality.may_copy_information(context, &source(origin.session.clone()), here) {
             return false;
@@ -149,14 +171,35 @@ impl AgentMemory {
     /// the agent's to change here: remembered earlier in this turn, or one
     /// that may be recalled here - asked of the policy for this entry alone,
     /// as in [`recalled`](Self::recalled).
-    pub(crate) async fn find(turn: &Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> Option<Memory> {
+    pub(crate) async fn find(
+        turn: &Turn<'_>,
+        id: MemoryId,
+        confidentiality: &dyn ConfidentialityPolicy,
+    ) -> Option<Memory> {
         let entry = Self::effective(turn).get(id)?.clone();
-        let Some(stored) = turn.situation().agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
+        let Some(stored) = turn
+            .situation()
+            .agent_state()
+            .current()
+            .memory
+            .current()
+            .into_iter()
+            .find(|m| m.id == id)
+        else {
             return Some(entry);
         };
         let own = Self::own_session(&turn.situation()).await?;
         let here = own.views().viewer().place()?.clone();
-        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), confidentiality, turn.situation().security_context()).await.then_some(entry)
+        Self::may_recall(
+            &stored,
+            &here,
+            own.views(),
+            &mut Vec::new(),
+            confidentiality,
+            turn.situation().security_context(),
+        )
+        .await
+        .then_some(entry)
     }
 
     /// Updates entry `id` - one the turn may change (see
@@ -164,7 +207,12 @@ impl AgentMemory {
     /// 302): classified as the turn has seen so far and written in its
     /// channel, as an entry it remembers is, and recalled from then on where
     /// one remembered here would be. Returns whether there was one.
-    pub(crate) async fn update(turn: &mut Turn<'_>, id: MemoryId, text: String, confidentiality: &dyn ConfidentialityPolicy) -> bool {
+    pub(crate) async fn update(
+        turn: &mut Turn<'_>,
+        id: MemoryId,
+        text: String,
+        confidentiality: &dyn ConfidentialityPolicy,
+    ) -> bool {
         if Self::find(turn, id, confidentiality).await.is_none() {
             return false;
         }
@@ -177,7 +225,11 @@ impl AgentMemory {
     /// Forgets entry `id` - one the turn may change (see
     /// [`find`](Self::find)) - when the turn completes. Returns whether
     /// there was one.
-    pub(crate) async fn forget(turn: &mut Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> bool {
+    pub(crate) async fn forget(
+        turn: &mut Turn<'_>,
+        id: MemoryId,
+        confidentiality: &dyn ConfidentialityPolicy,
+    ) -> bool {
         if Self::find(turn, id, confidentiality).await.is_none() {
             return false;
         }
@@ -196,16 +248,34 @@ impl AgentMemory {
     /// # Errors
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
-    pub(crate) async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
+    pub(crate) async fn reclassify(
+        turn: &mut Turn<'_>,
+        id: MemoryId,
+        classification: Classification,
+        access_policy: &dyn AccessPolicy,
+        confidentiality: &dyn ConfidentialityPolicy,
+    ) -> ToolResult<()> {
         let here = turn.situation().classification();
         if Self::find(turn, id, confidentiality).await.is_none() {
-            return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));
+            return Err(ToolError::InvalidParameter(format!(
+                "there is no entry #{id} you remember here"
+            )));
         }
-        let refused = || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"));
+        let refused = || {
+            ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"))
+        };
         let attributes = turn.situation().channel_attributes();
-        let action = ActionType::Reclassify(Reclassified::Memory { author: ActorId::Agent(turn.situation().agent_id()), attributes: &attributes });
+        let action = ActionType::Reclassify(Reclassified::Memory {
+            author: ActorId::Agent(turn.situation().agent_id()),
+            attributes: &attributes,
+        });
         access_policy.require(turn.situation().security_context(), action, |_| refused()).await?;
-        confidentiality.require_publish(turn.situation().security_context(), &classification, &here, refused)?;
+        confidentiality.require_publish(
+            turn.situation().security_context(),
+            &classification,
+            &here,
+            refused,
+        )?;
         let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);
         Ok(())
@@ -214,8 +284,10 @@ impl AgentMemory {
     /// Where a change made in `turn` is made: its channel, and the privacy
     /// its session has now (issue 134) - private, for a turn in no session.
     async fn origin(turn: &Turn<'_>) -> MemoryOrigin {
-        let session = Self::own_session(&turn.situation()).await.map(|s| s.privacy())
-            .unwrap_or_else(|| SessionPrivacy { id: turn.situation().session_id(), ..SessionPrivacy::default() });
+        let session =
+            Self::own_session(&turn.situation()).await.map(|s| s.privacy()).unwrap_or_else(|| {
+                SessionPrivacy { id: turn.situation().session_id(), ..SessionPrivacy::default() }
+            });
         MemoryOrigin { channel: turn.situation().channel_id(), session }
     }
 
@@ -225,7 +297,10 @@ impl AgentMemory {
     /// goes on as one in no session.
     async fn own_session(situation: &Situation<'_>) -> Option<SessionView> {
         situation.session().await.unwrap_or_else(|e| {
-            warn!("Agent {}: its session could not be read for its memory: {e}", situation.agent_id());
+            warn!(
+                "Agent {}: its session could not be read for its memory: {e}",
+                situation.agent_id()
+            );
             None
         })
     }

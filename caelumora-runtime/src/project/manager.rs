@@ -72,8 +72,16 @@ impl ProjectManager {
     /// `OwnerNotAUser`, `InvalidScope` for another scope, `Invalid` for a name or a description
     /// that does not fit, or a `StoreError` - `NameTaken`, `PermissionDenied`, and `Validation` for
     /// the name `own` or another user's scope.
-    pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, description: Option<&str>) -> ProjectResult<Project> {
-        let ActorId::User(owner) = ctx.principal_id else { return Err(ProjectError::OwnerNotAUser) };
+    pub async fn create(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        scope: Scope,
+        description: Option<&str>,
+    ) -> ProjectResult<Project> {
+        let ActorId::User(owner) = ctx.principal_id else {
+            return Err(ProjectError::OwnerNotAUser);
+        };
         if !matches!(scope, Scope::GlobalScope | Scope::UserScope { .. }) {
             return Err(ProjectError::InvalidScope);
         }
@@ -81,7 +89,9 @@ impl ProjectManager {
         project.description = Description::optional(description)?;
         let _writing = self.writing.lock().await;
         self.stores.projects.create(ctx, &project).await?;
-        if let Err(e) = keep_participants(self.stores.groups.as_ref(), Group::of_project(&project)).await {
+        if let Err(e) =
+            keep_participants(self.stores.groups.as_ref(), Group::of_project(&project)).await
+        {
             if let Err(cleanup) = purge_for_good(self.stores.projects.as_ref(), project.id).await {
                 warn!(project = %project.id, "A project whose group could not be made is left: {cleanup}");
             }
@@ -106,7 +116,9 @@ impl ProjectManager {
     /// whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(project) = self.stores.projects.get(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(project) = self.stores.projects.get(ctx, id).await.optional()? else {
+            return Ok(false);
+        };
         if project.is_own() {
             return Err(ProjectError::InvalidScope);
         }
@@ -123,11 +135,14 @@ impl ProjectManager {
             if kept > 0 {
                 left.push((Session::KIND, kept));
             }
-            left.extend(self.scoped.delete_lying_in(ctx, slice::from_ref(&holder), &removal).await?);
+            left.extend(
+                self.scoped.delete_lying_in(ctx, slice::from_ref(&holder), &removal).await?,
+            );
             ScopeNotEmpty::require_empty(&holder, left)?;
             self.groups.delete_participants(slice::from_ref(&holder), &removal).await?;
             Ok::<_, ProjectError>(())
-        }.await;
+        }
+        .await;
         if let Err(error) = deleted {
             if let Err(undo) = self.stores.projects.restore(&SecurityContext::system(), id).await {
                 warn!(project = %id, "A project could not be deleted and not be unmarked again: {undo}");
@@ -151,7 +166,8 @@ impl ProjectManager {
     pub async fn restore(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<Project> {
         let _writing = self.writing.lock().await;
         // What went with it carries its mark (issue 469).
-        let Deleted { entity: deleted, removal } = self.stores.projects.get_deleted(ctx, id).await.map_err(store_error(id))?;
+        let Deleted { entity: deleted, removal } =
+            self.stores.projects.get_deleted(ctx, id).await.map_err(store_error(id))?;
         if deleted.is_own() {
             return Err(ProjectError::InvalidScope);
         }
@@ -159,18 +175,29 @@ impl ProjectManager {
         let holder = project.holds();
         // If its members cannot come back, it is marked again as it was, so that a restoring tried
         // again finds what went with it.
-        if let Err(error) = self.groups.restore_participants(slice::from_ref(&holder), &removal).await {
-            if let Err(undo) = self.stores.projects.delete(&SecurityContext::system(), id, &removal).await {
+        if let Err(error) =
+            self.groups.restore_participants(slice::from_ref(&holder), &removal).await
+        {
+            if let Err(undo) =
+                self.stores.projects.delete(&SecurityContext::system(), id, &removal).await
+            {
                 warn!(project = %id, "A project could not be restored and not be marked deleted again: {undo}");
             }
             return Err(error.into());
         }
-        for session in self.stores.sessions.list_deleted_with(&SecurityContext::system(), removal.id, &in_project(id)).await?.items {
+        for session in self
+            .stores
+            .sessions
+            .list_deleted_with(&SecurityContext::system(), removal.id, &in_project(id))
+            .await?
+            .items
+        {
             if let Err(e) = self.sessions.restore(ctx, session.id).await {
                 info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
             }
         }
-        if let Err(e) = self.scoped.restore_lying_in(ctx, slice::from_ref(&holder), &removal).await {
+        if let Err(e) = self.scoped.restore_lying_in(ctx, slice::from_ref(&holder), &removal).await
+        {
             warn!(project = %id, "The project was restored, but not what lies in its scope: {e}");
         }
         self.events.announce(GlobalEvent::restored::<Project>(&id), &project);
@@ -188,11 +215,21 @@ impl ProjectManager {
     /// failed, or whatever the store reports; what was purged before stays purged.
     pub async fn purge(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(Deleted { entity: deleted, .. }) = self.stores.projects.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(Deleted { entity: deleted, .. }) =
+            self.stores.projects.get_deleted(ctx, id).await.optional()?
+        else {
+            return Ok(false);
+        };
         if deleted.is_own() {
             return Err(ProjectError::InvalidScope);
         }
-        self.access_policy.require(ctx, ActionType::purge(Project::KIND, &deleted.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy
+            .require(
+                ctx,
+                ActionType::purge(Project::KIND, &deleted.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         let system = SecurityContext::system();
         for Deleted { entity: session, .. } in self.deleted_sessions_in(id).await? {
             self.sessions.purge(&system, session.id).await.map_err(ProjectError::Session)?;
@@ -212,7 +249,12 @@ impl ProjectManager {
 
     /// The deleted sessions that lie in project `id`, read in the runtime's name.
     async fn deleted_sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Deleted<Session>>> {
-        Ok(self.stores.sessions.list_deleted(&SecurityContext::system(), &in_project(id)).await?.items)
+        Ok(self
+            .stores
+            .sessions
+            .list_deleted(&SecurityContext::system(), &in_project(id))
+            .await?
+            .items)
     }
 
     /// Deletes `sessions` on behalf of `ctx` through the `SessionManager`, as a project they lie
@@ -221,12 +263,25 @@ impl ProjectManager {
     ///
     /// # Errors
     /// `Session` if deleting one failed otherwise; what was deleted before stays deleted.
-    async fn delete_sessions(&self, ctx: &SecurityContext, sessions: &[Session], removal: &Removal) -> ProjectResult<usize> {
+    async fn delete_sessions(
+        &self,
+        ctx: &SecurityContext,
+        sessions: &[Session],
+        removal: &Removal,
+    ) -> ProjectResult<usize> {
         let mut kept = 0;
         for session in sessions {
             match self.sessions.delete_with(ctx, session.id, removal).await {
                 Ok(_) => {}
-                Err(e) if is_forbidden(&e) || matches!(e.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_) | SessionError::ScopeNotEmpty(_))) => kept += 1,
+                Err(e)
+                    if is_forbidden(&e)
+                        || matches!(
+                            e.downcast_ref::<SessionError>(),
+                            Some(SessionError::NotFound(_) | SessionError::ScopeNotEmpty(_))
+                        ) =>
+                {
+                    kept += 1
+                }
                 Err(e) => return Err(ProjectError::Session(e)),
             }
         }
@@ -256,24 +311,42 @@ mod tests {
         let manager = Arc::new(SessionManager::new(runtime));
         let projects = ProjectManager::new(Arc::clone(&manager));
         let owner = UserId::new();
-        let ctx = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let ctx =
+            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let system = SecurityContext::system();
         let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
-        let project = projects.create(&ctx, "report", Scope::UserScope { user_id: owner }, None).await.unwrap();
+        let project = projects
+            .create(&ctx, "report", Scope::UserScope { user_id: owner }, None)
+            .await
+            .unwrap();
         session.update_project(&ctx, Some(project.id)).await.unwrap();
-        let bundle = ComponentBundle::new(ScopedName::new("tools", project.holds()).unwrap(), Default::default(), Default::default());
+        let bundle = ComponentBundle::new(
+            ScopedName::new("tools", project.holds()).unwrap(),
+            Default::default(),
+            Default::default(),
+        );
         stores.component_bundles.create(&system, &bundle).await.unwrap();
         projects.delete(&ctx, project.id).await.unwrap();
         let mark = stores.projects.get_deleted(&system, project.id).await.unwrap().removal;
 
         passing.store(0, Ordering::SeqCst);
         projects.restore(&ctx, project.id).await.expect_err("its members cannot come back");
-        assert_eq!(stores.projects.get_deleted(&system, project.id).await.unwrap().removal, mark, "it stays deleted, marked as it was");
+        assert_eq!(
+            stores.projects.get_deleted(&system, project.id).await.unwrap().removal,
+            mark,
+            "it stays deleted, marked as it was"
+        );
 
         passing.store(usize::MAX, Ordering::SeqCst);
         projects.restore(&ctx, project.id).await.expect("restored when tried again");
-        assert!(stores.groups.get(&system, GroupId::of_project(project.id)).await.is_ok(), "with its members");
+        assert!(
+            stores.groups.get(&system, GroupId::of_project(project.id)).await.is_ok(),
+            "with its members"
+        );
         assert!(stores.sessions.get(&system, session.id()).await.is_ok(), "its session");
-        assert!(stores.component_bundles.get(&system, bundle.id).await.is_ok(), "and what lay in its scope");
+        assert!(
+            stores.component_bundles.get(&system, bundle.id).await.is_ok(),
+            "and what lay in its scope"
+        );
     }
 }

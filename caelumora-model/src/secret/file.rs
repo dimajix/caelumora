@@ -2,9 +2,9 @@ use crate::secret::{SecretError, SecretProvider, SecretResult};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::io::ErrorKind;
 use std::fs;
+use std::io::ErrorKind;
+use std::path::PathBuf;
 
 /// Resolves secrets from a flat JSON object file (`{"KEY": "value", ...}`).
 ///
@@ -50,8 +50,8 @@ impl SecretProvider for FileSecretProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use std::fs::File;
+    use std::io::Write;
 
     #[tokio::test]
     async fn reads_existing_key() {

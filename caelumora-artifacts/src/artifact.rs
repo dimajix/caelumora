@@ -151,7 +151,14 @@ impl Artifact {
     /// `storage`, classified `classification`, with its first version
     /// `first`, whose number is set to 1. The id is given, since its content
     /// is stored by it before the document is.
-    pub fn new(id: ArtifactId, name: ScopedName, storage: impl Into<String>, classification: Classification, owner: UserId, mut first: ArtifactVersion) -> Self {
+    pub fn new(
+        id: ArtifactId,
+        name: ScopedName,
+        storage: impl Into<String>,
+        classification: Classification,
+        owner: UserId,
+        mut first: ArtifactVersion,
+    ) -> Self {
         let now = Utc::now();
         first.number = 1;
         Self {
@@ -196,7 +203,8 @@ impl Artifact {
     /// Its access list and those of its versions, to be changed alike - as
     /// entries naming a group that is gone are dropped (issue 347).
     pub fn access_lists_mut(&mut self) -> impl Iterator<Item = &mut Vec<AclEntry>> {
-        iter::once(&mut self.security_attributes.acl).chain(self.versions.iter_mut().map(|version| &mut version.acl))
+        iter::once(&mut self.security_attributes.acl)
+            .chain(self.versions.iter_mut().map(|version| &mut version.acl))
     }
 
     /// Lets `subject` read the artifact, unless its list grants it already
@@ -251,7 +259,10 @@ impl Stored for Artifact {
         for version in &self.versions {
             self.version_attributes(version).validate()?;
             if version.acl.iter().any(|entry| entry.grant != Grant::Read) {
-                return Err("a version's list grants reading alone; changing is the artifact's to grant".to_string());
+                return Err(
+                    "a version's list grants reading alone; changing is the artifact's to grant"
+                        .to_string(),
+                );
             }
         }
         if self.versions.is_empty() {
@@ -352,7 +363,14 @@ mod tests {
     }
 
     fn artifact(scope: Scope, owner: UserId) -> Artifact {
-        Artifact::new(ArtifactId::new(), ScopedName::new("report.csv", scope).unwrap(), "files", Classification::CHANNEL_DEFAULT, owner, version(b"a,b", SessionId::new()))
+        Artifact::new(
+            ArtifactId::new(),
+            ScopedName::new("report.csv", scope).unwrap(),
+            "files",
+            Classification::CHANNEL_DEFAULT,
+            owner,
+            version(b"a,b", SessionId::new()),
+        )
     }
 
     /// Issue 467: an artifact lies in a project's scope and nowhere else, and belongs to a user.
@@ -363,21 +381,37 @@ mod tests {
         let project_id = ProjectId::new();
         let project = Scope::ProjectScope { project_id };
         assert!(artifact(project.clone(), alice).validate().is_ok());
-        assert_eq!(artifact(project.clone(), alice).project(), Some(project_id), "the project it lies in");
-        for scope in [Scope::SessionScope { session_id }, Scope::UserScope { user_id: alice }, Scope::GlobalScope, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }] {
+        assert_eq!(
+            artifact(project.clone(), alice).project(),
+            Some(project_id),
+            "the project it lies in"
+        );
+        for scope in [
+            Scope::SessionScope { session_id },
+            Scope::UserScope { user_id: alice },
+            Scope::GlobalScope,
+            Scope::ChannelScope { session_id, channel_id: ChannelId::new() },
+        ] {
             assert!(artifact(scope.clone(), alice).validate().is_err(), "not in {scope:?}");
         }
-        let systems = Artifact { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..artifact(project, alice) };
+        let systems = Artifact {
+            security_attributes: SecurityAttributes::owned_by(ActorId::System),
+            ..artifact(project, alice)
+        };
         assert!(systems.validate().is_err(), "nobody's");
     }
 
     #[test]
     fn versions_are_numbered_from_one_and_kept() {
         let session_id = SessionId::new();
-        let mut kept = artifact(Scope::ProjectScope { project_id: ProjectId::new() }, UserId::new());
+        let mut kept =
+            artifact(Scope::ProjectScope { project_id: ProjectId::new() }, UserId::new());
         assert_eq!(kept.latest().map(|v| v.number), Some(1));
         assert_eq!(kept.add_version(version(b"a,b\n1,2", session_id)), 2);
-        assert_eq!((kept.version(1).map(|v| v.size), kept.version(2).map(|v| v.size)), (Some(3), Some(7)));
+        assert_eq!(
+            (kept.version(1).map(|v| v.size), kept.version(2).map(|v| v.size)),
+            (Some(3), Some(7))
+        );
         assert!(kept.validate().is_ok());
 
         let gapped = Artifact { versions: vec![kept.versions[1].clone()], ..kept.clone() };
@@ -395,22 +429,47 @@ mod tests {
         let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
         let mut shared = artifact(Scope::ProjectScope { project_id: ProjectId::new() }, alice);
         shared.versions[0].acl = vec![read_by(drafts)];
-        shared.add_version(ArtifactVersion { acl: vec![read_by(team)], ..version(b"final", session_id) });
-        shared.security_attributes = shared.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
+        shared.add_version(ArtifactVersion {
+            acl: vec![read_by(team)],
+            ..version(b"final", session_id)
+        });
+        shared.security_attributes = shared
+            .security_attributes
+            .clone()
+            .granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let bobs = AclEntry { subject: Subject::Actor(ActorId::User(bob)), grant: Grant::Read };
-        assert_eq!(shared.version_attributes(&shared.versions[0]).acl, [read_by(drafts)], "the draft: its own list");
-        assert_eq!(shared.version_attributes(&shared.versions[1]).acl, [read_by(team)], "the final one: not the drafts' readers, nor the artifact's");
-        assert_eq!(shared.version_attributes(&shared.versions[1]).owner_id, ActorId::User(alice), "its owner, the artifact's");
+        assert_eq!(
+            shared.version_attributes(&shared.versions[0]).acl,
+            [read_by(drafts)],
+            "the draft: its own list"
+        );
+        assert_eq!(
+            shared.version_attributes(&shared.versions[1]).acl,
+            [read_by(team)],
+            "the final one: not the drafts' readers, nor the artifact's"
+        );
+        assert_eq!(
+            shared.version_attributes(&shared.versions[1]).owner_id,
+            ActorId::User(alice),
+            "its owner, the artifact's"
+        );
         assert_eq!(shared.security_attributes.acl, [bobs], "the artifact's list is its own");
         shared.grant_reading(Subject::Actor(ActorId::User(bob)));
         shared.grant_reading(Subject::Group(team));
-        assert_eq!(shared.security_attributes.acl, [bobs, read_by(team)], "reading granted once, where it was not");
+        assert_eq!(
+            shared.security_attributes.acl,
+            [bobs, read_by(team)],
+            "reading granted once, where it was not"
+        );
         assert!(shared.validate().is_ok());
         let mut written = shared.clone();
         written.versions[1].acl = vec![AclEntry { grant: Grant::Write, ..read_by(team) }];
         assert!(written.validate().is_err(), "a version's list grants reading alone");
         let mut agent = shared;
-        agent.versions[1].acl = vec![AclEntry { subject: Subject::Actor(ActorId::Agent(AgentId::new())), grant: Grant::Read }];
+        agent.versions[1].acl = vec![AclEntry {
+            subject: Subject::Actor(ActorId::Agent(AgentId::new())),
+            grant: Grant::Read,
+        }];
         assert!(agent.validate().is_err(), "and names no agent");
     }
 
@@ -418,7 +477,10 @@ mod tests {
     fn an_artifact_is_written_without_what_it_does_not_have() {
         let made = artifact(Scope::ProjectScope { project_id: ProjectId::new() }, UserId::new());
         let written = serde_json::to_value(&made).unwrap();
-        assert!(written.get("description").is_none() && written.get("deleted").is_none(), "{written}");
+        assert!(
+            written.get("description").is_none() && written.get("deleted").is_none(),
+            "{written}"
+        );
         assert!(written["versions"][0].get("media_type").is_none());
         let read: Artifact = serde_json::from_value(written).unwrap();
         assert_eq!((read.id, read.name, read.versions), (made.id, made.name, made.versions));

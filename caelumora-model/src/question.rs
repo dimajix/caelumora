@@ -230,7 +230,13 @@ pub enum QuestionError {
 impl Questions {
     /// The users they are put to, as found (`Addressee::Actor`).
     pub fn asked(&self) -> Vec<ActorId> {
-        self.ask.iter().filter_map(|a| match a { Addressee::Actor(id) => Some(*id), _ => None }).collect()
+        self.ask
+            .iter()
+            .filter_map(|a| match a {
+                Addressee::Actor(id) => Some(*id),
+                _ => None,
+            })
+            .collect()
     }
 
     /// To whom alone they are shown, if not to every user of the channel:
@@ -261,13 +267,23 @@ impl Questions {
     /// `UnknownHandle` if a handle names no user of the channel, `OwnerAbsent`
     /// or `InitiatorAbsent` if the owner or the initiator is none of them,
     /// `NotInChannel` if a user named by id is none of them.
-    pub fn resolve(self, participants: &MentionDirectory, users: &[ActorId], context: &SecurityContext) -> Result<Questions, QuestionError> {
+    pub fn resolve(
+        self,
+        participants: &MentionDirectory,
+        users: &[ActorId],
+        context: &SecurityContext,
+    ) -> Result<Questions, QuestionError> {
         let mut asked: Vec<Addressee> = Vec::new();
         for addressee in self.ask {
             let found: Vec<ActorId> = match addressee {
                 Addressee::Handle(written) => {
                     let handle = handle_of(written.strip_prefix('@').unwrap_or(&written));
-                    let found: Vec<ActorId> = participants.lookup(&handle).iter().copied().filter(|id| users.contains(id)).collect();
+                    let found: Vec<ActorId> = participants
+                        .lookup(&handle)
+                        .iter()
+                        .copied()
+                        .filter(|id| users.contains(id))
+                        .collect();
                     if found.is_empty() {
                         return Err(QuestionError::UnknownHandle(written));
                     }
@@ -275,7 +291,9 @@ impl Questions {
                 }
                 Addressee::Owner if users.contains(&context.owner_id) => vec![context.owner_id],
                 Addressee::Owner => return Err(QuestionError::OwnerAbsent),
-                Addressee::Initiator if users.contains(&context.initiator_id) => vec![context.initiator_id],
+                Addressee::Initiator if users.contains(&context.initiator_id) => {
+                    vec![context.initiator_id]
+                }
                 Addressee::Initiator => return Err(QuestionError::InitiatorAbsent),
                 Addressee::Actor(id) if users.contains(&id) => vec![id],
                 Addressee::Actor(_) => return Err(QuestionError::NotInChannel),
@@ -342,19 +360,25 @@ impl Questions {
             let number = index + 1;
             match response {
                 Response::Declined => {}
-                Response::Text { .. } if !question.choices.is_empty() => return Err(QuestionError::NotAText(number)),
+                Response::Text { .. } if !question.choices.is_empty() => {
+                    return Err(QuestionError::NotAText(number))
+                }
                 Response::Text { text } => {
                     if text.is_empty() {
                         return Err(QuestionError::EmptyResponse(number));
                     }
                 }
-                Response::Chosen { .. } if question.choices.is_empty() => return Err(QuestionError::NotAChoice(number)),
+                Response::Chosen { .. } if question.choices.is_empty() => {
+                    return Err(QuestionError::NotAChoice(number))
+                }
                 Response::Chosen { chosen, other } => {
                     if other.as_deref() == Some("") || (chosen.is_empty() && other.is_none()) {
                         return Err(QuestionError::EmptyResponse(number));
                     }
                     let labels: Vec<&str> = chosen.iter().map(String::as_str).collect();
-                    if has_duplicates(&labels) || !labels.iter().all(|l| question.choices.iter().any(|c| c.label == *l)) {
+                    if has_duplicates(&labels)
+                        || !labels.iter().all(|l| question.choices.iter().any(|c| c.label == *l))
+                    {
                         return Err(QuestionError::UnknownChoice(number));
                     }
                     if !question.multi_select && chosen.len() > 1 {
@@ -381,7 +405,12 @@ mod tests {
     }
 
     fn question(choices: &[&str], multi_select: bool) -> Question {
-        Question { header: "Database".to_string(), question: "Which one?".to_string(), choices: choices.iter().map(|l| choice(l)).collect(), multi_select }
+        Question {
+            header: "Database".to_string(),
+            question: "Which one?".to_string(),
+            choices: choices.iter().map(|l| choice(l)).collect(),
+            multi_select,
+        }
     }
 
     fn questions(questions: Vec<Question>) -> Questions {
@@ -390,55 +419,174 @@ mod tests {
 
     #[test]
     fn questions_are_asked_only_within_their_limits_and_of_someone() {
-        assert_eq!(questions(vec![question(&[], false), question(&["yes", "no"], false), question(&["a", "b", "c", "d"], true)]).check(), Ok(()));
+        assert_eq!(
+            questions(vec![
+                question(&[], false),
+                question(&["yes", "no"], false),
+                question(&["a", "b", "c", "d"], true)
+            ])
+            .check(),
+            Ok(())
+        );
 
         assert_eq!(questions(vec![]).check(), Err(QuestionError::QuestionCount));
-        assert_eq!(questions(vec![question(&[], false); MAX_QUESTIONS + 1]).check(), Err(QuestionError::QuestionCount));
-        assert_eq!(Questions { ask: vec![], ..questions(vec![question(&[], false)]) }.check(), Err(QuestionError::NoAddressee));
-        assert_eq!(Questions { ask: vec![Addressee::Handle(String::new())], ..questions(vec![question(&[], false)]) }.check(), Err(QuestionError::EmptyHandle));
-        assert_eq!(Questions { ask: vec![Addressee::Owner], ..questions(vec![question(&[], false)]) }.check(), Ok(()));
+        assert_eq!(
+            questions(vec![question(&[], false); MAX_QUESTIONS + 1]).check(),
+            Err(QuestionError::QuestionCount)
+        );
+        assert_eq!(
+            Questions { ask: vec![], ..questions(vec![question(&[], false)]) }.check(),
+            Err(QuestionError::NoAddressee)
+        );
+        assert_eq!(
+            Questions {
+                ask: vec![Addressee::Handle(String::new())],
+                ..questions(vec![question(&[], false)])
+            }
+            .check(),
+            Err(QuestionError::EmptyHandle)
+        );
+        assert_eq!(
+            Questions { ask: vec![Addressee::Owner], ..questions(vec![question(&[], false)]) }
+                .check(),
+            Ok(())
+        );
 
         let long_header = Question { header: "Thirteen char".to_string(), ..question(&[], false) };
-        assert_eq!(questions(vec![question(&[], false), long_header]).check(), Err(QuestionError::Header(2)), "counted from 1");
-        assert_eq!(questions(vec![Question { header: "Zwölf Zeichn".to_string(), ..question(&[], false) }]).check(), Ok(()), "characters, not bytes");
-        assert_eq!(questions(vec![Question { question: String::new(), ..question(&[], false) }]).check(), Err(QuestionError::NoQuestion(1)));
-        assert_eq!(questions(vec![question(&["only"], false)]).check(), Err(QuestionError::ChoiceCount(1)));
-        assert_eq!(questions(vec![question(&["a", "b", "c", "d", "e"], false)]).check(), Err(QuestionError::ChoiceCount(1)));
-        assert_eq!(questions(vec![question(&["a", "a"], false)]).check(), Err(QuestionError::ChoiceLabels(1)));
-        assert_eq!(questions(vec![question(&["a", ""], false)]).check(), Err(QuestionError::ChoiceLabels(1)));
-        assert_eq!(questions(vec![question(&[], true)]).check(), Err(QuestionError::MultiSelectWithoutChoices(1)));
+        assert_eq!(
+            questions(vec![question(&[], false), long_header]).check(),
+            Err(QuestionError::Header(2)),
+            "counted from 1"
+        );
+        assert_eq!(
+            questions(vec![Question {
+                header: "Zwölf Zeichn".to_string(),
+                ..question(&[], false)
+            }])
+            .check(),
+            Ok(()),
+            "characters, not bytes"
+        );
+        assert_eq!(
+            questions(vec![Question { question: String::new(), ..question(&[], false) }]).check(),
+            Err(QuestionError::NoQuestion(1))
+        );
+        assert_eq!(
+            questions(vec![question(&["only"], false)]).check(),
+            Err(QuestionError::ChoiceCount(1))
+        );
+        assert_eq!(
+            questions(vec![question(&["a", "b", "c", "d", "e"], false)]).check(),
+            Err(QuestionError::ChoiceCount(1))
+        );
+        assert_eq!(
+            questions(vec![question(&["a", "a"], false)]).check(),
+            Err(QuestionError::ChoiceLabels(1))
+        );
+        assert_eq!(
+            questions(vec![question(&["a", ""], false)]).check(),
+            Err(QuestionError::ChoiceLabels(1))
+        );
+        assert_eq!(
+            questions(vec![question(&[], true)]).check(),
+            Err(QuestionError::MultiSelectWithoutChoices(1))
+        );
     }
 
     #[test]
     fn responses_answer_questions_only_as_each_asks() {
-        let asked = questions(vec![question(&[], false), question(&["yes", "no"], false), question(&["a", "b", "c"], true)]);
+        let asked = questions(vec![
+            question(&[], false),
+            question(&["yes", "no"], false),
+            question(&["a", "b", "c"], true),
+        ]);
         let text = |t: &str| Response::Text { text: t.to_string() };
-        let chosen = |labels: &[&str], other: Option<&str>| Response::Chosen { chosen: labels.iter().map(|l| l.to_string()).collect(), other: other.map(str::to_string) };
+        let chosen = |labels: &[&str], other: Option<&str>| Response::Chosen {
+            chosen: labels.iter().map(|l| l.to_string()).collect(),
+            other: other.map(str::to_string),
+        };
 
-        assert_eq!(asked.check_responses(&[text("Postgres"), chosen(&["yes"], None), chosen(&["a", "c"], Some("and d"))]), Ok(()));
-        assert_eq!(asked.check_responses(&[Response::Declined, chosen(&[], Some("maybe")), Response::Declined]), Ok(()), "declined, or only another answer");
+        assert_eq!(
+            asked.check_responses(&[
+                text("Postgres"),
+                chosen(&["yes"], None),
+                chosen(&["a", "c"], Some("and d"))
+            ]),
+            Ok(())
+        );
+        assert_eq!(
+            asked.check_responses(&[
+                Response::Declined,
+                chosen(&[], Some("maybe")),
+                Response::Declined
+            ]),
+            Ok(()),
+            "declined, or only another answer"
+        );
 
-        assert_eq!(asked.check_responses(&[text("Postgres")]), Err(QuestionError::ResponseCount(3)));
-        assert_eq!(asked.check_responses(&[chosen(&["yes"], None), chosen(&["yes"], None), Response::Declined]), Err(QuestionError::NotAChoice(1)));
-        assert_eq!(asked.check_responses(&[text("x"), text("yes"), Response::Declined]), Err(QuestionError::NotAText(2)));
-        assert_eq!(asked.check_responses(&[text(""), chosen(&["yes"], None), Response::Declined]), Err(QuestionError::EmptyResponse(1)));
-        assert_eq!(asked.check_responses(&[text(" "), chosen(&["yes"], None), Response::Declined]), Ok(()), "nothing is trimmed");
-        assert_eq!(asked.check_responses(&[text("x"), chosen(&[], None), Response::Declined]), Err(QuestionError::EmptyResponse(2)));
-        assert_eq!(asked.check_responses(&[text("x"), chosen(&["yes"], Some("")), Response::Declined]), Err(QuestionError::EmptyResponse(2)));
-        assert_eq!(asked.check_responses(&[text("x"), chosen(&["perhaps"], None), Response::Declined]), Err(QuestionError::UnknownChoice(2)));
-        assert_eq!(asked.check_responses(&[text("x"), chosen(&["yes"], None), chosen(&["a", "a"], None)]), Err(QuestionError::UnknownChoice(3)));
-        assert_eq!(asked.check_responses(&[text("x"), chosen(&["yes", "no"], None), Response::Declined]), Err(QuestionError::SeveralChosen(2)));
+        assert_eq!(
+            asked.check_responses(&[text("Postgres")]),
+            Err(QuestionError::ResponseCount(3))
+        );
+        assert_eq!(
+            asked.check_responses(&[
+                chosen(&["yes"], None),
+                chosen(&["yes"], None),
+                Response::Declined
+            ]),
+            Err(QuestionError::NotAChoice(1))
+        );
+        assert_eq!(
+            asked.check_responses(&[text("x"), text("yes"), Response::Declined]),
+            Err(QuestionError::NotAText(2))
+        );
+        assert_eq!(
+            asked.check_responses(&[text(""), chosen(&["yes"], None), Response::Declined]),
+            Err(QuestionError::EmptyResponse(1))
+        );
+        assert_eq!(
+            asked.check_responses(&[text(" "), chosen(&["yes"], None), Response::Declined]),
+            Ok(()),
+            "nothing is trimmed"
+        );
+        assert_eq!(
+            asked.check_responses(&[text("x"), chosen(&[], None), Response::Declined]),
+            Err(QuestionError::EmptyResponse(2))
+        );
+        assert_eq!(
+            asked.check_responses(&[text("x"), chosen(&["yes"], Some("")), Response::Declined]),
+            Err(QuestionError::EmptyResponse(2))
+        );
+        assert_eq!(
+            asked.check_responses(&[text("x"), chosen(&["perhaps"], None), Response::Declined]),
+            Err(QuestionError::UnknownChoice(2))
+        );
+        assert_eq!(
+            asked.check_responses(&[text("x"), chosen(&["yes"], None), chosen(&["a", "a"], None)]),
+            Err(QuestionError::UnknownChoice(3))
+        );
+        assert_eq!(
+            asked.check_responses(&[text("x"), chosen(&["yes", "no"], None), Response::Declined]),
+            Err(QuestionError::SeveralChosen(2))
+        );
     }
 
     #[test]
     fn answers_are_read_back_as_written_and_never_shown_by_debug() {
         let answers = Answers {
-            questions: questions(vec![question(&[], false), question(&["a", "b"], false), question(&[], false)]),
+            questions: questions(vec![
+                question(&[], false),
+                question(&["a", "b"], false),
+                question(&[], false),
+            ]),
             answered_by: ActorId::None,
             answered_by_name: "alice".to_string(),
             responses: vec![
                 Response::Text { text: "hunter2".to_string() },
-                Response::Chosen { chosen: vec!["secret choice".to_string()], other: Some("secret other".to_string()) },
+                Response::Chosen {
+                    chosen: vec!["secret choice".to_string()],
+                    other: Some("secret other".to_string()),
+                },
                 Response::Declined,
             ],
         };
@@ -454,7 +602,17 @@ mod tests {
     #[test]
     fn questions_are_read_back_as_written() {
         let asked = Questions {
-            questions: vec![Question { choices: vec![Choice { recommended: true, description: Some("the usual".to_string()), ..choice("yes") }, choice("no")], ..question(&[], false) }],
+            questions: vec![Question {
+                choices: vec![
+                    Choice {
+                        recommended: true,
+                        description: Some("the usual".to_string()),
+                        ..choice("yes")
+                    },
+                    choice("no"),
+                ],
+                ..question(&[], false)
+            }],
             ask: vec![Addressee::Handle("@alice".to_string()), Addressee::Owner],
             sensitive: true,
         };
@@ -468,39 +626,109 @@ mod tests {
         let alice = ActorId::User(UserId::new());
         let bob = ActorId::User(UserId::new());
         let helper = ActorId::Agent(AgentId::new());
-        let participants = MentionDirectory::new([(alice, "Alice"), (bob, "Bob"), (helper, "Helper")]);
+        let participants =
+            MentionDirectory::new([(alice, "Alice"), (bob, "Bob"), (helper, "Helper")]);
         let users = [alice, bob];
-        let asking = |ask: Vec<Addressee>| Questions { ask, ..questions(vec![question(&[], false)]) };
+        let asking =
+            |ask: Vec<Addressee>| Questions { ask, ..questions(vec![question(&[], false)]) };
         // Alice's agent, asked by bob.
-        let context = SecurityContext::new(bob, Default::default(), Default::default()).next(helper, alice, alice);
+        let context = SecurityContext::new(bob, Default::default(), Default::default())
+            .next(helper, alice, alice);
 
-        let put = asking(vec![Addressee::Handle("@alice".to_string()), Addressee::Handle("Bob".to_string()), Addressee::Owner]).resolve(&participants, &users, &context).unwrap();
-        assert_eq!(put.ask, [Addressee::Actor(alice), Addressee::Actor(bob)], "with or without @, each once");
+        let put = asking(vec![
+            Addressee::Handle("@alice".to_string()),
+            Addressee::Handle("Bob".to_string()),
+            Addressee::Owner,
+        ])
+        .resolve(&participants, &users, &context)
+        .unwrap();
+        assert_eq!(
+            put.ask,
+            [Addressee::Actor(alice), Addressee::Actor(bob)],
+            "with or without @, each once"
+        );
         assert_eq!(put.asked(), [alice, bob]);
         assert!(put.is_asked(bob) && !put.is_asked(helper));
         assert_eq!(put.shown_to(), None, "not sensitive: shown to everyone");
         assert_eq!(Questions { sensitive: true, ..put }.shown_to(), Some(vec![alice, bob]));
 
-        assert_eq!(asking(vec![Addressee::Handle("@all".to_string())]).resolve(&participants, &users, &context).map(|put| put.asked()), Ok(vec![alice, bob]), "every user (issue 401)");
-        assert_eq!(asking(vec![Addressee::Handle("@channel".to_string()), Addressee::Owner]).resolve(&participants, &users, &context).map(|put| put.asked()), Ok(vec![alice, bob]), "each once");
-        assert_eq!(asking(vec![Addressee::Handle("@helper".to_string())]).resolve(&participants, &users, &context), Err(QuestionError::UnknownHandle("@helper".to_string())), "an agent answers no questions");
-        assert_eq!(asking(vec![Addressee::Handle("@carol".to_string())]).resolve(&participants, &users, &context), Err(QuestionError::UnknownHandle("@carol".to_string())));
-        assert_eq!(asking(vec![Addressee::Owner]).resolve(&participants, &users, &context).map(|put| put.asked()), Ok(vec![alice]), "the agent's owner");
-        assert_eq!(asking(vec![Addressee::Initiator]).resolve(&participants, &users, &context).map(|put| put.asked()), Ok(vec![bob]), "whoever caused the call (issue 341)");
+        assert_eq!(
+            asking(vec![Addressee::Handle("@all".to_string())])
+                .resolve(&participants, &users, &context)
+                .map(|put| put.asked()),
+            Ok(vec![alice, bob]),
+            "every user (issue 401)"
+        );
+        assert_eq!(
+            asking(vec![Addressee::Handle("@channel".to_string()), Addressee::Owner])
+                .resolve(&participants, &users, &context)
+                .map(|put| put.asked()),
+            Ok(vec![alice, bob]),
+            "each once"
+        );
+        assert_eq!(
+            asking(vec![Addressee::Handle("@helper".to_string())]).resolve(
+                &participants,
+                &users,
+                &context
+            ),
+            Err(QuestionError::UnknownHandle("@helper".to_string())),
+            "an agent answers no questions"
+        );
+        assert_eq!(
+            asking(vec![Addressee::Handle("@carol".to_string())]).resolve(
+                &participants,
+                &users,
+                &context
+            ),
+            Err(QuestionError::UnknownHandle("@carol".to_string()))
+        );
+        assert_eq!(
+            asking(vec![Addressee::Owner])
+                .resolve(&participants, &users, &context)
+                .map(|put| put.asked()),
+            Ok(vec![alice]),
+            "the agent's owner"
+        );
+        assert_eq!(
+            asking(vec![Addressee::Initiator])
+                .resolve(&participants, &users, &context)
+                .map(|put| put.asked()),
+            Ok(vec![bob]),
+            "whoever caused the call (issue 341)"
+        );
         let elsewhere = ActorId::User(UserId::new());
-        let theirs = SecurityContext::new(elsewhere, Default::default(), Default::default()).next(helper, elsewhere, elsewhere);
-        assert_eq!(asking(vec![Addressee::Owner]).resolve(&participants, &users, &theirs), Err(QuestionError::OwnerAbsent));
-        assert_eq!(asking(vec![Addressee::Initiator]).resolve(&participants, &users, &theirs), Err(QuestionError::InitiatorAbsent));
-        let unasked = SecurityContext::new(helper, Default::default(), Default::default()).next(helper, alice, alice);
-        assert_eq!(asking(vec![Addressee::Initiator]).resolve(&participants, &users, &unasked), Err(QuestionError::InitiatorAbsent), "an agent acting on its own answers nothing");
-        assert_eq!(asking(vec![Addressee::Actor(helper)]).resolve(&participants, &users, &context), Err(QuestionError::NotInChannel));
+        let theirs = SecurityContext::new(elsewhere, Default::default(), Default::default())
+            .next(helper, elsewhere, elsewhere);
+        assert_eq!(
+            asking(vec![Addressee::Owner]).resolve(&participants, &users, &theirs),
+            Err(QuestionError::OwnerAbsent)
+        );
+        assert_eq!(
+            asking(vec![Addressee::Initiator]).resolve(&participants, &users, &theirs),
+            Err(QuestionError::InitiatorAbsent)
+        );
+        let unasked = SecurityContext::new(helper, Default::default(), Default::default())
+            .next(helper, alice, alice);
+        assert_eq!(
+            asking(vec![Addressee::Initiator]).resolve(&participants, &users, &unasked),
+            Err(QuestionError::InitiatorAbsent),
+            "an agent acting on its own answers nothing"
+        );
+        assert_eq!(
+            asking(vec![Addressee::Actor(helper)]).resolve(&participants, &users, &context),
+            Err(QuestionError::NotInChannel)
+        );
     }
 
     #[test]
     fn whoever_left_is_no_longer_asked() {
         let alice = ActorId::User(UserId::new());
         let bob = ActorId::User(UserId::new());
-        let mut put = Questions { ask: vec![Addressee::Actor(alice), Addressee::Actor(bob)], ..questions(vec![question(&[], false)]) };
+        let mut put = Questions {
+            ask: vec![Addressee::Actor(alice), Addressee::Actor(bob)],
+            ..questions(vec![question(&[], false)])
+        };
 
         assert!(put.remove_asked(alice), "bob is still asked");
         assert_eq!(put.asked(), [bob]);

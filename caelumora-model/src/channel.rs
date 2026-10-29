@@ -1,10 +1,10 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::approval::{ApprovalRule, Approver};
+use crate::chain::Position;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
-use crate::chain::Position;
 use crate::history::{History, WINDOW};
 use crate::message::{Message, MessageId};
 use crate::removal::Removal;
@@ -77,8 +77,12 @@ pub(crate) fn uses_workspace_by_default() -> bool {
 /// The components of a channel whose moderator and the policy for the
 /// moderator's slot are named by their kinds, as a request names them
 /// (issue 174). Each one left out is its default.
-pub fn moderation_components(moderator: Option<&str>, responder_policy: Option<&str>) -> ComponentConfig {
-    let component_nodes = [("moderator", moderator), ("responder_policy", responder_policy)].into_iter()
+pub fn moderation_components(
+    moderator: Option<&str>,
+    responder_policy: Option<&str>,
+) -> ComponentConfig {
+    let component_nodes = [("moderator", moderator), ("responder_policy", responder_policy)]
+        .into_iter()
         .filter_map(|(id, kind)| kind.map(|kind| ComponentDescriptor::new(id, kind)))
         .collect();
     ComponentConfig { component_nodes }
@@ -147,8 +151,12 @@ pub enum HistoryAccess {
     #[default]
     All,
     None,
-    LastDays { count: u32 },
-    LastMessages { count: u32 },
+    LastDays {
+        count: u32,
+    },
+    LastMessages {
+        count: u32,
+    },
 }
 
 impl HistoryAccess {
@@ -259,10 +267,16 @@ impl Updatable for Channel {
     fn apply(&mut self, event: &ChannelUpdateEvent) -> Result<(), ValueError> {
         match event {
             ChannelUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
-            ChannelUpdateEvent::ClassificationChanged(classification) => self.classification = classification.clone(),
-            ChannelUpdateEvent::LanguageChanged(language) => self.language = Language::optional(language.as_deref())?,
+            ChannelUpdateEvent::ClassificationChanged(classification) => {
+                self.classification = classification.clone()
+            }
+            ChannelUpdateEvent::LanguageChanged(language) => {
+                self.language = Language::optional(language.as_deref())?
+            }
             ChannelUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
-            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
+            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => {
+                self.describe(summary.as_deref(), briefing.as_deref())?
+            }
             ChannelUpdateEvent::UsesWorkspaceChanged(uses) => self.uses_workspace = *uses,
         }
         Ok(())
@@ -272,7 +286,10 @@ impl Updatable for Channel {
 /// A channel's name is unique in its session (issue 250).
 impl Scoped for Channel {
     fn scoped_name(&self) -> ScopedName {
-        ScopedName { name: self.name.clone(), scope: Scope::SessionScope { session_id: self.session_id } }
+        ScopedName {
+            name: self.name.clone(),
+            scope: Scope::SessionScope { session_id: self.session_id },
+        }
     }
 }
 
@@ -302,7 +319,8 @@ impl Channel {
     /// at the time (issue 23) - the group of its participants, stored with it
     /// (`Group::of_channel`).
     pub fn attributes_of(id: ChannelId, owner: ActorId) -> SecurityAttributes {
-        SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read)
+        SecurityAttributes::owned_by(owner)
+            .granting(Subject::Group(GroupId::of_channel(id)), Grant::Read)
     }
 
     /// A new channel, owned by `owner`, as every channel is built - from a
@@ -314,7 +332,14 @@ impl Channel {
     /// as anyone does, once it is stored; and it has no internal actors -
     /// whoever builds it gives it those that are configured, and no others,
     /// so that without an approver nothing in it is approved.
-    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>) -> Self {
+    pub fn build(
+        session_id: SessionId,
+        owner: ActorId,
+        name: Name,
+        components: ComponentConfig,
+        classification: Classification,
+        language: Option<Language>,
+    ) -> Self {
         let id = ChannelId::new();
         let security_attributes = Self::attributes_of(id, owner);
         Self {
@@ -355,8 +380,13 @@ impl Channel {
     /// # Errors
     /// `ValueError` for the first that does not fit; the channel is then
     /// unchanged.
-    pub fn describe(&mut self, summary: Option<&str>, briefing: Option<&str>) -> Result<(), ValueError> {
-        (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
+    pub fn describe(
+        &mut self,
+        summary: Option<&str>,
+        briefing: Option<&str>,
+    ) -> Result<(), ValueError> {
+        (self.summary, self.briefing) =
+            (Summary::optional(summary)?, Briefing::optional(briefing)?);
         Ok(())
     }
 }
@@ -386,11 +416,7 @@ pub struct ChannelState {
 
 impl ChannelState {
     pub fn new(channel_id: ChannelId) -> Self {
-        Self {
-            channel_id,
-            history: History::default(),
-            history_from: Position::START,
-        }
+        Self { channel_id, history: History::default(), history_from: Position::START }
     }
 
     /// Lets go of what its history holds before its window - the last
@@ -472,19 +498,22 @@ impl InternalActor {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::ProjectId;
     use crate::agent::testing::{replayed, stored};
     use crate::message::testing::{id, make_message};
+    use crate::project::ProjectId;
 
     /// Five messages, one a day, the last one `now`.
     fn daily(now: DateTime<Utc>) -> Vec<Message> {
-        (0..5).rev()
-            .map(|days| Message { id: MessageId::new(), timestamp: now - Duration::days(days), ..Message::new(Classification::CHANNEL_DEFAULT) })
+        (0..5)
+            .rev()
+            .map(|days| Message {
+                id: MessageId::new(),
+                timestamp: now - Duration::days(days),
+                ..Message::new(Classification::CHANNEL_DEFAULT)
+            })
             .collect()
     }
 
@@ -503,7 +532,11 @@ mod tests {
             newest.push(message.clone());
         }
         let from = match access.start_in(&newest, now) {
-            Some(start) => start.from(Position::new(history.iter().position(|m| m.id == start.message()).unwrap() as u64)).get() as usize,
+            Some(start) => start
+                .from(Position::new(
+                    history.iter().position(|m| m.id == start.message()).unwrap() as u64
+                ))
+                .get() as usize,
             None => 0,
         };
         ids(&history[from.min(history.len())..])
@@ -512,13 +545,32 @@ mod tests {
     #[test]
     fn a_change_is_made_into_the_channel_s_values_or_leaves_it_as_it_was() {
         let owner = ActorId::User(UserId::new());
-        let mut channel = Channel::build(SessionId::new(), owner, Name::new("main").unwrap(), ComponentConfig::default(), Classification::CHANNEL_DEFAULT, None);
+        let mut channel = Channel::build(
+            SessionId::new(),
+            owner,
+            Name::new("main").unwrap(),
+            ComponentConfig::default(),
+            Classification::CHANNEL_DEFAULT,
+            None,
+        );
         channel.apply(&ChannelUpdateEvent::NameChanged("planning".to_string())).unwrap();
         channel.apply(&ChannelUpdateEvent::LanguageChanged(Some("de".to_string()))).unwrap();
         channel.apply(&ChannelUpdateEvent::UsesWorkspaceChanged(false)).unwrap();
-        assert_eq!((channel.name.as_str(), channel.language.as_ref().map(|l| l.as_str()), channel.uses_workspace), ("planning", Some("de"), false));
+        assert_eq!(
+            (
+                channel.name.as_str(),
+                channel.language.as_ref().map(|l| l.as_str()),
+                channel.uses_workspace
+            ),
+            ("planning", Some("de"), false)
+        );
 
-        assert!(channel.apply(&ChannelUpdateEvent::LanguageChanged(Some("no language".to_string()))).is_err(), "no language tag");
+        assert!(
+            channel
+                .apply(&ChannelUpdateEvent::LanguageChanged(Some("no language".to_string())))
+                .is_err(),
+            "no language tag"
+        );
         assert_eq!(channel.language.as_ref().map(|l| l.as_str()), Some("de"), "unchanged");
     }
 
@@ -526,48 +578,109 @@ mod tests {
     fn a_channel_without_a_language_of_its_own_is_held_in_its_sessions() {
         let (owner, id, now) = (UserId::new(), SessionId::new(), Utc::now());
         let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: Vec::new(), channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
-            security_attributes: Session::attributes_of(id, owner, &[]), deleted: None,
+            id,
+            name: Name::new("s").unwrap(),
+            summary: None,
+            briefing: None,
+            language: None,
+            time_zone: None,
+            participants: Vec::new(),
+            channels: Vec::new(),
+            commands: Default::default(),
+            privacy: Default::default(),
+            approval_rules: Vec::new(),
+            workspace: None,
+            project: ProjectId::new(),
+            created_at: now,
+            updated_at: now,
+            security_attributes: Session::attributes_of(id, owner, &[]),
+            deleted: None,
         };
         let tag = |tag: &str| Some(Language::new(tag).unwrap());
-        let mut channel = Channel::build(id, ActorId::User(owner), Name::new("main").unwrap(), ComponentConfig::default(), Classification::CHANNEL_DEFAULT, None);
+        let mut channel = Channel::build(
+            id,
+            ActorId::User(owner),
+            Name::new("main").unwrap(),
+            ComponentConfig::default(),
+            Classification::CHANNEL_DEFAULT,
+            None,
+        );
         assert_eq!(channel.effective_language(&session), None, "neither has one");
         session.language = tag("de");
         assert_eq!(channel.effective_language(&session), tag("de").as_ref(), "the session's");
         channel.language = tag("fr");
-        assert_eq!(channel.effective_language(&session), tag("fr").as_ref(), "its own before the session's");
+        assert_eq!(
+            channel.effective_language(&session),
+            tag("fr").as_ref(),
+            "its own before the session's"
+        );
     }
 
     #[test]
     fn history_access_all_and_none_grant_everything_and_nothing() {
         let now = Utc::now();
         let history = daily(now);
-        assert_eq!(granted(HistoryAccess::All, &history, now), ids(&history), "All sees every message");
-        assert!(granted(HistoryAccess::None, &history, now).is_empty(), "None sees no earlier message");
-        assert_eq!(HistoryAccess::None.start_in(&[], now), None, "an empty channel has nothing to hide");
-        assert!(HistoryAccess::All.read_enough(&[], now), "all of it is granted without reading any");
+        assert_eq!(
+            granted(HistoryAccess::All, &history, now),
+            ids(&history),
+            "All sees every message"
+        );
+        assert!(
+            granted(HistoryAccess::None, &history, now).is_empty(),
+            "None sees no earlier message"
+        );
+        assert_eq!(
+            HistoryAccess::None.start_in(&[], now),
+            None,
+            "an empty channel has nothing to hide"
+        );
+        assert!(
+            HistoryAccess::All.read_enough(&[], now),
+            "all of it is granted without reading any"
+        );
     }
 
     #[test]
     fn history_access_last_messages_and_days_cut_the_history() {
         let now = Utc::now();
         let history = daily(now);
-        assert_eq!(granted(HistoryAccess::LastMessages { count: 2 }, &history, now), ids(&history[3..]));
-        assert_eq!(granted(HistoryAccess::LastMessages { count: 9 }, &history, now), ids(&history),
-                   "more than there is grants all of it");
+        assert_eq!(
+            granted(HistoryAccess::LastMessages { count: 2 }, &history, now),
+            ids(&history[3..])
+        );
+        assert_eq!(
+            granted(HistoryAccess::LastMessages { count: 9 }, &history, now),
+            ids(&history),
+            "more than there is grants all of it"
+        );
         assert!(granted(HistoryAccess::LastMessages { count: 0 }, &history, now).is_empty());
         // Messages 1, 2 and 3 days ago plus today's - within the last three days.
-        assert_eq!(granted(HistoryAccess::LastDays { count: 3 }, &history, now), ids(&history[1..]));
-        assert!(granted(HistoryAccess::LastDays { count: 3 }, &history, now + Duration::days(10)).is_empty(),
-                "nothing within the last days sees nothing");
-        assert!(!HistoryAccess::LastDays { count: 3 }.read_enough(&history[3..].iter().rev().cloned().collect::<Vec<_>>(), now), "read back until one older than the grant");
+        assert_eq!(
+            granted(HistoryAccess::LastDays { count: 3 }, &history, now),
+            ids(&history[1..])
+        );
+        assert!(
+            granted(HistoryAccess::LastDays { count: 3 }, &history, now + Duration::days(10))
+                .is_empty(),
+            "nothing within the last days sees nothing"
+        );
+        assert!(
+            !HistoryAccess::LastDays { count: 3 }
+                .read_enough(&history[3..].iter().rev().cloned().collect::<Vec<_>>(), now),
+            "read back until one older than the grant"
+        );
     }
 
     #[test]
     fn a_history_start_is_the_position_of_its_message_or_the_one_after() {
         let at = id(1);
-        assert_eq!((HistoryStart::From(at).from(Position::new(4)), HistoryStart::After(at).from(Position::new(4))), (Position::new(4), Position::new(5)));
+        assert_eq!(
+            (
+                HistoryStart::From(at).from(Position::new(4)),
+                HistoryStart::After(at).from(Position::new(4))
+            ),
+            (Position::new(4), Position::new(5))
+        );
         assert_eq!(HistoryStart::After(at).message(), at);
     }
 
@@ -576,10 +689,18 @@ mod tests {
         let mut state = ChannelState::new(ChannelId::new());
         state.history.extend((1..=250).map(|n| make_message(id(n))).collect());
         state.keep_window();
-        assert_eq!((state.history.base().get(), state.history_from.get()), (0, 0), "nothing goes before it is stored");
+        assert_eq!(
+            (state.history.base().get(), state.history_from.get()),
+            (0, 0),
+            "nothing goes before it is stored"
+        );
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!((state.history.base().get(), state.history.end().get(), state.history_from.get()), (50, 250, 50), "the last entries");
+        assert_eq!(
+            (state.history.base().get(), state.history.end().get(), state.history_from.get()),
+            (50, 250, 50),
+            "the last entries"
+        );
     }
 
     #[test]
@@ -588,7 +709,10 @@ mod tests {
         state.history.extend(vec![make_message(id(1))]);
         let mut copy = stored(&mut state);
         assert!(copy.history.is_empty(), "the history is not in the document");
-        assert!(state.history.changes().is_some(), "and is marked stored by the store that writes it");
+        assert!(
+            state.history.changes().is_some(),
+            "and is marked stored by the store that writes it"
+        );
 
         state.history_from = Position::new(1);
         assert_eq!(state.changes().len(), 1, "the small part, whole");

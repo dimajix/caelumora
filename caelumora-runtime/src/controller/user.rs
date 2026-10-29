@@ -1,21 +1,21 @@
+use super::document::{log_changed, take_over};
 use arc_swap::{ArcSwap, Guard};
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::event::{EventPublisher, GlobalEvent};
-use caelumora_model::value::language::Language;
-use caelumora_model::security::{Secured, SecurityContext};
-use caelumora_model::store::{EntityStore, EntityStores, StateStore, StoreError, StoreResult};
-use caelumora_model::history::Reader;
-use caelumora_model::store::history::HistoryStore;
-use caelumora_model::user::{ReadMark, User, UserId, UserProfile};
 use caelumora_model::channel::Channel;
+use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::history::Reader;
 use caelumora_model::message::MessageId;
-use tracing::debug;
-use std::sync::Arc;
-use super::document::{log_changed, take_over};
+use caelumora_model::security::{Secured, SecurityContext};
+use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::{EntityStore, EntityStores, StateStore, StoreError, StoreResult};
+use caelumora_model::user::{ReadMark, User, UserId, UserProfile};
+use caelumora_model::value::language::Language;
 use chrono::Utc;
+use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::debug;
 
 /// The live user of this instance, shared by all the user's actors in all
 /// sessions (issue 121), with their profile. The user record is not changed
@@ -55,7 +55,14 @@ pub struct UserController {
 impl UserController {
     /// The live `user` with their `profile`, `None` if they have none yet.
     /// Made by the `ControllerManager`, which keeps one per user.
-    pub(crate) fn new(user: User, profile: Option<UserProfile>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores, states: Arc<dyn StateStore>, histories: Arc<dyn HistoryStore>) -> Self {
+    pub(crate) fn new(
+        user: User,
+        profile: Option<UserProfile>,
+        event_publisher: Arc<dyn EventPublisher>,
+        stores: &EntityStores,
+        states: Arc<dyn StateStore>,
+        histories: Arc<dyn HistoryStore>,
+    ) -> Self {
         let id = user.id;
         Self {
             id,
@@ -93,7 +100,8 @@ impl UserController {
     /// `session`, with their roles as they are now (issue 304): what the
     /// `UserManager` stored and announced last (issue 306).
     pub fn security_context(&self, session: SessionId, channel: ChannelId) -> SecurityContext {
-        SecurityContext::new(ActorId::User(self.id), session, channel).with_roles(self.user.load().roles.clone(), None)
+        SecurityContext::new(ActorId::User(self.id), session, channel)
+            .with_roles(self.user.load().roles.clone(), None)
     }
 
     /// Sets how the user introduces themselves and the language they prefer
@@ -106,12 +114,19 @@ impl UserController {
     /// `StoreError::Invalid` for an introduction or a language that does
     /// not fit, otherwise whatever the store reports; the profile is then
     /// unchanged.
-    pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<&str>, preferred_language: Option<&str>) -> StoreResult<UserProfile> {
+    pub async fn update_profile(
+        &self,
+        ctx: &SecurityContext,
+        introduction: Option<&str>,
+        preferred_language: Option<&str>,
+    ) -> StoreResult<UserProfile> {
         self.change(ctx, |profile| {
             profile.introduce(introduction)?;
             profile.preferred_language = Language::optional(preferred_language)?;
             Ok(())
-        }).await.map(|(_, profile)| profile)
+        })
+        .await
+        .map(|(_, profile)| profile)
     }
 
     /// Adds `rule` to the user's answers to tool calls given in advance
@@ -123,8 +138,16 @@ impl UserController {
     /// `StoreError::Validation` for a rule a person may not keep, or one too
     /// many (`UserProfile::add_approval_rule`), otherwise whatever the store
     /// reports; the profile is then unchanged.
-    pub async fn add_approval_rule(&self, ctx: &SecurityContext, rule: ApprovalRule) -> StoreResult<()> {
-        self.change(ctx, |profile| profile.add_approval_rule(rule).map_err(|e| StoreError::Validation(e.to_string()))).await.map(|_| ())
+    pub async fn add_approval_rule(
+        &self,
+        ctx: &SecurityContext,
+        rule: ApprovalRule,
+    ) -> StoreResult<()> {
+        self.change(ctx, |profile| {
+            profile.add_approval_rule(rule).map_err(|e| StoreError::Validation(e.to_string()))
+        })
+        .await
+        .map(|_| ())
     }
 
     /// Takes the user's rule `id` back (issue 13), on behalf of `ctx`, as
@@ -133,11 +156,17 @@ impl UserController {
     /// # Errors
     /// `StoreError::NotFound` if the user has no such rule, otherwise
     /// whatever the store reports; the profile is then unchanged.
-    pub async fn remove_approval_rule(&self, ctx: &SecurityContext, id: ApprovalRuleId) -> StoreResult<()> {
+    pub async fn remove_approval_rule(
+        &self,
+        ctx: &SecurityContext,
+        id: ApprovalRuleId,
+    ) -> StoreResult<()> {
         self.change(ctx, |profile| match profile.remove_approval_rule(id) {
             true => Ok(()),
             false => Err(StoreError::NotFound { entity: "approval_rule", id: id.to_string() }),
-        }).await.map(|_| ())
+        })
+        .await
+        .map(|_| ())
     }
 
     /// Changes the profile as `change` says, on behalf of `ctx`: stored
@@ -147,7 +176,11 @@ impl UserController {
     ///
     /// # Errors
     /// What `change` reports, or the store; the profile is then unchanged.
-    async fn change<T>(&self, ctx: &SecurityContext, change: impl FnOnce(&mut UserProfile) -> StoreResult<T>) -> StoreResult<(T, UserProfile)> {
+    async fn change<T>(
+        &self,
+        ctx: &SecurityContext,
+        change: impl FnOnce(&mut UserProfile) -> StoreResult<T>,
+    ) -> StoreResult<(T, UserProfile)> {
         let _guard = self.write_lock.lock().await;
         let mut profile = (**self.profile.load()).clone();
         let changed = change(&mut profile)?;
@@ -156,7 +189,8 @@ impl UserController {
         log_changed(ctx, &profile);
         self.profile.store(Arc::new(profile.clone()));
         let attributes = profile.security_attributes().clone();
-        self.event_publisher.publish(GlobalEvent::updated::<UserProfile>(&self.id, &profile), attributes);
+        self.event_publisher
+            .publish(GlobalEvent::updated::<UserProfile>(&self.id, &profile), attributes);
         Ok((changed, profile))
     }
 
@@ -188,17 +222,30 @@ impl UserController {
     /// message the user does not see in it; `Validation` for a context not
     /// the user's; otherwise whatever the stores report. Nothing is changed
     /// then.
-    pub async fn mark_read(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId, message_id: MessageId) -> StoreResult<()> {
+    pub async fn mark_read(
+        &self,
+        ctx: &SecurityContext,
+        session_id: SessionId,
+        channel_id: ChannelId,
+        message_id: MessageId,
+    ) -> StoreResult<()> {
         let reader = ActorId::User(self.id);
         if ctx.caller_id != reader {
-            return Err(StoreError::Validation(format!("only user {} marks what they read", self.id)));
+            return Err(StoreError::Validation(format!(
+                "only user {} marks what they read",
+                self.id
+            )));
         }
         let channel = self.channels.get(ctx, channel_id).await?;
         if channel.session_id != session_id {
             return Err(StoreError::NotFound { entity: "channel", id: channel_id.to_string() });
         }
         let not_seen = || StoreError::NotFound { entity: "message", id: message_id.to_string() };
-        let (position, _) = self.histories.said(channel_id, &Reader::Participant(reader), message_id).await?.ok_or_else(not_seen)?;
+        let (position, _) = self
+            .histories
+            .said(channel_id, &Reader::Participant(reader), message_id)
+            .await?
+            .ok_or_else(not_seen)?;
         let _guard = self.read_lock.lock().await;
         let mut state = self.states.get_user_channel_state(self.id, channel_id).await?;
         if state.read_up_to(ReadMark { position, message: message_id }) {
@@ -214,7 +261,11 @@ impl UserController {
     /// taking over this controller's own change again changes nothing.
     pub fn process_global_event(&self, event: &GlobalEvent) {
         take_over(&self.user, &self.id, event);
-        if let Some(profile) = event.about::<UserProfile>().filter(|(uid, _)| *uid == self.id).and_then(|(_, change)| change.update::<UserProfile>()) {
+        if let Some(profile) = event
+            .about::<UserProfile>()
+            .filter(|(uid, _)| *uid == self.id)
+            .and_then(|(_, change)| change.update::<UserProfile>())
+        {
             self.profile.store(Arc::new(profile));
         }
     }
@@ -223,16 +274,16 @@ impl UserController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
+    use caelumora_model::role::RoleId;
+    use caelumora_model::security::OwnershipPolicy;
+    use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::store::Persistence;
+    use caelumora_model::user::UserUpdateEvent;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
-    use caelumora_model::role::RoleId;
-    use caelumora_model::user::UserUpdateEvent;
-    use caelumora_model::store::Persistence;
-    use caelumora_model::security::OwnershipPolicy;
-    use std::sync::Mutex;
-    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
-    use caelumora_model::security::SecurityAttributes;
     use std::slice;
+    use std::sync::Mutex;
 
     /// What was announced, in order.
     #[derive(Debug, Default)]
@@ -243,13 +294,24 @@ mod tests {
             self.0.lock().unwrap().push(event);
         }
 
-        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[Classification]) {
+        fn publish_classified(
+            &self,
+            event: GlobalEvent,
+            attributes: SecurityAttributes,
+            _classifications: &[Classification],
+        ) {
             self.publish(event, attributes);
         }
     }
 
     fn alice() -> User {
-        User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }
+        User {
+            id: UserId::new(),
+            username: Name::new("alice").unwrap(),
+            email: String::new(),
+            roles: Vec::new(),
+            deleted: None,
+        }
     }
 
     fn as_user(id: UserId) -> SecurityContext {
@@ -257,25 +319,61 @@ mod tests {
     }
 
     /// The controller of `user`, keeping everything in `store`.
-    fn controller_in(store: &Persistence, user: &User, event_publisher: Arc<dyn EventPublisher>) -> UserController {
-        UserController::new(user.clone(), None, event_publisher, &store.entity_stores().unwrap(), store.state_store(), store.history_store())
+    fn controller_in(
+        store: &Persistence,
+        user: &User,
+        event_publisher: Arc<dyn EventPublisher>,
+    ) -> UserController {
+        UserController::new(
+            user.clone(),
+            None,
+            event_publisher,
+            &store.entity_stores().unwrap(),
+            store.state_store(),
+            store.history_store(),
+        )
     }
 
     #[tokio::test]
     async fn a_profile_is_stored_first_then_taken_over_and_announced() {
-        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Persistence::in_memory_with(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
         let hers = as_user(user.id);
 
         for text in ["I run the budget.", "I run the budget and the team."] {
-            let profile = controller.update_profile(&hers, Some(text), None).await.expect("her own, created once and changed after");
+            let profile = controller
+                .update_profile(&hers, Some(text), None)
+                .await
+                .expect("her own, created once and changed after");
             assert_eq!(profile.introduction.as_ref().map(Introduction::as_str), Some(text));
-            assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some(text), "live");
-            assert_eq!(store.entity_stores().unwrap().user_profiles.get(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
+            assert_eq!(
+                controller.profile().introduction.as_ref().map(Introduction::as_str),
+                Some(text),
+                "live"
+            );
+            assert_eq!(
+                store
+                    .entity_stores()
+                    .unwrap()
+                    .user_profiles
+                    .get(&hers, user.id)
+                    .await
+                    .unwrap()
+                    .introduction
+                    .as_ref()
+                    .map(Introduction::as_str),
+                Some(text),
+                "stored"
+            );
         }
-        assert!(matches!(announced.0.lock().unwrap().as_slice(), [_, event] if matches!(event.about::<UserProfile>(), Some((id, change)) if id == user.id && change.update::<UserProfile>().is_some_and(|p| p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team.")))));
+        assert!(
+            matches!(announced.0.lock().unwrap().as_slice(), [_, event] if matches!(event.about::<UserProfile>(), Some((id, change)) if id == user.id && change.update::<UserProfile>().is_some_and(|p| p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team."))))
+        );
     }
 
     /// Issue 306: the roles the `UserManager` stored and announced are the
@@ -283,19 +381,32 @@ mod tests {
     #[test]
     fn the_roles_follow_their_announcement() {
         let user = alice();
-        let controller = controller_in(&Persistence::in_memory(), &user, Arc::new(Announced::default()));
+        let controller =
+            controller_in(&Persistence::in_memory(), &user, Arc::new(Announced::default()));
         let staff = RoleId::new();
-        controller.process_global_event(&GlobalEvent::updated::<User>(&UserId::new(), &UserUpdateEvent::RolesChanged(vec![staff])));
+        controller.process_global_event(&GlobalEvent::updated::<User>(
+            &UserId::new(),
+            &UserUpdateEvent::RolesChanged(vec![staff]),
+        ));
         assert!(controller.load().roles.is_empty(), "not someone else's");
-        controller.process_global_event(&GlobalEvent::updated::<User>(&user.id, &UserUpdateEvent::RolesChanged(vec![staff])));
+        controller.process_global_event(&GlobalEvent::updated::<User>(
+            &user.id,
+            &UserUpdateEvent::RolesChanged(vec![staff]),
+        ));
         assert_eq!(controller.load().roles, [staff], "given");
-        controller.process_global_event(&GlobalEvent::updated::<User>(&user.id, &UserUpdateEvent::RolesChanged(Vec::new())));
+        controller.process_global_event(&GlobalEvent::updated::<User>(
+            &user.id,
+            &UserUpdateEvent::RolesChanged(Vec::new()),
+        ));
         assert!(controller.load().roles.is_empty(), "and taken");
     }
 
     #[tokio::test]
     async fn a_refused_profile_changes_nothing() {
-        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Persistence::in_memory_with(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
@@ -305,8 +416,12 @@ mod tests {
         let invalid = controller.update_profile(&as_user(user.id), None, Some("Deutsch")).await;
         assert!(matches!(invalid, Err(StoreError::Invalid(_))), "a language, too: {invalid:?}");
 
-        let forged = controller.update_profile(&as_user(UserId::new()), Some("I am alice."), None).await;
-        assert!(matches!(forged, Err(StoreError::PermissionDenied(_))), "not by someone else: {forged:?}");
+        let forged =
+            controller.update_profile(&as_user(UserId::new()), Some("I am alice."), None).await;
+        assert!(
+            matches!(forged, Err(StoreError::PermissionDenied(_))),
+            "not by someone else: {forged:?}"
+        );
 
         assert_eq!(controller.profile().introduction, None);
         assert!(announced.0.lock().unwrap().is_empty());
@@ -315,25 +430,71 @@ mod tests {
     #[tokio::test]
     async fn a_rule_is_added_and_taken_back_by_the_user_alone() {
         use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
-        let store = Persistence::in_memory_with(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Persistence::in_memory_with(
+            Arc::new(OwnershipPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        );
         let user = alice();
         let controller = controller_in(&store, &user, Arc::new(()));
         let hers = as_user(user.id);
         controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
-        let rule = ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, RuleDecision::Allow, Reach::Everywhere, None).unwrap();
+        let rule = ApprovalRule::new(
+            ToolMatcher { tool: "shell".to_string(), arguments: Default::default() },
+            RuleDecision::Allow,
+            Reach::Everywhere,
+            None,
+        )
+        .unwrap();
 
-        assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied(_))), "not by someone else");
+        assert!(
+            matches!(
+                controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await,
+                Err(StoreError::PermissionDenied(_))
+            ),
+            "not by someone else"
+        );
         controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
         assert_eq!(controller.profile().approval_rules(), slice::from_ref(&rule), "live");
-        assert_eq!(store.entity_stores().unwrap().user_profiles.get(&hers, user.id).await.unwrap().approval_rules(), slice::from_ref(&rule), "stored");
-        assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."), "the rest stays");
+        assert_eq!(
+            store
+                .entity_stores()
+                .unwrap()
+                .user_profiles
+                .get(&hers, user.id)
+                .await
+                .unwrap()
+                .approval_rules(),
+            slice::from_ref(&rule),
+            "stored"
+        );
+        assert_eq!(
+            controller.profile().introduction.as_ref().map(Introduction::as_str),
+            Some("I run the budget."),
+            "the rest stays"
+        );
         controller.update_profile(&hers, None, None).await.unwrap();
-        assert_eq!(controller.profile().approval_rules(), slice::from_ref(&rule), "and stays through a change of the rest");
+        assert_eq!(
+            controller.profile().approval_rules(),
+            slice::from_ref(&rule),
+            "and stays through a change of the rest"
+        );
 
         let asking = ApprovalRule { decision: RuleDecision::Ask, ..rule.clone() };
-        assert!(matches!(controller.add_approval_rule(&hers, asking).await, Err(StoreError::Validation(_))), "a person allows or denies");
+        assert!(
+            matches!(
+                controller.add_approval_rule(&hers, asking).await,
+                Err(StoreError::Validation(_))
+            ),
+            "a person allows or denies"
+        );
         controller.remove_approval_rule(&hers, rule.id).await.expect("taken back");
-        assert!(matches!(controller.remove_approval_rule(&hers, rule.id).await, Err(StoreError::NotFound { .. })), "once");
+        assert!(
+            matches!(
+                controller.remove_approval_rule(&hers, rule.id).await,
+                Err(StoreError::NotFound { .. })
+            ),
+            "once"
+        );
         assert!(controller.profile().approval_rules().is_empty());
     }
 
@@ -341,11 +502,18 @@ mod tests {
     async fn a_profile_changed_elsewhere_is_taken_over() {
         let user = alice();
         let controller = controller_in(&Persistence::in_memory(), &user, Arc::new(()));
-        let changed = UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));
+        let changed =
+            UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));
 
-        controller.process_global_event(&GlobalEvent::updated::<UserProfile>(&UserId::new(), &UserProfile::new(UserId::new(), Some(Introduction::new("not hers").unwrap()))));
+        controller.process_global_event(&GlobalEvent::updated::<UserProfile>(
+            &UserId::new(),
+            &UserProfile::new(UserId::new(), Some(Introduction::new("not hers").unwrap())),
+        ));
         assert_eq!(controller.profile().introduction, None, "another user's");
         controller.process_global_event(&GlobalEvent::updated::<UserProfile>(&user.id, &changed));
-        assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
+        assert_eq!(
+            controller.profile().introduction.as_ref().map(Introduction::as_str),
+            Some("I run the budget.")
+        );
     }
 }

@@ -10,9 +10,9 @@ pub mod kept_chain;
 pub mod memberships;
 pub mod memory;
 pub mod query;
-pub mod transcript;
 #[cfg(any(test, feature = "test-support"))]
 pub mod suite;
+pub mod transcript;
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -26,32 +26,31 @@ use uuid::Uuid;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentBundle;
-use crate::removal::{Removal, RemovalId};
+use crate::confidentiality::ConfidentialityRules;
 use crate::confidentiality::{Classification, ConfidentialityPolicy};
-use crate::security::{Refused, Secured, SecurityContext, AccessPolicy, Verb};
+use crate::group::Group;
+use crate::intern::intern;
+use crate::project::Project;
+use crate::removal::{Removal, RemovalId};
+use crate::security::AllowAllPolicy;
+use crate::security::{AccessPolicy, Refused, Secured, SecurityContext, Verb};
 use crate::session::Session;
+use crate::store::documents::{CheckedStore, Document, DocumentOf, DocumentStorage};
+use crate::store::history::HistoryStore;
+use crate::store::memory::MemoryStore;
+use crate::store::query::{Field, Page, Query};
+use crate::store::transcript::TranscriptStore;
 use crate::template::SessionTemplate;
+use crate::type_map::{TypeKey, TypeMap};
 use crate::user::{User, UserChannelState, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::value::ValueError;
-use chrono::{DateTime, Utc};
 use crate::workspace::Workspace;
-use crate::group::Group;
-use crate::project::Project;
-use crate::intern::intern;
-use crate::store::history::HistoryStore;
-use crate::store::transcript::TranscriptStore;
-use crate::store::memory::MemoryStore;
-use crate::store::query::{Field, Page, Query};
-use crate::type_map::{TypeKey, TypeMap};
-use crate::store::documents::{CheckedStore, Document, DocumentOf, DocumentStorage};
-use crate::security::AllowAllPolicy;
-use crate::confidentiality::ConfidentialityRules;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
-use std::ptr;
 use std::fmt;
-
+use std::ptr;
+use std::sync::{Mutex, PoisonError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -110,7 +109,6 @@ impl<T> StoreResultExt<T> for StoreResult<T> {
     }
 }
 
-
 /// A state the `StateStore` keeps (issue 193): it tells what changed since
 /// it was last stored, as a sequence of changes, so that a store writes only
 /// that, and replays such changes onto what it stored before. A state is
@@ -134,7 +132,6 @@ pub trait Journaled: Serialize + DeserializeOwned + Send {
     fn apply(&mut self, change: Self::Change) -> Result<(), String>;
 }
 
-
 /// A kind of entity the stores keep: what the actions that concern every
 /// kind alike are keyed by, and its name in errors. Open
 /// (issue 323): each stored type names its own (`Stored::KIND`), so that a
@@ -157,10 +154,16 @@ impl EntityKind {
     /// Its name as a type's is written - `SessionTemplate` -, as
     /// `ActionType::describe` names what is done with it.
     pub fn title(self) -> String {
-        self.name().split('_').map(|word| {
-            let mut letters = word.chars();
-            letters.next().map(|first| first.to_ascii_uppercase().to_string() + letters.as_str()).unwrap_or_default()
-        }).collect()
+        self.name()
+            .split('_')
+            .map(|word| {
+                let mut letters = word.chars();
+                letters
+                    .next()
+                    .map(|first| first.to_ascii_uppercase().to_string() + letters.as_str())
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 }
 
@@ -196,7 +199,17 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
 
     /// What it is kept and found by: a UUID under a type of its kind's
     /// (`define_id!`), so that every store keys every kind alike.
-    type Id: Clone + Eq + Hash + Display + FromStr + Debug + Send + Sync + From<Uuid> + Into<Uuid> + 'static;
+    type Id: Clone
+        + Eq
+        + Hash
+        + Display
+        + FromStr
+        + Debug
+        + Send
+        + Sync
+        + From<Uuid>
+        + Into<Uuid>
+        + 'static;
 
     /// The kind of entity it lies in - a channel in a `Session` -, or
     /// `NoEntity` for a kind that lies in none (issue 335). Its events name
@@ -259,7 +272,8 @@ impl Presence {
     /// among them: what a storage compares the marks of its documents with
     /// (`Document::removal_id`).
     pub(crate) fn holds_mark(self, removal_id: Option<RemovalId>) -> bool {
-        removal_id.is_some() == self.marked() && self.removal_id().is_none_or(|id| removal_id == Some(id))
+        removal_id.is_some() == self.marked()
+            && self.removal_id().is_none_or(|id| removal_id == Some(id))
     }
 
     /// Whether they carry the mark of a deletion, whichever: what a storage that compares the mark
@@ -406,15 +420,29 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
-    async fn delete(&self, ctx: &SecurityContext, id: T::Id, removal: &Removal) -> StoreResult<bool>;
+    async fn delete(
+        &self,
+        ctx: &SecurityContext,
+        id: T::Id,
+        removal: &Removal,
+    ) -> StoreResult<bool>;
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>>;
-    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<Deleted<T>>>;
+    async fn list_deleted(
+        &self,
+        ctx: &SecurityContext,
+        query: &Query<T::Field>,
+    ) -> StoreResult<Page<Deleted<T>>>;
     /// Those meeting `query` that were deleted with the deletion `removal_id` - that carry its
     /// mark -, read as `list_deleted` reads.
-    async fn list_deleted_with(&self, ctx: &SecurityContext, removal_id: RemovalId, query: &Query<T::Field>) -> StoreResult<Page<T>>;
+    async fn list_deleted_with(
+        &self,
+        ctx: &SecurityContext,
+        removal_id: RemovalId,
+        query: &Query<T::Field>,
+    ) -> StoreResult<Page<T>>;
     /// The one of `name`, in exactly that scope, among what the caller may
     /// read (issue 178).
     async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;
@@ -491,7 +519,11 @@ pub trait PersistenceBackend: Debug + Send + Sync {
     ///
     /// # Errors
     /// If the storage cannot be opened, or the backend keeps no entities.
-    fn documents(&self, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Arc<dyn DocumentStorage>>;
+    fn documents(
+        &self,
+        kind: EntityKind,
+        document_of: DocumentOf,
+    ) -> StoreResult<Arc<dyn DocumentStorage>>;
 
     /// The store of the states - the backend itself, if it is one.
     ///
@@ -567,7 +599,12 @@ impl Persistence {
     ///
     /// # Errors
     /// If `states` keeps no states, or its state stores cannot be opened.
-    pub fn new(entities: Arc<dyn PersistenceBackend>, states: Arc<dyn PersistenceBackend>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> StoreResult<Self> {
+    pub fn new(
+        entities: Arc<dyn PersistenceBackend>,
+        states: Arc<dyn PersistenceBackend>,
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+    ) -> StoreResult<Self> {
         Ok(Self {
             state_store: Arc::clone(&states).state_store()?,
             history_store: Arc::clone(&states).history_store()?,
@@ -584,21 +621,31 @@ impl Persistence {
     ///
     /// # Errors
     /// As `new`.
-    pub fn over(backend: Arc<dyn PersistenceBackend>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> StoreResult<Self> {
+    pub fn over(
+        backend: Arc<dyn PersistenceBackend>,
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+    ) -> StoreResult<Self> {
         Self::new(Arc::clone(&backend), backend, access_policy, confidentiality)
     }
 
     /// Stores in memory that permit everything - for tests and throwaway
     /// setups.
     pub fn in_memory() -> Self {
-        Self::in_memory_with(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
+        Self::in_memory_with(
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        )
     }
 
     /// Stores in memory, the entities and the states in one, asking
     /// `access_policy` and `confidentiality` - for tests of the policies.
     /// Unlike `over`, it cannot fail: the memory store is the three state
     /// stores itself.
-    pub fn in_memory_with(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+    pub fn in_memory_with(
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+    ) -> Self {
         let memory = Arc::new(MemoryStore::new());
         Self {
             entities: Arc::<MemoryStore>::clone(&memory),
@@ -660,7 +707,12 @@ impl Persistence {
         let mut opened = self.opened.lock().unwrap_or_else(PoisonError::into_inner);
         let named = *opened.kinds.entry(T::KIND).or_insert(kind);
         if named.id != kind.id {
-            return Err(StoreError::Conflict(format!("the kinds {} and {} are both named '{}'", named.name(), kind.name(), T::KIND)));
+            return Err(StoreError::Conflict(format!(
+                "the kinds {} and {} are both named '{}'",
+                named.name(),
+                kind.name(),
+                T::KIND
+            )));
         }
         opened.stores.get_or_try_insert(|| {
             let storage = self.entities.documents(T::KIND, Document::read::<T>)?;
@@ -693,14 +745,23 @@ impl EntityStoreFactory for Persistence {
 /// writers of one state, even one after the other, would store the changes
 /// of the one onto what the other stored.
 #[async_trait]
-pub trait StateStore : Debug + Sync + Send {
+pub trait StateStore: Debug + Sync + Send {
     /// An agent in a channel, of either kind (issue 206).
-    async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState>;
+    async fn get_agent_channel_state(
+        &self,
+        agent_id: AgentId,
+        channel_id: ChannelId,
+    ) -> StoreResult<AgentChannelState>;
     /// Stores the agent's state in the channel, and keeps the index of the
     /// work under way with it (issue 388): the agent is in it for the channel
     /// while the state stored has work under way
     /// (`AgentChannelState::has_work_under_way`).
-    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()>;
+    async fn put_agent_channel_state(
+        &self,
+        agent_id: AgentId,
+        channel_id: ChannelId,
+        state: &mut AgentChannelState,
+    ) -> StoreResult<()>;
 
     /// The channels in which an agent's state stored has work under way
     /// (issue 388), each once, in no particular order: what a restart starts
@@ -711,12 +772,25 @@ pub trait StateStore : Debug + Sync + Send {
     async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()>;
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState>;
-    async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()>;
+    async fn put_channel_state(
+        &self,
+        channel_id: ChannelId,
+        state: &mut ChannelState,
+    ) -> StoreResult<()>;
 
     /// A user in a channel (issue 404): up to where they read it. One never
     /// stored reads as the default, nothing read.
-    async fn get_user_channel_state(&self, user_id: UserId, channel_id: ChannelId) -> StoreResult<UserChannelState>;
-    async fn put_user_channel_state(&self, user_id: UserId, channel_id: ChannelId, state: &mut UserChannelState) -> StoreResult<()>;
+    async fn get_user_channel_state(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+    ) -> StoreResult<UserChannelState>;
+    async fn put_user_channel_state(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+        state: &mut UserChannelState,
+    ) -> StoreResult<()>;
 
     /// Deletes the state of a channel that no longer exists: its own and that
     /// of every agent and user in it. Nothing to delete is not an error
@@ -728,28 +802,27 @@ pub trait StateStore : Debug + Sync + Send {
     async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()>;
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::session::SessionId;
-    use crate::project::ProjectId;
-    use crate::store::query::NoField;
     use super::*;
-    use crate::security::{SecurityAttributes, SecurityContext};
     use crate::confidentiality::ConfidentialityRules;
+    use crate::project::ProjectId;
     use crate::removal::Removal;
     use crate::security::AllowAllPolicy;
+    use crate::security::{SecurityAttributes, SecurityContext};
+    use crate::session::SessionId;
     use crate::store::memory::MemoryStore;
+    use crate::store::query::NoField;
+    use crate::value::name::Name;
     use std::sync::Arc;
     use uuid::Uuid;
-    use crate::value::name::Name;
-
 
     #[test]
     fn what_is_not_found_is_none_and_every_other_error_stays_one() {
         let found: StoreResult<u32> = Ok(1);
         assert_eq!(found.optional().unwrap(), Some(1));
-        let gone: StoreResult<u32> = Err(StoreError::NotFound { entity: "user", id: "1".to_string() });
+        let gone: StoreResult<u32> =
+            Err(StoreError::NotFound { entity: "user", id: "1".to_string() });
         assert_eq!(gone.optional().unwrap(), None);
         let failed: StoreResult<u32> = Err(StoreError::Backend("disk".to_string()));
         assert!(matches!(failed.optional(), Err(StoreError::Backend(_))));
@@ -758,7 +831,10 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_works() {
         let session1 = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
+            summary: None,
+            briefing: None,
+            language: None,
+            time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             project: ProjectId::new(),
@@ -774,7 +850,10 @@ mod tests {
             deleted: None,
         };
         let session2 = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
+            summary: None,
+            briefing: None,
+            language: None,
+            time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             project: ProjectId::new(),
@@ -868,17 +947,48 @@ mod tests {
     #[tokio::test]
     async fn a_backend_opens_a_kind_once_for_everybody_and_no_two_kinds_of_one_name() {
         let memory = Arc::new(MemoryStore::new());
-        let backend = Persistence::over(Arc::<MemoryStore>::clone(&memory), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
+        let backend = Persistence::over(
+            Arc::<MemoryStore>::clone(&memory),
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        )
+        .unwrap();
         let notes = backend.entity_store::<Note>().unwrap();
-        let note = Note { id: NoteId::new(), security_attributes: SecurityAttributes::default(), deleted: None };
+        let note = Note {
+            id: NoteId::new(),
+            security_attributes: SecurityAttributes::default(),
+            deleted: None,
+        };
         notes.create(&SecurityContext::system(), &note).await.unwrap();
         let again = backend.entity_store::<Note>().unwrap();
-        assert!(again.get(&SecurityContext::system(), note.id).await.is_ok(), "the same store, asked again");
+        assert!(
+            again.get(&SecurityContext::system(), note.id).await.is_ok(),
+            "the same store, asked again"
+        );
         let core = backend.entity_stores().unwrap();
-        assert!(Arc::ptr_eq(&core.groups, &backend.entity_stores().unwrap().groups), "the core's kinds, too");
+        assert!(
+            Arc::ptr_eq(&core.groups, &backend.entity_stores().unwrap().groups),
+            "the core's kinds, too"
+        );
         let refused = backend.entity_store::<Impostor>().expect_err("named as the groups are");
-        assert!(matches!(&refused, StoreError::Conflict(why) if why.contains("'group'")), "{refused}");
-        let other = Persistence::over(memory, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
-        assert!(other.entity_store::<Note>().unwrap().get(&SecurityContext::system(), note.id).await.is_ok(), "one storage of a kind in a backend");
+        assert!(
+            matches!(&refused, StoreError::Conflict(why) if why.contains("'group'")),
+            "{refused}"
+        );
+        let other = Persistence::over(
+            memory,
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        )
+        .unwrap();
+        assert!(
+            other
+                .entity_store::<Note>()
+                .unwrap()
+                .get(&SecurityContext::system(), note.id)
+                .await
+                .is_ok(),
+            "one storage of a kind in a backend"
+        );
     }
 }

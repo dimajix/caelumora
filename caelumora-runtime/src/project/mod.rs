@@ -26,7 +26,9 @@ pub enum ProjectError {
     /// Made or lifted where a shared project does not lie - it lies in the global scope or its
     /// owner's -, or a session's own project asked to be deleted, restored or purged by itself,
     /// which goes with its session, or to be lifted once it is shared.
-    #[error("a project lies in the global scope or its owner's; a session's own goes with the session")]
+    #[error(
+        "a project lies in the global scope or its owner's; a session's own goes with the session"
+    )]
     InvalidScope,
     #[error("there is no user {0}")]
     UnknownMember(UserId),

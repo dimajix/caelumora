@@ -99,7 +99,11 @@ pub trait UserProvider: Debug + Send + Sync {
     /// credential is wrong — which ends the chain, so that a second provider
     /// knowing the same name cannot be used to bypass the first.
     /// `Credential::Trusted` it takes for every user it knows.
-    async fn authenticate(&self, username: &str, credential: &Credential<'_>) -> AuthResult<Option<User>>;
+    async fn authenticate(
+        &self,
+        username: &str,
+        credential: &Credential<'_>,
+    ) -> AuthResult<Option<User>>;
 }
 
 #[cfg(test)]

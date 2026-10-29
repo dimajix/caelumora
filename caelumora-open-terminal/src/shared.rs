@@ -15,7 +15,10 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::component::{config_of_params, service_of, ComponentError, ComponentResult};
-use caelumora_runtime::terminal::{default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath};
+use caelumora_runtime::terminal::{
+    default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider,
+    TerminalResult, WorkspacePath,
+};
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -47,8 +50,13 @@ impl SharedStorageConfig {
     /// `ComponentError::InvalidConfig` if it does not.
     fn mount(&self) -> ComponentResult<&str> {
         let mount = &self.mount;
-        if !mount.starts_with('/') || mount.contains('\0') || mount.split('/').any(|part| part == "..") {
-            return Err(ComponentError::InvalidConfig(format!("the mount '{mount}' is not an absolute path that stays where it says")));
+        if !mount.starts_with('/')
+            || mount.contains('\0')
+            || mount.split('/').any(|part| part == "..")
+        {
+            return Err(ComponentError::InvalidConfig(format!(
+                "the mount '{mount}' is not an absolute path that stays where it says"
+            )));
         }
         Ok(mount)
     }
@@ -60,8 +68,14 @@ pub(crate) fn register_backend(backends: &mut Backends) {
     backends.register::<dyn TerminalProvider, _>("open_terminal_shared", |_, params, services| {
         let config: SharedStorageConfig = config_of_params(params)?;
         let secrets = Arc::clone(service_of::<SecretManager>(services)?);
-        let provider = SharedProvider::new(config.endpoint.clone(), config.mount()?, max_run(config.max_run_secs)?, config.destination.clone(), secrets)
-            .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+        let provider = SharedProvider::new(
+            config.endpoint.clone(),
+            config.mount()?,
+            max_run(config.max_run_secs)?,
+            config.destination.clone(),
+            secrets,
+        )
+        .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
         Ok(Arc::new(provider))
     });
 }
@@ -87,10 +101,22 @@ impl SharedProvider {
     ///
     /// # Errors
     /// `Unavailable` for an endpoint that is no URL.
-    pub(crate) fn new(endpoint: RemoteEndpoint, mount: &str, max_run: Duration, destination: Option<Classification>, secrets: Arc<SecretManager>) -> TerminalResult<Self> {
+    pub(crate) fn new(
+        endpoint: RemoteEndpoint,
+        mount: &str,
+        max_run: Duration,
+        destination: Option<Classification>,
+        secrets: Arc<SecretManager>,
+    ) -> TerminalResult<Self> {
         let mount = mount.trim_end_matches('/').to_string();
         let client = Arc::new(Client::new(endpoint, Key::Endpoint(secrets), false)?);
-        Ok(Self { client, mount, commands: Arc::default(), max_run, destination: destination.unwrap_or(Classification::PUBLIC) })
+        Ok(Self {
+            client,
+            mount,
+            commands: Arc::default(),
+            max_run,
+            destination: destination.unwrap_or(Classification::PUBLIC),
+        })
     }
 
     fn place(&self, id: WorkspaceId) -> String {
@@ -98,7 +124,13 @@ impl SharedProvider {
     }
 
     fn terminal(&self, id: WorkspaceId) -> OpenTerminal {
-        OpenTerminal { client: Arc::clone(&self.client), base: self.place(id), workspace: id, commands: Arc::clone(&self.commands), max_run: self.max_run }
+        OpenTerminal {
+            client: Arc::clone(&self.client),
+            base: self.place(id),
+            workspace: id,
+            commands: Arc::clone(&self.commands),
+            max_run: self.max_run,
+        }
     }
 }
 
@@ -106,14 +138,29 @@ impl SharedProvider {
 impl TerminalProvider for SharedProvider {
     async fn create(&self, id: WorkspaceId) -> TerminalResult<()> {
         let place = self.place(id);
-        let answer = self.client.send(Method::POST, &["files", "mkdir"], &[], None, Duration::ZERO, |r| r.json(&PathRequest { path: &place })).await?;
+        let answer = self
+            .client
+            .send(Method::POST, &["files", "mkdir"], &[], None, Duration::ZERO, |r| {
+                r.json(&PathRequest { path: &place })
+            })
+            .await?;
         self.client.success(answer).map(|_| ())
     }
 
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()> {
         // Nothing of it goes on writing into what is being removed.
         self.end_commands_of(id).await?;
-        let answer = self.client.send(Method::DELETE, &["files", "delete"], &[("path", self.place(id))], None, Duration::ZERO, |r| r).await?;
+        let answer = self
+            .client
+            .send(
+                Method::DELETE,
+                &["files", "delete"],
+                &[("path", self.place(id))],
+                None,
+                Duration::ZERO,
+                |r| r,
+            )
+            .await?;
         match answer.status() {
             StatusCode::NOT_FOUND => Ok(()),
             _ => self.client.success(answer).map(|_| ()),
@@ -163,8 +210,8 @@ mod tests {
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::workspace::CommandStatus;
     use caelumora_runtime::terminal::{ByteStream, DEFAULT_MAX_RUN_SECS};
-    use futures::StreamExt;
     use futures::stream;
+    use futures::StreamExt;
     use serde_json::json;
     use std::env;
     use std::slice;
@@ -180,11 +227,17 @@ mod tests {
                 Ok((key == "OPEN_TERMINAL_API_KEY").then(|| self.0.clone()))
             }
         }
-        Arc::new(SecretManager::new(vec![Arc::new(Fixed(key.to_string()))], Arc::new(AllowAllPolicy::new())))
+        Arc::new(SecretManager::new(
+            vec![Arc::new(Fixed(key.to_string()))],
+            Arc::new(AllowAllPolicy::new()),
+        ))
     }
 
     fn endpoint(url: &str) -> RemoteEndpoint {
-        RemoteEndpoint { auth: Some(RemoteAuthConfig::Bearer { secret: "OPEN_TERMINAL_API_KEY".to_string() }), ..RemoteEndpoint::new(url) }
+        RemoteEndpoint {
+            auth: Some(RemoteAuthConfig::Bearer { secret: "OPEN_TERMINAL_API_KEY".to_string() }),
+            ..RemoteEndpoint::new(url)
+        }
     }
 
     const MAX_RUN: Duration = Duration::from_secs(3600);
@@ -194,9 +247,13 @@ mod tests {
     }
 
     /// A workspace whose commands run for `max_run` at most.
-    async fn bounded(max_run: Duration) -> (StandIn, SharedProvider, Arc<dyn Terminal>, WorkspaceId) {
+    async fn bounded(
+        max_run: Duration,
+    ) -> (StandIn, SharedProvider, Arc<dyn Terminal>, WorkspaceId) {
         let stand_in = stand_in::start().await;
-        let provider = SharedProvider::new(endpoint(&stand_in.url), MOUNT, max_run, None, secrets(KEY)).unwrap();
+        let provider =
+            SharedProvider::new(endpoint(&stand_in.url), MOUNT, max_run, None, secrets(KEY))
+                .unwrap();
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
         let terminal = provider.terminal_for(id).await.unwrap();
@@ -213,7 +270,12 @@ mod tests {
 
     async fn text(terminal: &dyn Terminal, at: &str) -> String {
         let (size, stream) = terminal.read(&path(at)).await.expect(at);
-        let bytes: Vec<u8> = stream.collect::<Vec<_>>().await.into_iter().flat_map(|c| c.unwrap().to_vec()).collect();
+        let bytes: Vec<u8> = stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .flat_map(|c| c.unwrap().to_vec())
+            .collect();
         assert_eq!(size, bytes.len() as u64, "its size told");
         String::from_utf8(bytes).unwrap()
     }
@@ -221,44 +283,91 @@ mod tests {
     #[tokio::test]
     async fn files_are_written_read_listed_moved_and_deleted_as_locally() {
         let (stand_in, _, terminal, id) = workspace().await;
-        assert!(stand_in.root.path().join(id.to_string()).is_dir(), "its place made under the mount");
-        assert_eq!(terminal.write(&path("docs/a.md"), content("hello"), 100).await.unwrap(), 5, "and its directory made");
+        assert!(
+            stand_in.root.path().join(id.to_string()).is_dir(),
+            "its place made under the mount"
+        );
+        assert_eq!(
+            terminal.write(&path("docs/a.md"), content("hello"), 100).await.unwrap(),
+            5,
+            "and its directory made"
+        );
         assert_eq!(text(terminal.as_ref(), "docs/a.md").await, "hello");
         terminal.write(&path("docs/a.md"), content("again"), 100).await.expect("replaced");
         assert_eq!(text(terminal.as_ref(), "docs/a.md").await, "again");
 
         let listed = terminal.list(&WorkspacePath::root()).await.unwrap();
-        assert_eq!(listed.iter().map(|e| (e.name.as_str(), e.is_dir, e.size)).collect::<Vec<_>>(), [("docs", true, 0)]);
+        assert_eq!(
+            listed.iter().map(|e| (e.name.as_str(), e.is_dir, e.size)).collect::<Vec<_>>(),
+            [("docs", true, 0)]
+        );
         assert!(listed[0].modified.is_some());
         assert_eq!(terminal.stat(&path("docs/a.md")).await.unwrap().size, 5);
-        assert!(matches!(terminal.list(&path("docs/a.md")).await, Err(TerminalError::NotADirectory(p)) if p == "docs/a.md"));
-        assert!(matches!(terminal.list(&path("nowhere")).await, Err(TerminalError::NotFound(p)) if p == "nowhere"));
+        assert!(
+            matches!(terminal.list(&path("docs/a.md")).await, Err(TerminalError::NotADirectory(p)) if p == "docs/a.md")
+        );
+        assert!(
+            matches!(terminal.list(&path("nowhere")).await, Err(TerminalError::NotFound(p)) if p == "nowhere")
+        );
         assert!(matches!(terminal.read(&path("docs")).await, Err(TerminalError::IsADirectory(_))));
-        assert!(matches!(terminal.write(&path("docs"), content("x"), 10).await, Err(TerminalError::IsADirectory(_))));
-        assert!(matches!(terminal.write(&path("docs/a.md/x"), content("x"), 10).await, Err(TerminalError::NotADirectory(p)) if p == "docs/a.md"));
+        assert!(matches!(
+            terminal.write(&path("docs"), content("x"), 10).await,
+            Err(TerminalError::IsADirectory(_))
+        ));
+        assert!(
+            matches!(terminal.write(&path("docs/a.md/x"), content("x"), 10).await, Err(TerminalError::NotADirectory(p)) if p == "docs/a.md")
+        );
 
-        terminal.move_entry(&path("docs/a.md"), &path("archive/2026/a.md")).await.expect("its directory made");
-        assert!(matches!(terminal.stat(&path("docs/a.md")).await, Err(TerminalError::NotFound(p)) if p == "docs/a.md"));
+        terminal
+            .move_entry(&path("docs/a.md"), &path("archive/2026/a.md"))
+            .await
+            .expect("its directory made");
+        assert!(
+            matches!(terminal.stat(&path("docs/a.md")).await, Err(TerminalError::NotFound(p)) if p == "docs/a.md")
+        );
         terminal.write(&path("docs/b.md"), content("b"), 100).await.unwrap();
-        assert!(matches!(terminal.move_entry(&path("docs/b.md"), &path("archive/2026/a.md")).await, Err(TerminalError::Exists(_))), "nothing is moved over");
-        assert!(matches!(terminal.move_entry(&path("gone"), &path("x")).await, Err(TerminalError::NotFound(p)) if p == "gone"));
+        assert!(
+            matches!(
+                terminal.move_entry(&path("docs/b.md"), &path("archive/2026/a.md")).await,
+                Err(TerminalError::Exists(_))
+            ),
+            "nothing is moved over"
+        );
+        assert!(
+            matches!(terminal.move_entry(&path("gone"), &path("x")).await, Err(TerminalError::NotFound(p)) if p == "gone")
+        );
 
-        assert!(matches!(terminal.delete(&path("docs")).await, Err(TerminalError::NotEmpty(_))), "not removed with what is in it");
+        assert!(
+            matches!(terminal.delete(&path("docs")).await, Err(TerminalError::NotEmpty(_))),
+            "not removed with what is in it"
+        );
         assert!(stand_in.root.path().join(id.to_string()).join("docs/b.md").is_file());
         terminal.delete(&path("docs/b.md")).await.unwrap();
         terminal.delete(&path("docs")).await.expect("empty now");
         assert!(matches!(terminal.delete(&path("docs")).await, Err(TerminalError::NotFound(_))));
-        assert!(matches!(terminal.delete(&WorkspacePath::root()).await, Err(TerminalError::InvalidPath(_))), "not the workspace itself");
+        assert!(
+            matches!(
+                terminal.delete(&WorkspacePath::root()).await,
+                Err(TerminalError::InvalidPath(_))
+            ),
+            "not the workspace itself"
+        );
         terminal.mkdir(&path("x/y")).await.unwrap();
         terminal.mkdir(&path("x/y")).await.expect("there already is no error");
-        assert!(matches!(terminal.mkdir(&path("archive/2026/a.md")).await, Err(TerminalError::Exists(_))));
+        assert!(matches!(
+            terminal.mkdir(&path("archive/2026/a.md")).await,
+            Err(TerminalError::Exists(_))
+        ));
     }
 
     #[tokio::test]
     async fn a_write_beyond_the_limit_sends_nothing() {
         let (_stand_in, _, terminal, _) = workspace().await;
         terminal.write(&path("a.txt"), content("old"), 100).await.unwrap();
-        assert!(matches!(terminal.write(&path("a.txt"), content("far too long"), 4).await, Err(TerminalError::TooLarge { limit: 4 })));
+        assert!(matches!(
+            terminal.write(&path("a.txt"), content("far too long"), 4).await,
+            Err(TerminalError::TooLarge { limit: 4 })
+        ));
         assert_eq!(text(terminal.as_ref(), "a.txt").await, "old");
     }
 
@@ -280,17 +389,26 @@ mod tests {
         let state = shell.output(&started, 0, Duration::from_secs(5)).await.unwrap();
         assert_eq!((state.status, state.exit_code), (CommandStatus::Completed, Some(3)));
         assert_eq!(state.output, "line\nkey=\n", "carriage returns dropped, the key not given");
-        assert!(stand_in.root.path().join(id.to_string()).join("made.txt").is_file(), "run in the workspace");
+        assert!(
+            stand_in.root.path().join(id.to_string()).join("made.txt").is_file(),
+            "run in the workspace"
+        );
         {
             let seen = stand_in.seen.lock().unwrap();
             let (cwd, env) = seen.cwd.values().next().zip(seen.env.values().next()).unwrap();
             assert_eq!(cwd, &format!("{MOUNT}/{id}"));
-            assert_eq!((env["TERM"].as_str(), env["CAELUMORA_WORKSPACE"].as_str()), ("dumb", id.to_string().as_str()));
+            assert_eq!(
+                (env["TERM"].as_str(), env["CAELUMORA_WORKSPACE"].as_str()),
+                ("dumb", id.to_string().as_str())
+            );
         }
 
         let again = shell.output(&started, state.next_offset, Duration::ZERO).await.unwrap();
         assert_eq!(again.output, "", "nothing new after the offset");
-        assert!(matches!(terminal.shell("channel-b").unwrap().output(&started, 0, Duration::ZERO).await, Err(TerminalError::UnknownCommand(c)) if c == started), "not seen from another channel");
+        assert!(
+            matches!(terminal.shell("channel-b").unwrap().output(&started, 0, Duration::ZERO).await, Err(TerminalError::UnknownCommand(c)) if c == started),
+            "not seen from another channel"
+        );
     }
 
     #[tokio::test]
@@ -316,10 +434,16 @@ mod tests {
         let key = (id, "c".to_string(), long.clone());
         assert_eq!(provider.commands(), slice::from_ref(&key), "what may still run");
         provider.end_command(&key).await.unwrap();
-        assert_eq!(shell.output(&long, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
+        assert_eq!(
+            shell.output(&long, 0, Duration::ZERO).await.unwrap().status,
+            CommandStatus::Killed
+        );
         assert!(provider.commands().is_empty());
         provider.end_command(&key).await.expect("one that ended is no error");
-        provider.end_command(&(id, "c".to_string(), "nonesuch".to_string())).await.expect("nor one not known");
+        provider
+            .end_command(&(id, "c".to_string(), "nonesuch".to_string()))
+            .await
+            .expect("nor one not known");
     }
 
     #[tokio::test]
@@ -328,7 +452,10 @@ mod tests {
         let shell = terminal.shell("c").unwrap();
         let long = shell.start("sleep 30").await.unwrap();
         provider.remove(id).await.unwrap();
-        assert_eq!(shell.output(&long, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
+        assert_eq!(
+            shell.output(&long, 0, Duration::ZERO).await.unwrap().status,
+            CommandStatus::Killed
+        );
         assert!(provider.commands().is_empty());
     }
 
@@ -338,22 +465,50 @@ mod tests {
         let shell = terminal.shell("c").unwrap();
         let id = shell.start("echo \"begun 'quoted'\"; sleep 37 & sleep 37").await.unwrap();
         let ended = shell.output(&id, 0, Duration::from_secs(10)).await.unwrap();
-        assert_eq!((ended.status, ended.output.as_str()), (CommandStatus::Killed, "begun 'quoted'\n"), "the command as written, killed");
+        assert_eq!(
+            (ended.status, ended.output.as_str()),
+            (CommandStatus::Killed, "begun 'quoted'\n"),
+            "the command as written, killed"
+        );
         assert!(provider.commands().is_empty(), "no longer listed");
         let left = shell.start("pgrep -c -f '[s]leep 37' || true").await.unwrap();
-        assert_eq!(shell.output(&left, 0, Duration::from_secs(5)).await.unwrap().output.trim(), "0", "what it started went with it");
+        assert_eq!(
+            shell.output(&left, 0, Duration::from_secs(5)).await.unwrap().output.trim(),
+            "0",
+            "what it started went with it"
+        );
     }
 
     #[tokio::test]
     async fn a_refused_key_and_an_instance_out_of_reach_are_told_without_the_endpoint() {
         let stand_in = stand_in::start().await;
-        let refused = SharedProvider::new(endpoint(&stand_in.url), MOUNT, MAX_RUN, None, secrets("wrong")).unwrap();
+        let refused =
+            SharedProvider::new(endpoint(&stand_in.url), MOUNT, MAX_RUN, None, secrets("wrong"))
+                .unwrap();
         let error = refused.create(WorkspaceId::new()).await.unwrap_err();
-        assert!(matches!(&error, TerminalError::Unavailable(why) if why.contains("refused the storage's key")), "{error}");
-        let away = SharedProvider::new(endpoint("http://user:secret@127.0.0.1:9"), MOUNT, MAX_RUN, None, secrets(KEY)).unwrap();
+        assert!(
+            matches!(&error, TerminalError::Unavailable(why) if why.contains("refused the storage's key")),
+            "{error}"
+        );
+        let away = SharedProvider::new(
+            endpoint("http://user:secret@127.0.0.1:9"),
+            MOUNT,
+            MAX_RUN,
+            None,
+            secrets(KEY),
+        )
+        .unwrap();
         let error = away.create(WorkspaceId::new()).await.unwrap_err().to_string();
-        assert!(error.contains("not reached") && !error.contains("secret") && !error.contains("127.0.0.1"), "{error}");
-        assert!(matches!(SharedProvider::new(endpoint("no url"), MOUNT, MAX_RUN, None, secrets(KEY)), Err(TerminalError::Unavailable(_))));
+        assert!(
+            error.contains("not reached")
+                && !error.contains("secret")
+                && !error.contains("127.0.0.1"),
+            "{error}"
+        );
+        assert!(matches!(
+            SharedProvider::new(endpoint("no url"), MOUNT, MAX_RUN, None, secrets(KEY)),
+            Err(TerminalError::Unavailable(_))
+        ));
         assert_eq!(refused.destination(), Some(&Classification::PUBLIC), "public unless given");
     }
 
@@ -373,28 +528,59 @@ mod tests {
     #[ignore = "needs a running Open Terminal"]
     async fn against_a_real_instance() {
         let url = env::var("CAELUMORA_OPEN_TERMINAL_URL").expect("CAELUMORA_OPEN_TERMINAL_URL");
-        let file = FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
-        let secrets = Arc::new(SecretManager::new(vec![Arc::new(file)], Arc::new(AllowAllPolicy::new())));
-        let provider = SharedProvider::new(endpoint(&url), "/tmp/caelumora-workspaces", MAX_RUN, None, secrets).unwrap();
+        let file =
+            FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
+        let secrets =
+            Arc::new(SecretManager::new(vec![Arc::new(file)], Arc::new(AllowAllPolicy::new())));
+        let provider = SharedProvider::new(
+            endpoint(&url),
+            "/tmp/caelumora-workspaces",
+            MAX_RUN,
+            None,
+            secrets,
+        )
+        .unwrap();
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
         let terminal = provider.terminal_for(id).await.unwrap();
 
         terminal.write(&path("docs/a.md"), content("hello"), 100).await.unwrap();
         assert_eq!(text(terminal.as_ref(), "docs/a.md").await, "hello");
-        assert_eq!(terminal.list(&path("docs")).await.unwrap().iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["a.md"]);
-        assert!(matches!(terminal.list(&path("docs/a.md")).await, Err(TerminalError::NotADirectory(_))));
+        assert_eq!(
+            terminal
+                .list(&path("docs"))
+                .await
+                .unwrap()
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>(),
+            ["a.md"]
+        );
+        assert!(matches!(
+            terminal.list(&path("docs/a.md")).await,
+            Err(TerminalError::NotADirectory(_))
+        ));
         assert!(matches!(terminal.read(&path("docs")).await, Err(TerminalError::IsADirectory(_))));
         assert!(matches!(terminal.delete(&path("docs")).await, Err(TerminalError::NotEmpty(_))));
         terminal.move_entry(&path("docs/a.md"), &path("b/a.md")).await.unwrap();
 
         let scope = Uuid::new_v4().to_string();
         let shell = terminal.shell(&scope).unwrap();
-        let started = shell.start("cat b/a.md; echo; echo \"key=[$OPEN_TERMINAL_API_KEY]\"; pwd; exit 3").await.unwrap();
+        let started = shell
+            .start("cat b/a.md; echo; echo \"key=[$OPEN_TERMINAL_API_KEY]\"; pwd; exit 3")
+            .await
+            .unwrap();
         let state = shell.output(&started, 0, Duration::from_secs(10)).await.unwrap();
-        assert_eq!((state.status, state.exit_code), (CommandStatus::Completed, Some(3)), "{state:?}");
+        assert_eq!(
+            (state.status, state.exit_code),
+            (CommandStatus::Completed, Some(3)),
+            "{state:?}"
+        );
         assert_eq!(state.output, format!("hello\nkey=[]\n/tmp/caelumora-workspaces/{id}\n"));
-        assert!(matches!(terminal.shell("elsewhere").unwrap().output(&started, 0, Duration::ZERO).await, Err(TerminalError::UnknownCommand(_))));
+        assert!(matches!(
+            terminal.shell("elsewhere").unwrap().output(&started, 0, Duration::ZERO).await,
+            Err(TerminalError::UnknownCommand(_))
+        ));
 
         let long = shell.start("echo begun; sleep 60 & sleep 60").await.unwrap();
         let running = shell.output(&long, 0, Duration::from_millis(500)).await.unwrap();
@@ -412,8 +598,17 @@ mod tests {
     #[test]
     fn its_parameters_name_the_instance_and_where_it_has_the_storage() {
         let params = |mount: &str| json!({ "endpoint": { "url": "http://open-terminal:8000", "auth": { "type": "bearer", "secret": "OPEN_TERMINAL_API_KEY" } }, "mount": mount });
-        let config: SharedStorageConfig = config_of_params(&params("/workspaces")).expect("a shared Open Terminal");
-        assert_eq!((config.endpoint.url.as_str(), config.mount().unwrap(), &config.destination, config.max_run_secs), ("http://open-terminal:8000", "/workspaces", &None, DEFAULT_MAX_RUN_SECS));
+        let config: SharedStorageConfig =
+            config_of_params(&params("/workspaces")).expect("a shared Open Terminal");
+        assert_eq!(
+            (
+                config.endpoint.url.as_str(),
+                config.mount().unwrap(),
+                &config.destination,
+                config.max_run_secs
+            ),
+            ("http://open-terminal:8000", "/workspaces", &None, DEFAULT_MAX_RUN_SECS)
+        );
         for mount in ["workspaces", "/a/../b"] {
             let config: SharedStorageConfig = config_of_params(&params(mount)).unwrap();
             let refused = config.mount().unwrap_err().to_string();

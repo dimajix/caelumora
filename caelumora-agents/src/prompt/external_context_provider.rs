@@ -9,12 +9,14 @@
 //! they came from (`PromptPart::source`). Every part goes first, as text of
 //! the remote agent's user; positions mean nothing here.
 
-use caelumora_runtime::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
+use caelumora_runtime::component::{
+    ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry,
+};
 use std::sync::Arc;
 
 pub const EXTERNAL_CONTEXT_PROVIDER_KIND: &str = "external_context_provider";
@@ -28,7 +30,10 @@ pub struct ExternalContextProvider {
 
 #[async_trait]
 impl ContextProvider for ExternalContextProvider {
-    async fn current_context(&self, situation: &Situation<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
+    async fn current_context(
+        &self,
+        situation: &Situation<'_>,
+    ) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
         let mut parts = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
@@ -52,13 +57,17 @@ impl ContextProvider for ExternalContextProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(EXTERNAL_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>().needs::<dyn PromptProvider>(),
+        ComponentKind::new(EXTERNAL_CONTEXT_PROVIDER_KIND)
+            .provides::<dyn ContextProvider>()
+            .needs::<dyn PromptProvider>(),
         |_descriptor, context| async move {
             // In the order of the configuration, which is the order they are
             // given in.
             let prompt_providers = context.all::<dyn PromptProvider>().await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ContextProvider>(Arc::new(ExternalContextProvider { prompt_providers }));
+            facets.insert::<dyn ContextProvider>(Arc::new(ExternalContextProvider {
+                prompt_providers,
+            }));
             Ok(facets)
         },
     );
@@ -67,7 +76,6 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::prompt::PromptPosition;
     use crate::testing::detached_actor_runtime;
@@ -75,25 +83,56 @@ mod tests {
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::work::Work;
+    use caelumora_runtime::agent::state::AgentStateHandle;
 
-    fn fixed(id: &str, prompt: &str, position: PromptPosition) -> ComponentImpl<dyn PromptProvider> {
-        let provider = StaticSystemPromptProvider { prompt: prompt.to_string(), position, classification: Classification::PUBLIC };
-        ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailClosed, facet: Arc::new(provider) }
+    fn fixed(
+        id: &str,
+        prompt: &str,
+        position: PromptPosition,
+    ) -> ComponentImpl<dyn PromptProvider> {
+        let provider = StaticSystemPromptProvider {
+            prompt: prompt.to_string(),
+            position,
+            classification: Classification::PUBLIC,
+        };
+        ComponentImpl {
+            id: id.to_string(),
+            fail_policy: ComponentFailPolicy::FailClosed,
+            facet: Arc::new(provider),
+        }
     }
 
     #[tokio::test]
     async fn every_part_is_given_on_its_own_with_where_it_came_from_whatever_its_position() {
-        let provider = ExternalContextProvider { prompt_providers: vec![
-            fixed("frame", " Be brief. ", PromptPosition::BeforeTurnInput),
-            fixed("empty", "  ", PromptPosition::Start),
-            fixed("rules", "Answer in German.", PromptPosition::Start),
-        ] };
+        let provider = ExternalContextProvider {
+            prompt_providers: vec![
+                fixed("frame", " Be brief. ", PromptPosition::BeforeTurnInput),
+                fixed("empty", "  ", PromptPosition::Start),
+                fixed("rules", "Answer in German.", PromptPosition::Start),
+            ],
+        };
         let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
         let work = Work::default();
-        let (parts, knowledge) = provider.current_context(&Situation::new(AgentId::new(), &work, &state, &agent_state, &detached_actor_runtime())).await.unwrap();
+        let (parts, knowledge) = provider
+            .current_context(&Situation::new(
+                AgentId::new(),
+                &work,
+                &state,
+                &agent_state,
+                &detached_actor_runtime(),
+            ))
+            .await
+            .unwrap();
 
-        let given: Vec<_> = parts.iter().map(|p| (p.source.as_deref(), p.text.as_str(), p.role, p.after)).collect();
-        assert_eq!(given, [(Some("frame"), "Be brief.", MessageRole::User, None), (Some("rules"), "Answer in German.", MessageRole::User, None)]);
+        let given: Vec<_> =
+            parts.iter().map(|p| (p.source.as_deref(), p.text.as_str(), p.role, p.after)).collect();
+        assert_eq!(
+            given,
+            [
+                (Some("frame"), "Be brief.", MessageRole::User, None),
+                (Some("rules"), "Answer in German.", MessageRole::User, None)
+            ]
+        );
         assert!(knowledge.is_empty());
     }
 }

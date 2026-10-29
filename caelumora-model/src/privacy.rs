@@ -73,7 +73,9 @@ impl SessionPrivacy {
     /// `session` as privacy sees it.
     pub fn of(session: &Session) -> Self {
         let owner = session.security_attributes.owner_id;
-        let people = session.participants.iter()
+        let people = session
+            .participants
+            .iter()
             .filter_map(|p| match p {
                 Participant::User(user) => Some(*user),
                 _ => None,
@@ -141,34 +143,61 @@ mod tests {
         let reader = session(PrivacyConfig::Private, alice, &[]);
         assert!(!source.permits(&reader), "not even by its owner's");
         assert_eq!(PrivacyConfig::default(), PrivacyConfig::Private, "the default");
-        let names: Vec<_> = [PrivacyConfig::Private, PrivacyConfig::SameOwner, PrivacyConfig::SharedAudience].iter().map(|p| serde_json::to_value(p).unwrap()).collect();
-        assert_eq!(names, ["private", "same_owner", "shared_audience"], "as the API and the web UI name them");
+        let names: Vec<_> =
+            [PrivacyConfig::Private, PrivacyConfig::SameOwner, PrivacyConfig::SharedAudience]
+                .iter()
+                .map(|p| serde_json::to_value(p).unwrap())
+                .collect();
+        assert_eq!(
+            names,
+            ["private", "same_owner", "shared_audience"],
+            "as the API and the web UI name them"
+        );
     }
 
     #[test]
     fn same_owner_lets_the_owners_other_sessions_read() {
         let (alice, bob) = (UserId::new(), UserId::new());
         let source = session(PrivacyConfig::SameOwner, alice, &[bob]);
-        assert!(source.permits(&session(PrivacyConfig::Private, alice, &[])), "whatever the reader's own policy");
-        assert!(!source.permits(&session(PrivacyConfig::Private, bob, &[alice])), "not a participant's");
-        let unowned = SessionPrivacy { policy: PrivacyConfig::SameOwner, ..SessionPrivacy::default() };
-        assert!(!unowned.permits(&SessionPrivacy::default()), "nobody's sessions are not one person's");
+        assert!(
+            source.permits(&session(PrivacyConfig::Private, alice, &[])),
+            "whatever the reader's own policy"
+        );
+        assert!(
+            !source.permits(&session(PrivacyConfig::Private, bob, &[alice])),
+            "not a participant's"
+        );
+        let unowned =
+            SessionPrivacy { policy: PrivacyConfig::SameOwner, ..SessionPrivacy::default() };
+        assert!(
+            !unowned.permits(&SessionPrivacy::default()),
+            "nobody's sessions are not one person's"
+        );
     }
 
     #[test]
     fn shared_audience_lets_read_who_took_part_anyway() {
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let source = session(PrivacyConfig::SharedAudience, alice, &[bob]);
-        assert!(source.permits(&session(PrivacyConfig::Private, bob, &[])), "a participant's own session");
+        assert!(
+            source.permits(&session(PrivacyConfig::Private, bob, &[])),
+            "a participant's own session"
+        );
         assert!(source.permits(&session(PrivacyConfig::Private, alice, &[bob])), "the same people");
-        assert!(!source.permits(&session(PrivacyConfig::Private, alice, &[carol])), "not with someone who was not there");
+        assert!(
+            !source.permits(&session(PrivacyConfig::Private, alice, &[carol])),
+            "not with someone who was not there"
+        );
     }
 
     #[test]
     fn the_people_of_a_session_are_its_users_and_its_owner() {
         let (alice, bob) = (UserId::new(), UserId::new());
         let session = Session {
-            summary: None, briefing: None, language: None, time_zone: None,
+            summary: None,
+            briefing: None,
+            language: None,
+            time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             project: ProjectId::new(),
@@ -185,6 +214,9 @@ mod tests {
         };
         let privacy = SessionPrivacy::of(&session);
         assert_eq!(privacy.people, [alice, bob].into_iter().collect());
-        assert_eq!((privacy.policy, privacy.owner), (PrivacyConfig::SharedAudience, ActorId::User(alice)));
+        assert_eq!(
+            (privacy.policy, privacy.owner),
+            (PrivacyConfig::SharedAudience, ActorId::User(alice))
+        );
     }
 }

@@ -14,23 +14,28 @@
 //! all the same, and fails and says so. The result is classified as the
 //! artifact, which is classified as the workspace.
 
-use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use crate::manager::{ArtifactError, ArtifactManager};
+use crate::NAMESPACE;
 use async_trait::async_trait;
+use caelumora_agents::prompt::{texts_of, writing_for_the_model};
+use caelumora_agents::situation::Situation;
+use caelumora_agents::tool::{
+    arguments, described, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput,
+    ToolProvider, ToolResult,
+};
+use caelumora_agents::turn::Turn;
+use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::Grant;
 use caelumora_model::store::StoreError;
-use caelumora_model::value::name::ScopedName;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_agents::turn::Turn;
-use caelumora_agents::situation::Situation;
-use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
+use caelumora_model::value::name::ScopedName;
+use caelumora_runtime::component::{
+    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult,
+};
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::WorkspacePath;
-use caelumora_agents::tool::{arguments, described, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use caelumora_model::prompt_catalogue::PromptTexts;
-use crate::NAMESPACE;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -38,7 +43,8 @@ use std::sync::Arc;
 /// A file published as a version of an artifact (issue 271): its
 /// `name`, `version`, `size`, `description` and the `artifact` it is
 /// downloaded from.
-pub const ARTIFACT_PUBLISH_PRESENTATION: ToolPresentation = ToolPresentation::new("artifact_publish");
+pub const ARTIFACT_PUBLISH_PRESENTATION: ToolPresentation =
+    ToolPresentation::new("artifact_publish");
 
 pub const ARTIFACT_TOOL_KIND: &str = "artifact_tool";
 pub const PUBLISH_ARTIFACT: &str = "publish_artifact";
@@ -83,13 +89,20 @@ impl ArtifactTool {
     /// # Errors
     /// `ComponentError::InvalidConfig` for parameters it does not take;
     /// `ComponentError::Prompt` if a text cannot be had.
-    pub fn new(params: &Value, artifacts: Arc<ArtifactManager>, prompts: &PromptTexts) -> ComponentResult<Self> {
+    pub fn new(
+        params: &Value,
+        artifacts: Arc<ArtifactManager>,
+        prompts: &PromptTexts,
+    ) -> ComponentResult<Self> {
         let config: ArtifactToolConfig = config_of_params(params)?;
         let string = ToolParameters::string;
         let tool = Tool {
             name: PUBLISH_ARTIFACT.to_string(),
             description: String::new(),
-            parameters: ToolParameters::object([("path", string()), ("name", string()), ("description", string())], ["path"]),
+            parameters: ToolParameters::object(
+                [("path", string()), ("name", string()), ("description", string())],
+                ["path"],
+            ),
             requires_approval: config.requires_approval.required(false),
             visibility: ToolVisibility::SHOWN,
             classification: None,
@@ -154,7 +167,13 @@ impl ToolProvider for ArtifactTool {
         })
     }
 
-    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(
+        &self,
+        name: &str,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
         if name != PUBLISH_ARTIFACT {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
@@ -168,12 +187,20 @@ impl ToolProvider for ArtifactTool {
         let ctx = turn.situation().security_context();
         let channel = (turn.situation().session_id(), turn.situation().channel_id());
         // Into the project its session's results go to (issue 467), as the session is now.
-        let session = turn.situation().session().await?.ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session to publish in".to_string()))?;
-        let name = ScopedName::new(name, Scope::ProjectScope { project_id: session.project() }).map_err(ArtifactError::from)?;
+        let session = turn.situation().session().await?.ok_or_else(|| {
+            ToolError::ExecutionFailed("the turn is in no session to publish in".to_string())
+        })?;
+        let name = ScopedName::new(name, Scope::ProjectScope { project_id: session.project() })
+            .map_err(ArtifactError::from)?;
         let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await?;
         let content = terminal.read(&at).await?;
-        let (artifact, number) = self.artifacts.publish(ctx, channel, content, &workspace.classification, &name, description).await?;
-        let version = artifact.version(number).ok_or_else(|| ToolError::ExecutionFailed(format!("version {number} of the artifact is missing")))?;
+        let (artifact, number) = self
+            .artifacts
+            .publish(ctx, channel, content, &workspace.classification, &name, description)
+            .await?;
+        let version = artifact.version(number).ok_or_else(|| {
+            ToolError::ExecutionFailed(format!("version {number} of the artifact is missing"))
+        })?;
         let mut result = json!({
             "artifact": artifact.id,
             "version": number,
@@ -192,12 +219,20 @@ impl ToolProvider for ArtifactTool {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<ArtifactManager>()),
+        writing_for_the_model(
+            ComponentKind::new(ARTIFACT_TOOL_KIND)
+                .provides::<dyn ToolProvider>()
+                .uses::<ArtifactManager>(),
+        ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let artifacts = Arc::clone(context.service::<ArtifactManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(&descriptor.params, artifacts, &texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(
+                &descriptor.params,
+                artifacts,
+                &texts,
+            )?));
             Ok(facets)
         },
     );

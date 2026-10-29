@@ -8,18 +8,18 @@
 
 use crate::actor::{ActorId, ActorState};
 use crate::approval::ApprovalRequest;
-use crate::question::QuestionRequest;
-use crate::memory::{MemoryChange, MemoryOrigin};
-use crate::note::NoteChange;
-use crate::plan::PlanState;
-use crate::tool::{ToolCallState, ToolCallStatus};
 use crate::confidentiality::Classification;
 use crate::content::ContentRef;
 use crate::context::KnowledgeRef;
+use crate::memory::{MemoryChange, MemoryOrigin};
 use crate::message::Message;
+use crate::note::NoteChange;
+use crate::plan::PlanState;
+use crate::prompt_catalogue::CORE;
+use crate::question::QuestionRequest;
+use crate::tool::{ToolCallState, ToolCallStatus};
 use crate::transcript::TranscriptEntry;
 use crate::work::Work;
-use crate::prompt_catalogue::CORE;
 use serde::{Deserialize, Serialize};
 
 /// What came to a turn while the calls of its step ran, put aside to be
@@ -67,7 +67,12 @@ impl GivenUpReason {
     /// for again is answered anew already; one given up as it left belongs
     /// to an agent that left.
     pub fn may_be_answered_again(&self) -> bool {
-        matches!(self, GivenUpReason::Failed { .. } | GivenUpReason::Lowered { .. } | GivenUpReason::CallLimit { .. })
+        matches!(
+            self,
+            GivenUpReason::Failed { .. }
+                | GivenUpReason::Lowered { .. }
+                | GivenUpReason::CallLimit { .. }
+        )
     }
 
     /// The key of the text of the prompt catalogue that tells its agent's
@@ -94,7 +99,9 @@ impl GivenUpReason {
             GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
             GivenUpReason::Left => "you left the channel",
             GivenUpReason::Retried => "your answer was asked for again",
-            GivenUpReason::CallLimit { .. } => "it asked the model as often as one answer, or one step of a plan, may",
+            GivenUpReason::CallLimit { .. } => {
+                "it asked the model as often as one answer, or one step of a plan, may"
+            }
         }
     }
 }
@@ -186,9 +193,12 @@ impl TurnState {
     /// for a turn whose context is sent by no agent.
     pub fn pending_approvals(&self) -> Vec<ApprovalRequest> {
         let ActorId::Agent(agent) = self.work.event_context.sender_id else { return Vec::new() };
-        self.tool_calls.iter()
+        self.tool_calls
+            .iter()
             .filter_map(|c| match &c.status {
-                ToolCallStatus::WaitingApproval { id, description, explicit, suggested, .. } => Some(ApprovalRequest {
+                ToolCallStatus::WaitingApproval {
+                    id, description, explicit, suggested, ..
+                } => Some(ApprovalRequest {
                     id: *id,
                     session_id: self.work.event_context.session_id,
                     channel_id: self.work.event_context.channel_id,
@@ -210,7 +220,8 @@ impl TurnState {
     /// context is sent by no agent.
     pub fn pending_questions(&self) -> Vec<QuestionRequest> {
         let ActorId::Agent(agent) = self.work.event_context.sender_id else { return Vec::new() };
-        self.tool_calls.iter()
+        self.tool_calls
+            .iter()
             .filter_map(|c| match &c.status {
                 ToolCallStatus::WaitingUser { id, questions } => Some(QuestionRequest {
                     id: *id,

@@ -5,15 +5,15 @@
 
 use super::body::AgentBody;
 use crate::command::{AgentCommandAccess, AgentCommandProvider};
-use caelumora_runtime::command::{CommandError, CommandExecutor};
-use caelumora_runtime::component::{ComponentContainer, ComponentError, ComponentResult};
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::turn::CommandRequest;
+use caelumora_runtime::command::{CommandError, CommandExecutor};
+use caelumora_runtime::component::{ComponentContainer, ComponentError, ComponentResult};
+use caelumora_runtime::runtime::ActorRuntime;
+use caelumora_runtime::transport::EventSender;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -25,10 +25,15 @@ impl AgentBody {
     /// `ComponentError::InvalidConfig` if two components provide the same
     /// name, or one provides a name the session's commands have: the
     /// session's would hide it (issue 37).
-    pub(super) fn command_executor(components: &ComponentContainer, runtime: &ActorRuntime) -> ComponentResult<CommandExecutor<dyn AgentCommandProvider>> {
+    pub(super) fn command_executor(
+        components: &ComponentContainer,
+        runtime: &ActorRuntime,
+    ) -> ComponentResult<CommandExecutor<dyn AgentCommandProvider>> {
         let providers = components.get_all::<dyn AgentCommandProvider>(None)?;
         for provider in &providers {
-            if let Some(command) = provider.commands().into_iter().find(|c| runtime.command_executor().has(&c.name)) {
+            if let Some(command) =
+                provider.commands().into_iter().find(|c| runtime.command_executor().has(&c.name))
+            {
                 return Err(ComponentError::InvalidConfig(format!(
                     "command /{} of component '{}' is a command of the session too, which would hide it",
                     command.name, provider.id
@@ -63,7 +68,12 @@ impl AgentBody {
     /// it announces no answer's start nor end, asks nobody to respond and
     /// is never asked for again. Where the agent stands meanwhile is its
     /// actor's to tell.
-    pub(super) async fn carry_out(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
+    pub(super) async fn carry_out(
+        &self,
+        state: &mut AgentChannelState,
+        request: &Envelope,
+        output: &dyn EventSender,
+    ) {
         let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
         let issuer = request.context.sender_id;
         let (agent_id, name) = (self.agent_id(), self.agent.name());
@@ -77,9 +87,18 @@ impl AgentBody {
             return;
         };
         let mut started = false;
-        let carried_out = match self.commands.admitted(command, &request.security, &attributes, &channel_attributes).await {
+        let carried_out = match self
+            .commands
+            .admitted(command, &request.security, &attributes, &channel_attributes)
+            .await
+        {
             Ok(admitted) => {
-                let start = ActorEvent::CommandStarted { command: command.clone(), args: args.clone(), to: issuer, turn_id };
+                let start = ActorEvent::CommandStarted {
+                    command: command.clone(),
+                    args: args.clone(),
+                    to: issuer,
+                    turn_id,
+                };
                 if let Err(e) = answering.send(start, output).await {
                     warn!("{:#}", e);
                 }
@@ -97,7 +116,13 @@ impl AgentBody {
                 }
                 info!("Agent {} {} carried out /{} for {}", agent_id, name, command, issuer);
                 let to = (answer.visibility == CommandVisibility::Private).then_some(issuer);
-                ActorEvent::CommandExecuted { command: command.clone(), args: args.clone(), output: answer.text, to, turn_id: Some(turn_id) }
+                ActorEvent::CommandExecuted {
+                    command: command.clone(),
+                    args: args.clone(),
+                    output: answer.text,
+                    to,
+                    turn_id: Some(turn_id),
+                }
             }
             Err(e) => {
                 drop(turn);
@@ -105,10 +130,21 @@ impl AgentBody {
                 // applied, so the turn leaves no end behind.
                 state.turn = None;
                 match &e {
-                    CommandError::Failed { .. } => warn!("Agent {} {} could not carry out /{} for {}: {}", agent_id, name, command, issuer, e),
-                    _ => debug!("Agent {} {} does not carry out /{} for {}: {}", agent_id, name, command, issuer, e),
+                    CommandError::Failed { .. } => warn!(
+                        "Agent {} {} could not carry out /{} for {}: {}",
+                        agent_id, name, command, issuer, e
+                    ),
+                    _ => debug!(
+                        "Agent {} {} does not carry out /{} for {}: {}",
+                        agent_id, name, command, issuer, e
+                    ),
                 }
-                ActorEvent::CommandFailed { command: command.clone(), reason: e.to_string(), to: issuer, turn_id: started.then_some(turn_id) }
+                ActorEvent::CommandFailed {
+                    command: command.clone(),
+                    reason: e.to_string(),
+                    to: issuer,
+                    turn_id: started.then_some(turn_id),
+                }
             }
         };
         // What it was given while it carried the command out, before what

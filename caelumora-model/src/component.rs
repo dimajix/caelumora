@@ -10,7 +10,6 @@ use crate::value::name::ScopedName;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-
 /// The components of a personality, a template or the configuration -
 /// written by hand (configuration, seed files), so the fields with a
 /// default may be left out there (issue 108). Written as the list of its
@@ -77,7 +76,11 @@ pub struct ComponentBundle {
 
 impl ComponentBundle {
     /// A new bundle of `components` under `name`, with `security_attributes`.
-    pub fn new(name: ScopedName, components: ComponentConfig, security_attributes: SecurityAttributes) -> Self {
+    pub fn new(
+        name: ScopedName,
+        components: ComponentConfig,
+        security_attributes: SecurityAttributes,
+    ) -> Self {
         Self { id: ComponentBundleId::new(), name, components, security_attributes, deleted: None }
     }
 }
@@ -124,7 +127,6 @@ pub enum ComponentFailPolicy {
     FailClosed,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,20 +138,35 @@ mod tests {
     fn a_bundle_is_written_as_its_id_its_name_its_list_and_its_attributes() {
         let owner = ActorId::System;
         let user_id = UserId::new();
-        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search"), ComponentDescriptor::new("stop", "stop_tool")] };
-        let bundle = ComponentBundle::new(ScopedName::new("basics", Scope::UserScope { user_id }).unwrap(), components.clone(), SecurityAttributes::owned_by(owner));
+        let components = ComponentConfig {
+            component_nodes: vec![
+                ComponentDescriptor::new("search", "web_search"),
+                ComponentDescriptor::new("stop", "stop_tool"),
+            ],
+        };
+        let bundle = ComponentBundle::new(
+            ScopedName::new("basics", Scope::UserScope { user_id }).unwrap(),
+            components.clone(),
+            SecurityAttributes::owned_by(owner),
+        );
         let json = serde_json::to_value(&bundle).unwrap();
         assert_eq!(json["id"], bundle.id.to_string());
         assert_eq!(json["name"], "basics", "its name and scope flattened, as a definition's are");
         assert!(json["scope"]["UserScope"].is_object(), "{json}");
-        assert_eq!(json["components"][1]["kind"], "stop_tool", "the list directly under its key (issue 201)");
+        assert_eq!(
+            json["components"][1]["kind"], "stop_tool",
+            "the list directly under its key (issue 201)"
+        );
         assert_eq!(json["security_attributes"]["owner_id"], serde_json::to_value(owner).unwrap());
 
         let read: ComponentBundle = serde_json::from_value(json).unwrap();
         assert_eq!((read.id, read.scoped_name()), (bundle.id, bundle.scoped_name()));
         assert_eq!(read.components, components, "in its order");
         assert_eq!(read.security_attributes.owner_id, owner);
-        let global: ComponentBundle = serde_json::from_value(serde_json::json!({ "id": bundle.id, "name": "basics", "components": [] })).unwrap();
+        let global: ComponentBundle = serde_json::from_value(
+            serde_json::json!({ "id": bundle.id, "name": "basics", "components": [] }),
+        )
+        .unwrap();
         assert_eq!(global.name.scope, Scope::GlobalScope, "global unless named");
     }
 }

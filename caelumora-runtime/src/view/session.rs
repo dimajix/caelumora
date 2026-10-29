@@ -1,31 +1,34 @@
 //! A session as its viewer reached it: its document, and its loop if it
 //! runs.
 
-use caelumora_model::project::ProjectId;
-use caelumora_model::store::query::{Filter, Query};
+use super::{channel_reading, ChannelReader};
 use super::{ChannelView, ViewError, ViewResult, Views};
+use crate::channel::ChannelError;
 use crate::session::{ChannelRun, Found, SessionLoop};
+use anyhow::Error;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{Channel, ChannelField, Participant};
-use caelumora_model::value::language::Language;
-use caelumora_model::value::time_zone::TimeZone;
-use caelumora_model::value::text::{Briefing, Summary};
+use caelumora_model::confidentiality::{Place, Reading};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::confidentiality::{Reading, Place};
-use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
-use super::{channel_reading, ChannelReader};
-use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::snapshot::{CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
+use caelumora_model::project::ProjectId;
 use caelumora_model::scope::ScopeField;
+use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
+use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::snapshot::{
+    CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot,
+    SessionSnapshot,
+};
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::UserField;
-use crate::channel::ChannelError;
+use caelumora_model::value::language::Language;
+use caelumora_model::value::text::{Briefing, Summary};
+use caelumora_model::value::time_zone::TimeZone;
 use std::sync::Arc;
 use tracing::warn;
-use anyhow::Error;
 
 /// An agent's private notes in another channel of its session, as far as
 /// they may be read where it reads from (`SessionView::own_private_notes`):
@@ -143,7 +146,10 @@ impl SessionView {
     /// Whether the viewer may change the session - rename it, change its
     /// privacy (`UpdateSession`).
     pub async fn may_change(&self) -> bool {
-        self.views.access_policy().may_change_session(self.views.context(), &self.session.security_attributes).await
+        self.views
+            .access_policy()
+            .may_change_session(self.views.context(), &self.session.security_attributes)
+            .await
     }
 
     /// Whom the viewer could take into the session and, with `channel`,
@@ -159,9 +165,15 @@ impl SessionView {
     /// `NotPermitted` if the viewer may not change the session;
     /// `ChannelNotFound` for a channel they may not read; `Failed` if the
     /// stores cannot list them.
-    pub async fn candidates(&self, prefix: &str, channel: Option<ChannelId>) -> ViewResult<Vec<CandidateSnapshot>> {
+    pub async fn candidates(
+        &self,
+        prefix: &str,
+        channel: Option<ChannelId>,
+    ) -> ViewResult<Vec<CandidateSnapshot>> {
         if !self.may_change().await {
-            return Err(ViewError::NotPermitted(ActionType::update(Session::KIND, &self.session.security_attributes).refused()));
+            return Err(ViewError::NotPermitted(
+                ActionType::update(Session::KIND, &self.session.security_attributes).refused(),
+            ));
         }
         let channel = match channel {
             Some(id) => Some(self.channel(id).await?),
@@ -173,12 +185,33 @@ impl SessionView {
         }
         let context = self.views.context();
         let stores = self.views.stores();
-        let users = stores.users.list(context, &Query::filtered(Filter::name_prefix(UserField::Username, prefix)).limited(CANDIDATES)).await
-            .map_err(|e| ViewError::failed(e, "searching users"))?.items;
-        let agents = stores.agents.list(context, &Query::filtered(Filter::name_prefix(ScopeField::Name, prefix)).limited(CANDIDATES)).await
-            .map_err(|e| ViewError::failed(e, "searching agents"))?.items;
-        let found = users.into_iter().map(|user| (Participant::User(user.id), user.username.to_string()))
-            .chain(agents.into_iter().map(|agent| (Participant::Agent(agent.id), agent.name.name.to_string())));
+        let users = stores
+            .users
+            .list(
+                context,
+                &Query::filtered(Filter::name_prefix(UserField::Username, prefix))
+                    .limited(CANDIDATES),
+            )
+            .await
+            .map_err(|e| ViewError::failed(e, "searching users"))?
+            .items;
+        let agents = stores
+            .agents
+            .list(
+                context,
+                &Query::filtered(Filter::name_prefix(ScopeField::Name, prefix)).limited(CANDIDATES),
+            )
+            .await
+            .map_err(|e| ViewError::failed(e, "searching agents"))?
+            .items;
+        let found = users
+            .into_iter()
+            .map(|user| (Participant::User(user.id), user.username.to_string()))
+            .chain(
+                agents
+                    .into_iter()
+                    .map(|agent| (Participant::Agent(agent.id), agent.name.name.to_string())),
+            );
         let running = channel.as_ref().and_then(|channel| channel.running().cloned());
         let mut candidates = Vec::new();
         for (participant, name) in found {
@@ -187,7 +220,11 @@ impl SessionView {
             let in_channel = channel.as_ref().is_some_and(|channel| channel.lists(id));
             let refusal = match in_channel {
                 true => None,
-                false => session_loop.resolve_to_take_in(context, &participant, running.as_ref()).await.err().and_then(|error| refusal_of(&error)),
+                false => session_loop
+                    .resolve_to_take_in(context, &participant, running.as_ref())
+                    .await
+                    .err()
+                    .and_then(|error| refusal_of(&error)),
             };
             candidates.push(CandidateSnapshot { id, name, in_session, in_channel, refusal });
         }
@@ -244,7 +281,12 @@ impl SessionView {
     /// viewer may not read it.
     pub async fn channel_named(&self, name: &str) -> ViewResult<ChannelView> {
         let not_found = || ViewError::NoChannelNamed(name.to_string());
-        let (channel, run) = self.channel_documents().await.into_iter().find(|(c, _)| c.name == name).ok_or_else(not_found)?;
+        let (channel, run) = self
+            .channel_documents()
+            .await
+            .into_iter()
+            .find(|(c, _)| c.name == name)
+            .ok_or_else(not_found)?;
         let reading = self.reading(&channel).await.ok_or_else(not_found)?;
         Ok(ChannelView::of(self.clone(), channel, run, reading))
     }
@@ -256,12 +298,24 @@ impl SessionView {
     /// agent's owner or the agent itself (issue 264) - reads none of it
     /// (`GetChannel`).
     pub(super) async fn reading(&self, channel: &Channel) -> Option<Reading> {
-        let at = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
+        let at = Place {
+            channel: channel.id,
+            classification: channel.classification.clone(),
+            session: self.privacy(),
+        };
         let reader = match self.views.viewer().place() {
             Some(from) => ChannelReader::From(from),
             None => ChannelReader::Cleared,
         };
-        channel_reading(self.views.access_policy().as_ref(), self.views.confidentiality().as_ref(), self.views.context(), &channel.security_attributes, &at, reader).await
+        channel_reading(
+            self.views.access_policy().as_ref(),
+            self.views.confidentiality().as_ref(),
+            self.views.context(),
+            &channel.security_attributes,
+            &at,
+            reader,
+        )
+        .await
     }
 
     /// The document of channel `id`, if the session has it, with its loop
@@ -269,9 +323,16 @@ impl SessionView {
     /// permitted, and whether the channel may be read is asked of it.
     async fn document(&self, id: ChannelId) -> ViewResult<Option<Document>> {
         match &self.running {
-            Some(session_loop) => Ok(session_loop.listed_channel(id).map(|(channel, run)| (channel, Some(run)))),
+            Some(session_loop) => {
+                Ok(session_loop.listed_channel(id).map(|(channel, run)| (channel, Some(run))))
+            }
             None if self.session.channels.contains(&id) => {
-                let channel = self.views.stores().channels.get(&SecurityContext::system(), id).await
+                let channel = self
+                    .views
+                    .stores()
+                    .channels
+                    .get(&SecurityContext::system(), id)
+                    .await
                     .map_err(|e| ViewError::failed(e, format!("reading channel {id}")))?;
                 Ok(Some((Arc::new(channel), None)))
             }
@@ -283,7 +344,9 @@ impl SessionView {
     /// it runs. A channel whose document cannot be read is left out.
     async fn channel_documents(&self) -> Vec<Document> {
         match &self.running {
-            Some(session_loop) => session_loop.listed_channels().into_iter()
+            Some(session_loop) => session_loop
+                .listed_channels()
+                .into_iter()
                 .map(|(channel, run)| (channel, Some(run)))
                 .collect(),
             None => {
@@ -293,7 +356,10 @@ impl SessionView {
                 for id in &self.session.channels {
                     match store.get(&system, *id).await {
                         Ok(channel) => channels.push((Arc::new(channel), None)),
-                        Err(e) => warn!("Cannot read channel {} of session {}: {}", id, self.session.id, e),
+                        Err(e) => warn!(
+                            "Cannot read channel {} of session {}: {}",
+                            id, self.session.id, e
+                        ),
                     }
                 }
                 channels
@@ -313,7 +379,9 @@ impl SessionView {
     /// logged and left out.
     pub async fn own_private_notes(&self) -> Vec<PrivateNotesElsewhere> {
         let ActorId::Agent(agent) = self.views.context().caller_id else { return Vec::new() };
-        let Some(here) = self.views.viewer().place().map(|place| place.channel) else { return Vec::new() };
+        let Some(here) = self.views.viewer().place().map(|place| place.channel) else {
+            return Vec::new();
+        };
         let mut found = Vec::new();
         for (channel, _) in self.channel_documents().await {
             let actor = ActorId::Agent(agent);
@@ -325,19 +393,31 @@ impl SessionView {
             let state = match self.views.states().get_agent_channel_state(agent, channel.id).await {
                 Ok(state) => state,
                 Err(e) => {
-                    warn!("Reading the private notes of agent {} in channel {} failed: {}", agent, channel.id, e);
+                    warn!(
+                        "Reading the private notes of agent {} in channel {} failed: {}",
+                        agent, channel.id, e
+                    );
                     continue;
                 }
             };
             let mut notes = Vec::new();
             for note in state.private_notes.current() {
-                let from = Place { channel: channel.id, classification: note.classification.clone(), session: self.privacy() };
+                let from = Place {
+                    channel: channel.id,
+                    classification: note.classification.clone(),
+                    session: self.privacy(),
+                };
                 if self.views.may_copy_from(&from) {
                     notes.push(note);
                 }
             }
             if !notes.is_empty() {
-                found.push(PrivateNotesElsewhere { channel: channel.id, name: channel.name.to_string(), notes, digest: state.private_notes.digest() });
+                found.push(PrivateNotesElsewhere {
+                    channel: channel.id,
+                    name: channel.name.to_string(),
+                    notes,
+                    digest: state.private_notes.digest(),
+                });
             }
         }
         found.sort_by(|l, r| l.name.cmp(&r.name));
@@ -355,16 +435,26 @@ impl SessionView {
     ///
     /// # Errors
     /// `Forbidden` if the viewer may not read what the agent saw.
-    pub async fn private_notes_of(&self, agent: AgentId) -> ViewResult<Vec<(ChannelView, Vec<Note>, Option<Digest>)>> {
+    pub async fn private_notes_of(
+        &self,
+        agent: AgentId,
+    ) -> ViewResult<Vec<(ChannelView, Vec<Note>, Option<Digest>)>> {
         let mut found = Vec::new();
         for channel in self.all_channels().await {
             // Not a participant there: nothing noted there.
-            let Ok(participant) = channel.participant(ActorId::Agent(agent)).await else { continue };
+            let Ok(participant) = channel.participant(ActorId::Agent(agent)).await else {
+                continue;
+            };
             match participant.private_notes().await {
                 Ok((notes, digest)) if !notes.is_empty() => found.push((channel, notes, digest)),
                 Ok(_) => {}
                 Err(e @ ViewError::Forbidden { .. }) => return Err(e),
-                Err(e) => warn!("Reading the private notes of agent {} in channel {} failed: {}", agent, channel.id(), e),
+                Err(e) => warn!(
+                    "Reading the private notes of agent {} in channel {} failed: {}",
+                    agent,
+                    channel.id(),
+                    e
+                ),
             }
         }
         found.sort_by(|(l, ..), (r, ..)| l.name().as_str().cmp(r.name().as_str()));
@@ -380,8 +470,17 @@ impl SessionView {
     pub async fn deleted_channels(&self) -> ViewResult<Vec<DeletedSnapshot<ChannelId>>> {
         let views = self.views();
         let of_this = Query::filtered(Filter::eq(ChannelField::Session, self.id()));
-        let mut deleted = views.deleted_of(views.stores().channels.as_ref(), &of_this, |channel| channel.name.to_string()).await
-            .map_err(|e| ViewError::failed(e, format!("listing the deleted channels of session {}", self.id())))?;
+        let mut deleted = views
+            .deleted_of(views.stores().channels.as_ref(), &of_this, |channel| {
+                channel.name.to_string()
+            })
+            .await
+            .map_err(|e| {
+                ViewError::failed(
+                    e,
+                    format!("listing the deleted channels of session {}", self.id()),
+                )
+            })?;
         // Restoring one changes the session, and none is purged alone.
         let may_change = self.may_change().await;
         for entry in &mut deleted {

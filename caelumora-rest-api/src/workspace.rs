@@ -3,9 +3,9 @@
 
 use crate::access::AccessEntry;
 use crate::scope::{ScopeKind, ScopeResponse};
-use caelumora_model::snapshot;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::Grant;
+use caelumora_model::snapshot;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use chrono::{DateTime, Utc};
@@ -43,8 +43,16 @@ impl From<snapshot::WorkspaceSnapshot> for WorkspaceResponse {
     fn from(view: snapshot::WorkspaceSnapshot) -> Self {
         let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
         Self {
-            id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), storage: view.storage, description: view.description, classification: view.classification,
-            has_shell: view.has_shell, can_change: view.can_change, can_write: view.can_write, access,
+            id: view.id,
+            name: view.name,
+            scope: ScopeResponse::of(&view.scope),
+            storage: view.storage,
+            description: view.description,
+            classification: view.classification,
+            has_shell: view.has_shell,
+            can_change: view.can_change,
+            can_write: view.can_write,
+            access,
         }
     }
 }
@@ -110,7 +118,6 @@ pub struct FileResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified: Option<DateTime<Utc>>,
 }
-
 
 /// How a command of a workspace's shell stands (issue 294): as a result of
 /// `run_command` shows it, without what the model is told to do next.

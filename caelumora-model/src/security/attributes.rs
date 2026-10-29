@@ -52,7 +52,9 @@ impl SecurityAttributes {
         for entry in &self.acl {
             if let Subject::Actor(actor) = entry.subject {
                 if !matches!(actor, ActorId::User(_)) {
-                    return Err(format!("an access list names users, roles and groups, not {actor}"));
+                    return Err(format!(
+                        "an access list names users, roles and groups, not {actor}"
+                    ));
                 }
             }
         }
@@ -177,8 +179,8 @@ pub trait Secured {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::testing::*;
     use crate::agent::AgentId;
+    use crate::security::testing::*;
     use crate::store::query::meets_exactly_its_equals;
     use uuid::Uuid;
 
@@ -188,11 +190,24 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         assert_eq!(shared(alice, &[user()]).validate(), Ok(()));
         let place = Subject::Group(GroupId::new());
-        assert_eq!(SecurityAttributes::owned_by(alice).granting(Subject::Role(RoleId::new()), Grant::Read).granting(place, Grant::Write).validate(), Ok(()));
+        assert_eq!(
+            SecurityAttributes::owned_by(alice)
+                .granting(Subject::Role(RoleId::new()), Grant::Read)
+                .granting(place, Grant::Write)
+                .validate(),
+            Ok(())
+        );
         for nobody in [agent, ActorId::System, ActorId::None] {
-            assert!(SecurityAttributes::owned_by(alice).granting(Subject::Actor(nobody), Grant::Read).validate().is_err(), "not {nobody}");
+            assert!(
+                SecurityAttributes::owned_by(alice)
+                    .granting(Subject::Actor(nobody), Grant::Read)
+                    .validate()
+                    .is_err(),
+                "not {nobody}"
+            );
         }
-        let written: SecurityAttributes = serde_json::from_value(serde_json::json!({"owner_id": alice})).unwrap();
+        let written: SecurityAttributes =
+            serde_json::from_value(serde_json::json!({"owner_id": alice})).unwrap();
         assert!(written.acl.is_empty(), "the list may be left out where it is written by hand");
     }
 
@@ -209,9 +224,17 @@ mod tests {
         }
         for needed in Grant::ALL {
             let covering: Vec<Grant> = Grant::covering(needed).collect();
-            assert_eq!(covering, Grant::ALL.into_iter().filter(|grant| grant.covers(needed)).collect::<Vec<_>>(), "for {needed:?}");
+            assert_eq!(
+                covering,
+                Grant::ALL.into_iter().filter(|grant| grant.covers(needed)).collect::<Vec<_>>(),
+                "for {needed:?}"
+            );
         }
-        assert_eq!(Grant::covering(Grant::Read).collect::<Vec<_>>(), [Grant::Read, Grant::Write], "reading by a grant to read or to write");
+        assert_eq!(
+            Grant::covering(Grant::Read).collect::<Vec<_>>(),
+            [Grant::Read, Grant::Write],
+            "reading by a grant to read or to write"
+        );
     }
 
     /// A subject as a query compares it (issue 293).
@@ -219,9 +242,14 @@ mod tests {
     fn a_subject_meets_exactly_the_subjects_equal_to_it() {
         let id = Uuid::new_v4();
         meets_exactly_its_equals(&[
-            Subject::Actor(ActorId::User(UserId(id))), Subject::Actor(ActorId::Agent(AgentId(id))),
-            Subject::Actor(ActorId::System), Subject::Role(RoleId(id)), Subject::Role(RoleId::new()),
-            Subject::Group(GroupId(id)), Subject::Group(GroupId::new()), Subject::Everyone,
+            Subject::Actor(ActorId::User(UserId(id))),
+            Subject::Actor(ActorId::Agent(AgentId(id))),
+            Subject::Actor(ActorId::System),
+            Subject::Role(RoleId(id)),
+            Subject::Role(RoleId::new()),
+            Subject::Group(GroupId(id)),
+            Subject::Group(GroupId::new()),
+            Subject::Everyone,
         ]);
     }
 }

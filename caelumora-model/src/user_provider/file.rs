@@ -11,11 +11,11 @@ use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordVerifier};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::fs as std_fs;
 use std::io;
-use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::fs as std_fs;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::task;
 
@@ -116,18 +116,30 @@ impl FileUserProvider {
         let file: UserFile = parse_yaml(content).map_err(|e| invalid(&e))?;
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
-        file.users.into_iter()
+        file.users
+            .into_iter()
             .map(|entry| {
                 if !ids.insert(entry.id) {
                     return Err(invalid(&format!("the id {} is given twice", entry.id)));
                 }
                 if !names.insert(entry.username.clone()) {
-                    return Err(invalid(&format!("the username '{}' is given twice", entry.username)));
+                    return Err(invalid(&format!(
+                        "the username '{}' is given twice",
+                        entry.username
+                    )));
                 }
-                let of_user = |e: &dyn ToString| invalid(&format!("user '{}': {}", entry.username, e.to_string()));
+                let of_user = |e: &dyn ToString| {
+                    invalid(&format!("user '{}': {}", entry.username, e.to_string()))
+                };
                 let roles = self.roles.ids_of(&entry.roles).map_err(|e| of_user(&e))?;
                 let password_hash = argon2_hash(&entry.password_hash).map_err(|e| of_user(&e))?;
-                let user = User { id: entry.id, username: entry.username, email: entry.email, roles, deleted: None };
+                let user = User {
+                    id: entry.id,
+                    username: entry.username,
+                    email: entry.email,
+                    roles,
+                    deleted: None,
+                };
                 Ok(Known { user, password_hash })
             })
             .collect()
@@ -137,25 +149,44 @@ impl FileUserProvider {
 #[async_trait]
 impl UserProvider for FileUserProvider {
     async fn find_user(&self, username: &str) -> AuthResult<Option<User>> {
-        Ok(self.users().await?.into_iter().find(|known| known.user.username == username).map(|known| known.user))
+        Ok(self
+            .users()
+            .await?
+            .into_iter()
+            .find(|known| known.user.username == username)
+            .map(|known| known.user))
     }
 
     async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
-        Ok(self.users().await?.into_iter().find(|known| known.user.id == id).map(|known| known.user))
+        Ok(self
+            .users()
+            .await?
+            .into_iter()
+            .find(|known| known.user.id == id)
+            .map(|known| known.user))
     }
 
     /// A password is verified against the user's hash; `Credential::Trusted` is taken for every
     /// user of the file. A name the file does not know is not its own.
-    async fn authenticate(&self, username: &str, credential: &Credential<'_>) -> AuthResult<Option<User>> {
+    async fn authenticate(
+        &self,
+        username: &str,
+        credential: &Credential<'_>,
+    ) -> AuthResult<Option<User>> {
         let mut users = self.users().await?;
-        let found = users.iter().position(|known| known.user.username == username).map(|at| users.swap_remove(at));
+        let found = users
+            .iter()
+            .position(|known| known.user.username == username)
+            .map(|at| users.swap_remove(at));
         match credential {
             Credential::Trusted => Ok(found.map(|known| known.user)),
             Credential::Password(password) => {
                 // For a name the file does not know, another user's hash is verified all the
                 // same, and the answer dropped: the time a login takes does not tell which names
                 // exist.
-                let Some(hash) = found.as_ref().or(users.first()).map(|known| known.password_hash.clone()) else {
+                let Some(hash) =
+                    found.as_ref().or(users.first()).map(|known| known.password_hash.clone())
+                else {
                     return Ok(None);
                 };
                 let verified = verify(password, hash).await?;
@@ -171,20 +202,26 @@ impl UserProvider for FileUserProvider {
 
 /// `text` as an Argon2 hash whose parameters Argon2 takes.
 fn argon2_hash(text: &str) -> Result<PasswordHash, String> {
-    let hash = PasswordHash::new(text).map_err(|e| format!("the password hash is no Argon2 hash: {e}"))?;
-    Algorithm::try_from(hash.algorithm.as_str()).map_err(|_| "the password hash is no Argon2 hash".to_string())?;
-    Params::try_from(&hash).map_err(|e| format!("the password hash has invalid parameters: {e}"))?;
+    let hash =
+        PasswordHash::new(text).map_err(|e| format!("the password hash is no Argon2 hash: {e}"))?;
+    Algorithm::try_from(hash.algorithm.as_str())
+        .map_err(|_| "the password hash is no Argon2 hash".to_string())?;
+    Params::try_from(&hash)
+        .map_err(|e| format!("the password hash has invalid parameters: {e}"))?;
     Ok(hash)
 }
 
 /// Whether `password` is what `hash` was made of. Computed on a blocking thread: a password hash
 /// is made to take long.
 async fn verify(password: &str, hash: PasswordHash) -> AuthResult<bool> {
-    let failed = |e: &dyn ToString| AuthError::Backend(format!("the password could not be verified: {}", e.to_string()));
+    let failed = |e: &dyn ToString| {
+        AuthError::Backend(format!("the password could not be verified: {}", e.to_string()))
+    };
     let password = password.to_owned();
-    let verified = task::spawn_blocking(move || Argon2::default().verify_password(password.as_bytes(), &hash))
-        .await
-        .map_err(|e| failed(&e))?;
+    let verified =
+        task::spawn_blocking(move || Argon2::default().verify_password(password.as_bytes(), &hash))
+            .await
+            .map_err(|e| failed(&e))?;
     match verified {
         Ok(()) => Ok(true),
         Err(HashError::PasswordInvalid) => Ok(false),
@@ -208,8 +245,11 @@ fn invalid(why: &dyn ToString) -> AuthError {
 fn warn_if_exposed(path: &Path) {
     if let Ok(metadata) = std_fs::metadata(path) {
         if exposed(metadata.permissions().mode()) {
-            tracing::warn!("The user file {} may be read by others or changed by others than its owner - \
-                restrict it, e.g. with chmod 600", path.display());
+            tracing::warn!(
+                "The user file {} may be read by others or changed by others than its owner - \
+                restrict it, e.g. with chmod 600",
+                path.display()
+            );
         }
     }
 }
@@ -258,7 +298,9 @@ mod tests {
     fn roles() -> (Roles, RoleId, RoleId) {
         let staff = RoleId::new();
         let hr = RoleId::new();
-        let roles = Roles::new([(staff, "staff".to_string(), vec![]), (hr, "hr".to_string(), vec![])]).expect("valid roles");
+        let roles =
+            Roles::new([(staff, "staff".to_string(), vec![]), (hr, "hr".to_string(), vec![])])
+                .expect("valid roles");
         (roles, staff, hr)
     }
 
@@ -266,24 +308,49 @@ mod tests {
     async fn a_user_logs_in_with_their_password_only() {
         let (roles, staff, hr) = roles();
         let alice = UserId::new();
-        let (_dir, path) = user_file(&format!("users:\n{}", entry(alice, "alice", "[staff, hr]", "wonderland")));
+        let (_dir, path) =
+            user_file(&format!("users:\n{}", entry(alice, "alice", "[staff, hr]", "wonderland")));
         let users = FileUserProvider::open(&path, roles).expect("a valid file");
 
-        let found = users.authenticate("alice", &Credential::Password("wonderland")).await.unwrap().expect("her password");
-        assert_eq!((found.id, found.roles), (alice, vec![staff, hr]), "her id, and her roles by their names");
-        let shouted = users.authenticate("ALICE", &Credential::Password("wonderland")).await.unwrap().expect("her password");
+        let found = users
+            .authenticate("alice", &Credential::Password("wonderland"))
+            .await
+            .unwrap()
+            .expect("her password");
+        assert_eq!(
+            (found.id, found.roles),
+            (alice, vec![staff, hr]),
+            "her id, and her roles by their names"
+        );
+        let shouted = users
+            .authenticate("ALICE", &Credential::Password("wonderland"))
+            .await
+            .unwrap()
+            .expect("her password");
         assert_eq!(shouted.id, alice, "a username is compared as a name");
-        assert!(matches!(users.authenticate("alice", &Credential::Password("looking-glass")).await, Err(AuthError::InvalidCredentials)),
-            "a wrong password ends the chain");
-        assert!(users.authenticate("bob", &Credential::Password("wonderland")).await.unwrap().is_none(), "a name it does not know is not its own");
+        assert!(
+            matches!(
+                users.authenticate("alice", &Credential::Password("looking-glass")).await,
+                Err(AuthError::InvalidCredentials)
+            ),
+            "a wrong password ends the chain"
+        );
+        assert!(
+            users.authenticate("bob", &Credential::Password("wonderland")).await.unwrap().is_none(),
+            "a name it does not know is not its own"
+        );
     }
 
     #[tokio::test]
     async fn a_trusted_frontend_is_answered_for_the_users_of_the_file_only() {
         let alice = UserId::new();
-        let (_dir, path) = user_file(&format!("users:\n{}", entry(alice, "alice", "[]", "wonderland")));
+        let (_dir, path) =
+            user_file(&format!("users:\n{}", entry(alice, "alice", "[]", "wonderland")));
         let users = FileUserProvider::open(&path, Roles::default()).expect("a valid file");
-        assert_eq!(users.authenticate("alice", &Credential::Trusted).await.unwrap().map(|user| user.id), Some(alice));
+        assert_eq!(
+            users.authenticate("alice", &Credential::Trusted).await.unwrap().map(|user| user.id),
+            Some(alice)
+        );
         assert!(users.authenticate("bob", &Credential::Trusted).await.unwrap().is_none());
     }
 
@@ -301,16 +368,35 @@ mod tests {
         let bob = UserId::new();
         let (_dir, path) = user_file(&format!("users:\n{}", entry(alice, "alice", "[]", "a")));
         let users = FileUserProvider::open(&path, Roles::default()).expect("a valid file");
-        assert_eq!(users.get_user(alice).await.unwrap().map(|user| user.username.to_string()), Some("alice".to_string()));
+        assert_eq!(
+            users.get_user(alice).await.unwrap().map(|user| user.username.to_string()),
+            Some("alice".to_string())
+        );
 
         std_fs::write(&path, format!("users:\n{}", entry(bob, "bob", "[]", "b"))).unwrap();
-        assert!(users.get_user(alice).await.unwrap().is_none(), "removed, her token is not renewed");
-        assert_eq!(users.find_user("bob").await.unwrap().map(|user| user.id), Some(bob), "added, he is known");
+        assert!(
+            users.get_user(alice).await.unwrap().is_none(),
+            "removed, her token is not renewed"
+        );
+        assert_eq!(
+            users.find_user("bob").await.unwrap().map(|user| user.id),
+            Some(bob),
+            "added, he is known"
+        );
 
         std_fs::write(&path, "users: [").unwrap();
-        assert!(matches!(users.find_user("bob").await, Err(AuthError::Backend(_))), "broken, it denies rather than knowing nobody");
+        assert!(
+            matches!(users.find_user("bob").await, Err(AuthError::Backend(_))),
+            "broken, it denies rather than knowing nobody"
+        );
         std_fs::remove_file(&path).unwrap();
-        assert!(matches!(users.authenticate("bob", &Credential::Password("b")).await, Err(AuthError::Backend(_))), "and so when gone");
+        assert!(
+            matches!(
+                users.authenticate("bob", &Credential::Password("b")).await,
+                Err(AuthError::Backend(_))
+            ),
+            "and so when gone"
+        );
     }
 
     #[test]
@@ -319,49 +405,96 @@ mod tests {
         let id = UserId::new();
         let refused = |content: String| {
             let (_dir, path) = user_file(&content);
-            let error = FileUserProvider::open(&path, roles.clone()).map(|_| ()).expect_err("refused");
+            let error =
+                FileUserProvider::open(&path, roles.clone()).map(|_| ()).expect_err("refused");
             let message = error.to_string();
             assert!(!message.contains(path.to_string_lossy().as_ref()), "no path in {message}");
             message
         };
         assert!(refused("users: [".to_string()).contains("invalid"), "no YAML");
-        assert!(refused(format!("users:\n{}{}", entry(id, "alice", "[]", "a"), entry(UserId::new(), "Alice", "[]", "b"))).contains("username"),
-            "a name given twice, as names are compared");
-        assert!(refused(format!("users:\n{}{}", entry(id, "alice", "[]", "a"), entry(id, "bob", "[]", "b"))).contains("id"), "an id given twice");
-        assert!(refused(format!("users:\n{}", entry(id, "alice", "[boss]", "a"))).contains("boss"), "a role not configured");
-        assert!(refused(format!("users:\n  - id: {id}\n    username: alice\n    password: wonderland\n")).contains("password"),
-            "a password in plain text is no field of it");
-        let hashed = |hash: &str| refused(format!("users:\n  - id: {id}\n    username: alice\n    password_hash: \"{hash}\"\n"));
+        assert!(
+            refused(format!(
+                "users:\n{}{}",
+                entry(id, "alice", "[]", "a"),
+                entry(UserId::new(), "Alice", "[]", "b")
+            ))
+            .contains("username"),
+            "a name given twice, as names are compared"
+        );
+        assert!(
+            refused(format!(
+                "users:\n{}{}",
+                entry(id, "alice", "[]", "a"),
+                entry(id, "bob", "[]", "b")
+            ))
+            .contains("id"),
+            "an id given twice"
+        );
+        assert!(
+            refused(format!("users:\n{}", entry(id, "alice", "[boss]", "a"))).contains("boss"),
+            "a role not configured"
+        );
+        assert!(
+            refused(format!(
+                "users:\n  - id: {id}\n    username: alice\n    password: wonderland\n"
+            ))
+            .contains("password"),
+            "a password in plain text is no field of it"
+        );
+        let hashed = |hash: &str| {
+            refused(format!(
+                "users:\n  - id: {id}\n    username: alice\n    password_hash: \"{hash}\"\n"
+            ))
+        };
         let bcrypt = hashed("$2b$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW");
-        assert!(bcrypt.contains("Argon2") && !bcrypt.contains("R9h/cIPz0gi"), "no Argon2 hash, and the hash not quoted: {bcrypt}");
+        assert!(
+            bcrypt.contains("Argon2") && !bcrypt.contains("R9h/cIPz0gi"),
+            "no Argon2 hash, and the hash not quoted: {bcrypt}"
+        );
         let scrypt = hashed("$scrypt$ln=16,r=8,p=1$aM15713r3Xsvxbi31lqr1Q$nFNh2CVHVjNldFVKDHDlm4CbdRSCdEBsjjJxD+iCs5E");
-        assert!(scrypt.contains("Argon2") && !scrypt.contains("aM15713r3X"), "a hash of another kind: {scrypt}");
+        assert!(
+            scrypt.contains("Argon2") && !scrypt.contains("aM15713r3X"),
+            "a hash of another kind: {scrypt}"
+        );
         assert!(hashed("wonderland").contains("Argon2"), "a password where its hash belongs");
 
         let dir = tempfile::tempdir().unwrap();
         let missing = FileUserProvider::open(dir.path().join("users.yaml"), Roles::default());
-        assert!(matches!(missing, Err(AuthError::Backend(_))), "a file that is not there is no empty one");
+        assert!(
+            matches!(missing, Err(AuthError::Backend(_))),
+            "a file that is not there is no empty one"
+        );
     }
 
     #[test]
     fn its_parameters_name_the_file_and_its_roles_must_be_configured() {
         let (roles, _, _) = roles();
-        let (_dir, path) = user_file(&format!("users:\n{}", entry(UserId::new(), "alice", "[hr]", "a")));
+        let (_dir, path) =
+            user_file(&format!("users:\n{}", entry(UserId::new(), "alice", "[hr]", "a")));
         let config = FileUserConfig { path };
         assert!(config.provider(Some(&roles)).is_ok());
-        assert!(config.provider(None).is_err_and(|e| e.to_string().contains(&RoleError::UnknownRole("hr".to_string()).to_string())),
-            "roles named, but none configured");
+        assert!(
+            config.provider(None).is_err_and(|e| e
+                .to_string()
+                .contains(&RoleError::UnknownRole("hr".to_string()).to_string())),
+            "roles named, but none configured"
+        );
     }
 
     #[tokio::test]
     async fn the_example_users_log_in_with_their_names_as_passwords() {
         let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
-        let config = AppConfig::load(examples.join("config.yaml")).expect("examples/config.yaml is a valid configuration");
-        let users = FileUserProvider::open(examples.join("users.yaml"), config.roles.unwrap_or_default())
-            .expect("examples/users.yaml names the roles of examples/config.yaml");
+        let config = AppConfig::load(examples.join("config.yaml"))
+            .expect("examples/config.yaml is a valid configuration");
+        let users =
+            FileUserProvider::open(examples.join("users.yaml"), config.roles.unwrap_or_default())
+                .expect("examples/users.yaml names the roles of examples/config.yaml");
         for name in ["alice", "bob", "user"] {
             let found = users.authenticate(name, &Credential::Password(name)).await;
-            assert!(matches!(found, Ok(Some(ref user)) if user.username == name), "{name}: {found:?}");
+            assert!(
+                matches!(found, Ok(Some(ref user)) if user.username == name),
+                "{name}: {found:?}"
+            );
         }
     }
 

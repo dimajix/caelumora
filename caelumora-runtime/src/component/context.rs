@@ -1,19 +1,21 @@
-use caelumora_model::security::SecurityContext;
-use caelumora_model::type_map::TypeKey;
-use crate::runtime::Services;
-use std::sync::Arc;
 use super::container::{ComponentImpl, Graph};
 use super::registry::Registration;
 use super::{require_declared, ComponentError, ComponentResult};
+use crate::runtime::Services;
+use caelumora_model::security::SecurityContext;
+use caelumora_model::type_map::TypeKey;
 use std::fmt;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 /// The service `T` of `services`, for what is made with them: a component
 /// (`ComponentContext::service`), a backend (`Backends`).
 ///
 /// # Errors
 /// `ComponentError::NoService` if there is none.
-pub fn service_of<T: ?Sized + Send + Sync + 'static>(services: &Services) -> ComponentResult<&Arc<T>> {
+pub fn service_of<T: ?Sized + Send + Sync + 'static>(
+    services: &Services,
+) -> ComponentResult<&Arc<T>> {
     services.get::<T>().ok_or(ComponentError::NoService(TypeKey::of::<T>().name()))
 }
 
@@ -90,7 +92,9 @@ impl ComponentContext {
     /// `ComponentError::Undeclared` if the kind does not declare it needs
     /// `T`; whatever building one of them reports; `ComponentError::Cycle`
     /// if one of them is being built and waits for this one.
-    pub async fn all<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<Vec<ComponentImpl<T>>> {
+    pub async fn all<T: ?Sized + Send + Sync + 'static>(
+        &self,
+    ) -> ComponentResult<Vec<ComponentImpl<T>>> {
         require_declared::<T>(&self.needs)?;
         let (graph, component) = self.building()?;
         graph.all::<T>(Some(component)).await
@@ -102,16 +106,22 @@ impl ComponentContext {
     ///
     /// # Errors
     /// As [`all`](Self::all).
-    pub async fn one<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<ComponentImpl<T>> {
+    pub async fn one<T: ?Sized + Send + Sync + 'static>(
+        &self,
+    ) -> ComponentResult<ComponentImpl<T>> {
         require_declared::<T>(&self.needs)?;
         let (graph, component) = self.building()?;
         graph.one::<T>(Some(component)).await
     }
 
     fn building(&self) -> ComponentResult<(&Arc<Graph>, &str)> {
-        self.building.as_ref()
-            .map(|(graph, component)| (graph, component.as_str()))
-            .ok_or_else(|| ComponentError::InvalidConfig("other components can only be asked for while a component is built".to_string()))
+        self.building.as_ref().map(|(graph, component)| (graph, component.as_str())).ok_or_else(
+            || {
+                ComponentError::InvalidConfig(
+                    "other components can only be asked for while a component is built".to_string(),
+                )
+            },
+        )
     }
 }
 
@@ -124,73 +134,154 @@ mod tests {
     use caelumora_model::store::Persistence;
     use std::sync::Mutex;
 
-        #[tokio::test]
-        async fn a_component_gets_every_other_that_provides_what_it_asks_for_in_the_order_of_the_configuration() {
-            let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
-            registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| Ok(named(&descriptor.id)));
-            let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-            let recorded = Arc::clone(&seen);
-            // Provides what it collects, so that it has to leave itself out.
-            registry.register_async(ComponentKind::new("collector").provides::<dyn Named>().needs::<dyn Named>(), move |descriptor, context| {
+    #[tokio::test]
+    async fn a_component_gets_every_other_that_provides_what_it_asks_for_in_the_order_of_the_configuration(
+    ) {
+        let mut registry = ComponentRegistry::new(
+            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+        );
+        registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| {
+            Ok(named(&descriptor.id))
+        });
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&seen);
+        // Provides what it collects, so that it has to leave itself out.
+        registry.register_async(
+            ComponentKind::new("collector").provides::<dyn Named>().needs::<dyn Named>(),
+            move |descriptor, context| {
                 let recorded = Arc::clone(&recorded);
                 async move {
                     let parts = context.all::<dyn Named>().await?;
                     recorded.lock().unwrap().extend(parts.iter().map(|part| part.name()));
                     Ok(named(&descriptor.id))
                 }
-            });
-            let registry = Arc::new(registry);
+            },
+        );
+        let registry = Arc::new(registry);
 
-            // Configured before what it collects, which is built for it first.
-            let container = ComponentContainer::from_config(&config(&[("collector", "collector"), ("a", "part"), ("b", "part")]), ASKED, &registry, &test_context())
-                .await.expect("builds");
+        // Configured before what it collects, which is built for it first.
+        let container = ComponentContainer::from_config(
+            &config(&[("collector", "collector"), ("a", "part"), ("b", "part")]),
+            ASKED,
+            &registry,
+            &test_context(),
+        )
+        .await
+        .expect("builds");
 
-            assert_eq!(*seen.lock().unwrap(), ["a", "b"], "every other component with the facet, in the order of the configuration");
-            let all: Vec<_> = container.get_all::<dyn Named>(None).unwrap().iter().map(|c| c.id.clone()).collect();
-            assert_eq!(all, ["collector", "a", "b"], "the container keeps the order of the configuration");
-        }
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["a", "b"],
+            "every other component with the facet, in the order of the configuration"
+        );
+        let all: Vec<_> =
+            container.get_all::<dyn Named>(None).unwrap().iter().map(|c| c.id.clone()).collect();
+        assert_eq!(
+            all,
+            ["collector", "a", "b"],
+            "the container keeps the order of the configuration"
+        );
+    }
 
-        /// A kind is given the services it declares it uses (issue 296), and
-        /// none it does not: the context of the graph has the policy, the one of
-        /// `blind` does not.
-        #[tokio::test]
-        async fn a_component_is_given_the_services_its_kind_uses_alone() {
-            let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
-            registry.register(ComponentKind::new("seeing").provides::<dyn Named>().uses::<dyn AccessPolicy>(), |node, context| {
+    /// A kind is given the services it declares it uses (issue 296), and
+    /// none it does not: the context of the graph has the policy, the one of
+    /// `blind` does not.
+    #[tokio::test]
+    async fn a_component_is_given_the_services_its_kind_uses_alone() {
+        let mut registry = ComponentRegistry::new(
+            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+        );
+        registry.register(
+            ComponentKind::new("seeing").provides::<dyn Named>().uses::<dyn AccessPolicy>(),
+            |node, context| {
                 context.service::<dyn AccessPolicy>()?;
                 Ok(named(&node.id))
-            });
-            registry.register(ComponentKind::new("blind").provides::<dyn Named>(), |node, context| {
-                context.service::<dyn AccessPolicy>()?;
-                Ok(named(&node.id))
-            });
-            let registry = Arc::new(registry);
+            },
+        );
+        registry.register(ComponentKind::new("blind").provides::<dyn Named>(), |node, context| {
+            context.service::<dyn AccessPolicy>()?;
+            Ok(named(&node.id))
+        });
+        let registry = Arc::new(registry);
 
-            ComponentContainer::from_config(&config(&[("seeing", "seeing")]), ASKED, &registry, &test_context()).await.expect("given what it uses");
-            let error = ComponentContainer::from_config(&config(&[("blind", "blind")]), ASKED, &registry, &test_context())
-                .await.expect_err("not what it does not declare");
-            assert!(causes(&error).iter().any(|e| matches!(e, ComponentError::NoService("AccessPolicy"))), "{error}");
-        }
+        ComponentContainer::from_config(
+            &config(&[("seeing", "seeing")]),
+            ASKED,
+            &registry,
+            &test_context(),
+        )
+        .await
+        .expect("given what it uses");
+        let error = ComponentContainer::from_config(
+            &config(&[("blind", "blind")]),
+            ASKED,
+            &registry,
+            &test_context(),
+        )
+        .await
+        .expect_err("not what it does not declare");
+        assert!(
+            causes(&error).iter().any(|e| matches!(e, ComponentError::NoService("AccessPolicy"))),
+            "{error}"
+        );
+    }
 
-        /// A component may ask for the facets its kind needs and no other, an
-        /// owner for those it built its container for (issue 337).
-        #[tokio::test]
-        async fn a_facet_that_was_not_declared_is_refused() {
-            let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
-            registry.register_async(ComponentKind::new("greedy").provides::<dyn Named>(), |descriptor, context| async move {
+    /// A component may ask for the facets its kind needs and no other, an
+    /// owner for those it built its container for (issue 337).
+    #[tokio::test]
+    async fn a_facet_that_was_not_declared_is_refused() {
+        let mut registry = ComponentRegistry::new(
+            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+        );
+        registry.register_async(
+            ComponentKind::new("greedy").provides::<dyn Named>(),
+            |descriptor, context| async move {
                 context.all::<dyn Named>().await?;
                 Ok(named(&descriptor.id))
-            });
-            registry.register(ComponentKind::new("part").provides::<dyn Named>().provides::<dyn Other>(), |descriptor, _| {
-                Ok(named(&descriptor.id).with(Arc::new(Name(descriptor.id.clone())) as Arc<dyn Other>))
-            });
-            let registry = Arc::new(registry);
-            let error = ComponentContainer::from_config(&config(&[("greedy", "greedy")]), NAMED, &registry, &test_context())
-                .await.expect_err("its kind does not need Named");
-            assert!(causes(&error).iter().any(|e| matches!(e, ComponentError::Undeclared("Named"))), "{error}");
+            },
+        );
+        registry.register(
+            ComponentKind::new("part").provides::<dyn Named>().provides::<dyn Other>(),
+            |descriptor, _| {
+                Ok(named(&descriptor.id)
+                    .with(Arc::new(Name(descriptor.id.clone())) as Arc<dyn Other>))
+            },
+        );
+        let registry = Arc::new(registry);
+        let error = ComponentContainer::from_config(
+            &config(&[("greedy", "greedy")]),
+            NAMED,
+            &registry,
+            &test_context(),
+        )
+        .await
+        .expect_err("its kind does not need Named");
+        assert!(
+            causes(&error).iter().any(|e| matches!(e, ComponentError::Undeclared("Named"))),
+            "{error}"
+        );
 
-            let container = ComponentContainer::from_config(&config(&[("a", "part")]), NAMED, &registry, &test_context()).await.expect("provides Named");
-            assert!(matches!(container.get_all::<dyn Other>(None), Err(ComponentError::Undeclared("Other"))), "not built for Other");
-            assert!(matches!(container.one::<dyn Choice>().await, Err(ComponentError::Undeclared("Choice"))), "not built for Choice");
-        }
+        let container = ComponentContainer::from_config(
+            &config(&[("a", "part")]),
+            NAMED,
+            &registry,
+            &test_context(),
+        )
+        .await
+        .expect("provides Named");
+        assert!(
+            matches!(
+                container.get_all::<dyn Other>(None),
+                Err(ComponentError::Undeclared("Other"))
+            ),
+            "not built for Other"
+        );
+        assert!(
+            matches!(
+                container.one::<dyn Choice>().await,
+                Err(ComponentError::Undeclared("Choice"))
+            ),
+            "not built for Choice"
+        );
+    }
 }

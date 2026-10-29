@@ -29,7 +29,13 @@ impl StandIn {
     /// # Panics
     /// If `name` is no valid name.
     pub(crate) fn new(id: ActorId, name: &str, state: ActorState) -> Self {
-        Self { id, name: Name::new(name).expect("a name"), state, woken: AtomicBool::new(false), cancelled: AtomicBool::new(false) }
+        Self {
+            id,
+            name: Name::new(name).expect("a name"),
+            state,
+            woken: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+        }
     }
 
     /// The actor `id` asleep, called `name`.
@@ -73,7 +79,11 @@ impl Actor for StandIn {
     }
 
     fn state(&self) -> ActorState {
-        if self.woken() { ActorState::Idle } else { self.state }
+        if self.woken() {
+            ActorState::Idle
+        } else {
+            self.state
+        }
     }
 
     fn wakeup(&self) {

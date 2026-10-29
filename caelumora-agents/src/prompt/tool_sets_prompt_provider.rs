@@ -10,13 +10,15 @@
 //! that what it says matches what the model is offered; with all of them
 //! available it contributes nothing.
 
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
+use crate::prompt::{
+    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use caelumora_model::tool::ToolSet;
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use std::sync::Arc;
 
 pub const TOOL_SETS_PROMPT_PROVIDER_KIND: &str = "tool_sets_prompt_provider";
@@ -63,12 +65,17 @@ fn one_line(text: &str) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+        ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let position = PromptPosition::of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider { position, prompts: texts }));
+            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider {
+                position,
+                prompts: texts,
+            }));
             Ok(facets)
         },
     );
@@ -87,7 +94,10 @@ mod tests {
         Tool {
             name: name.to_string(),
             description: "does something".to_string(),
-            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
+            parameters: ToolParameters::object(
+                Vec::<(String, ToolParameters)>::new(),
+                Vec::<String>::new(),
+            ),
             requires_approval: false,
             visibility: Default::default(),
             classification: None,
@@ -98,10 +108,17 @@ mod tests {
     /// What the provider says in a turn begun with `sets`.
     async fn told(sets: Vec<ToolSet>) -> Prompt {
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(Default::default(), None, Default::default(), Classification::CHANNEL_DEFAULT, Default::default()));
+        state.begin_turn(Work::new(
+            Default::default(),
+            None,
+            Default::default(),
+            Classification::CHANNEL_DEFAULT,
+            Default::default(),
+        ));
         state.offer_tools(sets);
         let turn = Turn::under_way(AgentId::new(), &mut state);
-        let provider = ToolSetsPromptProvider { position: PromptPosition::Start, prompts: testing::prompts() };
+        let provider =
+            ToolSetsPromptProvider { position: PromptPosition::Start, prompts: testing::prompts() };
         provider.get_prompt(&turn.situation()).await.unwrap()
     }
 
@@ -111,15 +128,32 @@ mod tests {
             unavailable: Some("its server\ncannot be reached".to_string()),
             ..ToolSet::new("github-mcp", "The tools of\nthe issue tracker.", Vec::new())
         };
-        let prompt = told(vec![ToolSet::new("calculator", "Evaluate expressions.", vec![tool("calculate")]), github]).await;
-        assert!(prompt.text.contains("- github-mcp (The tools of the issue tracker.): its server cannot be reached\n"), "{}", prompt.text);
+        let prompt = told(vec![
+            ToolSet::new("calculator", "Evaluate expressions.", vec![tool("calculate")]),
+            github,
+        ])
+        .await;
+        assert!(
+            prompt.text.contains(
+                "- github-mcp (The tools of the issue tracker.): its server cannot be reached\n"
+            ),
+            "{}",
+            prompt.text
+        );
         assert!(!prompt.text.contains("calculator"), "only the unavailable ones: {}", prompt.text);
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
     }
 
     #[tokio::test]
     async fn with_every_tool_set_available_it_says_nothing() {
-        assert!(told(vec![ToolSet::new("calculator", "Evaluate expressions.", vec![tool("calculate")])]).await.text.is_empty());
+        assert!(told(vec![ToolSet::new(
+            "calculator",
+            "Evaluate expressions.",
+            vec![tool("calculate")]
+        )])
+        .await
+        .text
+        .is_empty());
         assert!(told(Vec::new()).await.text.is_empty(), "nor without tools");
     }
 }

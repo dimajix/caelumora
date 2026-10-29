@@ -134,7 +134,10 @@ pub mod testing {
 
     /// A reference to `name` of the bytes `bytes`, as a channel's storage "kept" keeps them,
     /// classified as a channel is by default.
-    #[expect(clippy::expect_used, reason = "test code: a name that is none fails the test that gives it")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test code: a name that is none fails the test that gives it"
+    )]
     pub fn make_content_ref(name: &str, bytes: &[u8]) -> ContentRef {
         let id = ContentId::new();
         ContentRef {
@@ -166,10 +169,26 @@ mod tests {
         assert_eq!(media_type(b"%PDF-1.7\n"), "application/pdf");
         assert_eq!(media_type(b"PK\x03\x04 xlsx"), "application/zip");
         assert_eq!(media_type("a,b\n1,2\nZoë".as_bytes()), "text/plain");
-        assert_eq!(media_type(&"Zoë".as_bytes()[..3]), "text/plain", "a character cut off at the end of the head");
+        assert_eq!(
+            media_type(&"Zoë".as_bytes()[..3]),
+            "text/plain",
+            "a character cut off at the end of the head"
+        );
         assert_eq!(media_type(b"\x00\x01binary"), "application/octet-stream");
-        assert_eq!(media_type(b"<svg onload=..."), "text/plain", "what claims to be an image is text, never an image");
-        let image = |media_type: &str| ContentRef { media_type: media_type.to_string(), ..make_content_ref("x", b"x") };
-        assert!(image("image/png").is_image() && image("image/webp").is_image() && !image("image/gif").is_image() && !image("text/plain").is_image());
+        assert_eq!(
+            media_type(b"<svg onload=..."),
+            "text/plain",
+            "what claims to be an image is text, never an image"
+        );
+        let image = |media_type: &str| ContentRef {
+            media_type: media_type.to_string(),
+            ..make_content_ref("x", b"x")
+        };
+        assert!(
+            image("image/png").is_image()
+                && image("image/webp").is_image()
+                && !image("image/gif").is_image()
+                && !image("text/plain").is_image()
+        );
     }
 }

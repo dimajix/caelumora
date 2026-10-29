@@ -1,4 +1,6 @@
-use crate::transport::{EventPick, EventPredicate, EventReceiver, EventSender, TransportError, TransportResult};
+use crate::transport::{
+    EventPick, EventPredicate, EventReceiver, EventSender, TransportError, TransportResult,
+};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorId, Envelope, Pick};
 use caelumora_model::history::Heard;
@@ -108,10 +110,7 @@ impl InMemoryEventSender {
 #[async_trait]
 impl EventSender for InMemoryEventSender {
     async fn send(&self, event: Envelope) -> TransportResult<()> {
-        self.tx
-            .send(event)
-            .await
-            .map_err(|_| TransportError::Closed)
+        self.tx.send(event).await.map_err(|_| TransportError::Closed)
     }
 }
 
@@ -145,7 +144,11 @@ impl OriginEventSender {
         if self.speaks_as(event) {
             return Ok(());
         }
-        tracing::error!("Refused {}: sent by {} in the name of another", event.describe(), self.origin);
+        tracing::error!(
+            "Refused {}: sent by {} in the name of another",
+            event.describe(),
+            self.origin
+        );
         Err(TransportError::Refused { origin: self.origin })
     }
 }
@@ -172,7 +175,11 @@ mod tests {
 
     /// `event`, delivered as the entry at the position `seq`.
     fn at(seq: u64, event: ActorEvent) -> Envelope {
-        Envelope::new(SecurityContext::default(), EventContext { position: Some(Position::new(seq)), ..EventContext::default() }, event)
+        Envelope::new(
+            SecurityContext::default(),
+            EventContext { position: Some(Position::new(seq)), ..EventContext::default() },
+            event,
+        )
     }
 
     #[tokio::test]
@@ -181,37 +188,73 @@ mod tests {
         let mut receiver = InMemoryEventReceiver::new(rx);
         assert!(receiver.try_recv().await.is_none(), "nothing queued, nothing waited for");
 
-        tx.try_send(at(0, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })).expect("room");
-        tx.try_send(at(1, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() })).expect("room");
-        tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("room");
+        tx.try_send(at(0, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }))
+            .expect("room");
+        tx.try_send(at(
+            1,
+            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() },
+        ))
+        .expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() }))
+            .expect("room");
         // Puts the request aside while it takes what it waits for.
-        receiver.recv_matching(|e| matches!(e.event, ActorEvent::TurnFinished { .. })).await.expect("queued");
-        assert!(receiver.heard().has(Position::new(1)) && receiver.heard().next() == Position::START, "taken ahead of what it put aside");
+        receiver
+            .recv_matching(|e| matches!(e.event, ActorEvent::TurnFinished { .. }))
+            .await
+            .expect("queued");
+        assert!(
+            receiver.heard().has(Position::new(1)) && receiver.heard().next() == Position::START,
+            "taken ahead of what it put aside"
+        );
 
         let mut kinds = Vec::new();
         while let Some(event) = receiver.try_recv().await {
             kinds.push(event.event.kind());
         }
-        assert_eq!(kinds, ["ResponseRequested", "ResponseStarted"], "what was put aside first, then what is queued");
-        assert_eq!(receiver.heard(), Heard::at(Position::new(2)), "everything up to the last taken");
+        assert_eq!(
+            kinds,
+            ["ResponseRequested", "ResponseStarted"],
+            "what was put aside first, then what is queued"
+        );
+        assert_eq!(
+            receiver.heard(),
+            Heard::at(Position::new(2)),
+            "everything up to the last taken"
+        );
 
         drop(tx);
         assert!(receiver.try_recv().await.is_none(), "nothing either once the input is closed");
     }
 
     #[tokio::test]
-    async fn try_recv_if_takes_the_next_event_only_if_it_fulfils_the_predicate_and_leaves_it_otherwise() {
+    async fn try_recv_if_takes_the_next_event_only_if_it_fulfils_the_predicate_and_leaves_it_otherwise(
+    ) {
         let (tx, rx) = mpsc::channel(4);
         let mut receiver = InMemoryEventReceiver::new(rx);
-        let requested = |e: &Envelope| if matches!(e.event, ActorEvent::ResponseRequested { .. }) { Pick::Take } else { Pick::Stop };
-        assert!(receiver.try_recv_if(&requested).await.is_none(), "nothing queued, nothing waited for");
+        let requested = |e: &Envelope| {
+            if matches!(e.event, ActorEvent::ResponseRequested { .. }) {
+                Pick::Take
+            } else {
+                Pick::Stop
+            }
+        };
+        assert!(
+            receiver.try_recv_if(&requested).await.is_none(),
+            "nothing queued, nothing waited for"
+        );
 
-        tx.try_send(envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })).expect("room");
-        tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("room");
-        tx.try_send(envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })).expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }))
+            .expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() }))
+            .expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }))
+            .expect("room");
 
         assert!(receiver.try_recv_if(&requested).await.is_some(), "the next event fulfils it");
-        assert!(receiver.try_recv_if(&requested).await.is_none(), "the next one does not, and nothing behind it is looked at");
+        assert!(
+            receiver.try_recv_if(&requested).await.is_none(),
+            "the next one does not, and nothing behind it is looked at"
+        );
         assert!(receiver.try_recv_if(&requested).await.is_none(), "and stays the next one");
 
         let mut kinds = Vec::new();
@@ -233,14 +276,24 @@ mod tests {
             _ => Pick::Stop,
         };
         let started = || ActorEvent::ResponseStarted { turn_id: TurnId::new() };
-        for (seq, event) in [(0, started()), (1, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), (2, started()), (3, ActorEvent::WakeupRequested), (4, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })] {
+        for (seq, event) in [
+            (0, started()),
+            (1, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            (2, started()),
+            (3, ActorEvent::WakeupRequested),
+            (4, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+        ] {
             tx.try_send(at(seq, event)).expect("room");
         }
 
-        let taken = receiver.try_recv_if(&requests_past_starts).await.expect("past what it passes over");
+        let taken =
+            receiver.try_recv_if(&requests_past_starts).await.expect("past what it passes over");
         assert_eq!(taken.context.position, Some(Position::new(1)));
         assert!(receiver.try_recv_if(&requests_past_starts).await.is_none(), "never past a stop");
-        assert!(receiver.heard().has(Position::new(1)) && !receiver.heard().has(Position::new(0)), "taken ahead of what it passed over");
+        assert!(
+            receiver.heard().has(Position::new(1)) && !receiver.heard().has(Position::new(0)),
+            "taken ahead of what it passed over"
+        );
 
         let mut left = Vec::new();
         while let Some(event) = receiver.try_recv().await {
@@ -256,18 +309,32 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let agent = ActorId::Agent(AgentId::new());
         let sender = OriginEventSender::new(agent, Box::new(InMemoryEventSender::new(tx)));
-        let as_actor = |sender_id: ActorId, caller: ActorId| Envelope::new(
-            SecurityContext::default().next(caller, ActorId::None, ActorId::None),
-            EventContext { sender_id, ..EventContext::default() },
-            ActorEvent::ResponseStarted { turn_id: TurnId::new() },
-        );
+        let as_actor = |sender_id: ActorId, caller: ActorId| {
+            Envelope::new(
+                SecurityContext::default().next(caller, ActorId::None, ActorId::None),
+                EventContext { sender_id, ..EventContext::default() },
+                ActorEvent::ResponseStarted { turn_id: TurnId::new() },
+            )
+        };
         let someone = ActorId::System;
 
-        assert!(matches!(sender.send(as_actor(someone, agent)).await, Err(TransportError::Refused { origin }) if origin == agent), "another's envelope");
-        assert!(matches!(sender.send(as_actor(agent, someone)).await, Err(TransportError::Refused { .. })), "another's context");
+        assert!(
+            matches!(sender.send(as_actor(someone, agent)).await, Err(TransportError::Refused { origin }) if origin == agent),
+            "another's envelope"
+        );
+        assert!(
+            matches!(
+                sender.send(as_actor(agent, someone)).await,
+                Err(TransportError::Refused { .. })
+            ),
+            "another's context"
+        );
         sender.send(as_actor(agent, agent)).await.expect("its own");
-        assert_eq!(rx.try_recv().map(|e| e.context.sender_id).ok(), Some(agent), "only its own is passed on");
+        assert_eq!(
+            rx.try_recv().map(|e| e.context.sender_id).ok(),
+            Some(agent),
+            "only its own is passed on"
+        );
         assert!(rx.try_recv().is_err());
     }
-
 }

@@ -1,6 +1,5 @@
 //! Access lists as they are written and shown (issue 23): whom an entry grants what.
 
-use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
 use caelumora_model::group::GroupId;
 use caelumora_model::project::ProjectId;
@@ -8,6 +7,7 @@ use caelumora_model::role::RoleId;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, Grant, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::snapshot;
 use caelumora_model::user::UserId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -59,7 +59,8 @@ impl AccessEntry {
                 Some(Scope::SessionScope { .. }) => (AccessKind::Session, Some(group.0)),
                 Some(Scope::ChannelScope { .. }) => (AccessKind::Channel, Some(group.0)),
                 Some(Scope::ProjectScope { .. }) => (AccessKind::Project, Some(group.0)),
-                Some(Scope::UserScope { .. } | Scope::GlobalScope | Scope::GroupScope { .. }) | None => (AccessKind::Group, Some(group.0)),
+                Some(Scope::UserScope { .. } | Scope::GlobalScope | Scope::GroupScope { .. })
+                | None => (AccessKind::Group, Some(group.0)),
             },
             Subject::Everyone => (AccessKind::Everyone, None),
         };
@@ -87,8 +88,12 @@ impl AccessEntry {
     /// # Errors
     /// What is wrong with the first that names nobody.
     pub fn acl_of(entries: Vec<AccessEntry>) -> Result<Vec<AclEntry>, String> {
-        entries.into_iter()
-            .map(|entry| { let kind = entry.kind; entry.into_acl().ok_or_else(|| format!("an entry of kind {kind:?} needs an id")) })
+        entries
+            .into_iter()
+            .map(|entry| {
+                let kind = entry.kind;
+                entry.into_acl().ok_or_else(|| format!("an entry of kind {kind:?} needs an id"))
+            })
             .collect()
     }
 }
@@ -104,8 +109,20 @@ mod tests {
     fn the_members_of_a_project_are_named_by_it() {
         let project_id = ProjectId::new();
         let group = GroupId::of_project(project_id);
-        let shown = AccessEntry::of(snapshot::AccessSnapshot { subject: Subject::Group(group), grant: Grant::Read, name: None, scope: Some(Scope::ProjectScope { project_id }) });
-        assert_eq!(shown.as_ref().map(|entry| (entry.kind, entry.id)), Some((AccessKind::Project, Some(project_id.0))));
-        assert_eq!(shown.and_then(AccessEntry::into_acl), Some(AclEntry { subject: Subject::Group(group), grant: Grant::Read }), "stored as it was");
+        let shown = AccessEntry::of(snapshot::AccessSnapshot {
+            subject: Subject::Group(group),
+            grant: Grant::Read,
+            name: None,
+            scope: Some(Scope::ProjectScope { project_id }),
+        });
+        assert_eq!(
+            shown.as_ref().map(|entry| (entry.kind, entry.id)),
+            Some((AccessKind::Project, Some(project_id.0)))
+        );
+        assert_eq!(
+            shown.and_then(AccessEntry::into_acl),
+            Some(AclEntry { subject: Subject::Group(group), grant: Grant::Read }),
+            "stored as it was"
+        );
     }
 }

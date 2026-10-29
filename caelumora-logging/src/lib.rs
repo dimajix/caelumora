@@ -8,14 +8,14 @@
 
 use anyhow::{Context, Result};
 use caelumora_model::config::{LogFormat, LoggingConfig};
+use std::fs;
 use std::fs::OpenOptions;
+use std::io;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::EnvFilter;
-use std::fs;
-use std::io;
 
 /// Where a binary logs when the configuration names no file.
 #[derive(Debug, Clone)]
@@ -32,7 +32,8 @@ pub enum LogTarget {
 /// # Errors
 /// If the log file cannot be opened or a subscriber is already installed.
 pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &str) -> Result<()> {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     let target = config.file.clone().map(LogTarget::File).unwrap_or(default_target);
 
     let (writer, ansi) = match target {
@@ -42,7 +43,10 @@ pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &
                 fs::create_dir_all(parent)
                     .with_context(|| format!("cannot create log directory {}", parent.display()))?;
             }
-            let file = OpenOptions::new().create(true).append(true).open(&path)
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
                 .with_context(|| format!("cannot open log file {}", path.display()))?;
             (BoxMakeWriter::new(Mutex::new(file)), false)
         }
@@ -62,9 +66,9 @@ mod tests {
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_runtime::logging::envelope_span;
     use serde_json::Value;
+    use std::env;
     use tracing::info;
     use uuid::Uuid;
-    use std::env;
 
     // The only test in this crate that installs the global subscriber.
     #[test]
@@ -74,11 +78,18 @@ mod tests {
         let config = LoggingConfig { format: LogFormat::Json, file: Some(path.clone()) };
         init(&config, LogTarget::Stderr, "info").expect("subscriber installs");
 
-        let context = EventContext::new(Default::default(), Default::default(), ActorId::None, "tester".to_string());
+        let context = EventContext::new(
+            Default::default(),
+            Default::default(),
+            ActorId::None,
+            "tester".to_string(),
+        );
         envelope_span(&context, "ResponseRequested").in_scope(|| info!("inside the span"));
 
-        let content = fs::read_to_string(&path).expect("the log file and its directory are created");
-        let line = content.lines().find(|l| l.contains("inside the span")).expect("the event is written");
+        let content =
+            fs::read_to_string(&path).expect("the log file and its directory are created");
+        let line =
+            content.lines().find(|l| l.contains("inside the span")).expect("the event is written");
         let json: Value = serde_json::from_str(line).expect("each line is one JSON object");
         assert_eq!(json["span"]["span_id"], context.span_id.to_string());
         assert_eq!(json["span"]["event"], "ResponseRequested");

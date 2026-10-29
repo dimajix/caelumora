@@ -1,13 +1,16 @@
 //! The built-in `/wakeup` command (issue 28).
 
 use crate::actor::Actor;
-use crate::command::{named_participant, names, CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
-use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
+use crate::command::{
+    named_participant, names, ChannelCommandProvider, CommandContext, CommandError, CommandResult,
+    ProvidesCommands,
+};
+use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::error::{refusal, user_message};
+use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
 use std::sync::Arc;
-use anyhow::Error;
-use crate::error::{refusal, user_message};
 
 pub const WAKEUP_COMMAND_NAME: &str = "wakeup";
 
@@ -20,7 +23,10 @@ pub struct WakeupCommandProvider;
 /// a failure, described only as far as `user_message` allows.
 fn channel_error(error: Error) -> CommandError {
     if let Some(refused) = refusal(&error) {
-        return CommandError::Forbidden { name: WAKEUP_COMMAND_NAME.to_string(), refused: refused.clone() };
+        return CommandError::Forbidden {
+            name: WAKEUP_COMMAND_NAME.to_string(),
+            refused: refused.clone(),
+        };
     }
     tracing::warn!("/wakeup failed: {:#}", error);
     let reason = user_message(&error).unwrap_or_else(|| "see the server log".to_string());
@@ -40,10 +46,19 @@ impl ProvidesCommands for WakeupCommandProvider {
 
 #[async_trait]
 impl ChannelCommandProvider for WakeupCommandProvider {
-    async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
+    async fn execute(
+        &self,
+        _name: &str,
+        args: &str,
+        context: &CommandContext<'_>,
+    ) -> CommandResult<CommandOutput> {
         let wanted = args.trim();
         if wanted.is_empty() {
-            let mut woken = context.channel.wakeup(&context.issuer.security_context()).await.map_err(channel_error)?;
+            let mut woken = context
+                .channel
+                .wakeup(&context.issuer.security_context())
+                .await
+                .map_err(channel_error)?;
             woken.sort();
             let text = if woken.is_empty() {
                 "No agent was asleep.".to_string()
@@ -55,7 +70,11 @@ impl ChannelCommandProvider for WakeupCommandProvider {
 
         // Anyone taking part, as `/nudge` takes them; only an agent sleeps.
         let participant = named_participant(WAKEUP_COMMAND_NAME, wanted, context.channel)?;
-        let was_asleep = context.channel.wakeup_actor(&context.issuer.security_context(), participant.id).await.map_err(channel_error)?;
+        let was_asleep = context
+            .channel
+            .wakeup_actor(&context.issuer.security_context(), participant.id)
+            .await
+            .map_err(channel_error)?;
         let text = if was_asleep {
             format!("Woke {}.", participant.name)
         } else {
@@ -75,4 +94,3 @@ pub fn register(registry: &mut ComponentRegistry) {
         },
     );
 }
-

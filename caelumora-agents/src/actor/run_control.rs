@@ -9,9 +9,9 @@ use caelumora_model::work::TurnId;
 use std::collections::HashMap;
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
-use std::sync::{Mutex, MutexGuard};
 
 /// What `cancel`, `retry`, `stop` or `leave` asked of the run loop, which
 /// takes it after every step and alone decides what follows (issue 152).
@@ -134,7 +134,9 @@ impl RunControl {
     /// a stop or leaving still has.
     pub(crate) fn begin_turn(&self, turn: TurnId) {
         *self.lock_turn() = (Some(turn), self.ending.child_token());
-        let _ = self.interrupt.try_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (!ends_run(asked)).then_some(NO_INTERRUPT));
+        let _ = self.interrupt.try_update(Ordering::SeqCst, Ordering::SeqCst, |asked| {
+            (!ends_run(asked)).then_some(NO_INTERRUPT)
+        });
     }
 
     /// The turn under way, if the run loop is in one that can still be
@@ -180,7 +182,12 @@ impl RunControl {
         if under_way.0 != Some(turn) || !self.interruptible() {
             return false;
         }
-        let _ = self.interrupt.compare_exchange(NO_INTERRUPT, Interrupt::Retry as u8, Ordering::SeqCst, Ordering::SeqCst);
+        let _ = self.interrupt.compare_exchange(
+            NO_INTERRUPT,
+            Interrupt::Retry as u8,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
         under_way.1.cancel();
         true
     }
@@ -224,10 +231,17 @@ impl RunControl {
     fn interrupt(&self, interrupt: Interrupt) {
         match interrupt {
             Interrupt::Cancel | Interrupt::Retry => {
-                let _ = self.interrupt.compare_exchange(NO_INTERRUPT, interrupt as u8, Ordering::SeqCst, Ordering::SeqCst);
+                let _ = self.interrupt.compare_exchange(
+                    NO_INTERRUPT,
+                    interrupt as u8,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                );
             }
             Interrupt::Stop => {
-                let _ = self.interrupt.try_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (asked != Interrupt::Leave as u8).then_some(Interrupt::Stop as u8));
+                let _ = self.interrupt.try_update(Ordering::SeqCst, Ordering::SeqCst, |asked| {
+                    (asked != Interrupt::Leave as u8).then_some(Interrupt::Stop as u8)
+                });
             }
             Interrupt::Leave => self.interrupt.store(Interrupt::Leave as u8, Ordering::SeqCst),
         }
@@ -238,8 +252,12 @@ impl RunControl {
     /// 276): from now on each can be interrupted on its own. Returns, by
     /// id, what tells the run loop who interrupted a call - for
     /// `interruption`, or asked before the call runs.
-    pub(crate) fn begin_calls(&self, ids: impl IntoIterator<Item = String>) -> HashMap<String, oneshot::Receiver<String>> {
-        let (senders, receivers) = ids.into_iter()
+    pub(crate) fn begin_calls(
+        &self,
+        ids: impl IntoIterator<Item = String>,
+    ) -> HashMap<String, oneshot::Receiver<String>> {
+        let (senders, receivers) = ids
+            .into_iter()
             .map(|id| {
                 let (sender, receiver) = oneshot::channel();
                 ((id.clone(), sender), (id, receiver))
@@ -283,7 +301,11 @@ impl RunControl {
     /// `by_user`, for a call that can be interrupted on its own
     /// (`begin_calls`) - a user interrupting this call alone (issue 276).
     /// The turn's end wins.
-    pub(crate) async fn interruption(&self, turn: CancellationToken, by_user: Option<oneshot::Receiver<String>>) -> Interruption {
+    pub(crate) async fn interruption(
+        &self,
+        turn: CancellationToken,
+        by_user: Option<oneshot::Receiver<String>>,
+    ) -> Interruption {
         let by_user = async {
             match by_user {
                 Some(by_user) => match by_user.await {
@@ -319,13 +341,16 @@ mod tests {
 
     #[test]
     fn a_cancel_interrupts_only_a_turn_under_way() {
-        for state in [ActorState::Idle, ActorState::Sleeping, ActorState::Reflecting, ActorState::Cancelling] {
+        for state in
+            [ActorState::Idle, ActorState::Sleeping, ActorState::Reflecting, ActorState::Cancelling]
+        {
             let control = RunControl::new(state, None);
             control.cancel();
             assert_eq!(control.take_interrupt(), None, "{state:?}");
             assert!(!control.token().is_cancelled(), "{state:?}");
         }
-        for state in [ActorState::Planning, ActorState::ExecutingTools, ActorState::WaitingForUser] {
+        for state in [ActorState::Planning, ActorState::ExecutingTools, ActorState::WaitingForUser]
+        {
             let control = RunControl::new(state, None);
             control.cancel();
             assert!(control.token().is_cancelled(), "{state:?}");
@@ -413,7 +438,10 @@ mod tests {
         let (turn, other) = (TurnId::new(), TurnId::new());
         let control = RunControl::new(ActorState::Planning, Some(turn));
         assert!(!control.retry(other), "another turn");
-        assert!(!control.token().is_cancelled() && control.take_interrupt().is_none(), "ends nothing");
+        assert!(
+            !control.token().is_cancelled() && control.take_interrupt().is_none(),
+            "ends nothing"
+        );
         assert!(control.retry(turn));
         assert!(control.token().is_cancelled());
         assert_eq!(control.take_interrupt(), Some(Interrupt::Retry));
@@ -462,7 +490,10 @@ mod tests {
         assert!(!control.interrupt_call(turn, "a", "bob".to_string()), "once");
         let interrupted = control.interruption(control.token(), calls.remove("a")).await;
         assert_eq!(interrupted, Interruption::ByUser("alice".to_string()));
-        assert!(!control.token().is_cancelled() && control.take_interrupt().is_none(), "the turn goes on");
+        assert!(
+            !control.token().is_cancelled() && control.take_interrupt().is_none(),
+            "the turn goes on"
+        );
 
         // A call that ran can no longer be interrupted.
         drop(calls.remove("b"));
@@ -476,12 +507,22 @@ mod tests {
         let mut calls = control.begin_calls(["a".to_string()]);
         assert!(control.interrupt_call(turn, "a", "alice".to_string()));
         control.cancel();
-        assert_eq!(control.interruption(control.token(), calls.remove("a")).await, Interruption::TurnEnded);
-        assert_eq!(control.interruption(control.token(), None).await, Interruption::TurnEnded, "also a call without an id");
+        assert_eq!(
+            control.interruption(control.token(), calls.remove("a")).await,
+            Interruption::TurnEnded
+        );
+        assert_eq!(
+            control.interruption(control.token(), None).await,
+            Interruption::TurnEnded,
+            "also a call without an id"
+        );
 
         let control = RunControl::new(ActorState::Cancelling, Some(turn));
         let _calls = control.begin_calls(["a".to_string()]);
-        assert!(!control.interrupt_call(turn, "a", "alice".to_string()), "not in a turn that is ending");
+        assert!(
+            !control.interrupt_call(turn, "a", "alice".to_string()),
+            "not in a turn that is ending"
+        );
     }
 
     /// A call broken off because the channel stops is told so (issue 377):
@@ -492,7 +533,10 @@ mod tests {
         let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
         let mut calls = control.begin_calls(["a".to_string()]);
         control.stop();
-        assert_eq!(control.interruption(control.token(), calls.remove("a")).await, Interruption::Stopped);
+        assert_eq!(
+            control.interruption(control.token(), calls.remove("a")).await,
+            Interruption::Stopped
+        );
 
         let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
         control.stop();
@@ -518,12 +562,17 @@ mod tests {
         let control = RunControl::new(ActorState::Sleeping, None);
         assert_eq!(control.unannounced(), None, "it starts at what it stood at");
         control.wakeup();
-        time::timeout(Duration::from_secs(1), control.woken()).await.expect("told, though nobody waited yet");
+        time::timeout(Duration::from_secs(1), control.woken())
+            .await
+            .expect("told, though nobody waited yet");
         assert_eq!(control.unannounced(), Some(ActorState::Idle));
         assert_eq!(control.unannounced(), None, "announced once");
 
         control.wakeup();
-        assert!(time::timeout(Duration::from_millis(50), control.woken()).await.is_err(), "awake already: nothing to tell");
+        assert!(
+            time::timeout(Duration::from_millis(50), control.woken()).await.is_err(),
+            "awake already: nothing to tell"
+        );
         control.go_to(ActorState::Planning);
         control.go_to(ActorState::Idle);
         assert_eq!(control.unannounced(), None, "back where it was announced");

@@ -7,23 +7,23 @@
 //! change without old and new digests ever being mistaken for each other.
 
 use crate::actor::ActorId;
-use crate::content::ContentRef;
 use crate::confidentiality::Classification;
+use crate::content::ContentRef;
 use crate::context::FrameRef;
 use crate::history::{HistoryEntry, Recorded};
+use crate::ledger::{Change, LedgerKind};
 use crate::message::{Message, MessageId};
+use crate::tool::{ToolCallResult, ToolSet};
 use crate::transcript::TranscriptEntry;
 use crate::turn::GivenUpReason;
 use crate::work::TurnId;
+use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
-use crate::ledger::{Change, LedgerKind};
-use crate::tool::{ToolCallResult, ToolSet};
-use serde::de::Error;
 
 /// A SHA-256 digest.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -39,7 +39,6 @@ impl Digest {
         Uuid::from_bytes(bytes)
     }
 }
-
 
 impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -185,7 +184,10 @@ fn write_canonical(value: &Value, out: &mut String) {
 /// and have no maps with non-string keys, so conversion cannot fail; were it
 /// to, hashing `Null` instead would give different contents the same digest,
 /// which an integrity check must not do silently.
-#[expect(clippy::expect_used, reason = "the model types hashed always serialise; a digest of `Null` instead would be wrong silently")]
+#[expect(
+    clippy::expect_used,
+    reason = "the model types hashed always serialise; a digest of `Null` instead would be wrong silently"
+)]
 fn to_json<T: Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("hashed model types serialise to JSON")
 }
@@ -233,21 +235,31 @@ pub fn message_modified(previous: Option<&Digest>, modified: &Message) -> Digest
 /// type, size and the digest of its bytes - and the number its transcript gave it, not where the
 /// bytes lie.
 fn content_seen(refs: &[ContentRef]) -> Value {
-    to_json(&refs.iter().map(|r| (r.id, &r.name, &r.media_type, r.size, r.digest, r.number)).collect::<Vec<_>>())
+    to_json(
+        &refs
+            .iter()
+            .map(|r| (r.id, &r.name, &r.media_type, r.size, r.digest, r.number))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// The tool results `results` as a digest covers them: whole, as they are stored, but for what each
 /// gave and showed its model, which counts as attachments count (`content_seen`).
 fn results_seen(results: &[ToolCallResult]) -> Value {
-    Value::Array(results.iter().map(|result| {
-        let mut seen = to_json(result);
-        for (field, refs) in [("media", &result.media), ("shown", &result.shown)] {
-            if !refs.is_empty() {
-                seen[field] = content_seen(refs);
-            }
-        }
-        seen
-    }).collect())
+    Value::Array(
+        results
+            .iter()
+            .map(|result| {
+                let mut seen = to_json(result);
+                for (field, refs) in [("media", &result.media), ("shown", &result.shown)] {
+                    if !refs.is_empty() {
+                        seen[field] = content_seen(refs);
+                    }
+                }
+                seen
+            })
+            .collect(),
+    )
 }
 
 /// The digest of a chain of messages ending in `message` taken back (issue
@@ -264,7 +276,11 @@ pub fn message_revoked(previous: Option<&Digest>, message: MessageId) -> Digest 
 /// transcript (issue 239) - whose predecessor chain has the digest
 /// `previous`: in the scheme the history's entry had first, so that every
 /// digest recorded names what it named.
-pub fn message_reclassified(previous: Option<&Digest>, message: MessageId, classification: &Classification) -> Digest {
+pub fn message_reclassified(
+    previous: Option<&Digest>,
+    message: MessageId,
+    classification: &Classification,
+) -> Digest {
     let mut e = Encoder::new("caelumora.history-reclassified.v1");
     e.opt_digest(previous);
     e.bytes(message.0.as_bytes());
@@ -284,26 +300,58 @@ pub fn message_reclassified(previous: Option<&Digest>, message: MessageId, class
 /// `message_revoked` and `message_reclassified`.
 pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
     match entry {
-        TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => message_chain(previous, message),
+        TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => {
+            message_chain(previous, message)
+        }
         TranscriptEntry::Modified { message } => message_modified(previous, message),
         TranscriptEntry::Revoked { message, .. } => message_revoked(previous, *message),
-        TranscriptEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),
-        TranscriptEntry::TurnFinished { turn_id, .. } => turn_ended("caelumora.transcript-turn-finished.v1", previous, *turn_id, None, None),
-        TranscriptEntry::TurnGivenUp { turn_id, reason, .. } => turn_ended("caelumora.transcript-turn-given-up.v1", previous, *turn_id, None, Some(reason)),
+        TranscriptEntry::Reclassified { message, classification } => {
+            message_reclassified(previous, *message, classification)
+        }
+        TranscriptEntry::TurnFinished { turn_id, .. } => {
+            turn_ended("caelumora.transcript-turn-finished.v1", previous, *turn_id, None, None)
+        }
+        TranscriptEntry::TurnGivenUp { turn_id, reason, .. } => turn_ended(
+            "caelumora.transcript-turn-given-up.v1",
+            previous,
+            *turn_id,
+            None,
+            Some(reason),
+        ),
         TranscriptEntry::Compacted { .. } => {
             let mut e = Encoder::new("caelumora.transcript-compacted.v1");
             e.opt_digest(previous);
             e.finish()
         }
-        TranscriptEntry::ParticipantJoined { participant, name, by, by_name, .. } => taking_part("caelumora.transcript-participant-joined.v1", previous, participant, name, by, by_name),
-        TranscriptEntry::ParticipantLeft { participant, name, by, by_name, .. } => taking_part("caelumora.transcript-participant-left.v1", previous, participant, name, by, by_name),
+        TranscriptEntry::ParticipantJoined { participant, name, by, by_name, .. } => taking_part(
+            "caelumora.transcript-participant-joined.v1",
+            previous,
+            participant,
+            name,
+            by,
+            by_name,
+        ),
+        TranscriptEntry::ParticipantLeft { participant, name, by, by_name, .. } => taking_part(
+            "caelumora.transcript-participant-left.v1",
+            previous,
+            participant,
+            name,
+            by,
+            by_name,
+        ),
     }
 }
 
 /// The digest of a chain ending in the end of the turn `turn` (issue 258),
 /// in `scheme`: the turn, whose it was if the chain records it, and, if it
 /// was given up, the `reason` - not the time.
-fn turn_ended(scheme: &str, previous: Option<&Digest>, turn: TurnId, actor: Option<&ActorId>, reason: Option<&GivenUpReason>) -> Digest {
+fn turn_ended(
+    scheme: &str,
+    previous: Option<&Digest>,
+    turn: TurnId,
+    actor: Option<&ActorId>,
+    reason: Option<&GivenUpReason>,
+) -> Digest {
     let mut e = Encoder::new(scheme);
     e.opt_digest(previous);
     e.bytes(turn.0.as_bytes());
@@ -319,7 +367,14 @@ fn turn_ended(scheme: &str, previous: Option<&Digest>, turn: TurnId, actor: Opti
 /// The digest of a chain ending in someone joining or leaving (issue 408),
 /// in `scheme`: who - `participant`, called `name` - and by whose act -
 /// `by`, called `by_name` -, as the model is told of it; not when.
-fn taking_part(scheme: &str, previous: Option<&Digest>, participant: &ActorId, name: &str, by: &ActorId, by_name: &str) -> Digest {
+fn taking_part(
+    scheme: &str,
+    previous: Option<&Digest>,
+    participant: &ActorId,
+    name: &str,
+    by: &ActorId,
+    by_name: &str,
+) -> Digest {
     let mut e = Encoder::new(scheme);
     e.opt_digest(previous);
     e.json(&to_json(participant));
@@ -365,16 +420,33 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
         }
         HistoryEntry::Modified { message } => message_modified(previous, message),
         HistoryEntry::Revoked { message, .. } => message_revoked(previous, *message),
-        HistoryEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),
+        HistoryEntry::Reclassified { message, classification } => {
+            message_reclassified(previous, *message, classification)
+        }
         HistoryEntry::Fitted { channel } => {
             let mut e = Encoder::new("caelumora.history-fitted.v1");
             e.opt_digest(previous);
             e.json(&to_json(channel));
             e.finish()
         }
-        HistoryEntry::TurnFinished { turn_id, actor, .. } => turn_ended("caelumora.history-turn-finished.v1", previous, *turn_id, Some(actor), None),
-        HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. } => turn_ended("caelumora.history-turn-given-up.v1", previous, *turn_id, Some(actor), Some(reason)),
-        HistoryEntry::PlanStepStarted { turn_id, actor, step_index, total_steps, description, .. } => {
+        HistoryEntry::TurnFinished { turn_id, actor, .. } => {
+            turn_ended("caelumora.history-turn-finished.v1", previous, *turn_id, Some(actor), None)
+        }
+        HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. } => turn_ended(
+            "caelumora.history-turn-given-up.v1",
+            previous,
+            *turn_id,
+            Some(actor),
+            Some(reason),
+        ),
+        HistoryEntry::PlanStepStarted {
+            turn_id,
+            actor,
+            step_index,
+            total_steps,
+            description,
+            ..
+        } => {
             let mut e = Encoder::new("caelumora.history-plan-step-started.v1");
             e.opt_digest(previous);
             e.bytes(turn_id.0.as_bytes());
@@ -383,7 +455,9 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.str(description);
             e.finish()
         }
-        HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, output, to, .. } => {
+        HistoryEntry::CommandExecuted {
+            turn_id, actor, issuer, command, args, output, to, ..
+        } => {
             let mut e = Encoder::new("caelumora.history-command-executed.v2");
             e.opt_digest(previous);
             e.json(&serde_json::json!([turn_id, actor, issuer, to]));
@@ -502,7 +576,14 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.opt_digest(Some(to));
             e.finish()
         }
-        HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. } => taking_part("caelumora.history-participant-joined.v1", previous, participant, name, by, by_name),
+        HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. } => taking_part(
+            "caelumora.history-participant-joined.v1",
+            previous,
+            participant,
+            name,
+            by,
+            by_name,
+        ),
         HistoryEntry::ParticipantLeft { participant, name, by, by_name, until, .. } => {
             let mut e = Encoder::new("caelumora.history-participant-left.v2");
             e.opt_digest(previous);
@@ -531,7 +612,12 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
 /// (issue 62). It covers what a reader learns - the change, where in the
 /// conversation it was made and, where the kind says so, the origin - not
 /// when it was written.
-pub fn ledger_chain<K: LedgerKind>(previous: Option<&Digest>, change: &Change<K::Id>, origin: &K::Origin, after: MessageId) -> Digest {
+pub fn ledger_chain<K: LedgerKind>(
+    previous: Option<&Digest>,
+    change: &Change<K::Id>,
+    origin: &K::Origin,
+    after: MessageId,
+) -> Digest {
     let mut e = Encoder::new(K::SCHEME);
     e.opt_digest(previous);
     e.json(&to_json(change));
@@ -562,7 +648,7 @@ impl ContentDigest {
     }
 
     pub fn update(&mut self, part: &[u8]) {
-        self.0.0.update(part);
+        self.0 .0.update(part);
     }
 
     pub fn finish(self) -> Digest {
@@ -614,11 +700,15 @@ mod tests {
     use crate::message::MessageId;
     use crate::message::MessageRole;
     use crate::tool::{ToolCall, ToolResultStatus};
-    use serde_json::json;
     use chrono::{Duration, Utc};
+    use serde_json::json;
 
     fn message(content: &str) -> Message {
-        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+        Message {
+            id: MessageId::new(),
+            content: Some(content.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }
     }
 
     #[test]
@@ -638,7 +728,10 @@ mod tests {
         let text = digest.to_string();
         assert_eq!(text.len(), 64);
         assert_eq!(text.parse::<Digest>().unwrap(), digest);
-        assert_eq!(serde_json::from_value::<Digest>(serde_json::to_value(digest).unwrap()).unwrap(), digest);
+        assert_eq!(
+            serde_json::from_value::<Digest>(serde_json::to_value(digest).unwrap()).unwrap(),
+            digest
+        );
         assert!("xyz".parse::<Digest>().is_err());
     }
 
@@ -647,13 +740,21 @@ mod tests {
         let original = message("hello");
         let mut changed = original.clone();
         changed.content = Some("hello!".to_string());
-        assert_ne!(message_chain(None, &original), message_chain(None, &changed), "same id, other content");
+        assert_ne!(
+            message_chain(None, &original),
+            message_chain(None, &changed),
+            "same id, other content"
+        );
 
         let mut described = original.clone();
         described.timestamp = Utc::now() + Duration::hours(1);
         described.prompt_tokens = Some(42);
         described.turn_id = Some(TurnId::new());
-        assert_eq!(message_chain(None, &original), message_chain(None, &described), "only what the model sees counts");
+        assert_eq!(
+            message_chain(None, &original),
+            message_chain(None, &described),
+            "only what the model sees counts"
+        );
     }
 
     /// Issue 282: what each attachment is, a model is told and the digest covers; where its bytes
@@ -661,30 +762,73 @@ mod tests {
     /// covered too.
     #[test]
     fn what_is_attached_is_part_of_the_digest() {
-        let attached = Message { attachments: vec![make_content_ref("a.png", b"a")], ..message("look") };
+        let attached =
+            Message { attachments: vec![make_content_ref("a.png", b"a")], ..message("look") };
         let plain = Message { attachments: Vec::new(), ..attached.clone() };
         assert_ne!(message_chain(None, &attached), message_chain(None, &plain), "with and without");
         let mut other_bytes = attached.clone();
         other_bytes.attachments[0].digest = content(b"b");
-        assert_ne!(message_chain(None, &attached), message_chain(None, &other_bytes), "other bytes");
+        assert_ne!(
+            message_chain(None, &attached),
+            message_chain(None, &other_bytes),
+            "other bytes"
+        );
         let mut moved = attached.clone();
         moved.attachments[0].storage = "elsewhere".to_string();
         moved.attachments[0].key = "attachments/elsewhere".to_string();
-        assert_eq!(message_chain(None, &attached), message_chain(None, &moved), "where the bytes lie is no part of what was said");
+        assert_eq!(
+            message_chain(None, &attached),
+            message_chain(None, &moved),
+            "where the bytes lie is no part of what was said"
+        );
         let mut numbered = attached.clone();
         numbered.attachments[0].number = Some(3);
-        assert_ne!(message_chain(None, &attached), message_chain(None, &numbered), "how the model names it");
+        assert_ne!(
+            message_chain(None, &attached),
+            message_chain(None, &numbered),
+            "how the model names it"
+        );
 
         let mut released = attached.clone();
         released.attachments[0].classification = Classification::PUBLIC;
-        assert_ne!(message_modified(None, &attached), message_modified(None, &released), "a modification covers how each is classified");
-        assert_ne!(message_modified(None, &attached), message_modified(None, &plain), "and what is attached");
+        assert_ne!(
+            message_modified(None, &attached),
+            message_modified(None, &released),
+            "a modification covers how each is classified"
+        );
+        assert_ne!(
+            message_modified(None, &attached),
+            message_modified(None, &plain),
+            "and what is attached"
+        );
 
-        let result = |media: ContentRef| Message { role: MessageRole::Tool, tool_results: vec![ToolCallResult { media: vec![media], ..ToolCallResult::of(&ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments: Value::Null, visibility: Default::default(), presentation: Default::default() }, ToolResultStatus::Ok, String::new(), Classification::CHANNEL_DEFAULT) }], ..message("") };
+        let result = |media: ContentRef| Message {
+            role: MessageRole::Tool,
+            tool_results: vec![ToolCallResult {
+                media: vec![media],
+                ..ToolCallResult::of(
+                    &ToolCall {
+                        id: Some("1".to_string()),
+                        function_name: "f".to_string(),
+                        arguments: Value::Null,
+                        visibility: Default::default(),
+                        presentation: Default::default(),
+                    },
+                    ToolResultStatus::Ok,
+                    String::new(),
+                    Classification::CHANNEL_DEFAULT,
+                )
+            }],
+            ..message("")
+        };
         let given = result(attached.attachments[0].clone());
         let mut elsewhere = given.clone();
         elsewhere.tool_results[0].media[0].key = "attachments/elsewhere".to_string();
-        assert_eq!(message_chain(None, &given), message_chain(None, &elsewhere), "what a tool gave counts as an attachment does");
+        assert_eq!(
+            message_chain(None, &given),
+            message_chain(None, &elsewhere),
+            "what a tool gave counts as an attachment does"
+        );
         let mut other = given.clone();
         other.tool_results[0].media[0].digest = content(b"b");
         assert_ne!(message_chain(None, &given), message_chain(None, &other));
@@ -700,7 +844,13 @@ mod tests {
     #[test]
     fn the_order_of_json_keys_does_not_matter() {
         let with = |arguments: Value| Message {
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments, visibility: Default::default(), presentation: Default::default() }],
+            tool_calls: vec![ToolCall {
+                id: Some("1".to_string()),
+                function_name: "f".to_string(),
+                arguments,
+                visibility: Default::default(),
+                presentation: Default::default(),
+            }],
             ..message("")
         };
         let mut m1 = with(json!({"a": 1, "b": {"x": 1, "y": 2}}));
@@ -716,22 +866,54 @@ mod tests {
         let tool = |name: &str, description: &str| Tool {
             name: name.to_string(),
             description: description.to_string(),
-            parameters: ToolParameters::object([("a", ToolParameters::string().described("x")), ("b", ToolParameters::number().described("y"))], ["a"]),
+            parameters: ToolParameters::object(
+                [
+                    ("a", ToolParameters::string().described("x")),
+                    ("b", ToolParameters::number().described("y")),
+                ],
+                ["a"],
+            ),
             requires_approval: false,
             visibility: Default::default(),
             classification: None,
             presentation: Default::default(),
         };
-        let set = |name: &str, tools: Vec<Tool>| ToolSet::new(name, format!("the {name} tools"), tools);
+        let set =
+            |name: &str, tools: Vec<Tool>| ToolSet::new(name, format!("the {name} tools"), tools);
         let (a, b) = (tool("a", "does a"), tool("b", "does b"));
         let sets = |tools: Vec<Tool>| tool_sets(&[set("s", tools)]);
-        assert_eq!(sets(vec![a.clone(), b.clone()]), sets(vec![a.clone(), b.clone()]), "the order of parameters in a map does not matter");
-        assert_ne!(sets(vec![a.clone(), b.clone()]), sets(vec![b.clone(), a.clone()]), "the order they are offered in does");
-        assert_ne!(sets(vec![a.clone()]), sets(vec![tool("a", "does something else")]), "the description does");
-        assert_ne!(sets(vec![a.clone()]), sets(vec![Tool { requires_approval: true, ..a.clone() }]), "and how its calls are treated");
-        assert_ne!(tool_sets(&[set("s", vec![a.clone(), b.clone()])]), tool_sets(&[set("s", vec![a.clone()]), set("t", vec![b.clone()])]), "the grouping does");
-        let unavailable = ToolSet { unavailable: Some("unreachable".to_string()), ..set("s", Vec::new()) };
-        assert_ne!(tool_sets(&[set("s", Vec::new())]), tool_sets(&[unavailable]), "and whether a set is unavailable");
+        assert_eq!(
+            sets(vec![a.clone(), b.clone()]),
+            sets(vec![a.clone(), b.clone()]),
+            "the order of parameters in a map does not matter"
+        );
+        assert_ne!(
+            sets(vec![a.clone(), b.clone()]),
+            sets(vec![b.clone(), a.clone()]),
+            "the order they are offered in does"
+        );
+        assert_ne!(
+            sets(vec![a.clone()]),
+            sets(vec![tool("a", "does something else")]),
+            "the description does"
+        );
+        assert_ne!(
+            sets(vec![a.clone()]),
+            sets(vec![Tool { requires_approval: true, ..a.clone() }]),
+            "and how its calls are treated"
+        );
+        assert_ne!(
+            tool_sets(&[set("s", vec![a.clone(), b.clone()])]),
+            tool_sets(&[set("s", vec![a.clone()]), set("t", vec![b.clone()])]),
+            "the grouping does"
+        );
+        let unavailable =
+            ToolSet { unavailable: Some("unreachable".to_string()), ..set("s", Vec::new()) };
+        assert_ne!(
+            tool_sets(&[set("s", Vec::new())]),
+            tool_sets(&[unavailable]),
+            "and whether a set is unavailable"
+        );
         assert_ne!(tool_sets(&[]), prompt(""), "no tools is not an empty prompt");
     }
 }

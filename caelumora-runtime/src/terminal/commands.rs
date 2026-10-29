@@ -60,7 +60,8 @@ impl<C: Kept + Clone> Commands<C> {
     /// The commands, those ended longer ago than `KEPT_AFTER_END` forgotten.
     fn kept(&self) -> MutexGuard<'_, HashMap<CommandKey, C>> {
         let mut commands = locked(&self.commands);
-        commands.retain(|_, command| command.ended().is_none_or(|at| at.elapsed() < KEPT_AFTER_END));
+        commands
+            .retain(|_, command| command.ended().is_none_or(|at| at.elapsed() < KEPT_AFTER_END));
         commands
     }
 
@@ -78,7 +79,11 @@ impl<C: Kept + Clone> Commands<C> {
 
     /// The commands that may still run.
     pub fn running(&self) -> Vec<CommandKey> {
-        self.kept().iter().filter(|(_, command)| command.ended().is_none()).map(|(key, _)| key.clone()).collect()
+        self.kept()
+            .iter()
+            .filter(|(_, command)| command.ended().is_none())
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 
     /// Forgets the commands of workspace `id`: they ended with its place.
@@ -119,10 +124,22 @@ mod tests {
 
         assert_eq!(commands.running(), [key(workspace, "running")], "only what may still run");
         assert!(commands.get(&key(workspace, "ended")).is_ok(), "kept a while after it ended");
-        assert!(matches!(commands.get(&key(other, "long ended")), Err(TerminalError::UnknownCommand(id)) if id == "long ended"), "forgotten after that");
-        assert!(matches!(commands.get(&(workspace, "elsewhere".to_string(), "running".to_string())), Err(TerminalError::UnknownCommand(_))), "under its scope alone");
+        assert!(
+            matches!(commands.get(&key(other, "long ended")), Err(TerminalError::UnknownCommand(id)) if id == "long ended"),
+            "forgotten after that"
+        );
+        assert!(
+            matches!(
+                commands.get(&(workspace, "elsewhere".to_string(), "running".to_string())),
+                Err(TerminalError::UnknownCommand(_))
+            ),
+            "under its scope alone"
+        );
 
         commands.forget(workspace);
-        assert!(commands.running().is_empty() && commands.get(&key(workspace, "ended")).is_err(), "gone with its workspace");
+        assert!(
+            commands.running().is_empty() && commands.get(&key(workspace, "ended")).is_err(),
+            "gone with its workspace"
+        );
     }
 }

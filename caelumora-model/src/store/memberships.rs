@@ -28,14 +28,18 @@ impl StoreMemberships {
     /// ignored, with an error in the log.
     pub fn bind(&self, store: &Arc<dyn EntityStore<Group>>) {
         if self.store.set(Arc::downgrade(store)).is_err() {
-            tracing::error!("The memberships were bound to a store of groups twice; the first stays");
+            tracing::error!(
+                "The memberships were bound to a store of groups twice; the first stays"
+            );
         }
     }
 
     fn store(&self) -> Option<Arc<dyn EntityStore<Group>>> {
         let store = self.store.get().and_then(Weak::upgrade);
         if store.is_none() {
-            tracing::error!("Memberships were asked for before a store of groups was bound; nobody is a member");
+            tracing::error!(
+                "Memberships were asked for before a store of groups was bound; nobody is a member"
+            );
         }
         store
     }
@@ -47,7 +51,9 @@ impl StoreMemberships {
         let system = SecurityContext::system();
         match store.get(&system, id).await.optional()? {
             Some(group) => Ok(Some(group)),
-            None => Ok(store.get_deleted(&system, id).await.optional()?.map(|deleted| deleted.entity)),
+            None => {
+                Ok(store.get_deleted(&system, id).await.optional()?.map(|deleted| deleted.entity))
+            }
         }
     }
 }
@@ -77,7 +83,10 @@ mod tests {
         let memberships = StoreMemberships::new();
         let alice = UserId::new();
         let bob = ActorId::User(UserId::new());
-        let team = Group { members: vec![bob], ..Group::team(ScopedName::new("project", Default::default()).unwrap(), alice) };
+        let team = Group {
+            members: vec![bob],
+            ..Group::team(ScopedName::new("project", Default::default()).unwrap(), alice)
+        };
         assert!(memberships.group(team.id).await.is_none(), "none before a store is bound");
         let store = Persistence::in_memory().entity_stores().unwrap().groups;
         memberships.bind(&store);
@@ -85,10 +94,12 @@ mod tests {
         let kept = memberships.group(team.id).await.expect("the group");
         assert_eq!((kept.members, kept.deleted), (vec![bob], None));
         assert!(memberships.group(GroupId::new()).await.is_none(), "none that does not exist");
-        store.delete(&SecurityContext::system(), team.id, &Removal::now(ActorId::System)).await.unwrap();
+        store
+            .delete(&SecurityContext::system(), team.id, &Removal::now(ActorId::System))
+            .await
+            .unwrap();
         let deleted = memberships.group(team.id).await.expect("the deleted group");
         assert_eq!(deleted.members, [bob], "who belonged to what was deleted still did");
         assert!(deleted.deleted.is_some(), "and that it was deleted is said");
     }
-
 }

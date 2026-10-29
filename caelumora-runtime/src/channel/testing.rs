@@ -3,38 +3,44 @@
 //! those of the agents' logic, which run real ones - a channel of alice
 //! and her agent, started, and what is waited for in it. Behind the
 //! feature `test-support`, as `crate::testing` is.
-#![expect(clippy::unwrap_used, clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test code: what fails here fails the test that runs it"
+)]
 
-use caelumora_model::chain::Position;
-use caelumora_model::history::testing::{items_of, messages_of};
 use crate::actor::Actor;
 use crate::channel::ChannelLoop;
 use crate::command::CommandError;
-use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
-use crate::view::AgentContextView;
 use crate::controller::SessionController;
+use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use crate::session::testing::{bare_session, founded, user};
-use anyhow::{Result, Error};
+use crate::view::AgentContextView;
+use anyhow::{Error, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::history::{HistoryEntry, Reader};
-use caelumora_model::message::MessageId;
-use caelumora_model::store::StoreResult;
-use caelumora_model::work::TurnId;
-use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant, moderation_components};
+use caelumora_model::approval::{ApprovalStrategy, Approver};
+use caelumora_model::chain::Position;
+use caelumora_model::channel::{
+    moderation_components, Channel, ChannelId, InternalActor, Participant,
+};
 use caelumora_model::component::ComponentConfig;
+use caelumora_model::confidentiality::{Classification, Visibility};
+use caelumora_model::history::testing::{items_of, messages_of};
+use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::Message;
+use caelumora_model::message::MessageId;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
+use caelumora_model::store::StoreResult;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_model::work::TurnId;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use caelumora_model::approval::{ApprovalStrategy, Approver};
-use caelumora_model::confidentiality::{Classification, Visibility};
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time;
@@ -71,7 +77,10 @@ pub struct Stuck {
 
 /// Alice and her agent `helper` of a personality with `components`,
 /// stored in `store`: her context, the agent and her.
-pub async fn alice_and_an_agent(store: &Persistence, components: ComponentConfig) -> (SecurityContext, AgentId, UserId) {
+pub async fn alice_and_an_agent(
+    store: &Persistence,
+    components: ComponentConfig,
+) -> (SecurityContext, AgentId, UserId) {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
 
@@ -88,10 +97,21 @@ pub async fn alice_and_an_agent(store: &Persistence, components: ComponentConfig
         security_attributes: Default::default(),
         deleted: None,
     };
-    store.entity_stores().unwrap().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
+    store
+        .entity_stores()
+        .unwrap()
+        .personalities
+        .create(&SecurityContext::system(), &personality)
+        .await
+        .unwrap();
     let alice = user("alice");
-    let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, context.initiator_id);
+    let context =
+        SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+    let agent = Agent::new(
+        ScopedName::new("helper", Scope::GlobalScope).unwrap(),
+        personality.id,
+        context.initiator_id,
+    );
     store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
     (context, agent.id, alice.id)
@@ -99,9 +119,14 @@ pub async fn alice_and_an_agent(store: &Persistence, components: ComponentConfig
 
 /// The channel of `alice` and `agent`, with its approver, in `runtime`,
 /// built but not running.
-pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, agent: AgentId) -> Arc<ChannelLoop> {
+pub async fn channel_of_alice_and(
+    runtime: Arc<RuntimeManager>,
+    alice: UserId,
+    agent: AgentId,
+) -> Arc<ChannelLoop> {
     let channel = Channel {
-        summary: None, briefing: None,
+        summary: None,
+        briefing: None,
         approval_rules: Vec::new(),
         uses_workspace: true,
         id: ChannelId::new(),
@@ -121,21 +146,37 @@ pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, a
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     let session_id = channel.session_id;
-    ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, bare_session(session_id), channel)).await.unwrap()
+    ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, bare_session(session_id), channel))
+        .await
+        .unwrap()
 }
 
 /// Waits for `actor` to reach `wanted`.
 pub async fn settled(actor: &Arc<dyn Actor>, wanted: ActorState) {
     time::timeout(Duration::from_secs(5), async {
-        while actor.state() != wanted { time::sleep(Duration::from_millis(10)).await }
-    }).await.unwrap_or_else(|_| panic!("the agent does not reach {wanted:?}, it is {:?}", actor.state()));
+        while actor.state() != wanted {
+            time::sleep(Duration::from_millis(10)).await
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the agent does not reach {wanted:?}, it is {:?}", actor.state()));
 }
 
 /// Runs `built` and has alice say "hello".
-pub async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, SecurityContext, AgentId, UserId)) -> Stuck {
+pub async fn start(
+    (channel, context, agent, alice): (Arc<ChannelLoop>, SecurityContext, AgentId, UserId),
+) -> Stuck {
     let events = channel.observe();
-    let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
-    channel.user_actor(alice).unwrap().send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
+    let running = tokio::spawn({
+        let channel = Arc::clone(&channel);
+        async move { channel.run().await }
+    });
+    channel
+        .user_actor(alice)
+        .unwrap()
+        .send_message(Some("hello".to_string()), None, Vec::new())
+        .await
+        .unwrap();
     let helper = channel.actor(ActorId::Agent(agent)).unwrap();
     Stuck { channel, context, agent, helper, events, running }
 }
@@ -146,10 +187,14 @@ pub async fn answered(events: &mut Receiver<Envelope>, agent: AgentId) -> Vec<Me
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id == ActorId::Agent(agent) {
-                if let ActorEvent::TurnFinished { messages, .. } = envelope.event { break messages }
+                if let ActorEvent::TurnFinished { messages, .. } = envelope.event {
+                    break messages;
+                }
             }
         }
-    }).await.expect("the agent answers")
+    })
+    .await
+    .expect("the agent answers")
 }
 
 /// The user `context` acts for.
@@ -187,7 +232,10 @@ impl ChannelLoop {
     pub async fn record_said(&self, messages: Vec<Message>) {
         let mut state = self.state.lock().await;
         state.history.extend(messages);
-        self.state_store.put_channel_state(self.id, &mut state).await.expect("the history is stored");
+        self.state_store
+            .put_channel_state(self.id, &mut state)
+            .await
+            .expect("the history is stored");
     }
 
     /// Runs the channel until the stored state of `agent` fulfils `done` -
@@ -196,8 +244,15 @@ impl ChannelLoop {
     ///
     /// # Panics
     /// If it does not within five seconds.
-    pub async fn run_until(self: &Arc<Self>, agent: AgentId, done: impl Fn(&AgentChannelState) -> bool) -> AgentChannelState {
-        let running = tokio::spawn({ let channel = Arc::clone(self); async move { channel.run().await } });
+    pub async fn run_until(
+        self: &Arc<Self>,
+        agent: AgentId,
+        done: impl Fn(&AgentChannelState) -> bool,
+    ) -> AgentChannelState {
+        let running = tokio::spawn({
+            let channel = Arc::clone(self);
+            async move { channel.run().await }
+        });
         let state = time::timeout(Duration::from_secs(5), async {
             loop {
                 if let Ok(state) = self.stored_agent_channel_state(agent).await {
@@ -207,7 +262,9 @@ impl ChannelLoop {
                 }
                 time::sleep(Duration::from_millis(10)).await;
             }
-        }).await.expect("the agent's state comes to stand so");
+        })
+        .await
+        .expect("the agent's state comes to stand so");
         running.abort();
         state
     }
@@ -215,13 +272,24 @@ impl ChannelLoop {
     /// The messages `participant` sees of the history, read from the store
     /// as a view reads them (issues 379, 417).
     pub async fn visible_messages(&self, participant: ActorId) -> Vec<Message> {
-        self.visible_entries(participant).await.iter().filter_map(HistoryEntry::said).cloned().collect()
+        self.visible_entries(participant)
+            .await
+            .iter()
+            .filter_map(HistoryEntry::said)
+            .cloned()
+            .collect()
     }
 
     /// The entries `participant` sees of the history, as `visible_messages`
     /// reads them: who joined or left among them (issue 408).
     pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
-        self.history_store.page(self.id, &Reader::Participant(participant), Position::START, None, 10_000, None).await.expect("the history is read").entries().cloned().collect()
+        self.history_store
+            .page(self.id, &Reader::Participant(participant), Position::START, None, 10_000, None)
+            .await
+            .expect("the history is read")
+            .entries()
+            .cloned()
+            .collect()
     }
 
     /// The ranges of positions in which `participant` was given what went to
@@ -274,7 +342,10 @@ impl ChannelLoop {
     ///
     /// # Errors
     /// Whatever the `StateStore` reports.
-    pub async fn stored_agent_channel_state(&self, agent: AgentId) -> StoreResult<AgentChannelState> {
+    pub async fn stored_agent_channel_state(
+        &self,
+        agent: AgentId,
+    ) -> StoreResult<AgentChannelState> {
         self.state_store.get_agent_channel_state(agent, self.id).await
     }
 
@@ -283,7 +354,14 @@ impl ChannelLoop {
     /// as it saw it (`AgentContextView`).
     pub async fn agent_context(&self, agent: AgentId) -> AgentContextView {
         let state = self.stored_agent_channel_state(agent).await.expect("the state is read");
-        AgentContextView::of(agent, self.id, state, Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()), Arc::clone(self.runtime.prompts()))
+        AgentContextView::of(
+            agent,
+            self.id,
+            state,
+            Arc::clone(&self.history_store),
+            Arc::clone(self.runtime.transcript_store()),
+            Arc::clone(self.runtime.prompts()),
+        )
     }
 
     /// The runtime of this channel built again, as after a restart

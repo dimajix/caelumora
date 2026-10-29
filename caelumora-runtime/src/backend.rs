@@ -16,8 +16,9 @@
 use crate::component::{config_of_params, service_of, ComponentError, ComponentResult};
 use crate::plugin::Plugin;
 use crate::runtime::Services;
-use caelumora_model::config::BackendConfig;
+use crate::{content, terminal};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
+use caelumora_model::config::BackendConfig;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::file::{FileSecretConfig, FileSecretProvider};
 use caelumora_model::secret::SecretProvider;
@@ -29,12 +30,11 @@ use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
 use caelumora_model::user_provider::file::FileUserConfig;
 use caelumora_model::user_provider::UserProvider;
 use serde::Deserialize;
+use serde_json::Value;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
-use crate::{content, terminal};
-use serde_json::Value;
 
 /// The backends a section of the configuration names, by their names - the
 /// storages of workspaces, the storages of content -, which what lies there
@@ -81,7 +81,9 @@ impl<T: ?Sized> NamedBackends<T> {
     /// `Unknown` if `named` is none of them, `Unnamed` if nothing is named among several.
     pub fn chosen(&self, named: Option<&str>) -> Result<Option<(&str, &Arc<T>)>, Unchosen> {
         let chosen = match named {
-            Some(name) => Some(self.0.get_key_value(name).ok_or_else(|| Unchosen::Unknown(name.to_string()))?),
+            Some(name) => Some(
+                self.0.get_key_value(name).ok_or_else(|| Unchosen::Unknown(name.to_string()))?,
+            ),
             None if self.0.len() > 1 => return Err(Unchosen::Unnamed),
             None => self.0.iter().next(),
         };
@@ -109,7 +111,8 @@ impl<T: ?Sized> fmt::Debug for NamedBackends<T> {
 
 /// What makes a backend of `T`: given the name it is configured under - its
 /// position in a chain -, its parameters and the services made before it.
-type BackendFactory<T> = Box<dyn Fn(&str, &Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync>;
+type BackendFactory<T> =
+    Box<dyn Fn(&str, &Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync>;
 
 /// The factories of the backends of one service, by type.
 type Factories<T> = BTreeMap<String, BackendFactory<T>>;
@@ -159,7 +162,8 @@ impl Backends {
         backends.register::<dyn UserProvider, _>("file", |_, params, services| {
             let config: FileUserConfig = config_of_params(params)?;
             let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
-            let provider = config.provider(roles).map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+            let provider =
+                config.provider(roles).map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
             Ok(Arc::new(provider))
         });
         backends.register::<dyn UserProvider, _>("accept_any", |_, params, services| {
@@ -190,7 +194,9 @@ impl Backends {
         T: ?Sized + 'static,
         F: Fn(&str, &Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync + 'static,
     {
-        let (_, factories) = self.factories.entry(TypeId::of::<T>())
+        let (_, factories) = self
+            .factories
+            .entry(TypeId::of::<T>())
             .or_insert_with(|| (TypeKey::of::<T>().name(), Box::new(Factories::<T>::new())));
         if let Some(factories) = factories.downcast_mut::<Factories<T>>() {
             factories.insert(kind.to_string(), Box::new(factory));
@@ -202,9 +208,20 @@ impl Backends {
     ///
     /// # Errors
     /// `ComponentError::Backend` naming the first that cannot be made.
-    pub fn make_named<T: ?Sized + 'static>(&self, what: &str, configs: &BTreeMap<String, BackendConfig>, services: &Services) -> ComponentResult<NamedBackends<T>> {
-        configs.iter()
-            .map(|(name, config)| Ok((name.clone(), self.make(&format!("the {what} '{name}'"), name, config, services)?)))
+    pub fn make_named<T: ?Sized + 'static>(
+        &self,
+        what: &str,
+        configs: &BTreeMap<String, BackendConfig>,
+        services: &Services,
+    ) -> ComponentResult<NamedBackends<T>> {
+        configs
+            .iter()
+            .map(|(name, config)| {
+                Ok((
+                    name.clone(),
+                    self.make(&format!("the {what} '{name}'"), name, config, services)?,
+                ))
+            })
             .collect::<ComponentResult<_>>()
             .map(NamedBackends)
     }
@@ -214,8 +231,15 @@ impl Backends {
     ///
     /// # Errors
     /// `ComponentError::Backend` naming the first that cannot be made.
-    pub fn make_chain<T: ?Sized + 'static>(&self, what: &str, configs: &[BackendConfig], services: &Services) -> ComponentResult<Vec<Arc<T>>> {
-        configs.iter().enumerate()
+    pub fn make_chain<T: ?Sized + 'static>(
+        &self,
+        what: &str,
+        configs: &[BackendConfig],
+        services: &Services,
+    ) -> ComponentResult<Vec<Arc<T>>> {
+        configs
+            .iter()
+            .enumerate()
             .map(|(at, config)| {
                 let position = (at + 1).to_string();
                 self.make(&format!("the {what} {position}"), &position, config, services)
@@ -228,22 +252,47 @@ impl Backends {
     ///
     /// # Errors
     /// `ComponentError::Backend` naming it if it cannot be made.
-    pub fn make_one<T: ?Sized + 'static>(&self, what: &str, name: &str, config: &BackendConfig, services: &Services) -> ComponentResult<Arc<T>> {
+    pub fn make_one<T: ?Sized + 'static>(
+        &self,
+        what: &str,
+        name: &str,
+        config: &BackendConfig,
+        services: &Services,
+    ) -> ComponentResult<Arc<T>> {
         self.make(&format!("the {what}"), name, config, services)
     }
 
     /// The backend `config` names, configured as `name`, described as
     /// `backend` in messages.
-    fn make<T: ?Sized + 'static>(&self, backend: &str, name: &str, config: &BackendConfig, services: &Services) -> ComponentResult<Arc<T>> {
-        let factories = self.factories.get(&TypeId::of::<T>()).and_then(|(_, factories)| factories.downcast_ref::<Factories<T>>());
+    fn make<T: ?Sized + 'static>(
+        &self,
+        backend: &str,
+        name: &str,
+        config: &BackendConfig,
+        services: &Services,
+    ) -> ComponentResult<Arc<T>> {
+        let factories = self
+            .factories
+            .get(&TypeId::of::<T>())
+            .and_then(|(_, factories)| factories.downcast_ref::<Factories<T>>());
         let made = match factories.and_then(|factories| factories.get(&config.kind)) {
             Some(factory) => factory(name, &Value::Object(config.params.clone()), services),
             None => {
-                let known: Vec<_> = factories.into_iter().flat_map(|factories| factories.keys().map(String::as_str)).collect();
-                Err(ComponentError::InvalidConfig(format!("no backend of this type is known; known are: {}", known.join(", "))))
+                let known: Vec<_> = factories
+                    .into_iter()
+                    .flat_map(|factories| factories.keys().map(String::as_str))
+                    .collect();
+                Err(ComponentError::InvalidConfig(format!(
+                    "no backend of this type is known; known are: {}",
+                    known.join(", ")
+                )))
             }
         };
-        made.map_err(|cause| ComponentError::Backend { backend: backend.to_string(), kind: config.kind.clone(), cause: Box::new(cause) })
+        made.map_err(|cause| ComponentError::Backend {
+            backend: backend.to_string(),
+            kind: config.kind.clone(),
+            cause: Box::new(cause),
+        })
     }
 }
 
@@ -258,8 +307,8 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::store::{EntityStoreFactory, Persistence};
     use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
@@ -297,27 +346,57 @@ mod tests {
 
     #[test]
     fn a_backend_is_made_by_the_factory_of_its_type_from_its_parameters() {
-        let configs = [("front".to_string(), BackendConfig::new("fixed", json!({ "greeting": "hello" })))].into();
-        let made = greeters().make_named::<dyn Greeter>("greeter", &configs, &Services::empty()).unwrap();
-        assert_eq!(made.get("front").unwrap().greet(), "hello from front", "given its name and its parameters");
-        let chain = greeters().make_chain::<dyn Greeter>("greeter", &[BackendConfig::new("fixed", json!({ "greeting": "hi" }))], &Services::empty()).unwrap();
+        let configs =
+            [("front".to_string(), BackendConfig::new("fixed", json!({ "greeting": "hello" })))]
+                .into();
+        let made =
+            greeters().make_named::<dyn Greeter>("greeter", &configs, &Services::empty()).unwrap();
+        assert_eq!(
+            made.get("front").unwrap().greet(),
+            "hello from front",
+            "given its name and its parameters"
+        );
+        let chain = greeters()
+            .make_chain::<dyn Greeter>(
+                "greeter",
+                &[BackendConfig::new("fixed", json!({ "greeting": "hi" }))],
+                &Services::empty(),
+            )
+            .unwrap();
         assert_eq!(chain[0].greet(), "hi from 1", "in a chain, named by its position");
     }
 
     #[test]
     fn of_the_backends_by_name_the_one_named_is_chosen_or_the_one_there_is() {
         let named = |names: &[&str]| {
-            let configs = names.iter().map(|name| (name.to_string(), BackendConfig::new("fixed", json!({ "greeting": "hi" })))).collect();
+            let configs = names
+                .iter()
+                .map(|name| {
+                    (name.to_string(), BackendConfig::new("fixed", json!({ "greeting": "hi" })))
+                })
+                .collect();
             greeters().make_named::<dyn Greeter>("greeter", &configs, &Services::empty()).unwrap()
         };
         let front = named(&["front"]);
         let (name, greeter) = front.chosen(None).unwrap().expect("the one there is");
-        assert_eq!((name, greeter.greet().as_str()), ("front", "hi from front"), "with the backend itself");
+        assert_eq!(
+            (name, greeter.greet().as_str()),
+            ("front", "hi from front"),
+            "with the backend itself"
+        );
         assert!(named(&[]).chosen(None).unwrap().is_none(), "none configured");
         let several = named(&["a", "b"]);
-        assert_eq!(several.chosen(None).err(), Some(Unchosen::Unnamed), "which one, among several, must be said");
+        assert_eq!(
+            several.chosen(None).err(),
+            Some(Unchosen::Unnamed),
+            "which one, among several, must be said"
+        );
         assert_eq!(several.chosen(Some("b")).unwrap().map(|(name, _)| name), Some("b"));
-        assert_eq!(several.chosen(Some("c")).err(), Some(Unchosen::Unknown("c".to_string())), "not one that is not there");
+        assert_eq!(
+            several.chosen(Some("c")).err(),
+            Some(Unchosen::Unknown("c".to_string())),
+            "not one that is not there"
+        );
         assert_eq!(several.iter().map(|(name, _)| name).collect::<Vec<_>>(), ["a", "b"]);
         assert_eq!(format!("{several:?}"), r#"["a", "b"]"#, "shown by their names alone");
     }
@@ -325,13 +404,38 @@ mod tests {
     #[test]
     fn an_unknown_type_or_wrong_parameters_are_refused_naming_the_backend() {
         let unknown = [("front".to_string(), BackendConfig::new("loud", json!({})))].into();
-        let refused = greeters().make_named::<dyn Greeter>("greeter", &unknown, &Services::empty()).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the greeter 'front' (loud)") && refused.contains("known are: fixed"), "{refused}");
+        let refused = greeters()
+            .make_named::<dyn Greeter>("greeter", &unknown, &Services::empty())
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("the greeter 'front' (loud)") && refused.contains("known are: fixed"),
+            "{refused}"
+        );
         let wrong = [BackendConfig::new("fixed", json!({ "greting": "hello" }))];
-        let refused = greeters().make_chain::<dyn Greeter>("greeter", &wrong, &Services::empty()).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the greeter 1 (fixed)") && refused.contains("greting"), "{refused}");
-        let other_service = Backends::built_in().make_chain::<dyn Greeter>("greeter", &[BackendConfig::new("env", json!({}))], &Services::empty()).map(|_| ()).unwrap_err().to_string();
-        assert!(other_service.contains("no backend of this type is known"), "the types of another service are not its: {other_service}");
+        let refused = greeters()
+            .make_chain::<dyn Greeter>("greeter", &wrong, &Services::empty())
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("the greeter 1 (fixed)") && refused.contains("greting"),
+            "{refused}"
+        );
+        let other_service = Backends::built_in()
+            .make_chain::<dyn Greeter>(
+                "greeter",
+                &[BackendConfig::new("env", json!({}))],
+                &Services::empty(),
+            )
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            other_service.contains("no backend of this type is known"),
+            "the types of another service are not its: {other_service}"
+        );
     }
 
     /// The stores keep their data in memory unless a plugin brings another
@@ -340,16 +444,52 @@ mod tests {
     #[tokio::test]
     async fn the_stores_keep_their_data_in_memory() {
         let memory = BackendConfig::new("memory", json!(null));
-        let kept = Backends::built_in().make_one::<dyn PersistenceBackend>("entity store", "entity_store", &memory, &Services::empty()).unwrap();
-        let stores = Persistence::over(kept, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).expect("its states, too");
+        let kept = Backends::built_in()
+            .make_one::<dyn PersistenceBackend>(
+                "entity store",
+                "entity_store",
+                &memory,
+                &Services::empty(),
+            )
+            .unwrap();
+        let stores = Persistence::over(
+            kept,
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        )
+        .expect("its states, too");
         stores.entity_store::<User>().expect("any kind is kept");
 
         let with_params = BackendConfig::new("memory", json!({ "path": "x" }));
-        let refused = Backends::built_in().make_one::<dyn PersistenceBackend>("entity store", "entity_store", &with_params, &Services::empty()).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the entity store (memory)") && refused.contains("path"), "{refused}");
+        let refused = Backends::built_in()
+            .make_one::<dyn PersistenceBackend>(
+                "entity store",
+                "entity_store",
+                &with_params,
+                &Services::empty(),
+            )
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("the entity store (memory)") && refused.contains("path"),
+            "{refused}"
+        );
         let unknown = BackendConfig::new("json", json!({ "path": "x" }));
-        let refused = Backends::built_in().make_one::<dyn PersistenceBackend>("state store", "state_store", &unknown, &Services::empty()).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the state store (json)") && refused.contains("known are: memory"), "without its plugin: {refused}");
+        let refused = Backends::built_in()
+            .make_one::<dyn PersistenceBackend>(
+                "state store",
+                "state_store",
+                &unknown,
+                &Services::empty(),
+            )
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("the state store (json)") && refused.contains("known are: memory"),
+            "without its plugin: {refused}"
+        );
     }
 
     #[tokio::test]
@@ -358,14 +498,29 @@ mod tests {
         let file = dir.path().join("secrets.json");
         fs::write(&file, r#"{"CAELUMORA_TEST_BACKEND_FILE": "from-file"}"#).unwrap();
         env::set_var("CAELUMORA_TEST_BACKEND_ENV", "from-env");
-        let configs = [BackendConfig::new("file", json!({ "path": file })), BackendConfig::new("env", json!(null))];
-        let providers = Backends::built_in().make_chain::<dyn SecretProvider>("secret provider", &configs, &Services::empty()).unwrap();
+        let configs = [
+            BackendConfig::new("file", json!({ "path": file })),
+            BackendConfig::new("env", json!(null)),
+        ];
+        let providers = Backends::built_in()
+            .make_chain::<dyn SecretProvider>("secret provider", &configs, &Services::empty())
+            .unwrap();
         let secrets = SecretManager::new(providers, Arc::new(AllowAllPolicy::new()));
         let context = SecurityContext::default();
-        assert_eq!(secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_FILE").await.unwrap(), "from-file");
-        assert_eq!(secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_ENV").await.unwrap(), "from-env");
+        assert_eq!(
+            secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_FILE").await.unwrap(),
+            "from-file"
+        );
+        assert_eq!(
+            secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_ENV").await.unwrap(),
+            "from-env"
+        );
         env::remove_var("CAELUMORA_TEST_BACKEND_ENV");
-        let misspelt = Backends::built_in().make_chain::<dyn SecretProvider>("secret provider", &[BackendConfig::new("env", json!({ "prefix": "X" }))], &Services::empty());
+        let misspelt = Backends::built_in().make_chain::<dyn SecretProvider>(
+            "secret provider",
+            &[BackendConfig::new("env", json!({ "prefix": "X" }))],
+            &Services::empty(),
+        );
         assert!(misspelt.is_err(), "env takes no parameters");
     }
 
@@ -380,17 +535,31 @@ mod tests {
         let users = Persistence::in_memory().entity_stores().unwrap().users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
-        let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(ConfidentialityRules::default().with_roles(roles));
+        let confidentiality: Arc<dyn ConfidentialityPolicy> =
+            Arc::new(ConfidentialityRules::default().with_roles(roles));
         let services = Services::empty().with(Arc::clone(&users)).with(confidentiality);
         let configs = [BackendConfig::new("file", json!({ "path": file }))];
-        let providers = Backends::built_in().make_chain::<dyn UserProvider>("user provider", &configs, &services).unwrap();
+        let providers = Backends::built_in()
+            .make_chain::<dyn UserProvider>("user provider", &configs, &services)
+            .unwrap();
         let manager = UserManager::new(providers, users, Arc::new(()));
-        let found = manager.authenticate("alice", &Credential::Password("wonderland")).await.expect("her password");
+        let found = manager
+            .authenticate("alice", &Credential::Password("wonderland"))
+            .await
+            .expect("her password");
         assert_eq!((found.id, found.roles), (alice, vec![hr]));
 
-        let missing = [BackendConfig::new("file", json!({ "path": dir.path().join("nobody.yaml") }))];
-        let refused = Backends::built_in().make_chain::<dyn UserProvider>("user provider", &missing, &services).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the user provider 1 (file)"), "a file that is not there is refused at startup: {refused}");
+        let missing =
+            [BackendConfig::new("file", json!({ "path": dir.path().join("nobody.yaml") }))];
+        let refused = Backends::built_in()
+            .make_chain::<dyn UserProvider>("user provider", &missing, &services)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("the user provider 1 (file)"),
+            "a file that is not there is refused at startup: {refused}"
+        );
     }
 
     #[tokio::test]
@@ -398,16 +567,27 @@ mod tests {
         let users = Persistence::in_memory().entity_stores().unwrap().users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
-        let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(ConfidentialityRules::default().with_roles(roles));
+        let confidentiality: Arc<dyn ConfidentialityPolicy> =
+            Arc::new(ConfidentialityRules::default().with_roles(roles));
         let services = Services::empty().with(Arc::clone(&users)).with(confidentiality);
         let configs = [BackendConfig::new("accept_any", json!({ "default_roles": ["hr"] }))];
-        let providers = Backends::built_in().make_chain::<dyn UserProvider>("user provider", &configs, &services).unwrap();
+        let providers = Backends::built_in()
+            .make_chain::<dyn UserProvider>("user provider", &configs, &services)
+            .unwrap();
         let manager = UserManager::new(providers, users, Arc::new(()));
-        let alice = manager.authenticate("alice", &Credential::Password("x")).await.expect("accepted");
+        let alice =
+            manager.authenticate("alice", &Credential::Password("x")).await.expect("accepted");
         assert_eq!(alice.roles, [hr]);
 
         let unknown = [BackendConfig::new("accept_any", json!({ "default_roles": ["staff"] }))];
-        let refused = Backends::built_in().make_chain::<dyn UserProvider>("user provider", &unknown, &services).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the user provider 1 (accept_any)") && refused.contains("staff"), "{refused}");
+        let refused = Backends::built_in()
+            .make_chain::<dyn UserProvider>("user provider", &unknown, &services)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("the user provider 1 (accept_any)") && refused.contains("staff"),
+            "{refused}"
+        );
     }
 }

@@ -1,8 +1,16 @@
 //! The terminal frontend: a user talks, line by line, in a channel of a session started from a
 //! template.
 
-use caelumora_model::store::query::Query;
-use caelumora_model::store::StoreResultExt;
+use anyhow::Result;
+use caelumora_a2a::plugin::A2aPlugin;
+use caelumora_agents::llm::LLMClient;
+use caelumora_agents::plugin::AgentsPlugin;
+use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_artifacts::plugin::ArtifactsPlugin;
+use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_decision::plugin::DecisionPlugin;
+use caelumora_logging::{init, LogTarget};
+use caelumora_mcp::plugin::McpPlugin;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
@@ -11,67 +19,72 @@ use caelumora_model::config::AppConfig;
 use caelumora_model::mention::{is_group_handle, mention_spans};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::question::{Question, QuestionId, QuestionRequest, Response};
+use caelumora_model::store::query::Query;
+use caelumora_model::store::StoreResultExt;
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::user::UserId;
 use caelumora_model::user_provider::Credential;
 use caelumora_model::value::language::Language;
 use caelumora_model::work::TurnId;
+use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
+use caelumora_ollama::plugin::OllamaPlugin;
+use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
-use caelumora_agents::prompt::ModelProfileProvider;
-use caelumora_agents::llm::LLMClient;
-use caelumora_agents::plugin::AgentsPlugin;
-use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_runtime::error::user_message;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
-use caelumora_artifacts::plugin::ArtifactsPlugin;
+use caelumora_runtime::view::Viewer;
 use caelumora_skills::plugin::SkillsPlugin;
-use caelumora_mcp::plugin::McpPlugin;
-use caelumora_a2a::plugin::A2aPlugin;
-use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
-use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
-use caelumora_ollama::plugin::OllamaPlugin;
-use caelumora_decision::plugin::DecisionPlugin;
-use caelumora_runtime::view::Viewer;
 use clap::Parser;
-use caelumora_logging::{LogTarget, init};
 use rustyline::error::ReadlineError;
+use rustyline::history::DefaultHistory;
 use rustyline::Editor;
 use std::collections::HashMap;
+use std::future;
+use std::io::Error;
 use std::path::PathBuf;
-use tokio::sync::broadcast::error::RecvError;
 use std::sync::Arc;
 use std::thread;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use anyhow::Result;
-use caelumora_runtime::error::user_message;
-use rustyline::history::DefaultHistory;
-use std::io::Error;
-use std::future;
 
 /// What `message` says as the terminal prints it: its words, the participants it mentions
 /// highlighted, and what it carries by name, type and size (issue 282); `None` if it says neither.
 fn said(message: &Message, handles: &HashMap<ActorId, String>) -> Option<String> {
-    let words = message.content.as_deref().filter(|content| !content.is_empty()).map(|content| render_content(message, content, handles));
-    let attachments = message.attachments.iter()
-        .map(|attachment| format!("[{}, {}, {}]", attachment.name.as_str(), attachment.media_type, attachment.size_shown()));
+    let words = message
+        .content
+        .as_deref()
+        .filter(|content| !content.is_empty())
+        .map(|content| render_content(message, content, handles));
+    let attachments = message.attachments.iter().map(|attachment| {
+        format!(
+            "[{}, {}, {}]",
+            attachment.name.as_str(),
+            attachment.media_type,
+            attachment.size_shown()
+        )
+    });
     let parts: Vec<String> = words.into_iter().chain(attachments).collect();
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
-    let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
+    let mentioned: Vec<&String> =
+        message.mentions.iter().filter_map(|id| handles.get(id)).collect();
     let mut rendered = String::with_capacity(content.len());
     let mut pos = 0;
     for span in mention_spans(content) {
         // A group handle addresses everyone (issue 401): resolved if anyone was.
-        if mentioned.contains(&&span.handle) || (is_group_handle(&span.handle) && !message.mentions.is_empty()) {
+        if mentioned.contains(&&span.handle)
+            || (is_group_handle(&span.handle) && !message.mentions.is_empty())
+        {
             rendered.push_str(&content[pos..span.range.start]);
             rendered.push_str("\x1b[1;36m");
             rendered.push_str(&content[span.range.clone()]);
@@ -92,7 +105,8 @@ fn print_questions(request: &QuestionRequest, me: ActorId) {
         println!("{}. [{}] {}", index + 1, question.header, question.question);
         for (number, choice) in question.choices.iter().enumerate() {
             let recommended = if choice.recommended { " (recommended)" } else { "" };
-            let description = choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
+            let description =
+                choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
             println!("   {}) {}{}{}", number + 1, choice.label, recommended, description);
         }
     }
@@ -129,9 +143,16 @@ fn response_of(question: &Question, line: &str) -> Response {
     if question.choices.is_empty() {
         return Response::Text { text: line.to_string() };
     }
-    let numbers: Option<Vec<usize>> = line.split(',').map(|n| n.trim().parse::<usize>().ok().filter(|n| (1..=question.choices.len()).contains(n))).collect();
+    let numbers: Option<Vec<usize>> = line
+        .split(',')
+        .map(|n| {
+            n.trim().parse::<usize>().ok().filter(|n| (1..=question.choices.len()).contains(n))
+        })
+        .collect();
     let chosen: Option<Vec<String>> = match numbers {
-        Some(numbers) => Some(numbers.into_iter().map(|n| question.choices[n - 1].label.clone()).collect()),
+        Some(numbers) => {
+            Some(numbers.into_iter().map(|n| question.choices[n - 1].label.clone()).collect())
+        }
         None => question.choices.iter().find(|c| c.label == line).map(|c| vec![c.label.clone()]),
     };
     match chosen {
@@ -145,14 +166,17 @@ fn response_of(question: &Question, line: &str) -> Response {
 fn questions_named(open: &[QuestionRequest], arg: &str, me: ActorId) -> Option<QuestionRequest> {
     match arg.trim() {
         "" => open.iter().rev().find(|q| q.questions.is_asked(me)).cloned(),
-        id => Uuid::parse_str(id).ok().and_then(|id| open.iter().find(|q| q.id == QuestionId(id)).cloned()),
+        id => Uuid::parse_str(id)
+            .ok()
+            .and_then(|id| open.iter().find(|q| q.id == QuestionId(id)).cloned()),
     }
 }
 
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 #[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
-    let user_actor = channel.user_actor(user)
+    let user_actor = channel
+        .user_actor(user)
         .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the channel"))?;
 
     let mut receiver = user_actor.watch();
@@ -174,10 +198,8 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
     let me = ActorId::User(user);
     let mut open_questions: Vec<QuestionRequest> = Vec::new();
     let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
-    let handles: HashMap<ActorId, String> = channel.participants()
-        .into_iter()
-        .filter_map(|m| Some((m.id, m.handle?)))
-        .collect();
+    let handles: HashMap<ActorId, String> =
+        channel.participants().into_iter().filter_map(|m| Some((m.id, m.handle?))).collect();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
     // A signal ends the loop as `exit` does, so that the session is shut
@@ -489,7 +511,6 @@ fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineErr
     input_rx
 }
 
-
 #[derive(Parser, Debug)]
 #[command(author, version, about = "An accessible Chat CLI")]
 struct Args {
@@ -512,7 +533,20 @@ struct Args {
 /// The plugins the terminal builds its runtime with (issue 323) - first the
 /// essential one, the agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(AgentsPlugin), Box::new(CompactionPlugin), Box::new(SkillsPlugin), Box::new(ArtifactsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin), Box::new(JsonStorePlugin), Box::new(PostgresStorePlugin)]
+    vec![
+        Box::new(AgentsPlugin),
+        Box::new(CompactionPlugin),
+        Box::new(SkillsPlugin),
+        Box::new(ArtifactsPlugin),
+        Box::new(OllamaPlugin),
+        Box::new(McpPlugin),
+        Box::new(A2aPlugin),
+        Box::new(OpenTerminalPlugin),
+        Box::new(WorkspaceToolsPlugin),
+        Box::new(DecisionPlugin),
+        Box::new(JsonStorePlugin),
+        Box::new(PostgresStorePlugin),
+    ]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core
@@ -534,8 +568,7 @@ async fn main() -> Result<()> {
 
     let config = if let Some(config_path) = args.config {
         AppConfig::load(config_path)?
-    }
-    else {
+    } else {
         AppConfig::default()
     };
 
@@ -556,11 +589,18 @@ async fn main() -> Result<()> {
     if users.is_empty() {
         anyhow::bail!("No user providers are configured (`users` section), so the terminal can act for nobody. See examples/config.yaml.");
     }
-    let owner = users.authenticate(&args.user, &Credential::Trusted).await
-        .map_err(|e| anyhow::anyhow!("The terminal cannot act for '{}': {e}", args.user))?.id;
+    let owner = users
+        .authenticate(&args.user, &Credential::Trusted)
+        .await
+        .map_err(|e| anyhow::anyhow!("The terminal cannot act for '{}': {e}", args.user))?
+        .id;
     // The session is this terminal user's own; their context, with their
     // roles, is their controller's (issue 304).
-    let security = runtime.controller_manager().user_controller(owner).await?.security_context(Default::default(), Default::default());
+    let security = runtime
+        .controller_manager()
+        .user_controller(owner)
+        .await?
+        .security_context(Default::default(), Default::default());
 
     // By name, among those this user may use.
     let template = entity_stores.session_templates.list(&security, &Query::all()).await.map(|page| page.items)?.into_iter()
@@ -569,21 +609,46 @@ async fn main() -> Result<()> {
 
     // Held in the language the user prefers where the template names none:
     // the frontend's to offer, not the server's (issues 331, 425).
-    let preferred = entity_stores.user_profiles.get(&security, owner).await.optional()?.and_then(|profile| profile.preferred_language);
+    let preferred = entity_stores
+        .user_profiles
+        .get(&security, owner)
+        .await
+        .optional()?
+        .and_then(|profile| profile.preferred_language);
     let language = preferred.filter(|_| template.language.is_none());
 
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-    let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session"), language.as_ref().map(Language::as_str), None, None).await?;
+    let session_loop = session_manager
+        .create_from_template(
+            &security,
+            template.id,
+            Some("default-session"),
+            language.as_ref().map(Language::as_str),
+            None,
+            None,
+        )
+        .await?;
     let session_id = session_loop.id();
 
     // The template's first channel, whatever it is called.
-    let channel = session_loop.channels().into_iter().next()
-        .ok_or_else(|| anyhow::anyhow!("Session template '{}' has no channel", args.template))?;
+    let channel =
+        session_loop.channels().into_iter().next().ok_or_else(|| {
+            anyhow::anyhow!("Session template '{}' has no channel", args.template)
+        })?;
 
     // Who answers, as the views tell it (issue 174).
-    let view = session_manager.views(Viewer::new(security.clone())).session(session_id).await?.channel(channel.id()).await?;
+    let view = session_manager
+        .views(Viewer::new(security.clone()))
+        .session(session_id)
+        .await?
+        .channel(channel.id())
+        .await?;
     let unknown = || "from a bundle".to_string();
-    println!("Moderator: {}, responders: {}", view.moderator().unwrap_or_else(unknown), view.responder_policy().unwrap_or_else(unknown));
+    println!(
+        "Moderator: {}, responders: {}",
+        view.moderator().unwrap_or_else(unknown),
+        view.responder_policy().unwrap_or_else(unknown)
+    );
 
     // Start the interactive loop; however it ends, the session is shut
     // down in order (issue 297): its actors keep what they are in the
@@ -602,7 +667,9 @@ async fn signalled() {
                 caught.recv().await;
             }
             Err(e) => {
-                tracing::warn!("A signal cannot be caught, and ends the program without a shutdown: {e}");
+                tracing::warn!(
+                    "A signal cannot be caught, and ends the program without a shutdown: {e}"
+                );
                 future::pending::<()>().await;
             }
         }
@@ -623,7 +690,10 @@ mod tests {
         Question {
             header: "Pick".to_string(),
             question: "Which?".to_string(),
-            choices: choices.iter().map(|l| Choice { label: l.to_string(), description: None, recommended: false }).collect(),
+            choices: choices
+                .iter()
+                .map(|l| Choice { label: l.to_string(), description: None, recommended: false })
+                .collect(),
             multi_select,
         }
     }
@@ -632,19 +702,34 @@ mod tests {
     fn a_message_is_printed_with_what_it_carries() {
         use caelumora_model::confidentiality::Classification;
         use caelumora_model::content::testing::make_content_ref;
-        let message = |content: Option<&str>, attachments| Message { content: content.map(str::to_string), attachments, ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let message = |content: Option<&str>, attachments| Message {
+            content: content.map(str::to_string),
+            attachments,
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
         let chart = make_content_ref("chart.png", b"chart");
         let printed = |message: Message| said(&message, &HashMap::new());
         assert_eq!(printed(message(Some("hello"), Vec::new())).as_deref(), Some("hello"));
-        assert_eq!(printed(message(None, vec![chart.clone()])).as_deref(), Some("[chart.png, image/png, 5 B]"), "attachments alone");
-        assert_eq!(printed(message(Some("look"), vec![chart])).as_deref(), Some("look [chart.png, image/png, 5 B]"));
+        assert_eq!(
+            printed(message(None, vec![chart.clone()])).as_deref(),
+            Some("[chart.png, image/png, 5 B]"),
+            "attachments alone"
+        );
+        assert_eq!(
+            printed(message(Some("look"), vec![chart])).as_deref(),
+            Some("look [chart.png, image/png, 5 B]")
+        );
         assert_eq!(printed(message(Some(""), Vec::new())), None, "nothing said");
     }
 
     #[test]
     fn a_line_answers_a_question_as_it_asks() {
-        let chosen = |labels: &[&str]| Response::Chosen { chosen: labels.iter().map(|l| l.to_string()).collect(), other: None };
-        let other = |text: &str| Response::Chosen { chosen: Vec::new(), other: Some(text.to_string()) };
+        let chosen = |labels: &[&str]| Response::Chosen {
+            chosen: labels.iter().map(|l| l.to_string()).collect(),
+            other: None,
+        };
+        let other =
+            |text: &str| Response::Chosen { chosen: Vec::new(), other: Some(text.to_string()) };
         let choices = question(&["Postgres", "SQLite", "None"], true);
         assert_eq!(response_of(&choices, "2"), chosen(&["SQLite"]));
         assert_eq!(response_of(&choices, "1, 3"), chosen(&["Postgres", "None"]));
@@ -652,7 +737,10 @@ mod tests {
         assert_eq!(response_of(&choices, "4"), other("4"), "no such choice: another answer");
         assert_eq!(response_of(&choices, "MariaDB"), other("MariaDB"));
         assert_eq!(response_of(&choices, "-"), Response::Declined);
-        assert_eq!(response_of(&question(&[], false), "Kaya"), Response::Text { text: "Kaya".to_string() });
+        assert_eq!(
+            response_of(&question(&[], false), "Kaya"),
+            Response::Text { text: "Kaya".to_string() }
+        );
         assert_eq!(response_of(&question(&[], false), "-"), Response::Declined);
     }
 }

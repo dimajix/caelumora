@@ -3,21 +3,25 @@
 
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
-use caelumora_rest_api::session::{AddSessionParticipantRequest, CandidateResponse, CandidatesQuery, CreateSessionRequest, DescriptionRequest, JoinSessionRequest, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
-use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
+use crate::error::{Json, Path, Query};
+use crate::routes::{change_error, ensure_session, session_view, views};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, http::StatusCode};
-use crate::error::{Json, Path, Query};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::snapshot::Detail;
 use caelumora_model::session::SessionId;
+use caelumora_model::snapshot::Detail;
 use caelumora_model::template::SessionTemplateId;
-use std::sync::Arc;
+use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
+use caelumora_rest_api::session::{
+    AddSessionParticipantRequest, CandidateResponse, CandidatesQuery, CreateSessionRequest,
+    DescriptionRequest, JoinSessionRequest, PrivateNotesResponse, RenameSessionRequest,
+    SessionPrivacyRequest, SessionResponse, SessionSnapshot,
+};
 use caelumora_runtime::view::SessionView;
+use std::sync::Arc;
 use uuid::Uuid;
-use crate::routes::{change_error, ensure_session, session_view, views};
 
 pub(super) async fn create_session(
     State(state): State<Arc<AppState>>,
@@ -27,7 +31,17 @@ pub(super) async fn create_session(
     // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
     let ctx = user.security_context();
-    let session_loop = state.session_manager.create_from_template(&ctx, template_id, payload.name.as_deref(), payload.language.as_deref(), payload.time_zone.as_deref(), payload.workspace.map(Into::into)).await?;
+    let session_loop = state
+        .session_manager
+        .create_from_template(
+            &ctx,
+            template_id,
+            payload.name.as_deref(),
+            payload.language.as_deref(),
+            payload.time_zone.as_deref(),
+            payload.workspace.map(Into::into),
+        )
+        .await?;
     // Made in its own project, then put into the shared one asked for (issue 467), as any session
     // is; if it cannot be, it is not made.
     if let Some(project) = payload.project_id {
@@ -42,15 +56,22 @@ pub(super) async fn create_session(
 
 /// The sessions the user may read - or, with `?deleted=true`, those they
 /// deleted and may read as such (issue 164).
-pub(super) async fn list_sessions(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+pub(super) async fn list_sessions(
+    State(state): State<Arc<AppState>>,
+    Query(options): Query<ListOptions>,
+    user: AuthenticatedUser,
+) -> Result<Response, ApiError> {
     let views = views(&state, &user);
     if options.deleted {
-        let deleted = views.deleted_sessions().await
-            .map_err(|e| ApiError::internal("sessions_unavailable", "listing the deleted sessions", &e.into()))?;
-        return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
+        let deleted = views.deleted_sessions().await.map_err(|e| {
+            ApiError::internal("sessions_unavailable", "listing the deleted sessions", &e.into())
+        })?;
+        return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>())
+            .into_response());
     }
-    let sessions = views.sessions().await
-        .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
+    let sessions = views.sessions().await.map_err(|e| {
+        ApiError::internal("sessions_unavailable", "listing the sessions", &e.into())
+    })?;
     Ok(Json(all_listed(sessions).await).into_response())
 }
 
@@ -87,17 +108,26 @@ pub(super) async fn agent_private_notes(
     let session_id = SessionId(id);
     let session = views(&state, &user).session(session_id).await?;
     let found = session.private_notes_of(AgentId(aid)).await?;
-    Ok(Json(found.into_iter().map(|(channel, notes, digest)| PrivateNotesResponse {
-        channel_id: channel.id(),
-        channel_name: channel.name().to_string(),
-        notes,
-        digest,
-    }).collect()))
+    Ok(Json(
+        found
+            .into_iter()
+            .map(|(channel, notes, digest)| PrivateNotesResponse {
+                channel_id: channel.id(),
+                channel_name: channel.name().to_string(),
+                notes,
+                digest,
+            })
+            .collect(),
+    ))
 }
 
 /// Restores the deleted session `id` (issue 164) and answers it as `GET`
 /// does. It is not started; opening it starts it.
-pub(super) async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
+pub(super) async fn restore_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
     state.session_manager.restore(&user.security_context(), session_id).await?;
     Ok(Json(session_view(&state, &user, session_id).await?))
@@ -105,13 +135,21 @@ pub(super) async fn restore_session(State(state): State<Arc<AppState>>, Path(id)
 
 /// Removes the deleted session `id` for good, with its channels and their
 /// state (issue 164) - as the policy allows, by default the system's alone.
-pub(super) async fn purge_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn purge_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
     state.session_manager.purge(&user.security_context(), session_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+pub(super) async fn delete_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
     // `SessionManager::delete` stops the running loop, marks the session deleted -
     // kept with its channels until it is purged (issue 164) - and emits the
@@ -202,7 +240,9 @@ pub(super) async fn update_session_approval_rules(
     let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_approval_rules(&user.security_context(), rules).await
+    session_loop
+        .update_approval_rules(&user.security_context(), rules)
+        .await
         .map_err(|e| change_error(e, "invalid_rule"))?;
 
     Ok(Json(session_view(&state, &user, session_id).await?))
@@ -221,7 +261,13 @@ pub(super) async fn update_session_description(
     let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await?;
+    session_loop
+        .update_description(
+            &user.security_context(),
+            payload.summary.as_deref(),
+            payload.briefing.as_deref(),
+        )
+        .await?;
 
     Ok(Json(session_view(&state, &user, session_id).await?))
 }
@@ -278,6 +324,10 @@ pub(super) async fn join_session(
 
 /// Session `id` as a list shows it to `user`: as the views reach it, the project its results go
 /// to where they read it.
-async fn listed(state: &Arc<AppState>, user: &AuthenticatedUser, id: SessionId) -> Result<SessionResponse, ApiError> {
+async fn listed(
+    state: &Arc<AppState>,
+    user: &AuthenticatedUser,
+    id: SessionId,
+) -> Result<SessionResponse, ApiError> {
     Ok(views(state, user).session(id).await?.snapshot(Detail::empty()).await.into())
 }

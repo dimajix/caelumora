@@ -24,9 +24,16 @@ pub struct ProfileResponse {
 impl ProfileResponse {
     /// `profile` as answered; one without anything in it if there is none.
     pub fn of(profile: Option<UserProfile>) -> Self {
-        let approval_rules = profile.as_ref().map_or_else(Vec::new, |profile| profile.approval_rules().to_vec());
-        let (introduction, preferred_language) = profile.map_or((None, None), |profile| (profile.introduction, profile.preferred_language));
-        Self { introduction, max_introduction_chars: Introduction::MAX_CHARS, preferred_language, approval_rules }
+        let approval_rules =
+            profile.as_ref().map_or_else(Vec::new, |profile| profile.approval_rules().to_vec());
+        let (introduction, preferred_language) = profile
+            .map_or((None, None), |profile| (profile.introduction, profile.preferred_language));
+        Self {
+            introduction,
+            max_introduction_chars: Introduction::MAX_CHARS,
+            preferred_language,
+            approval_rules,
+        }
     }
 }
 
@@ -60,18 +67,24 @@ pub struct ProfileRequest {
 mod tests {
     use super::*;
     use crate::channel::CreateChannelRequest;
-    
-    
-    
 
     #[test]
     fn a_language_is_passed_on_as_it_was_sent() {
-        let request: ProfileRequest = serde_json::from_str(r#"{"introduction": null, "preferred_language": "de_ch"}"#).unwrap();
+        let request: ProfileRequest =
+            serde_json::from_str(r#"{"introduction": null, "preferred_language": "de_ch"}"#)
+                .unwrap();
         assert_eq!(request.preferred_language, Some("de_ch".to_string()));
-        let request: ProfileRequest = serde_json::from_str(r#"{"preferred_language": "Deutsch"}"#).unwrap();
-        assert_eq!(request.preferred_language.as_deref(), Some("Deutsch"), "checked by the profile, not as the request is read");
+        let request: ProfileRequest =
+            serde_json::from_str(r#"{"preferred_language": "Deutsch"}"#).unwrap();
+        assert_eq!(
+            request.preferred_language.as_deref(),
+            Some("Deutsch"),
+            "checked by the profile, not as the request is read"
+        );
         let request: CreateChannelRequest = serde_json::from_str(r#"{"name": "side"}"#).unwrap();
-        assert_eq!(request.language, None, "none when left out, whichever the user prefers (issue 331)");
+        assert_eq!(
+            request.language, None,
+            "none when left out, whichever the user prefers (issue 331)"
+        );
     }
-
 }

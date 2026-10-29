@@ -101,9 +101,19 @@ impl DecisionClient {
     ///
     /// # Errors
     /// `Unreachable` if no HTTP client can be made.
-    pub fn new(endpoint: RemoteEndpoint, model: String, keep_alive: Option<String>, secret_manager: Arc<SecretManager>) -> DecisionResult<Self> {
-        let http = Client::builder().timeout(endpoint.timeout_or(DEFAULT_TIMEOUT)).build()
-            .map_err(|e| DecisionError::Unreachable { endpoint: endpoint.shown(), reason: describe_request_error(e) })?;
+    pub fn new(
+        endpoint: RemoteEndpoint,
+        model: String,
+        keep_alive: Option<String>,
+        secret_manager: Arc<SecretManager>,
+    ) -> DecisionResult<Self> {
+        let http = Client::builder()
+            .timeout(endpoint.timeout_or(DEFAULT_TIMEOUT))
+            .build()
+            .map_err(|e| DecisionError::Unreachable {
+                endpoint: endpoint.shown(),
+                reason: describe_request_error(e),
+            })?;
         Ok(Self { http, endpoint, model, keep_alive, secret_manager })
     }
 
@@ -121,12 +131,25 @@ impl DecisionClient {
     /// the endpoint does not answer in time; `Rejected` if it refuses;
     /// `InvalidResponse` if its answer cannot be read or leaves a question
     /// unanswered.
-    pub async fn ask(&self, context: &SecurityContext, state: &str, questions: &BTreeMap<String, Question>) -> DecisionResult<HashMap<String, Answer>> {
-        let body = Request { model: &self.model, state, questions, keep_alive: self.keep_alive.as_deref() };
+    pub async fn ask(
+        &self,
+        context: &SecurityContext,
+        state: &str,
+        questions: &BTreeMap<String, Question>,
+    ) -> DecisionResult<HashMap<String, Answer>> {
+        let body = Request {
+            model: &self.model,
+            state,
+            questions,
+            keep_alive: self.keep_alive.as_deref(),
+        };
         trace!(endpoint = %self.shown(), "Asking a decision model: {}", serde_json::to_string(&body).unwrap_or_default());
         let url = format!("{}/{PATH}", self.endpoint.url.trim_end_matches('/'));
         let mut request = self.http.post(url).json(&body);
-        let token = self.endpoint.bearer_token(&self.secret_manager, context).await
+        let token = self
+            .endpoint
+            .bearer_token(&self.secret_manager, context)
+            .await
             .map_err(|source| DecisionError::Credential { endpoint: self.shown(), source })?;
         if let Some(token) = token {
             request = request.bearer_auth(token);
@@ -134,18 +157,27 @@ impl DecisionClient {
         let response = request.send().await.map_err(|e| self.unreachable(e))?;
         let status = response.status();
         if !status.is_success() {
-            return Err(DecisionError::Rejected { endpoint: self.shown(), status: status.as_u16() });
+            return Err(DecisionError::Rejected {
+                endpoint: self.shown(),
+                status: status.as_u16(),
+            });
         }
         let text = response.text().await.map_err(|e| self.unreachable(e))?;
-        let response: Response = serde_json::from_str(&text).map_err(|e| self.invalid(e.to_string()))?;
-        if let Some(unanswered) = questions.keys().find(|name| !response.answers.contains_key(*name)) {
+        let response: Response =
+            serde_json::from_str(&text).map_err(|e| self.invalid(e.to_string()))?;
+        if let Some(unanswered) =
+            questions.keys().find(|name| !response.answers.contains_key(*name))
+        {
             return Err(self.invalid(format!("the question '{unanswered}' is not answered")));
         }
         Ok(response.answers)
     }
 
     fn unreachable(&self, e: Error) -> DecisionError {
-        DecisionError::Unreachable { endpoint: self.shown(), reason: self.endpoint.redact_in(&describe_request_error(e)) }
+        DecisionError::Unreachable {
+            endpoint: self.shown(),
+            reason: self.endpoint.redact_in(&describe_request_error(e)),
+        }
     }
 
     fn invalid(&self, reason: String) -> DecisionError {

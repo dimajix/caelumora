@@ -2,17 +2,19 @@
 //! prompt that nudges the model towards it (extended planning).
 
 use crate::prompt::NAMESPACE;
-use crate::turn::Turn;
-use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, Prompt, PromptProvider, texts_of, writing_for_the_model};
+use crate::prompt::{texts_of, writing_for_the_model, ContextError, Prompt, PromptProvider};
 use crate::situation::Situation;
-use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{
+    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+};
+use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
-use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::tool::{Tool, ToolPresentation, ToolVisibility, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -60,29 +62,35 @@ impl CreatePlanToolProvider {
     pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
         // What its texts are told.
         let values = context! { max_steps => Plan::MAX_STEPS };
-        let tools = vec![described(&prompts, NAMESPACE, CREATE_PLAN_TOOL_KIND, Tool {
-            name: CREATE_PLAN_TOOL_NAME.to_string(),
-            description: String::new(),
-            parameters: ToolParameters::object(
-                [
-                    ("summary", ToolParameters::string()),
-                    (
-                        "steps",
-                        ToolParameters::array(
-                            ToolParameters::object(
+        let tools = vec![described(
+            &prompts,
+            NAMESPACE,
+            CREATE_PLAN_TOOL_KIND,
+            Tool {
+                name: CREATE_PLAN_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [
+                        ("summary", ToolParameters::string()),
+                        (
+                            "steps",
+                            ToolParameters::array(ToolParameters::object(
                                 [("description", ToolParameters::string())],
                                 ["description"],
                             )),
-                    ),
-                ],
-                ["summary", "steps"],
-            ),
-            requires_approval: false,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: PLAN_PRESENTATION,
-        }, &values)?];
-        let description = tool_text(&prompts, NAMESPACE, CREATE_PLAN_TOOL_KIND, "description", &values)?;
+                        ),
+                    ],
+                    ["summary", "steps"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: PLAN_PRESENTATION,
+            },
+            &values,
+        )?];
+        let description =
+            tool_text(&prompts, NAMESPACE, CREATE_PLAN_TOOL_KIND, "description", &values)?;
         Ok(Self { description, tools, prompts })
     }
 }
@@ -91,7 +99,8 @@ impl CreatePlanToolProvider {
 impl PromptProvider for CreatePlanToolProvider {
     async fn get_prompt(&self, _situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // A fixed text of the runtime's: nothing confidential (issue 168).
-        let text = self.prompts.render(PLANNING, context! { create_plan => CREATE_PLAN_TOOL_NAME })?;
+        let text =
+            self.prompts.render(PLANNING, context! { create_plan => CREATE_PLAN_TOOL_NAME })?;
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
 }
@@ -116,11 +125,7 @@ fn parse_plan(args: &Value) -> ToolResult<Plan> {
     Ok(Plan {
         id: PlanId::new(),
         summary: args.summary,
-        steps: args
-            .steps
-            .into_iter()
-            .map(|s| PlanStep { description: s.description })
-            .collect(),
+        steps: args.steps.into_iter().map(|s| PlanStep { description: s.description }).collect(),
     })
 }
 
@@ -134,7 +139,13 @@ impl ToolProvider for CreatePlanToolProvider {
         self.tools.clone()
     }
 
-    async fn execute(&self, _name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(
+        &self,
+        _name: &str,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
         let incoming = parse_plan(params)?;
         // A plan larger than a plan may be is the model's to correct; the
         // plan in play stays as it was (issue 412).
@@ -161,11 +172,17 @@ impl ToolProvider for CreatePlanToolProvider {
                 // untouched - the current step continues uninterrupted, and
                 // the new steps get picked up once it converges.
                 turn.set_plan(state);
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "steps_added" }), turn.situation().label()))
+                Ok(ToolOutput::classified(
+                    serde_json::json!({ "status": "steps_added" }),
+                    turn.situation().label(),
+                ))
             }
             None => {
                 turn.set_plan(PlanState { plan: incoming, progress: PlanProgress::Step(0) });
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "accepted" }), turn.situation().label()))
+                Ok(ToolOutput::classified(
+                    serde_json::json!({ "status": "accepted" }),
+                    turn.situation().label(),
+                ))
             }
         }
     }
@@ -185,7 +202,11 @@ impl ToolProvider for CreatePlanToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(CREATE_PLAN_TOOL_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(CREATE_PLAN_TOOL_KIND)
+                .provides::<dyn ToolProvider>()
+                .provides::<dyn PromptProvider>(),
+        ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let provider = Arc::new(CreatePlanToolProvider::new(texts)?);
@@ -206,12 +227,21 @@ mod tests {
 
     #[test]
     fn create_plan_tool_requires_no_approval() {
-        assert!(!CreatePlanToolProvider::new(testing::prompts()).unwrap().tools().remove(0).requires_approval);
+        assert!(
+            !CreatePlanToolProvider::new(testing::prompts())
+                .unwrap()
+                .tools()
+                .remove(0)
+                .requires_approval
+        );
     }
 
     #[test]
     fn create_plan_calls_are_shown_as_a_plan() {
-        assert_eq!(CreatePlanToolProvider::new(testing::prompts()).unwrap().tools().remove(0).presentation, PLAN_PRESENTATION);
+        assert_eq!(
+            CreatePlanToolProvider::new(testing::prompts()).unwrap().tools().remove(0).presentation,
+            PLAN_PRESENTATION
+        );
     }
 
     #[tokio::test]
@@ -302,7 +332,10 @@ mod tests {
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), None, &mut turn).await;
-        assert!(matches!(result, Err(ToolError::InvalidParameter(_))), "the model is asked to correct the call: {result:?}");
+        assert!(
+            matches!(result, Err(ToolError::InvalidParameter(_))),
+            "the model is asked to correct the call: {result:?}"
+        );
         assert!(turn.plan().is_none());
     }
 
@@ -313,15 +346,33 @@ mod tests {
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
         let steps = |n: usize| json!({ "summary": "work", "steps": (0..n).map(|i| json!({ "description": format!("step {i}") })).collect::<Vec<_>>() });
 
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &steps(Plan::MAX_STEPS + 1), None, &mut turn).await;
-        assert!(matches!(&result, Err(ToolError::InvalidParameter(m)) if m.contains("at most 20")), "the model is asked to correct the call: {result:?}");
+        let result = provider
+            .execute(CREATE_PLAN_TOOL_NAME, &steps(Plan::MAX_STEPS + 1), None, &mut turn)
+            .await;
+        assert!(
+            matches!(&result, Err(ToolError::InvalidParameter(m)) if m.contains("at most 20")),
+            "the model is asked to correct the call: {result:?}"
+        );
         assert!(turn.plan().is_none());
 
-        provider.execute(CREATE_PLAN_TOOL_NAME, &steps(Plan::MAX_STEPS - 1), None, &mut turn).await.expect("one step less than it may have");
+        provider
+            .execute(CREATE_PLAN_TOOL_NAME, &steps(Plan::MAX_STEPS - 1), None, &mut turn)
+            .await
+            .expect("one step less than it may have");
         let result = provider.execute(CREATE_PLAN_TOOL_NAME, &steps(2), None, &mut turn).await;
-        assert!(matches!(result, Err(ToolError::InvalidParameter(_))), "appended, it would have one too many: {result:?}");
-        assert_eq!(turn.plan().expect("the plan stays").plan.steps.len(), Plan::MAX_STEPS - 1, "as it was");
-        provider.execute(CREATE_PLAN_TOOL_NAME, &steps(1), None, &mut turn).await.expect("the last step it may have");
+        assert!(
+            matches!(result, Err(ToolError::InvalidParameter(_))),
+            "appended, it would have one too many: {result:?}"
+        );
+        assert_eq!(
+            turn.plan().expect("the plan stays").plan.steps.len(),
+            Plan::MAX_STEPS - 1,
+            "as it was"
+        );
+        provider
+            .execute(CREATE_PLAN_TOOL_NAME, &steps(1), None, &mut turn)
+            .await
+            .expect("the last step it may have");
         assert_eq!(turn.plan().unwrap().plan.steps.len(), Plan::MAX_STEPS);
     }
 
@@ -336,7 +387,8 @@ mod tests {
             ]
         });
 
-        let description = provider.describe(CREATE_PLAN_TOOL_NAME, &params).expect("valid plan should describe");
+        let description =
+            provider.describe(CREATE_PLAN_TOOL_NAME, &params).expect("valid plan should describe");
         assert!(description.contains("Investigate and fix the bug"));
         assert!(description.contains("1. Reproduce the issue"));
         assert!(description.contains("2. Find the root cause"));
@@ -346,7 +398,11 @@ mod tests {
     async fn create_plan_tool_contributes_the_planning_system_prompt() {
         let mut state = AgentChannelState::default();
         let turn = Turn::begun(Default::default(), &mut state);
-        let prompt = CreatePlanToolProvider::new(testing::prompts()).unwrap().get_prompt(&turn.situation()).await.expect("prompt should be available");
+        let prompt = CreatePlanToolProvider::new(testing::prompts())
+            .unwrap()
+            .get_prompt(&turn.situation())
+            .await
+            .expect("prompt should be available");
         assert_eq!(prompt.text, "[Planning]\nBefore responding, decide whether this request needs \
             research or multiple steps to complete. If it does, gather any information you need using \
             the available tools, then call `create_plan` once with a short summary and an ordered list \
@@ -376,6 +432,9 @@ mod tests {
     fn parse_plan_rejects_malformed_arguments() {
         let args = json!({ "summary": "missing steps field" });
 
-        assert!(matches!(parse_plan(&args), Err(ToolError::InvalidParameter(ref m)) if m.contains("steps")), "serde names what is missing");
+        assert!(
+            matches!(parse_plan(&args), Err(ToolError::InvalidParameter(ref m)) if m.contains("steps")),
+            "serde names what is missing"
+        );
     }
 }

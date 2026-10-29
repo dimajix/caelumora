@@ -5,9 +5,9 @@ use crate::store::{Address, Enclosing, EntityKind, Stored};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use tracing::warn;
 use std::fmt::Debug;
 use std::slice;
+use tracing::warn;
 
 /// What happened, announced on the event bus - and, once there are several instances, between them
 /// (issue 122): it is read back as it is written. Every event is about an entity (issue 323), of
@@ -57,7 +57,10 @@ pub enum EntityChange {
     /// (`channel::JOINED`), an agent's state changed
     /// (`agent::STATE_CHANGED`) -, with what the kind says of it, `null`
     /// for nothing.
-    Custom { name: &'static str, data: Value },
+    Custom {
+        name: &'static str,
+        data: Value,
+    },
 }
 
 /// Read as it is written, the name of a custom change kept as `intern`
@@ -113,7 +116,11 @@ impl GlobalEvent {
 
     /// What `name` says happened to the entity of kind `T` at `address`,
     /// with `data`.
-    pub fn custom<T: Stored>(address: &Address<T>, name: &'static str, data: &impl Serialize) -> Self {
+    pub fn custom<T: Stored>(
+        address: &Address<T>,
+        name: &'static str,
+        data: &impl Serialize,
+    ) -> Self {
         Self::entity::<T>(address, EntityChange::Custom { name, data: value_of(T::KIND, data) })
     }
 
@@ -172,13 +179,24 @@ pub trait EventPublisher: Send + Sync + Debug {
     /// the views reach it (issue 312). One classification, the entity's;
     /// two as it is reclassified, the one it had and the one it has, so
     /// that whoever no longer reaches it learns so.
-    fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]);
+    fn publish_classified(
+        &self,
+        event: GlobalEvent,
+        attributes: SecurityAttributes,
+        classifications: &[Classification],
+    );
 }
 
 impl EventPublisher for () {
     fn publish(&self, _event: GlobalEvent, _attributes: SecurityAttributes) {}
 
-    fn publish_classified(&self, _event: GlobalEvent, _attributes: SecurityAttributes, _classifications: &[Classification]) {}
+    fn publish_classified(
+        &self,
+        _event: GlobalEvent,
+        _attributes: SecurityAttributes,
+        _classifications: &[Classification],
+    ) {
+    }
 }
 
 /// The one way an event about an entity is published as the entity stands
@@ -208,7 +226,7 @@ mod tests {
     use crate::channel::{self, Channel, ChannelId};
     use crate::confidentiality::Classification;
     use crate::scope::Scope;
-    use crate::security::{SecurityAttributes, Secured};
+    use crate::security::{Secured, SecurityAttributes};
     use crate::session::{self, Session, SessionId, SessionUpdateEvent};
     use crate::user::{UserId, UserProfile};
     use crate::value::name::{Name, ScopedName};
@@ -225,7 +243,12 @@ mod tests {
             self.publish_classified(event, attributes, &[]);
         }
 
-        fn publish_classified(&self, _event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]) {
+        fn publish_classified(
+            &self,
+            _event: GlobalEvent,
+            attributes: SecurityAttributes,
+            classifications: &[Classification],
+        ) {
             self.0.lock().unwrap().push((attributes, classifications.to_vec()));
         }
     }
@@ -235,15 +258,24 @@ mod tests {
     #[test]
     fn an_entity_is_announced_as_it_stands() {
         let owner = UserId::new();
-        let workspace = Workspace::new(ScopedName { name: Name::new("notes").unwrap(), scope: Scope::default() }, "local", Classification::PUBLIC, owner);
+        let workspace = Workspace::new(
+            ScopedName { name: Name::new("notes").unwrap(), scope: Scope::default() },
+            "local",
+            Classification::PUBLIC,
+            owner,
+        );
         let profile = UserProfile::new(owner, None);
         let published = Published::default();
         published.announce(GlobalEvent::created::<Workspace>(&workspace.id), &workspace);
         published.announce(GlobalEvent::created::<UserProfile>(&owner), &profile);
-        assert_eq!(*published.0.lock().unwrap(), [
-            (workspace.security_attributes.clone(), vec![Classification::PUBLIC]),
-            (profile.security_attributes().clone(), vec![]),
-        ], "a classified kind to who is cleared for it, another to whoever may read it");
+        assert_eq!(
+            *published.0.lock().unwrap(),
+            [
+                (workspace.security_attributes.clone(), vec![Classification::PUBLIC]),
+                (profile.security_attributes().clone(), vec![]),
+            ],
+            "a classified kind to who is cleared for it, another to whoever may read it"
+        );
     }
 
     /// Issue 122: an event is read back as it was written - by another
@@ -251,18 +283,33 @@ mod tests {
     #[test]
     fn an_event_is_read_back_as_it_was_written() {
         let id = SessionId::new();
-        let renamed = GlobalEvent::updated::<Session>(&id, &SessionUpdateEvent::NameChanged("Release".to_string()));
+        let renamed = GlobalEvent::updated::<Session>(
+            &id,
+            &SessionUpdateEvent::NameChanged("Release".to_string()),
+        );
         let written = serde_json::to_value(&renamed).unwrap();
-        assert_eq!(written, json!({"kind": "session", "id": id.to_string(), "change": {"Updated": {"NameChanged": "Release"}}}));
+        assert_eq!(
+            written,
+            json!({"kind": "session", "id": id.to_string(), "change": {"Updated": {"NameChanged": "Release"}}})
+        );
 
         let read: GlobalEvent = serde_json::from_value(written).unwrap();
         let (read_id, change) = read.about::<Session>().expect("about a session");
         assert_eq!(read_id, id);
-        assert!(matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::NameChanged(name)) if name == "Release"));
+        assert!(
+            matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::NameChanged(name)) if name == "Release")
+        );
 
         let started = GlobalEvent::custom::<Session>(&id, session::STARTED, &());
-        let read: GlobalEvent = serde_json::from_str(&serde_json::to_string(&started).unwrap()).unwrap();
-        assert!(matches!(read.about::<Session>(), Some((_, EntityChange::Custom { name: session::STARTED, .. }))), "{read:?}");
+        let read: GlobalEvent =
+            serde_json::from_str(&serde_json::to_string(&started).unwrap()).unwrap();
+        assert!(
+            matches!(
+                read.about::<Session>(),
+                Some((_, EntityChange::Custom { name: session::STARTED, .. }))
+            ),
+            "{read:?}"
+        );
     }
 
     /// Issue 335: an event about a channel names the session it lies in
@@ -272,16 +319,27 @@ mod tests {
         let session = SessionId::new();
         let channel = ChannelId::new();
         let user = UserId::new();
-        let joined = GlobalEvent::custom::<Channel>(&(session, channel), channel::JOINED, &ActorId::User(user));
+        let joined = GlobalEvent::custom::<Channel>(
+            &(session, channel),
+            channel::JOINED,
+            &ActorId::User(user),
+        );
         let written = serde_json::to_value(&joined).unwrap();
-        assert_eq!(written, json!({"kind": "channel", "id": channel.to_string(), "within": session.to_string(), "change": {"Custom": {"name": "joined", "data": {"User": user.to_string()}}}}));
+        assert_eq!(
+            written,
+            json!({"kind": "channel", "id": channel.to_string(), "within": session.to_string(), "change": {"Custom": {"name": "joined", "data": {"User": user.to_string()}}}})
+        );
 
         let read: GlobalEvent = serde_json::from_value(written).unwrap();
-        let ((read_session, read_channel), change) = read.about::<Channel>().expect("about a channel");
+        let ((read_session, read_channel), change) =
+            read.about::<Channel>().expect("about a channel");
         assert_eq!((read_session, read_channel), (session, channel));
         assert_eq!(change.data::<ActorId>(channel::JOINED), Some(ActorId::User(user)));
 
-        let unplaced: GlobalEvent = serde_json::from_value(json!({"kind": "channel", "id": channel.to_string(), "change": "Created"})).unwrap();
+        let unplaced: GlobalEvent = serde_json::from_value(
+            json!({"kind": "channel", "id": channel.to_string(), "change": "Created"}),
+        )
+        .unwrap();
         assert!(unplaced.about::<Channel>().is_none(), "a channel lies in a session");
         let placed: GlobalEvent = serde_json::from_value(json!({"kind": "session", "id": session.to_string(), "within": channel.to_string(), "change": "Created"})).unwrap();
         assert!(placed.about::<Session>().is_none(), "a session lies in nothing");

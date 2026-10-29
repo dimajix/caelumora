@@ -7,13 +7,13 @@
 
 use arc_swap::ArcSwapOption;
 use reqwest::Error;
+use std::error;
 use std::fmt::{self, Debug};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
-use std::error;
 
 /// The full chain of the causes of `error`, a failed request, without the
 /// URL that `reqwest` writes into its messages.
@@ -103,7 +103,11 @@ impl<T> ExpiringCache<T> {
     /// Marks what was read as outdated: the next ask reads it again, and
     /// until then it is `current` still.
     pub fn invalidate(&self) {
-        self.kept.rcu(|kept| kept.as_ref().map(|kept| Arc::new(Kept { value: Arc::clone(&kept.value), fresh_until: Some(Instant::now()) })));
+        self.kept.rcu(|kept| {
+            kept.as_ref().map(|kept| {
+                Arc::new(Kept { value: Arc::clone(&kept.value), fresh_until: Some(Instant::now()) })
+            })
+        });
     }
 
     fn fresh(&self) -> Option<Arc<T>> {
@@ -134,7 +138,11 @@ mod tests {
     /// were, or fails.
     async fn read(reads: &AtomicUsize, fails: bool) -> Result<usize, String> {
         let n = reads.fetch_add(1, Ordering::SeqCst) + 1;
-        if fails { Err(format!("read {n} failed")) } else { Ok(n) }
+        if fails {
+            Err(format!("read {n} failed"))
+        } else {
+            Ok(n)
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -144,7 +152,11 @@ mod tests {
         assert_eq!(cache.current(), None, "nothing read yet");
         assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 1);
         time::advance(TTL - Duration::from_secs(1)).await;
-        assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 1, "kept within its time-to-live");
+        assert_eq!(
+            *cache.get(|| read(&reads, false)).await.unwrap(),
+            1,
+            "kept within its time-to-live"
+        );
         time::advance(Duration::from_secs(1)).await;
         assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 2, "read again after it");
         assert_eq!(cache.current().as_deref(), Some(&2));
@@ -169,7 +181,11 @@ mod tests {
         let reads = AtomicUsize::new(0);
         assert_eq!(cache.get(|| read(&reads, true)).await.unwrap_err(), "read 1 failed");
         assert_eq!(cache.current(), None);
-        assert_eq!(*cache.get(|| read(&reads, false)).await.unwrap(), 2, "read again at the next ask");
+        assert_eq!(
+            *cache.get(|| read(&reads, false)).await.unwrap(),
+            2,
+            "read again at the next ask"
+        );
         time::advance(TTL).await;
         assert_eq!(cache.get(|| read(&reads, true)).await.unwrap_err(), "read 3 failed");
         assert_eq!(cache.current().as_deref(), Some(&2), "what was read before stays");
@@ -181,12 +197,17 @@ mod tests {
         let cache = Arc::new(ExpiringCache::new(TTL));
         let reads = Arc::new(AtomicUsize::new(0));
         let slow = |cache: Arc<ExpiringCache<usize>>, reads: Arc<AtomicUsize>| async move {
-            cache.get(|| async {
-                time::sleep(Duration::from_secs(1)).await;
-                read(&reads, false).await
-            }).await
+            cache
+                .get(|| async {
+                    time::sleep(Duration::from_secs(1)).await;
+                    read(&reads, false).await
+                })
+                .await
         };
-        let (first, second) = tokio::join!(slow(Arc::clone(&cache), Arc::clone(&reads)), slow(Arc::clone(&cache), Arc::clone(&reads)));
+        let (first, second) = tokio::join!(
+            slow(Arc::clone(&cache), Arc::clone(&reads)),
+            slow(Arc::clone(&cache), Arc::clone(&reads))
+        );
         assert_eq!((*first.unwrap(), *second.unwrap()), (1, 1));
         assert_eq!(reads.load(Ordering::SeqCst), 1, "read once");
     }

@@ -2,11 +2,11 @@
 //! alone (issue 332): the policy's rule for a verb on entities, in a form a
 //! store can apply to a whole list as well as to one entity.
 
+use super::{Grant, Memberships, SecurityAttributes, Subject};
 use crate::actor::ActorId;
 use crate::group::GroupId;
 use crate::role::RoleId;
 use crate::store::Stored;
-use super::{Grant, Memberships, SecurityAttributes, Subject};
 
 /// Which entities a context may do one verb with, in the words of
 /// `SecurityAttributes`: whom an owner or an entry has to name, and what an
@@ -41,7 +41,11 @@ pub struct Admission {
 impl Admission {
     /// Whether an entity with `attributes` is admitted. `memberships` is
     /// asked only for a group an entry names, once nothing else admits it.
-    pub(crate) async fn admits(&self, attributes: &SecurityAttributes, memberships: &dyn Memberships) -> bool {
+    pub(crate) async fn admits(
+        &self,
+        attributes: &SecurityAttributes,
+        memberships: &dyn Memberships,
+    ) -> bool {
         if self.admits_without_groups(attributes) {
             return true;
         }
@@ -76,7 +80,10 @@ impl Admission {
     }
 
     /// The groups the entries of `attributes` covering the grant name.
-    fn groups_named<'a>(&'a self, attributes: &'a SecurityAttributes) -> impl Iterator<Item = GroupId> + 'a {
+    fn groups_named<'a>(
+        &'a self,
+        attributes: &'a SecurityAttributes,
+    ) -> impl Iterator<Item = GroupId> + 'a {
         self.covering(attributes).filter_map(|subject| match subject {
             Subject::Group(group) => Some(group),
             Subject::Actor(_) | Subject::Role(_) | Subject::Everyone => None,
@@ -85,16 +92,24 @@ impl Admission {
 
     /// Whom the entries of `attributes` covering the grant name - none
     /// where owning alone admits.
-    fn covering<'a>(&'a self, attributes: &'a SecurityAttributes) -> impl Iterator<Item = Subject> + 'a {
+    fn covering<'a>(
+        &'a self,
+        attributes: &'a SecurityAttributes,
+    ) -> impl Iterator<Item = Subject> + 'a {
         let needed = self.grant;
-        attributes.acl.iter().filter(move |entry| needed.is_some_and(|needed| entry.grant.covers(needed))).map(|entry| entry.subject)
+        attributes
+            .acl
+            .iter()
+            .filter(move |entry| needed.is_some_and(|needed| entry.grant.covers(needed)))
+            .map(|entry| entry.subject)
     }
 
     /// Whether one of the actors belongs to `group` - to a deleted one only
     /// where `deleted_groups` says so.
     async fn admits_members_of(&self, group: GroupId, memberships: &dyn Memberships) -> bool {
         let Some(group) = memberships.group(group).await else { return false };
-        (group.deleted().is_none() || self.deleted_groups) && self.actors.iter().any(|actor| group.members.contains(actor))
+        (group.deleted().is_none() || self.deleted_groups)
+            && self.actors.iter().any(|actor| group.members.contains(actor))
     }
 }
 
@@ -119,8 +134,14 @@ mod tests {
         assert!(!writing.admits(&hers, &none).await, "an entry covering what is needed");
         let owning = Admission { grant: None, unowned: false, ..reading(vec![bob]) };
         assert!(!owning.admits(&hers, &none).await, "no entry where owning alone admits");
-        assert!(reading(vec![]).admits(&SecurityAttributes::owned_by(ActorId::System), &none).await, "the system's, where unowned admits");
-        assert!(!owning.admits(&SecurityAttributes::default(), &none).await, "but not where it does not");
+        assert!(
+            reading(vec![]).admits(&SecurityAttributes::owned_by(ActorId::System), &none).await,
+            "the system's, where unowned admits"
+        );
+        assert!(
+            !owning.admits(&SecurityAttributes::default(), &none).await,
+            "but not where it does not"
+        );
         assert!(!Admission::default().admits(&hers, &none).await, "the default admits nobody");
     }
 
@@ -128,27 +149,42 @@ mod tests {
     async fn an_entry_admits_by_a_role_that_counts_everyone_and_a_group() {
         let (alice, bob) = (user(), user());
         let role = RoleId::new();
-        let by_role = SecurityAttributes::owned_by(alice).granting(Subject::Role(role), Grant::Read);
+        let by_role =
+            SecurityAttributes::owned_by(alice).granting(Subject::Role(role), Grant::Read);
         let none = Known::default();
-        assert!(Admission { roles: vec![role], ..reading(vec![bob]) }.admits(&by_role, &none).await, "a role that counts");
+        assert!(
+            Admission { roles: vec![role], ..reading(vec![bob]) }.admits(&by_role, &none).await,
+            "a role that counts"
+        );
         assert!(!reading(vec![bob]).admits(&by_role, &none).await, "not one that does not");
         let open = SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Read);
-        assert!(Admission { everyone: true, ..reading(vec![bob]) }.admits(&open, &none).await, "an entry for everyone");
+        assert!(
+            Admission { everyone: true, ..reading(vec![bob]) }.admits(&open, &none).await,
+            "an entry for everyone"
+        );
         assert!(!reading(vec![bob]).admits(&open, &none).await, "where it admits");
 
         let team = GroupId::new();
-        let shared_with = SecurityAttributes::owned_by(alice).granting(Subject::Group(team), Grant::Read);
+        let shared_with =
+            SecurityAttributes::owned_by(alice).granting(Subject::Group(team), Grant::Read);
         let known = Known { members: vec![(bob, team)], ..Known::default() };
-        assert!(reading(vec![bob]).admits(&shared_with, &known).await, "a member of the group named");
+        assert!(
+            reading(vec![bob]).admits(&shared_with, &known).await,
+            "a member of the group named"
+        );
         assert!(!reading(vec![user()]).admits(&shared_with, &known).await, "not who is no member");
     }
 
     #[test]
     fn an_entity_may_be_admitted_by_any_group_an_entry_names() {
         let (alice, bob) = (user(), user());
-        let shared_with = SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::new()), Grant::Read);
+        let shared_with = SecurityAttributes::owned_by(alice)
+            .granting(Subject::Group(GroupId::new()), Grant::Read);
         assert!(reading(vec![bob]).may_admit(&shared_with), "by a group, told without it");
-        assert!(!Admission { grant: Some(Grant::Write), ..reading(vec![bob]) }.may_admit(&shared_with), "but only by an entry covering the grant");
+        assert!(
+            !Admission { grant: Some(Grant::Write), ..reading(vec![bob]) }.may_admit(&shared_with),
+            "but only by an entry covering the grant"
+        );
         assert!(reading(vec![bob]).may_admit(&shared(alice, &[bob])), "and by what admits it");
         assert!(!reading(vec![bob]).may_admit(&shared(alice, &[])), "not by what does not");
     }
@@ -157,9 +193,18 @@ mod tests {
     async fn a_deleted_group_admits_nobody_but_where_a_deletion_is_told() {
         let (alice, bob) = (user(), user());
         let team = GroupId::new();
-        let shared_with = SecurityAttributes::owned_by(alice).granting(Subject::Group(team), Grant::Read);
+        let shared_with =
+            SecurityAttributes::owned_by(alice).granting(Subject::Group(team), Grant::Read);
         let known = Known { members: vec![(bob, team)], deleted: vec![team] };
-        assert!(!reading(vec![bob]).admits(&shared_with, &known).await, "its entries grant nothing once it is deleted");
-        assert!(Admission { deleted_groups: true, ..reading(vec![bob]) }.admits(&shared_with, &known).await, "but its members hear of what went with it");
+        assert!(
+            !reading(vec![bob]).admits(&shared_with, &known).await,
+            "its entries grant nothing once it is deleted"
+        );
+        assert!(
+            Admission { deleted_groups: true, ..reading(vec![bob]) }
+                .admits(&shared_with, &known)
+                .await,
+            "but its members hear of what went with it"
+        );
     }
 }

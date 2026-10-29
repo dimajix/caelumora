@@ -2,9 +2,9 @@
 //! 326): by their component kind alone.
 
 use crate::agent;
+use anyhow::Result;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
-use anyhow::Result;
 
 /// External agents reached over A2A, as a plugin.
 #[derive(Debug, Default)]

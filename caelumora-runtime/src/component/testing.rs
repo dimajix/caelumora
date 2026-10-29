@@ -2,22 +2,23 @@
 //! provide them, configurations and the context they are built with.
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
+use super::{ComponentContext, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::runtime::Services;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
-use caelumora_model::security::{AllowAllPolicy, SecurityContext, AccessPolicy};
+use caelumora_model::security::{AccessPolicy, AllowAllPolicy, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
 use caelumora_model::type_map::TypeKey;
-use crate::runtime::Services;
 use serde_json::{json, Value};
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use super::{ComponentContext, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use std::fmt::Debug;
 
 pub trait Marker: Debug + Send + Sync {}
 
 /// What the tests' containers are asked for, as the owner of one asks.
-pub const ASKED: &[TypeKey] = &[TypeKey::of::<dyn Marker>(), TypeKey::of::<dyn Named>(), TypeKey::of::<dyn Choice>()];
+pub const ASKED: &[TypeKey] =
+    &[TypeKey::of::<dyn Marker>(), TypeKey::of::<dyn Named>(), TypeKey::of::<dyn Choice>()];
 
 pub fn test_context() -> ComponentContext {
     context_with_session(SessionId::default())
@@ -66,7 +67,9 @@ pub fn named(id: &str) -> ComponentFacets {
 }
 
 pub fn config(nodes: &[(&str, &str)]) -> ComponentConfig {
-    ComponentConfig { component_nodes: nodes.iter().map(|(id, kind)| descriptor(id, kind, json!(null))).collect() }
+    ComponentConfig {
+        component_nodes: nodes.iter().map(|(id, kind)| descriptor(id, kind, json!(null))).collect(),
+    }
 }
 
 /// The component errors from the outermost to the innermost.
@@ -83,7 +86,8 @@ pub const NAMED: &[TypeKey] = &[TypeKey::of::<dyn Named>()];
 /// A registry with the single `Choice`, the kinds `declared` and `other`
 /// that provide it, and how often `declared` was built.
 pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
-    let mut registry = ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
+    let mut registry =
+        ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
     let built = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&built);
     let choice = |id: &str| {
@@ -91,12 +95,20 @@ pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
         facets.insert::<dyn Choice>(Arc::new(Name(id.to_string())));
         facets
     };
-    registry.register(ComponentKind::new("declared").provides::<dyn Choice>(), move |descriptor, _| {
-        counted.fetch_add(1, Ordering::SeqCst);
-        Ok(choice(&descriptor.id))
+    registry.register(
+        ComponentKind::new("declared").provides::<dyn Choice>(),
+        move |descriptor, _| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok(choice(&descriptor.id))
+        },
+    );
+    registry
+        .register(ComponentKind::new("other").provides::<dyn Choice>(), move |descriptor, _| {
+            Ok(choice(&descriptor.id))
+        });
+    registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| {
+        Ok(named(&descriptor.id))
     });
-    registry.register(ComponentKind::new("other").provides::<dyn Choice>(), move |descriptor, _| Ok(choice(&descriptor.id)));
-    registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| Ok(named(&descriptor.id)));
     registry.single::<dyn Choice>(Some("declared"));
     (registry, built)
 }

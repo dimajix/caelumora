@@ -17,8 +17,8 @@ pub(crate) const MAX_COMMAND_LINE_CHARS: usize = 10_000;
 /// loop, a condition - whose parts its separators do not tell apart (`do rm x` of
 /// `while true; do rm x; done`).
 const RESERVED_WORDS: &[&str] = &[
-    "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "select", "function", "time",
-    "coproc", "!", "[[", "]]",
+    "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac",
+    "select", "function", "time", "coproc", "!", "[[", "]]",
 ];
 
 /// A word of a simple command, its quoting and escapes removed.
@@ -128,7 +128,11 @@ impl Scanner {
     fn push_plain(&mut self, c: char) {
         let empty = self.word.as_ref().is_none_or(|word| word.text.is_empty());
         self.name = match self.name {
-            NameState::Name if c == '_' || c.is_ascii_alphabetic() || (c.is_ascii_digit() && !empty) => NameState::Name,
+            NameState::Name
+                if c == '_' || c.is_ascii_alphabetic() || (c.is_ascii_digit() && !empty) =>
+            {
+                NameState::Name
+            }
             NameState::Name if c == '+' && !empty => NameState::NamePlus,
             _ => NameState::No,
         };
@@ -231,11 +235,21 @@ mod tests {
     /// The words of the simple commands of `line`, `None` if it is unjudgeable.
     fn read(line: &str) -> Option<Vec<Vec<String>>> {
         let commands = simple_commands(line).ok()?;
-        Some(commands.into_iter().map(|words| words.into_iter().map(|word| word.text).collect()).collect())
+        Some(
+            commands
+                .into_iter()
+                .map(|words| words.into_iter().map(|word| word.text).collect())
+                .collect(),
+        )
     }
 
     fn commands(commands: &[&[&str]]) -> Option<Vec<Vec<String>>> {
-        Some(commands.iter().map(|words| words.iter().map(|word| word.to_string()).collect()).collect())
+        Some(
+            commands
+                .iter()
+                .map(|words| words.iter().map(|word| word.to_string()).collect())
+                .collect(),
+        )
     }
 
     #[test]
@@ -270,23 +284,64 @@ mod tests {
     #[test]
     fn a_line_bash_would_run_otherwise_than_written_is_unjudgeable() {
         let lines = [
-            "ls $HOME", "ls ${x}", "ls $(rm x)", "ls `rm x`", "echo \"$(rm x)\"", "echo \"`rm x`\"", "echo $'x'",
-            "ls > f", "ls 2>&1", "cat < f", "cat <<EOF", "diff <(ls a) <(ls b)", "ls &> f",
-            "sleep 9 &", "ls |& cat",
-            "(rm x)", "{ rm x; }", "f() { rm x; }",
-            "FOO=1 ls", "FOO+=1 ls", "_x1=y ls", "FOO='a b' ls", "a[1]=x rm y",
-            "while true; do rm x; done", "if true; then rm x; fi", "for f in a; do rm x; done", "! rm x", "time rm x",
-            "[[ -f x ]] && rm x", "coproc rm x", "function f", "case x in esac",
-            "*.sh", "~/bin/x", "ls; rm*",
-            "echo 'x", "echo \"x", "ls \\",
-            "&& ls", "ls &&", "ls ||", "ls |", "ls && && rm x", "ls | | rm x",
-            "", "   ", ";", "\n\n",
+            "ls $HOME",
+            "ls ${x}",
+            "ls $(rm x)",
+            "ls `rm x`",
+            "echo \"$(rm x)\"",
+            "echo \"`rm x`\"",
+            "echo $'x'",
+            "ls > f",
+            "ls 2>&1",
+            "cat < f",
+            "cat <<EOF",
+            "diff <(ls a) <(ls b)",
+            "ls &> f",
+            "sleep 9 &",
+            "ls |& cat",
+            "(rm x)",
+            "{ rm x; }",
+            "f() { rm x; }",
+            "FOO=1 ls",
+            "FOO+=1 ls",
+            "_x1=y ls",
+            "FOO='a b' ls",
+            "a[1]=x rm y",
+            "while true; do rm x; done",
+            "if true; then rm x; fi",
+            "for f in a; do rm x; done",
+            "! rm x",
+            "time rm x",
+            "[[ -f x ]] && rm x",
+            "coproc rm x",
+            "function f",
+            "case x in esac",
+            "*.sh",
+            "~/bin/x",
+            "ls; rm*",
+            "echo 'x",
+            "echo \"x",
+            "ls \\",
+            "&& ls",
+            "ls &&",
+            "ls ||",
+            "ls |",
+            "ls && && rm x",
+            "ls | | rm x",
+            "",
+            "   ",
+            ";",
+            "\n\n",
         ];
         for line in lines {
             assert_eq!(simple_commands(line), Err(Unjudgeable), "{line:?}");
         }
         assert!(simple_commands(&"x".repeat(MAX_COMMAND_LINE_CHARS)).is_ok());
-        assert_eq!(simple_commands(&"x".repeat(MAX_COMMAND_LINE_CHARS + 1)), Err(Unjudgeable), "too long");
+        assert_eq!(
+            simple_commands(&"x".repeat(MAX_COMMAND_LINE_CHARS + 1)),
+            Err(Unjudgeable),
+            "too long"
+        );
     }
 
     #[test]
@@ -296,6 +351,9 @@ mod tests {
         assert!(begins_with(&command, &prefix(&["ls", "-l"])));
         assert!(!begins_with(&command, &prefix(&["ls", "-l", "*.rs"])), "a glob unquoted");
         assert!(command[3].is("*.md") && command[4].is("~"), "quoted, escaped");
-        assert!(begins_with(&command, &prefix(&[])) && !begins_with(&command[..1], &prefix(&["ls", "-l"])));
+        assert!(
+            begins_with(&command, &prefix(&[]))
+                && !begins_with(&command[..1], &prefix(&["ls", "-l"]))
+        );
     }
 }

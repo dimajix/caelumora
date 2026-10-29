@@ -2,9 +2,9 @@
 //! project (issue 467).
 
 use crate::scope::{ScopeKind, ScopeResponse};
-use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
 use caelumora_model::group::GroupId;
+use caelumora_model::snapshot;
 use serde::{Deserialize, Serialize};
 
 /// A group (issue 286) as whoever may read it sees it: a team, the
@@ -39,8 +39,16 @@ pub struct GroupMemberResponse {
 
 impl From<snapshot::GroupSnapshot> for GroupResponse {
     fn from(view: snapshot::GroupSnapshot) -> Self {
-        let members = view.members.into_iter().map(|(id, name)| GroupMemberResponse { id, name }).collect();
-        Self { id: view.id, name: view.name, scope: ScopeResponse::of(&view.scope), owner: view.owner, members, can_change: view.can_change }
+        let members =
+            view.members.into_iter().map(|(id, name)| GroupMemberResponse { id, name }).collect();
+        Self {
+            id: view.id,
+            name: view.name,
+            scope: ScopeResponse::of(&view.scope),
+            owner: view.owner,
+            members,
+            can_change: view.can_change,
+        }
     }
 }
 

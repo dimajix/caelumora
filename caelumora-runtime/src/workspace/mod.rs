@@ -34,8 +34,12 @@ pub use manager::WorkspaceManager;
 
 use crate::backend::StorageGone;
 use crate::terminal::{TerminalError, TerminalProvider};
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy, WRITE};
+use caelumora_model::confidentiality::{
+    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
+};
+use caelumora_model::security::{
+    AccessPolicy, ActionType, Enforcement, Refused, SecurityContext, WRITE,
+};
 use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::value::ValueError;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
@@ -61,7 +65,11 @@ pub enum WorkspaceError {
     /// What its access list grants the caller is reading, not changing its
     /// files (issue 23).
     #[error("you may read the workspace {id}, not change its files")]
-    ReadOnly { id: WorkspaceId, #[source] refused: Refused },
+    ReadOnly {
+        id: WorkspaceId,
+        #[source]
+        refused: Refused,
+    },
     /// No workspace the caller may use in the channel they act in: none is
     /// attached, the channel does not use it, they may not read the channel
     /// or the workspace, or the two do not flow both ways - one case, so
@@ -100,9 +108,17 @@ pub(crate) fn store_error(id: WorkspaceId) -> impl FnOnce(StoreError) -> Workspa
 ///
 /// # Errors
 /// `ClassificationRefused`, `StorageNotCleared` or `NotCleared`.
-pub(crate) fn require_classification(policy: &dyn ConfidentialityPolicy, ctx: &SecurityContext, storage: &str, provider: &dyn TerminalProvider, classification: &Classification) -> WorkspaceResult<()> {
+pub(crate) fn require_classification(
+    policy: &dyn ConfidentialityPolicy,
+    ctx: &SecurityContext,
+    storage: &str,
+    provider: &dyn TerminalProvider,
+    classification: &Classification,
+) -> WorkspaceResult<()> {
     policy.require_classifiable(classification, || WorkspaceError::ClassificationRefused)?;
-    policy.require_storable(ctx, classification, provider.destination(), || WorkspaceError::StorageNotCleared(storage.to_string()))?;
+    policy.require_storable(ctx, classification, provider.destination(), || {
+        WorkspaceError::StorageNotCleared(storage.to_string())
+    })?;
     policy.require_cleared_for(ctx, classification, || WorkspaceError::NotCleared)
 }
 
@@ -111,6 +127,16 @@ pub(crate) fn require_classification(policy: &dyn ConfidentialityPolicy, ctx: &S
 ///
 /// # Errors
 /// `ReadOnly` if they may not.
-pub(crate) async fn require_write(access_policy: &dyn AccessPolicy, ctx: &SecurityContext, workspace: &Workspace) -> WorkspaceResult<()> {
-    access_policy.require(ctx, ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes), |refused| WorkspaceError::ReadOnly { id: workspace.id, refused }).await
+pub(crate) async fn require_write(
+    access_policy: &dyn AccessPolicy,
+    ctx: &SecurityContext,
+    workspace: &Workspace,
+) -> WorkspaceResult<()> {
+    access_policy
+        .require(
+            ctx,
+            ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes),
+            |refused| WorkspaceError::ReadOnly { id: workspace.id, refused },
+        )
+        .await
 }

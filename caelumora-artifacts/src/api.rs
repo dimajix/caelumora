@@ -5,10 +5,10 @@ use crate::artifact::{ArtifactId, ArtifactSnapshot};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
+use caelumora_model::project::ProjectId;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::value::text::Description;
 use caelumora_rest_api::access::AccessEntry;
-use caelumora_model::project::ProjectId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -70,24 +70,57 @@ pub struct ArtifactVersionResponse {
 
 impl From<ArtifactSnapshot> for ArtifactResponse {
     fn from(view: ArtifactSnapshot) -> Self {
-        let ArtifactSnapshot { artifact, can_change, can_write, access, mut version_access, mut publications } = view;
+        let ArtifactSnapshot {
+            artifact,
+            can_change,
+            can_write,
+            access,
+            mut version_access,
+            mut publications,
+        } = view;
         let project_id = artifact.project();
-        let versions = artifact.versions.into_iter().map(|v| {
-            let (session_name, channel_name, published_by_name) = match publications.remove(&v.number) {
-                Some(p) => (Some(p.session_name), Some(p.channel_name), p.published_by),
-                None => (None, None, None),
-            };
-            ArtifactVersionResponse {
-                access: version_access.remove(&v.number).unwrap_or_default().into_iter().filter_map(AccessEntry::of).collect(),
-                number: v.number, size: v.size, digest: v.digest, media_type: v.media_type, description: v.description,
-                session_id: v.session_id, channel_id: v.channel_id, published_by: v.published_by, published_at: v.published_at,
-                session_name, channel_name, published_by_name,
-            }
-        }).collect();
+        let versions = artifact
+            .versions
+            .into_iter()
+            .map(|v| {
+                let (session_name, channel_name, published_by_name) =
+                    match publications.remove(&v.number) {
+                        Some(p) => (Some(p.session_name), Some(p.channel_name), p.published_by),
+                        None => (None, None, None),
+                    };
+                ArtifactVersionResponse {
+                    access: version_access
+                        .remove(&v.number)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(AccessEntry::of)
+                        .collect(),
+                    number: v.number,
+                    size: v.size,
+                    digest: v.digest,
+                    media_type: v.media_type,
+                    description: v.description,
+                    session_id: v.session_id,
+                    channel_id: v.channel_id,
+                    published_by: v.published_by,
+                    published_at: v.published_at,
+                    session_name,
+                    channel_name,
+                    published_by_name,
+                }
+            })
+            .collect();
         let access = access.into_iter().filter_map(AccessEntry::of).collect();
         Self {
-            id: artifact.id, name: artifact.name.name.to_string(), project_id, description: artifact.description, classification: artifact.classification, versions,
-            can_change, can_write, access,
+            id: artifact.id,
+            name: artifact.name.name.to_string(),
+            project_id,
+            description: artifact.description,
+            classification: artifact.classification,
+            versions,
+            can_change,
+            can_write,
+            access,
         }
     }
 }

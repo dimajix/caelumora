@@ -8,10 +8,10 @@
 //! other command its storage lists, at each event that can change the
 //! answer and besides every `COMMANDS_CHECKED_EVERY`.
 
+use crate::backend::NamedBackends;
 use crate::component::{ComponentError, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
-use crate::backend::NamedBackends;
 use crate::terminal::{CommandKey, TerminalProvider};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
@@ -20,20 +20,20 @@ use caelumora_model::channel::{self, Participant};
 use caelumora_model::event::{EntityChange, GlobalEvent};
 use caelumora_model::security::{Grant, SecurityContext};
 use caelumora_model::session::{Channel, ChannelId, Session};
-use caelumora_model::store::{EntityStore, EntityStores, Stored, StoreResultExt};
+use caelumora_model::store::{EntityStore, EntityStores, StoreResultExt, Stored};
 use caelumora_model::user::User;
 use caelumora_model::workspace::Workspace;
 use futures::future::join_all;
 use std::fmt;
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
+use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::time;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
-use tokio::runtime::Handle;
 use uuid::Uuid;
-use tokio::time;
 
 /// How often the commands of the storages are checked besides the events
 /// that can change who may run them (issue 254).
@@ -78,14 +78,30 @@ impl CommandReaper {
     /// # Errors
     /// `ComponentError::InvalidConfig` for a storage with a shell outside a
     /// Tokio runtime.
-    pub(crate) fn new(stores: &EntityStores, events: &EventBus, controllers: Arc<ControllerManager>, storages: Arc<NamedBackends<dyn TerminalProvider>>) -> ComponentResult<Arc<Self>> {
+    pub(crate) fn new(
+        stores: &EntityStores,
+        events: &EventBus,
+        controllers: Arc<ControllerManager>,
+        storages: Arc<NamedBackends<dyn TerminalProvider>>,
+    ) -> ComponentResult<Arc<Self>> {
         let with_shell = storages.iter().any(|(_, provider)| provider.has_shell());
-        let reaper = Arc::new(Self { sessions: Arc::clone(&stores.sessions), channels: Arc::clone(&stores.channels), controllers, storages, checker: OnceLock::new() });
+        let reaper = Arc::new(Self {
+            sessions: Arc::clone(&stores.sessions),
+            channels: Arc::clone(&stores.channels),
+            controllers,
+            storages,
+            checker: OnceLock::new(),
+        });
         if with_shell {
-            let runtime = Handle::try_current()
-                .map_err(|_| ComponentError::InvalidConfig("a storage of workspaces with a shell needs a running runtime".to_string()))?;
+            let runtime = Handle::try_current().map_err(|_| {
+                ComponentError::InvalidConfig(
+                    "a storage of workspaces with a shell needs a running runtime".to_string(),
+                )
+            })?;
             let subscription = events.subscribe_all().into_receiver();
-            let _ = reaper.checker.set(AbortOnDropHandle::new(runtime.spawn(check_commands(Arc::downgrade(&reaper), subscription))));
+            let _ = reaper.checker.set(AbortOnDropHandle::new(
+                runtime.spawn(check_commands(Arc::downgrade(&reaper), subscription)),
+            ));
         }
         Ok(reaper)
     }
@@ -96,7 +112,11 @@ impl CommandReaper {
     pub(crate) async fn end_commands_in(&self, channels: &[ChannelId]) {
         let scopes: Vec<String> = channels.iter().copied().map(scope_of).collect();
         for (_, provider) in self.storages.iter() {
-            let ending = provider.commands().into_iter().filter(|(_, scope, _)| scopes.contains(scope)).collect();
+            let ending = provider
+                .commands()
+                .into_iter()
+                .filter(|(_, scope, _)| scopes.contains(scope))
+                .collect();
             end_commands(provider.as_ref(), ending, "its session stopped").await;
         }
     }
@@ -118,10 +138,17 @@ impl CommandReaper {
                 match self.may_run(&key).await {
                     Ok(true) => {}
                     Ok(false) => ending.push(key),
-                    Err(e) => warn!(workspace = %key.0, command = %key.2, "Whether a command may still run could not be asked: {e}"),
+                    Err(e) => {
+                        warn!(workspace = %key.0, command = %key.2, "Whether a command may still run could not be asked: {e}")
+                    }
                 }
             }
-            end_commands(provider.as_ref(), ending, "nobody may run it any longer where it was started").await;
+            end_commands(
+                provider.as_ref(),
+                ending,
+                "nobody may run it any longer where it was started",
+            )
+            .await;
         }
     }
 
@@ -137,24 +164,48 @@ impl CommandReaper {
     async fn may_run(&self, (workspace, scope, _): &CommandKey) -> WorkspaceResult<bool> {
         let system = SecurityContext::system();
         let Some(channel_id) = channel_of(scope) else { return Ok(false) };
-        let Some(channel) = self.channels.get(&system, channel_id).await.optional()? else { return Ok(false) };
-        let Some(session) = self.sessions.get(&system, channel.session_id).await.optional()? else { return Ok(false) };
-        let Some(workspace) = self.controllers.workspace_controller(*workspace).await.optional()? else { return Ok(false) };
+        let Some(channel) = self.channels.get(&system, channel_id).await.optional()? else {
+            return Ok(false);
+        };
+        let Some(session) = self.sessions.get(&system, channel.session_id).await.optional()? else {
+            return Ok(false);
+        };
+        let Some(workspace) = self.controllers.workspace_controller(*workspace).await.optional()?
+        else {
+            return Ok(false);
+        };
         for participant in &channel.participants {
             let member = match participant {
                 // One whose record is gone asks with no roles, as before.
-                Participant::User(user) => match self.controllers.user_controller(*user).await.optional()? {
+                Participant::User(user) => match self
+                    .controllers
+                    .user_controller(*user)
+                    .await
+                    .optional()?
+                {
                     Some(controller) => controller.security_context(channel.session_id, channel.id),
-                    None => SecurityContext::new(ActorId::User(*user), channel.session_id, channel.id),
-                },
-                Participant::Agent(agent) => match self.controllers.agent_controller(*agent).await.optional()? {
-                    Some(agent) => {
-                        let personality = self.controllers.personality_controller(agent.load().personality_id).await.optional()?;
-                        let personality = personality.as_ref().map(|p| p.load());
-                        agent.security_context(channel.session_id, channel.id, personality.as_ref().and_then(|p| p.limiting_roles()))
+                    None => {
+                        SecurityContext::new(ActorId::User(*user), channel.session_id, channel.id)
                     }
-                    None => continue,
                 },
+                Participant::Agent(agent) => {
+                    match self.controllers.agent_controller(*agent).await.optional()? {
+                        Some(agent) => {
+                            let personality = self
+                                .controllers
+                                .personality_controller(agent.load().personality_id)
+                                .await
+                                .optional()?;
+                            let personality = personality.as_ref().map(|p| p.load());
+                            agent.security_context(
+                                channel.session_id,
+                                channel.id,
+                                personality.as_ref().and_then(|p| p.limiting_roles()),
+                            )
+                        }
+                        None => continue,
+                    }
+                }
             };
             let ctx = SecurityContext { initiator_id: ActorId::System, ..member };
             match workspace.usable_in_channel(&ctx, &session, &channel, Grant::Write).await {
@@ -202,7 +253,10 @@ async fn check_commands(reaper: Weak<CommandReaper>, mut events: broadcast::Rece
 /// session, the channel, its participants, the workspace or who someone is.
 fn changes_who_may_run(event: &GlobalEvent) -> bool {
     match event.change {
-        EntityChange::Updated(_) | EntityChange::Deleted => [Session::KIND, Channel::KIND, Agent::KIND, User::KIND, Workspace::KIND].contains(&event.kind),
+        EntityChange::Updated(_) | EntityChange::Deleted => {
+            [Session::KIND, Channel::KIND, Agent::KIND, User::KIND, Workspace::KIND]
+                .contains(&event.kind)
+        }
         EntityChange::Custom { name: channel::LEFT, .. } => event.kind == Channel::KIND,
         _ => false,
     }
@@ -210,11 +264,11 @@ fn changes_who_may_run(event: &GlobalEvent) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::workspace::testing::{session_with_workspace, WithWorkspace};
-    use crate::terminal::Shell;
     use super::*;
-    use caelumora_model::workspace::CommandStatus;
+    use crate::terminal::Shell;
+    use crate::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::channel::ChannelUpdateEvent;
+    use caelumora_model::workspace::CommandStatus;
 
     /// A command started by the agent in the session's channel, still
     /// running, with its shell.
@@ -227,9 +281,20 @@ mod tests {
 
     /// Whether the channel uses the workspace.
     async fn use_workspace(w: &WithWorkspace, uses: bool) -> Channel {
-        let mut channel = w.runtime.entity_stores().channels.get(&SecurityContext::system(), w.session.channels()[0].id()).await.unwrap();
+        let mut channel = w
+            .runtime
+            .entity_stores()
+            .channels
+            .get(&SecurityContext::system(), w.session.channels()[0].id())
+            .await
+            .unwrap();
         channel.uses_workspace = uses;
-        w.runtime.entity_stores().channels.update(&SecurityContext::system(), &channel).await.unwrap();
+        w.runtime
+            .entity_stores()
+            .channels
+            .update(&SecurityContext::system(), &channel)
+            .await
+            .unwrap();
         channel
     }
 
@@ -240,11 +305,19 @@ mod tests {
         let (shell, id) = running(&w).await;
 
         reaper.end_unusable_commands().await;
-        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Running, "the channel may still use it");
+        assert_eq!(
+            shell.output(&id, 0, Duration::ZERO).await.unwrap().status,
+            CommandStatus::Running,
+            "the channel may still use it"
+        );
 
         use_workspace(&w, false).await;
         reaper.end_unusable_commands().await;
-        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed, "the channel no longer uses the workspace");
+        assert_eq!(
+            shell.output(&id, 0, Duration::ZERO).await.unwrap().status,
+            CommandStatus::Killed,
+            "the channel no longer uses the workspace"
+        );
     }
 
     #[tokio::test]
@@ -252,17 +325,41 @@ mod tests {
         let w = session_with_workspace().await;
         let reaper = w.runtime.command_reaper();
         let (shell, id) = running(&w).await;
-        let mut channel = w.runtime.entity_stores().channels.get(&SecurityContext::system(), w.session.channels()[0].id()).await.unwrap();
+        let mut channel = w
+            .runtime
+            .entity_stores()
+            .channels
+            .get(&SecurityContext::system(), w.session.channels()[0].id())
+            .await
+            .unwrap();
 
         channel.participants.retain(|participant| !matches!(participant, Participant::Agent(_)));
-        w.runtime.entity_stores().channels.update(&SecurityContext::system(), &channel).await.unwrap();
+        w.runtime
+            .entity_stores()
+            .channels
+            .update(&SecurityContext::system(), &channel)
+            .await
+            .unwrap();
         reaper.end_unusable_commands().await;
-        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Running, "the agent that started it left, the owner may still start it there");
+        assert_eq!(
+            shell.output(&id, 0, Duration::ZERO).await.unwrap().status,
+            CommandStatus::Running,
+            "the agent that started it left, the owner may still start it there"
+        );
 
         channel.participants.clear();
-        w.runtime.entity_stores().channels.update(&SecurityContext::system(), &channel).await.unwrap();
+        w.runtime
+            .entity_stores()
+            .channels
+            .update(&SecurityContext::system(), &channel)
+            .await
+            .unwrap();
         reaper.end_unusable_commands().await;
-        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed, "nobody left who could");
+        assert_eq!(
+            shell.output(&id, 0, Duration::ZERO).await.unwrap().status,
+            CommandStatus::Killed,
+            "nobody left who could"
+        );
     }
 
     #[tokio::test]
@@ -270,7 +367,11 @@ mod tests {
         let w = session_with_workspace().await;
         let (shell, id) = running(&w).await;
         w.runtime.command_reaper().shutdown().await;
-        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed, "a `local` shell's, whose process nothing would know of after a restart (issue 297)");
+        assert_eq!(
+            shell.output(&id, 0, Duration::ZERO).await.unwrap().status,
+            CommandStatus::Killed,
+            "a `local` shell's, whose process nothing would know of after a restart (issue 297)"
+        );
     }
 
     #[tokio::test]
@@ -278,7 +379,13 @@ mod tests {
         let w = session_with_workspace().await;
         let (shell, id) = running(&w).await;
         let channel = use_workspace(&w, false).await;
-        w.runtime.event_bus().publish(GlobalEvent::updated::<Channel>(&(channel.session_id, channel.id), &ChannelUpdateEvent::UsesWorkspaceChanged(false)), channel.security_attributes.clone());
+        w.runtime.event_bus().publish(
+            GlobalEvent::updated::<Channel>(
+                &(channel.session_id, channel.id),
+                &ChannelUpdateEvent::UsesWorkspaceChanged(false),
+            ),
+            channel.security_attributes.clone(),
+        );
         let ended = shell.output(&id, 0, Duration::from_secs(10)).await.unwrap();
         assert_eq!(ended.status, CommandStatus::Killed, "not only at the next round");
     }

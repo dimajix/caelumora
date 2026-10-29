@@ -9,12 +9,12 @@
 //! *conversation* it keeps with the channel; both are opaque handles of the
 //! remote side (`ConversationId`, `TaskId`), which the actor stores.
 
-use caelumora_runtime::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::secret::SecretError;
 use caelumora_model::security::SecurityContext;
+use caelumora_runtime::component::ComponentRegistry;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
@@ -70,7 +70,13 @@ pub enum ExternalEvent {
 impl ExternalEvent {
     /// Whether nothing comes after this event on its stream.
     pub fn ends_stream(&self) -> bool {
-        matches!(self, ExternalEvent::InputRequired(_) | ExternalEvent::Completed | ExternalEvent::Canceled | ExternalEvent::Failed(_))
+        matches!(
+            self,
+            ExternalEvent::InputRequired(_)
+                | ExternalEvent::Completed
+                | ExternalEvent::Canceled
+                | ExternalEvent::Failed(_)
+        )
     }
 }
 
@@ -93,7 +99,11 @@ pub enum ExternalAgentError {
     /// The credential for the remote agent could not be had. Why is for the
     /// log: it names the secret's key.
     #[error("no usable credential for the external agent at {endpoint}")]
-    Credential { endpoint: String, #[source] source: SecretError },
+    Credential {
+        endpoint: String,
+        #[source]
+        source: SecretError,
+    },
 }
 
 pub type ExternalAgentResult<T> = Result<T, ExternalAgentError>;
@@ -112,12 +122,21 @@ pub trait ExternalAgent: Send + Sync + Debug {
     /// Hands `message` to the remote agent within `conversation` - `None`
     /// lets it open one, which the stream then names
     /// (`ExternalEvent::Conversation`) - and streams what comes back.
-    async fn send(&self, security: &SecurityContext, conversation: Option<&ConversationId>, message: OutboundMessage) -> ExternalAgentResult<ExternalStream>;
+    async fn send(
+        &self,
+        security: &SecurityContext,
+        conversation: Option<&ConversationId>,
+        message: OutboundMessage,
+    ) -> ExternalAgentResult<ExternalStream>;
 
     /// Re-attaches to `task`, left open by an earlier request - after a
     /// restart - and streams what comes back from where it stands now. A
     /// task that ended meanwhile yields its end at once.
-    async fn resume(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<ExternalStream>;
+    async fn resume(
+        &self,
+        security: &SecurityContext,
+        task: &TaskId,
+    ) -> ExternalAgentResult<ExternalStream>;
 
     /// Asks the remote agent to cancel `task`. A task that cannot be
     /// cancelled any more - it has ended - is no error.
@@ -142,14 +161,14 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 /// Stand-ins for a remote agent, for the tests of what uses the facet.
 #[cfg(test)]
 pub(crate) mod testing {
+    use super::*;
     use crate::prompt::ModelProfileProvider;
     use caelumora_model::context::ModelProfile;
-    use super::*;
+    use futures::stream;
     use futures::StreamExt;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
     use tokio::sync::Semaphore;
-    use futures::stream;
 
     /// A remote agent that answers each request with the next of its
     /// scripted event lists, and records what it was given. A script that
@@ -212,10 +231,15 @@ pub(crate) mod testing {
         }
 
         fn called(&self, call: &'static str, security: &SecurityContext) {
-            self.called_as.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((call, security.clone()));
+            self.called_as
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push((call, security.clone()));
         }
 
-        fn next(script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>) -> ExternalStream {
+        fn next(
+            script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
+        ) -> ExternalStream {
             let next = script.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
             Box::pin(stream::iter(next.unwrap_or_default()).chain(stream::pending()))
         }
@@ -223,15 +247,27 @@ pub(crate) mod testing {
 
     #[async_trait]
     impl ExternalAgent for ScriptedExternalAgent {
-        async fn send(&self, security: &SecurityContext, conversation: Option<&ConversationId>, message: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
+        async fn send(
+            &self,
+            security: &SecurityContext,
+            conversation: Option<&ConversationId>,
+            message: OutboundMessage,
+        ) -> ExternalAgentResult<ExternalStream> {
             self.called("send", security);
-            let mut unreachable = self.unreachable.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut unreachable =
+                self.unreachable.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if *unreachable > 0 {
                 *unreachable -= 1;
-                return Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "refused".to_string() });
+                return Err(ExternalAgentError::Connection {
+                    endpoint: "https://agent.example".to_string(),
+                    reason: "refused".to_string(),
+                });
             }
             drop(unreachable);
-            self.sent.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((conversation.cloned(), message));
+            self.sent
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push((conversation.cloned(), message));
             let answer = Self::next(&self.answers);
             let Some(gate) = self.gate.clone() else { return Ok(answer) };
             let opened = stream::once(async move {
@@ -242,14 +278,25 @@ pub(crate) mod testing {
             Ok(Box::pin(opened.filter_map(|()| async { None }).chain(answer)))
         }
 
-        async fn resume(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<ExternalStream> {
+        async fn resume(
+            &self,
+            security: &SecurityContext,
+            _: &TaskId,
+        ) -> ExternalAgentResult<ExternalStream> {
             self.called("resume", security);
             Ok(Self::next(&self.resumed))
         }
 
-        async fn cancel(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()> {
+        async fn cancel(
+            &self,
+            security: &SecurityContext,
+            task: &TaskId,
+        ) -> ExternalAgentResult<()> {
             self.called("cancel", security);
-            self.cancelled.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(task.clone());
+            self.cancelled
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(task.clone());
             Ok(())
         }
 
@@ -274,7 +321,11 @@ mod tests {
     use tokio::time;
 
     fn hello() -> OutboundMessage {
-        OutboundMessage { prompts: Vec::new(), said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }], answers: None }
+        OutboundMessage {
+            prompts: Vec::new(),
+            said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }],
+            answers: None,
+        }
     }
 
     #[test]
@@ -290,7 +341,10 @@ mod tests {
 
     #[test]
     fn a_failed_credential_does_not_name_its_secret() {
-        let error = ExternalAgentError::Credential { endpoint: "https://agent.example".to_string(), source: SecretError::NotFound("HERMES_TOKEN".to_string()) };
+        let error = ExternalAgentError::Credential {
+            endpoint: "https://agent.example".to_string(),
+            source: SecretError::NotFound("HERMES_TOKEN".to_string()),
+        };
         assert!(!error.to_string().contains("HERMES_TOKEN"), "{error}");
         assert!(error.to_string().contains("https://agent.example"), "{error}");
     }
@@ -303,16 +357,21 @@ mod tests {
             Ok(ExternalEvent::Started(task.clone())),
             Ok(ExternalEvent::Message("hi".to_string())),
             Ok(ExternalEvent::Completed),
-        ]]).resuming(vec![vec![Ok(ExternalEvent::Completed)]]);
+        ]])
+        .resuming(vec![vec![Ok(ExternalEvent::Completed)]]);
         let security = SecurityContext::default();
 
-        let events: Vec<_> = agent.send(&security, None, hello()).await.unwrap().take(4).collect().await;
+        let events: Vec<_> =
+            agent.send(&security, None, hello()).await.unwrap().take(4).collect().await;
         assert_eq!(events.len(), 4);
         assert!(matches!(events.last(), Some(Ok(ExternalEvent::Completed))));
         assert_eq!(agent.sent.lock().unwrap().as_slice(), &[(None, hello())]);
 
         let resumed: Vec<_> = agent.resume(&security, &task).await.unwrap().take(1).collect().await;
-        assert!(matches!(resumed.as_slice(), [Ok(ExternalEvent::Completed)]), "resuming has a script of its own");
+        assert!(
+            matches!(resumed.as_slice(), [Ok(ExternalEvent::Completed)]),
+            "resuming has a script of its own"
+        );
 
         agent.cancel(&security, &task).await.unwrap();
         assert_eq!(agent.cancelled.lock().unwrap().as_slice(), &[task]);

@@ -3,22 +3,25 @@
 //! agents, personalities, users, workspaces and projects (issues 121, 406,
 //! 467).
 
-use super::{AgentController, ChannelController, PersonalityController, ProjectController, SessionController, UserController, WorkspaceController};
-use crate::event::EventBus;
+use super::{
+    AgentController, ChannelController, PersonalityController, ProjectController,
+    SessionController, UserController, WorkspaceController,
+};
 use crate::backend::NamedBackends;
+use crate::event::EventBus;
 use crate::terminal::TerminalProvider;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::EntityChange;
-use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext, AccessPolicy};
+use caelumora_model::project::{Project, ProjectId};
+use caelumora_model::security::{AccessPolicy, Secured, SecurityAttributes, SecurityContext};
 use caelumora_model::session::{Session, SessionId};
-use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultExt};
 use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultExt};
 use caelumora_model::user::{User, UserId, UserProfile};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
-use caelumora_model::project::{Project, ProjectId};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, OnceLock, Weak};
@@ -72,7 +75,15 @@ pub struct ControllerManager {
 }
 
 impl ControllerManager {
-    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<NamedBackends<dyn TerminalProvider>>, states: Arc<dyn StateStore>, histories: Arc<dyn HistoryStore>) -> Self {
+    pub fn new(
+        stores: EntityStores,
+        event_bus: Arc<EventBus>,
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        storages: Arc<NamedBackends<dyn TerminalProvider>>,
+        states: Arc<dyn StateStore>,
+        histories: Arc<dyn HistoryStore>,
+    ) -> Self {
         Self {
             stores,
             event_bus,
@@ -91,11 +102,19 @@ impl ControllerManager {
     }
 
     pub fn new_session_controller(&self, session: Session) -> Arc<SessionController> {
-        Arc::new(SessionController::new(session, Arc::<EventBus>::clone(&self.event_bus), &self.stores))
+        Arc::new(SessionController::new(
+            session,
+            Arc::<EventBus>::clone(&self.event_bus),
+            &self.stores,
+        ))
     }
 
     pub fn new_channel_controller(&self, channel: Channel) -> Arc<ChannelController> {
-        Arc::new(ChannelController::new(channel, Arc::<EventBus>::clone(&self.event_bus), &self.stores))
+        Arc::new(ChannelController::new(
+            channel,
+            Arc::<EventBus>::clone(&self.event_bus),
+            &self.stores,
+        ))
     }
 
     /// The controller of agent `id` in this instance: the one its actors
@@ -119,7 +138,12 @@ impl ControllerManager {
             Some(owner) => self.user_controller(owner).await.optional()?,
             None => None,
         };
-        let controller = Arc::new(AgentController::new(agent, owner, Arc::<EventBus>::clone(&self.event_bus), &self.stores));
+        let controller = Arc::new(AgentController::new(
+            agent,
+            owner,
+            Arc::<EventBus>::clone(&self.event_bus),
+            &self.stores,
+        ));
         remember(&mut agents, id, &controller);
         Ok(controller)
     }
@@ -135,7 +159,10 @@ impl ControllerManager {
     /// `StoreError::NotFound` if the personality no longer exists - the
     /// controller that lives, if one does, then keeps it as it was for the
     /// agents that run -, or whatever else the store reports.
-    pub async fn personality_controller(&self, id: PersonalityId) -> StoreResult<Arc<PersonalityController>> {
+    pub async fn personality_controller(
+        &self,
+        id: PersonalityId,
+    ) -> StoreResult<Arc<PersonalityController>> {
         let mut personalities = self.personalities.lock().await;
         let personality = self.stores.personalities.get(&SecurityContext::system(), id).await?;
         if let Some(controller) = personalities.get(&id).and_then(Weak::upgrade) {
@@ -160,8 +187,16 @@ impl ControllerManager {
             return Ok(controller);
         }
         let user = self.stores.users.get(&SecurityContext::system(), id).await?;
-        let profile = self.stores.user_profiles.get(&SecurityContext::system(), id).await.optional()?;
-        let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), &self.stores, Arc::clone(&self.states), Arc::clone(&self.histories)));
+        let profile =
+            self.stores.user_profiles.get(&SecurityContext::system(), id).await.optional()?;
+        let controller = Arc::new(UserController::new(
+            user,
+            profile,
+            Arc::<EventBus>::clone(&self.event_bus),
+            &self.stores,
+            Arc::clone(&self.states),
+            Arc::clone(&self.histories),
+        ));
         remember(&mut users, id, &controller);
         Ok(controller)
     }
@@ -174,7 +209,10 @@ impl ControllerManager {
     /// # Errors
     /// `StoreError::NotFound` if the workspace no longer exists, or
     /// whatever else the store reports.
-    pub async fn workspace_controller(&self, id: WorkspaceId) -> StoreResult<Arc<WorkspaceController>> {
+    pub async fn workspace_controller(
+        &self,
+        id: WorkspaceId,
+    ) -> StoreResult<Arc<WorkspaceController>> {
         self.start_follower();
         let mut workspaces = self.workspaces.lock().await;
         if let Some(controller) = workspaces.get(&id).and_then(Weak::upgrade) {
@@ -182,7 +220,14 @@ impl ControllerManager {
         }
         let workspace = self.stores.workspaces.get(&SecurityContext::system(), id).await?;
         let provider = self.storages.get(&workspace.storage).cloned();
-        let controller = Arc::new(WorkspaceController::new(workspace, provider, Arc::<EventBus>::clone(&self.event_bus), &self.stores, Arc::clone(&self.access_policy), Arc::clone(&self.confidentiality)));
+        let controller = Arc::new(WorkspaceController::new(
+            workspace,
+            provider,
+            Arc::<EventBus>::clone(&self.event_bus),
+            &self.stores,
+            Arc::clone(&self.access_policy),
+            Arc::clone(&self.confidentiality),
+        ));
         remember(&mut workspaces, id, &controller);
         Ok(controller)
     }
@@ -201,7 +246,12 @@ impl ControllerManager {
             return Ok(controller);
         }
         let project = self.stores.projects.get(&SecurityContext::system(), id).await?;
-        let controller = Arc::new(ProjectController::new(project, Arc::<EventBus>::clone(&self.event_bus), &self.stores, Arc::clone(&self.access_policy)));
+        let controller = Arc::new(ProjectController::new(
+            project,
+            Arc::<EventBus>::clone(&self.event_bus),
+            &self.stores,
+            Arc::clone(&self.access_policy),
+        ));
         remember(&mut projects, id, &controller);
         Ok(controller)
     }
@@ -214,7 +264,12 @@ impl ControllerManager {
     ///
     /// # Errors
     /// Whatever the store reports, other than that the user is gone.
-    pub async fn owner_context(&self, owner: ActorId, session: SessionId, channel: ChannelId) -> StoreResult<SecurityContext> {
+    pub async fn owner_context(
+        &self,
+        owner: ActorId,
+        session: SessionId,
+        channel: ChannelId,
+    ) -> StoreResult<SecurityContext> {
         let user = match owner {
             ActorId::User(id) => self.user_controller(id).await.optional()?,
             _ => None,
@@ -298,7 +353,6 @@ impl ControllerManager {
     }
 }
 
-
 /// Registers `controller` under `id`, dropping the entries of controllers
 /// nobody holds any more.
 fn remember<K: Eq + Hash, C>(registry: &mut HashMap<K, Weak<C>>, id: K, controller: &Arc<C>) {
@@ -309,30 +363,41 @@ fn remember<K: Eq + Hash, C>(registry: &mut HashMap<K, Weak<C>>, id: K, controll
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::removal::Removal;
     use crate::backend::StorageGone;
     use crate::workspace::WorkspaceError;
-    use caelumora_model::event::GlobalEvent;
-    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
+    use caelumora_model::approval::ApproverId;
+    use caelumora_model::confidentiality::{ConfidentialityRules, Visibility};
+    use caelumora_model::event::GlobalEvent;
+    use caelumora_model::project::ProjectUpdateEvent;
+    use caelumora_model::removal::Removal;
     use caelumora_model::role::RoleId;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::store::StoreError;
-    use caelumora_model::store::Persistence;
-    use caelumora_model::user::{User, UserUpdateEvent};
-    use caelumora_model::workspace::WorkspaceUpdateEvent;
-    use caelumora_model::project::ProjectUpdateEvent;
     use caelumora_model::security::{AclEntry, Grant, Subject};
+    use caelumora_model::store::Persistence;
+    use caelumora_model::store::StoreError;
+    use caelumora_model::user::{User, UserUpdateEvent};
+    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::workspace::WorkspaceUpdateEvent;
     use std::time::Duration;
-    use caelumora_model::confidentiality::{ConfidentialityRules, Visibility};
-    use caelumora_model::approval::ApproverId;
     use tokio::time;
 
     fn manager() -> (Persistence, Arc<EventBus>, ControllerManager) {
         let store = Persistence::in_memory();
-        let bus = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
-        let manager = ControllerManager::new(store.entity_stores().unwrap(), Arc::clone(&bus), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default(), store.state_store(), store.history_store());
+        let bus = Arc::new(EventBus::new(
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        ));
+        let manager = ControllerManager::new(
+            store.entity_stores().unwrap(),
+            Arc::clone(&bus),
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+            Default::default(),
+            store.state_store(),
+            store.history_store(),
+        );
         (store, bus, manager)
     }
 
@@ -350,15 +415,43 @@ mod tests {
             hears_during_turn: Default::default(),
             deleted: None,
         };
-        store.entity_stores().unwrap().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
-        let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
-        store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
+        store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .create(&SecurityContext::system(), &personality)
+            .await
+            .unwrap();
+        let agent = Agent::new(
+            ScopedName::new("helper", Scope::GlobalScope).unwrap(),
+            personality.id,
+            ActorId::None,
+        );
+        store
+            .entity_stores()
+            .unwrap()
+            .agents
+            .create(&SecurityContext::system(), &agent)
+            .await
+            .unwrap();
         agent
     }
 
     async fn user_in(store: &Persistence) -> User {
-        let user = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
-        store.entity_stores().unwrap().users.create(&SecurityContext::system(), &user).await.unwrap();
+        let user = User {
+            id: UserId::new(),
+            username: Name::new("alice").unwrap(),
+            email: String::new(),
+            roles: Vec::new(),
+            deleted: None,
+        };
+        store
+            .entity_stores()
+            .unwrap()
+            .users
+            .create(&SecurityContext::system(), &user)
+            .await
+            .unwrap();
         user
     }
 
@@ -374,7 +467,13 @@ mod tests {
         }
 
         assert_eq!(names, ["alice", "helper", "Approver", "system"]);
-        assert!(matches!(manager.actor_name(ActorId::User(UserId::new())).await, Err(StoreError::NotFound { .. })), "a user who does not exist has no name");
+        assert!(
+            matches!(
+                manager.actor_name(ActorId::User(UserId::new())).await,
+                Err(StoreError::NotFound { .. })
+            ),
+            "a user who does not exist has no name"
+        );
     }
 
     /// Waits until `done` holds, as the follower works in a task of its own.
@@ -383,7 +482,9 @@ mod tests {
             while !done() {
                 time::sleep(Duration::from_millis(5)).await;
             }
-        }).await.expect("in time");
+        })
+        .await
+        .expect("in time");
     }
 
     #[tokio::test]
@@ -392,18 +493,36 @@ mod tests {
         let (agent, user) = (agent_in(&store).await, user_in(&store).await);
 
         let first = manager.agent_controller(agent.id).await.unwrap();
-        assert!(Arc::ptr_eq(&first, &manager.agent_controller(agent.id).await.unwrap()), "every session gets the same agent controller");
-        assert!(Arc::ptr_eq(&manager.user_controller(user.id).await.unwrap(), &manager.user_controller(user.id).await.unwrap()), "and the same user controller");
+        assert!(
+            Arc::ptr_eq(&first, &manager.agent_controller(agent.id).await.unwrap()),
+            "every session gets the same agent controller"
+        );
+        assert!(
+            Arc::ptr_eq(
+                &manager.user_controller(user.id).await.unwrap(),
+                &manager.user_controller(user.id).await.unwrap()
+            ),
+            "and the same user controller"
+        );
 
         // Nobody uses it any more: the next one is loaded again, as stored now.
         drop(first);
         let mut renamed = agent.clone();
         renamed.name.name = Name::new("renamed").unwrap();
-        store.entity_stores().unwrap().agents.update(&SecurityContext::system(), &renamed).await.unwrap();
+        store
+            .entity_stores()
+            .unwrap()
+            .agents
+            .update(&SecurityContext::system(), &renamed)
+            .await
+            .unwrap();
         assert_eq!(manager.agent_controller(agent.id).await.unwrap().name(), "renamed");
 
         let gone = manager.agent_controller(AgentId::new()).await;
-        assert!(matches!(gone, Err(StoreError::NotFound { .. })), "an agent that does not exist has none, got {gone:?}");
+        assert!(
+            matches!(gone, Err(StoreError::NotFound { .. })),
+            "an agent that does not exist has none, got {gone:?}"
+        );
     }
 
     /// Issue 406: the actors of a personality's agents answer from one copy
@@ -416,22 +535,44 @@ mod tests {
         let system = SecurityContext::system();
 
         let first = manager.personality_controller(agent.personality_id).await.unwrap();
-        assert!(Arc::ptr_eq(&first, &manager.personality_controller(agent.personality_id).await.unwrap()), "every agent of it gets the same controller");
+        assert!(
+            Arc::ptr_eq(
+                &first,
+                &manager.personality_controller(agent.personality_id).await.unwrap()
+            ),
+            "every agent of it gets the same controller"
+        );
 
         let mut narrowed = Personality::clone(&first.load());
         narrowed.roles = Some(vec![RoleId::new()]);
         store.entity_stores().unwrap().personalities.update(&system, &narrowed).await.unwrap();
         assert_eq!(first.load().roles, None, "not taken in by itself");
         manager.personality_controller(agent.personality_id).await.unwrap();
-        assert_eq!(first.load().roles, narrowed.roles, "taken in when asked for, for all that hold it");
+        assert_eq!(
+            first.load().roles,
+            narrowed.roles,
+            "taken in when asked for, for all that hold it"
+        );
 
-        store.entity_stores().unwrap().personalities.delete(&system, agent.personality_id, &Removal::now(system.caller_id)).await.unwrap();
+        store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .delete(&system, agent.personality_id, &Removal::now(system.caller_id))
+            .await
+            .unwrap();
         let deleted = manager.personality_controller(agent.personality_id).await;
-        assert!(matches!(deleted, Err(StoreError::NotFound { .. })), "a deleted one is not handed out, got {deleted:?}");
+        assert!(
+            matches!(deleted, Err(StoreError::NotFound { .. })),
+            "a deleted one is not handed out, got {deleted:?}"
+        );
         assert_eq!(first.load().roles, narrowed.roles, "but kept for those that hold it");
 
         let gone = manager.personality_controller(PersonalityId::new()).await;
-        assert!(matches!(gone, Err(StoreError::NotFound { .. })), "a personality that does not exist has none, got {gone:?}");
+        assert!(
+            matches!(gone, Err(StoreError::NotFound { .. })),
+            "a personality that does not exist has none, got {gone:?}"
+        );
     }
 
     #[tokio::test]
@@ -442,10 +583,26 @@ mod tests {
         let users_controller = manager.user_controller(user.id).await.unwrap();
 
         // As another instance, or whoever changes users, would announce them.
-        bus.publish(GlobalEvent::updated::<Agent>(&agent.id, &AgentUpdateEvent::NameChanged("from elsewhere".to_string())), Default::default());
-        bus.publish(GlobalEvent::updated::<User>(&user.id, &UserUpdateEvent::NameChanged("alice b.".to_string())), Default::default());
+        bus.publish(
+            GlobalEvent::updated::<Agent>(
+                &agent.id,
+                &AgentUpdateEvent::NameChanged("from elsewhere".to_string()),
+            ),
+            Default::default(),
+        );
+        bus.publish(
+            GlobalEvent::updated::<User>(
+                &user.id,
+                &UserUpdateEvent::NameChanged("alice b.".to_string()),
+            ),
+            Default::default(),
+        );
 
-        eventually(|| agents_controller.name() == "from elsewhere" && users_controller.username() == "alice b.").await;
+        eventually(|| {
+            agents_controller.name() == "from elsewhere"
+                && users_controller.username() == "alice b."
+        })
+        .await;
     }
 
     #[tokio::test]
@@ -469,21 +626,54 @@ mod tests {
     async fn a_workspace_has_one_controller_which_takes_over_what_was_changed_elsewhere() {
         let (store, bus, manager) = manager();
         let owner = UserId::new();
-        let workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(), "main", Default::default(), owner);
-        store.entity_stores().unwrap().workspaces.create(&SecurityContext::system(), &workspace).await.unwrap();
+        let workspace = Workspace::new(
+            ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
+            "main",
+            Default::default(),
+            owner,
+        );
+        store
+            .entity_stores()
+            .unwrap()
+            .workspaces
+            .create(&SecurityContext::system(), &workspace)
+            .await
+            .unwrap();
         let controller = manager.workspace_controller(workspace.id).await.unwrap();
-        assert!(Arc::ptr_eq(&controller, &manager.workspace_controller(workspace.id).await.unwrap()), "every session gets the same one");
+        assert!(
+            Arc::ptr_eq(&controller, &manager.workspace_controller(workspace.id).await.unwrap()),
+            "every session gets the same one"
+        );
 
         // As another instance would change it: stored, then announced.
         let mut changed = workspace.clone();
         changed.name.name = Name::new("notes").unwrap();
-        changed.security_attributes.acl = vec![AclEntry { subject: Subject::Actor(ActorId::User(UserId::new())), grant: Grant::Read }];
-        store.entity_stores().unwrap().workspaces.update(&SecurityContext::system(), &changed).await.unwrap();
-        bus.publish(GlobalEvent::updated::<Workspace>(&workspace.id, &WorkspaceUpdateEvent::AccessChanged), Default::default());
+        changed.security_attributes.acl = vec![AclEntry {
+            subject: Subject::Actor(ActorId::User(UserId::new())),
+            grant: Grant::Read,
+        }];
+        store
+            .entity_stores()
+            .unwrap()
+            .workspaces
+            .update(&SecurityContext::system(), &changed)
+            .await
+            .unwrap();
+        bus.publish(
+            GlobalEvent::updated::<Workspace>(&workspace.id, &WorkspaceUpdateEvent::AccessChanged),
+            Default::default(),
+        );
 
-        eventually(|| controller.load().name.name.as_str() == "notes" && controller.load().security_attributes.acl.len() == 1).await;
+        eventually(|| {
+            controller.load().name.name.as_str() == "notes"
+                && controller.load().security_attributes.acl.len() == 1
+        })
+        .await;
         let gone = manager.workspace_controller(WorkspaceId::new()).await;
-        assert!(matches!(gone, Err(StoreError::NotFound { .. })), "a workspace that does not exist has none, got {gone:?}");
+        assert!(
+            matches!(gone, Err(StoreError::NotFound { .. })),
+            "a workspace that does not exist has none, got {gone:?}"
+        );
     }
 
     /// A project has one controller in the instance, however many sessions lie in it (issue
@@ -492,20 +682,51 @@ mod tests {
     async fn a_project_has_one_controller_which_takes_over_what_was_changed_elsewhere() {
         let (store, bus, manager) = manager();
         let owner = UserId::new();
-        let project = Project::new(ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(), owner);
-        store.entity_stores().unwrap().projects.create(&SecurityContext::system(), &project).await.unwrap();
+        let project = Project::new(
+            ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(),
+            owner,
+        );
+        store
+            .entity_stores()
+            .unwrap()
+            .projects
+            .create(&SecurityContext::system(), &project)
+            .await
+            .unwrap();
         let controller = manager.project_controller(project.id).await.unwrap();
-        assert!(Arc::ptr_eq(&controller, &manager.project_controller(project.id).await.unwrap()), "every session gets the same one");
+        assert!(
+            Arc::ptr_eq(&controller, &manager.project_controller(project.id).await.unwrap()),
+            "every session gets the same one"
+        );
 
         let mut changed = project.clone();
         changed.name.name = Name::new("annual").unwrap();
-        changed.security_attributes.acl = vec![AclEntry { subject: Subject::Actor(ActorId::User(UserId::new())), grant: Grant::Read }];
-        store.entity_stores().unwrap().projects.update(&SecurityContext::system(), &changed).await.unwrap();
-        bus.publish(GlobalEvent::updated::<Project>(&project.id, &ProjectUpdateEvent::AccessChanged), Default::default());
+        changed.security_attributes.acl = vec![AclEntry {
+            subject: Subject::Actor(ActorId::User(UserId::new())),
+            grant: Grant::Read,
+        }];
+        store
+            .entity_stores()
+            .unwrap()
+            .projects
+            .update(&SecurityContext::system(), &changed)
+            .await
+            .unwrap();
+        bus.publish(
+            GlobalEvent::updated::<Project>(&project.id, &ProjectUpdateEvent::AccessChanged),
+            Default::default(),
+        );
 
-        eventually(|| controller.load().name.name.as_str() == "annual" && controller.load().security_attributes.acl == changed.security_attributes.acl).await;
+        eventually(|| {
+            controller.load().name.name.as_str() == "annual"
+                && controller.load().security_attributes.acl == changed.security_attributes.acl
+        })
+        .await;
         let gone = manager.project_controller(ProjectId::new()).await;
-        assert!(matches!(gone, Err(StoreError::NotFound { .. })), "a project that does not exist has none, got {gone:?}");
+        assert!(
+            matches!(gone, Err(StoreError::NotFound { .. })),
+            "a project that does not exist has none, got {gone:?}"
+        );
     }
 
     /// A workspace whose storage was removed from the configuration has its controller, but no
@@ -515,12 +736,27 @@ mod tests {
     async fn a_workspace_whose_storage_is_gone_has_no_terminal() {
         let (store, _, manager) = manager();
         let owner = UserId::new();
-        let workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(), "removed", Default::default(), owner);
-        store.entity_stores().unwrap().workspaces.create(&SecurityContext::system(), &workspace).await.unwrap();
+        let workspace = Workspace::new(
+            ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
+            "removed",
+            Default::default(),
+            owner,
+        );
+        store
+            .entity_stores()
+            .unwrap()
+            .workspaces
+            .create(&SecurityContext::system(), &workspace)
+            .await
+            .unwrap();
         let controller = manager.workspace_controller(workspace.id).await.unwrap();
 
         let terminal = controller.terminal(&SecurityContext::system(), Grant::Read).await;
-        assert!(matches!(&terminal, Err(WorkspaceError::StorageGone(StorageGone(name))) if name == "removed"), "{:?}", terminal.err());
+        assert!(
+            matches!(&terminal, Err(WorkspaceError::StorageGone(StorageGone(name))) if name == "removed"),
+            "{:?}",
+            terminal.err()
+        );
     }
 
     /// What is built for a user is built with their roles as they are now;
@@ -531,14 +767,21 @@ mod tests {
         let (store, _bus, manager) = manager();
         let staff = RoleId::new();
         let alice = User { roles: vec![staff], ..user_in(&store).await };
-        store.entity_stores().unwrap().users.update(&SecurityContext::system(), &alice).await.unwrap();
+        store
+            .entity_stores()
+            .unwrap()
+            .users
+            .update(&SecurityContext::system(), &alice)
+            .await
+            .unwrap();
         let (session, channel) = (SessionId::new(), ChannelId::new());
 
         let hers = manager.owner_context(ActorId::User(alice.id), session, channel).await.unwrap();
         assert_eq!(hers.principal_id, ActorId::User(alice.id));
         assert!(hers.has_role(staff), "her roles");
         assert_eq!((hers.session_id, hers.channel_id), (session, channel));
-        let gone = manager.owner_context(ActorId::User(UserId::new()), session, channel).await.unwrap();
+        let gone =
+            manager.owner_context(ActorId::User(UserId::new()), session, channel).await.unwrap();
         assert!(gone.roles.is_empty(), "a user who is gone has none");
         let system = manager.owner_context(ActorId::System, session, channel).await.unwrap();
         assert_eq!(system.principal_id, ActorId::System);

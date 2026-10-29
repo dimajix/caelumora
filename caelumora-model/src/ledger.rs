@@ -12,12 +12,12 @@
 
 use crate::chain::Chain;
 use crate::confidentiality::Classification;
+use crate::digest;
 use crate::message::MessageId;
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use crate::digest;
 
 /// What makes a ledger of one kind: the number of its entries, where a
 /// change is recorded to have been made, and how its chain is digested.
@@ -42,15 +42,28 @@ pub enum Change<Id> {
     /// 168): what the agent derives carries its turn's label, at most its
     /// channel's classification, and a later change of the channel changes
     /// none of its entries.
-    Add { id: Id, text: String, classification: Classification },
+    Add {
+        id: Id,
+        text: String,
+        classification: Classification,
+    },
     /// The entry `id` says `text` from now on (issue 302), classified as the
     /// turn that wrote it had seen, as a new entry is: a release of the old
     /// text does not carry over. It stands where it was updated.
-    Update { id: Id, text: String, classification: Classification },
-    Remove { id: Id },
+    Update {
+        id: Id,
+        text: String,
+        classification: Classification,
+    },
+    Remove {
+        id: Id,
+    },
     /// The entry `id` is classified `classification` from now on (issue
     /// 133): released, or raised.
-    Reclassify { id: Id, classification: Classification },
+    Reclassify {
+        id: Id,
+        classification: Classification,
+    },
 }
 
 /// An entry of a [`Ledger`]'s chain: a change and where it was made; its
@@ -70,7 +83,12 @@ pub struct LedgerEntry<K: LedgerKind> {
 // `Clone` too.
 impl<K: LedgerKind> Clone for LedgerEntry<K> {
     fn clone(&self) -> Self {
-        Self { change: self.change.clone(), origin: self.origin.clone(), after: self.after, written_at: self.written_at }
+        Self {
+            change: self.change.clone(),
+            origin: self.origin.clone(),
+            after: self.after,
+            written_at: self.written_at,
+        }
     }
 }
 
@@ -99,7 +117,9 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
     pub fn push(&mut self, change: Change<K::Id>, origin: K::Origin, after: MessageId) {
         self.push_with(
             LedgerEntry { change, origin, after, written_at: Utc::now() },
-            |previous, entry| digest::ledger_chain::<K>(previous, &entry.change, &entry.origin, entry.after),
+            |previous, entry| {
+                digest::ledger_chain::<K>(previous, &entry.change, &entry.origin, entry.after)
+            },
         );
     }
 
@@ -124,7 +144,10 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
     /// The ledger as it stands with `staged` - changes not part of it yet,
     /// each with where it is made: a turn's, until the turn completes
     /// (issue 156) - as if they had been appended.
-    pub fn with_staged<'c>(&self, staged: impl IntoIterator<Item = (&'c Change<K::Id>, K::Origin)>) -> Staged<K>
+    pub fn with_staged<'c>(
+        &self,
+        staged: impl IntoIterator<Item = (&'c Change<K::Id>, K::Origin)>,
+    ) -> Staged<K>
     where
         K::Id: 'c,
     {
@@ -151,7 +174,13 @@ fn added<Id: Copy + Into<u32>>(change: &Change<Id>) -> Option<u32> {
 
 /// Folds `change`, made at `origin` after message `after` at `written_at`,
 /// into `items`: what stands before it becomes what stands after it.
-fn fold<K: LedgerKind>(items: &mut Vec<Item<K>>, change: &Change<K::Id>, origin: &K::Origin, after: MessageId, written_at: DateTime<Utc>) {
+fn fold<K: LedgerKind>(
+    items: &mut Vec<Item<K>>,
+    change: &Change<K::Id>,
+    origin: &K::Origin,
+    after: MessageId,
+    written_at: DateTime<Utc>,
+) {
     match change {
         Change::Add { id, text, classification } => items.push(Item {
             id: *id,
@@ -211,11 +240,15 @@ impl<K: LedgerKind> Staged<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::note::{NoteChain, NoteId, NoteOrigin};
     use crate::confidentiality::Confidentiality;
+    use crate::note::{NoteChain, NoteId, NoteOrigin};
 
     fn add(id: u32, text: &str) -> Change<NoteId> {
-        Change::Add { id: NoteId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }
+        Change::Add {
+            id: NoteId(id),
+            text: text.to_string(),
+            classification: Classification::CHANNEL_DEFAULT,
+        }
     }
 
     fn push(chain: &mut NoteChain, change: Change<NoteId>, after: MessageId) {
@@ -241,9 +274,16 @@ mod tests {
         let mut chain = NoteChain::default();
         push(&mut chain, add(1, "a"), MessageId::new());
         let released = Classification::general(Confidentiality::Public);
-        push(&mut chain, Change::Reclassify { id: NoteId(1), classification: released.clone() }, MessageId::new());
+        push(
+            &mut chain,
+            Change::Reclassify { id: NoteId(1), classification: released.clone() },
+            MessageId::new(),
+        );
         let current = chain.current();
-        assert_eq!((current[0].id, current[0].text.as_str(), &current[0].classification), (NoteId(1), "a", &released));
+        assert_eq!(
+            (current[0].id, current[0].text.as_str(), &current[0].classification),
+            (NoteId(1), "a", &released)
+        );
         assert_eq!(chain.next_id(), NoteId(2));
     }
 
@@ -253,21 +293,56 @@ mod tests {
         push(&mut chain, add(1, "The user likes tea."), MessageId::new());
         push(&mut chain, add(2, "The user lives in Berlin."), MessageId::new());
         let released = Classification::general(Confidentiality::Public);
-        push(&mut chain, Change::Reclassify { id: NoteId(1), classification: released }, MessageId::new());
+        push(
+            &mut chain,
+            Change::Reclassify { id: NoteId(1), classification: released },
+            MessageId::new(),
+        );
         let later = MessageId::new();
         let internal = Classification::general(Confidentiality::Internal);
-        push(&mut chain, Change::Update { id: NoteId(1), text: "The user likes coffee.".to_string(), classification: internal.clone() }, later);
-        push(&mut chain, Change::Update { id: NoteId(7), text: "nothing".to_string(), classification: internal.clone() }, MessageId::new());
+        push(
+            &mut chain,
+            Change::Update {
+                id: NoteId(1),
+                text: "The user likes coffee.".to_string(),
+                classification: internal.clone(),
+            },
+            later,
+        );
+        push(
+            &mut chain,
+            Change::Update {
+                id: NoteId(7),
+                text: "nothing".to_string(),
+                classification: internal.clone(),
+            },
+            MessageId::new(),
+        );
 
         let current = chain.current();
         let texts: Vec<(NoteId, &str)> = current.iter().map(|n| (n.id, n.text.as_str())).collect();
-        assert_eq!(texts, [(NoteId(1), "The user likes coffee."), (NoteId(2), "The user lives in Berlin.")], "in its place; no entry for a number that does not stand");
-        assert_eq!((&current[0].classification, current[0].after), (&internal, later), "as the turn that updated it, which the release did not cover");
+        assert_eq!(
+            texts,
+            [(NoteId(1), "The user likes coffee."), (NoteId(2), "The user lives in Berlin.")],
+            "in its place; no entry for a number that does not stand"
+        );
+        assert_eq!(
+            (&current[0].classification, current[0].after),
+            (&internal, later),
+            "as the turn that updated it, which the release did not cover"
+        );
         assert_eq!(chain.next_id(), NoteId(3), "an update uses up no number");
 
-        let staged = [Change::Update { id: NoteId(2), text: "The user lives in Hamburg.".to_string(), classification: internal }];
+        let staged = [Change::Update {
+            id: NoteId(2),
+            text: "The user lives in Hamburg.".to_string(),
+            classification: internal,
+        }];
         let standing = chain.with_staged(staged.iter().map(|c| (c, NoteOrigin::default())));
-        assert_eq!(standing.get(NoteId(2)).map(|n| n.text.as_str()), Some("The user lives in Hamburg."));
+        assert_eq!(
+            standing.get(NoteId(2)).map(|n| n.text.as_str()),
+            Some("The user lives in Hamburg.")
+        );
         assert_eq!(standing.next_id(), NoteId(3));
     }
 
@@ -298,7 +373,8 @@ mod tests {
         push(&mut elsewhere, add(1, "a"), MessageId::new());
         assert_ne!(elsewhere.digest(), before_removal, "the same entry after another message");
 
-        let loaded: NoteChain = serde_json::from_value(serde_json::to_value(&noted).unwrap()).unwrap();
+        let loaded: NoteChain =
+            serde_json::from_value(serde_json::to_value(&noted).unwrap()).unwrap();
         assert_eq!(loaded.digest(), noted.digest());
         assert_eq!(loaded.current(), noted.current());
     }
@@ -307,7 +383,8 @@ mod tests {
     fn what_was_appended_since_the_ledger_was_stored_replays_onto_it() {
         let mut chain = NoteChain::default();
         push(&mut chain, add(1, "a"), MessageId::new());
-        let mut stored: NoteChain = serde_json::from_value(serde_json::to_value(&chain).unwrap()).unwrap();
+        let mut stored: NoteChain =
+            serde_json::from_value(serde_json::to_value(&chain).unwrap()).unwrap();
         chain.mark_stored();
         push(&mut chain, add(2, "b"), MessageId::new());
         push(&mut chain, Change::Remove { id: NoteId(1) }, MessageId::new());

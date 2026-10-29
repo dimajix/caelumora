@@ -2,12 +2,12 @@
 //! the stores alone.
 
 use crate::JsonStoreConfig;
+use anyhow::Result;
 use caelumora_model::store::PersistenceBackend;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::component::{config_of_params, ComponentError};
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
-use anyhow::Result;
 use std::sync::Arc;
 
 /// The backend `json` of the stores (`JsonFileStore`), as a plugin.
@@ -35,8 +35,8 @@ impl Plugin for JsonStorePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::config::BackendConfig;
     use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::config::BackendConfig;
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::{EntityStoreFactory, Persistence};
     use caelumora_model::user::User;
@@ -50,13 +50,37 @@ mod tests {
         let backends = Backends::with_plugins(&[&JsonStorePlugin]);
         let dir = tempfile::tempdir().unwrap();
         let json = BackendConfig::new("json", json!({ "path": dir.path(), "journal_floor": 1024 }));
-        let files = backends.make_one::<dyn PersistenceBackend>("entity store", "entity_store", &json, &Services::empty()).unwrap();
-        let stores = Persistence::over(files, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).expect("its states, too");
+        let files = backends
+            .make_one::<dyn PersistenceBackend>(
+                "entity store",
+                "entity_store",
+                &json,
+                &Services::empty(),
+            )
+            .unwrap();
+        let stores = Persistence::over(
+            files,
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+        )
+        .expect("its states, too");
         stores.entity_store::<User>().expect("its kinds are opened in its files");
         assert!(dir.path().join("entities/user").is_dir(), "below its path");
 
         let misspelt = BackendConfig::new("json", json!({ "pth": dir.path() }));
-        let refused = backends.make_one::<dyn PersistenceBackend>("entity store", "entity_store", &misspelt, &Services::empty()).map(|_| ()).unwrap_err().to_string();
-        assert!(refused.contains("the entity store (json)") && refused.contains("pth"), "{refused}");
+        let refused = backends
+            .make_one::<dyn PersistenceBackend>(
+                "entity store",
+                "entity_store",
+                &misspelt,
+                &Services::empty(),
+            )
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("the entity store (json)") && refused.contains("pth"),
+            "{refused}"
+        );
     }
 }

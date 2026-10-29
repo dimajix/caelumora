@@ -18,9 +18,16 @@ pub struct RoundRobinPolicy {
 
 #[async_trait]
 impl ResponderPolicy for RoundRobinPolicy {
-    async fn choose(&self, _event: &Envelope, _messages: &[Message], candidates: Vec<ActorDescription>) -> Result<Vec<ActorId>, Undecided> {
-        let mut next_agent_index = self.next_agent_index.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut candidates: Vec<ActorId> = candidates.into_iter().map(|candidate| candidate.id).collect();
+    async fn choose(
+        &self,
+        _event: &Envelope,
+        _messages: &[Message],
+        candidates: Vec<ActorDescription>,
+    ) -> Result<Vec<ActorId>, Undecided> {
+        let mut next_agent_index =
+            self.next_agent_index.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut candidates: Vec<ActorId> =
+            candidates.into_iter().map(|candidate| candidate.id).collect();
         if candidates.is_empty() {
             *next_agent_index = 0;
             return Ok(candidates);
