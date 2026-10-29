@@ -918,7 +918,7 @@ mod tests {
         ) -> StoreResult<ComponentBundle> {
             Self::failed()
         }
-        async fn update(&self, _: &SecurityContext, _: &ComponentBundle) -> StoreResult<()> {
+        async fn update(&self, _: &SecurityContext, _: &mut ComponentBundle) -> StoreResult<()> {
             Self::failed()
         }
         async fn delete(

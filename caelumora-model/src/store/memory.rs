@@ -15,7 +15,8 @@ use crate::store::kept_chain::KeptChain;
 use crate::store::query::{ordered_after, FieldPath, Filter};
 use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::store::{
-    EntityKind, Journaled, PersistenceBackend, Presence, StateStore, StoreError, StoreResult,
+    EntityKind, Journaled, PersistenceBackend, Presence, Revision, StateStore, StoreError,
+    StoreResult,
 };
 use crate::tool::ToolSet;
 use crate::transcript::{known, Transcript, TranscriptEntry};
@@ -260,6 +261,20 @@ impl MemoryDocuments {
         Self { kind, documents: Default::default() }
     }
 
+    /// Refuses a write in place of the document `id` of `documents` unless
+    /// it is at the revision `read` (issue 492).
+    fn at_revision(
+        &self,
+        documents: &HashMap<Uuid, Document>,
+        id: Uuid,
+        read: Revision,
+    ) -> StoreResult<()> {
+        match documents.get(&id) {
+            Some(stored) if stored.revision == read => Ok(()),
+            _ => Err(StoreError::Outdated { entity: self.kind.name(), id: id.to_string() }),
+        }
+    }
+
     /// Refuses `document` if another of `documents` that is not deleted has
     /// its name (issue 250).
     fn name_free(
@@ -342,19 +357,23 @@ impl DocumentStorage for MemoryDocuments {
         })
     }
 
-    async fn replace(&self, document: Document) -> StoreResult<()> {
+    async fn replace(&self, document: Document, read: Revision) -> StoreResult<()> {
         write_lock(&self.documents, |all| {
+            self.at_revision(all, document.id, read)?;
             self.name_free(all, &document)?;
             all.insert(document.id, document);
             Ok(())
         })
     }
 
-    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
-        Ok(write_lock(&self.documents, |all| {
-            let marked = all.get(&id).is_some_and(|document| document.removal_id.is_some());
-            marked && all.remove(&id).is_some()
-        }))
+    async fn remove(&self, id: Uuid, read: Revision) -> StoreResult<bool> {
+        write_lock(&self.documents, |all| {
+            if !all.contains_key(&id) {
+                return Ok(false);
+            }
+            self.at_revision(all, id, read)?;
+            Ok(all.remove(&id).is_some())
+        })
     }
 }
 
@@ -709,6 +728,7 @@ mod tests {
             documents
                 .insert(Document {
                     id,
+                    revision: Default::default(),
                     name: None,
                     removal_id: None,
                     security_attributes,
@@ -830,6 +850,15 @@ mod tests {
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
         suite::deleting_marks(&Persistence::in_memory().entity_stores().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn writes_are_judged_on_their_revision() {
+        suite::writes_are_judged_on_their_revision(
+            &Persistence::in_memory().entity_stores().unwrap(),
+        )
+        .await;
+        suite::storage_judges_writes_on_their_revision(&MemoryStore::new()).await;
     }
 
     #[tokio::test]

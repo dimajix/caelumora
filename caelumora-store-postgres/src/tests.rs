@@ -33,7 +33,7 @@ use caelumora_model::store::history::Memberships;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
 use caelumora_model::store::suite;
-use caelumora_model::store::{EntityStoreFactory, Persistence, Presence, StoreError};
+use caelumora_model::store::{EntityStoreFactory, Persistence, Presence, Revision, StoreError};
 use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
@@ -149,6 +149,17 @@ async fn keeps_what_is_deleted_marked() {
         &database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap(),
     )
     .await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn judges_writes_on_their_revision() {
+    let Some(database) = Database::new() else { return };
+    suite::writes_are_judged_on_their_revision(
+        &database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap(),
+    )
+    .await;
+    suite::storage_judges_writes_on_their_revision(database.backend().as_ref()).await;
     database.drop().await;
 }
 
@@ -534,6 +545,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
         groups
             .insert(Document {
                 id: group.id.into(),
+                revision: Default::default(),
                 name: None,
                 removal_id,
                 security_attributes: group.security_attributes.clone(),
@@ -560,6 +572,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
         storage
             .insert(Document {
                 id: id_of(at),
+                revision: Default::default(),
                 name: None,
                 removal_id: None,
                 security_attributes: security_attributes.clone(),
@@ -624,13 +637,17 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     );
 
     storage
-        .replace(Document {
-            id: id_of(1),
-            name: None,
-            removal_id: None,
-            security_attributes: SecurityAttributes::owned_by(hers),
-            body: json!({}),
-        })
+        .replace(
+            Document {
+                id: id_of(1),
+                revision: Revision::default().next(),
+                name: None,
+                removal_id: None,
+                security_attributes: SecurityAttributes::owned_by(hers),
+                body: json!({}),
+            },
+            Revision::default(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -639,16 +656,20 @@ async fn a_scan_hands_out_what_its_admission_admits() {
         "an entry taken away goes with the write"
     );
     storage
-        .replace(Document {
-            id: id_of(0),
-            name: None,
-            removal_id: Some(RemovalId::new()),
-            security_attributes: SecurityAttributes::owned_by(his),
-            body: json!({}),
-        })
+        .replace(
+            Document {
+                id: id_of(0),
+                revision: Revision::default().next(),
+                name: None,
+                removal_id: Some(RemovalId::new()),
+                security_attributes: SecurityAttributes::owned_by(his),
+                body: json!({}),
+            },
+            Revision::default(),
+        )
         .await
         .unwrap();
-    assert!(storage.remove_deleted(id_of(0)).await.unwrap());
+    assert!(storage.remove(id_of(0), Revision::default().next()).await.unwrap());
     let pool = database.connection.pool().await.unwrap();
     let left: i64 = sqlx::query_scalar(sql(format!(
         "SELECT count(*) FROM {} WHERE entity_id = $1",
@@ -720,6 +741,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         storage
             .insert(Document {
                 id: id_of(at),
+                revision: Default::default(),
                 name: None,
                 removal_id: None,
                 security_attributes: SecurityAttributes::systems(),

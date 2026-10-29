@@ -513,7 +513,7 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])
     })
     .await;
-    let skilled = Personality {
+    let mut skilled = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "silent"),
@@ -522,7 +522,13 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
         },
         ..world.personality("skilled", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &skilled).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut skilled)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &skilled).await;
     let internal = Classification::general(Confidentiality::Internal);
     manager(&world)
@@ -657,7 +663,7 @@ async fn with_a_writing_agent(
         register_scripted(registry, "writing", vec![call])
     })
     .await;
-    let writing = Personality {
+    let mut writing = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "writing"),
@@ -669,7 +675,13 @@ async fn with_a_writing_agent(
         },
         ..world.personality("writing", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &writing).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut writing)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &writing).await;
     let review = manager(&world)
         .create(
@@ -682,12 +694,12 @@ async fn with_a_writing_agent(
         )
         .await
         .expect("his to make");
-    let shared = Skill {
+    let mut shared = Skill {
         security_attributes: SecurityAttributes::owned_by(ActorId::User(world.bob))
             .granting(Subject::Actor(ActorId::User(world.alice)), Grant::Read),
         ..review
     };
-    store(&world).update(&World::as_user(world.bob), &shared).await.expect("shared with alice");
+    store(&world).update(&World::as_user(world.bob), &mut shared).await.expect("shared with alice");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");

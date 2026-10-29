@@ -251,7 +251,7 @@ impl SkillManager {
             }
         }
         skill.updated_at = Utc::now();
-        self.skills.update(ctx, &skill).await.map_err(store_error(id))?;
+        self.skills.update(ctx, &mut skill).await.map_err(store_error(id))?;
         self.events.publish_classified(
             GlobalEvent::updated::<Skill>(&id, &event),
             skill.security_attributes.clone(),

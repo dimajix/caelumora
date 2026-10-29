@@ -1,6 +1,6 @@
 # 492 — A document is written under two locks that do not know of each other
 
-**Status:** open
+**Status:** in progress
 **Type:** bug
 **Priority:** low
 **Area:** Persistence
@@ -69,3 +69,14 @@ The first is the goal; the second is acceptable as a step towards it.
 
 - **2026-10-29** — Opened while deciding issue [458](458-deleted-while-it-runs.md), whose first
   plan rested on `ScopeMember::writing` until it showed that the controllers do not take it.
+- **2026-10-29** — Decided for the first option, in three steps, together with issue
+  [450](450-store-overwrites-a-change-made-meanwhile.md): the revision in the store and the
+  storages; the writers that read again and change again where it matters; the locks go. The
+  counter is named `Revision`, not version, since an artifact has versions of its own. Step 1
+  done: every kind carries a `Revision`, counted up by every write; `DocumentStorage::replace`
+  and `remove` are given the revision read and refuse another (`StoreError::Outdated`), in
+  memory, in the JSON files under the lock of the kind, which every write now holds, and in
+  Postgres by a column named in the `WHERE` (table form 5); `EntityStore::update` takes `&mut T`
+  and leaves the revision written; `delete`, `restore` and `purge` read again and write again in
+  `CheckedStore`; `Writing::apply` reads again and applies again; the store suite holds every
+  backend to it. A write of a user as a provider answers them starts from the record stored.

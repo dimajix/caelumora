@@ -186,7 +186,7 @@ impl SessionController {
         participant: Participant,
     ) -> StoreResult<()> {
         let event = SessionUpdateEvent::ParticipantJoined(participant);
-        let writing = self.session.write().await;
+        let mut writing = self.session.write().await;
         let session = writing.apply(ctx, &event).await?;
         self.keep_participants(&session).await;
         writing.announce_update(&event, &session);

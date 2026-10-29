@@ -289,6 +289,7 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         store
             .entity_stores()
@@ -763,6 +764,7 @@ mod tests {
                     email: String::new(),
                     roles: Vec::new(),
                     deleted: None,
+                    revision: Default::default(),
                 },
             )
             .await

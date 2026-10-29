@@ -12,7 +12,9 @@ use crate::removal::{Removal, RemovalId};
 use crate::security::{ActionType, Admission, SecurityAttributes, SecurityContext};
 use crate::store::access::Access;
 use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
-use crate::store::{Deleted, EntityStore, Policies, Presence, StoreError, StoreResult, Stored};
+use crate::store::{
+    Deleted, EntityStore, Policies, Presence, Revision, StoreError, StoreResult, Stored,
+};
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -24,10 +26,14 @@ use uuid::Uuid;
 
 /// A document as it is handed to a storage: its body, and what the storage
 /// needs to know of it without reading it as its type - its id, its name
-/// unique in its scope, the deletion whose mark it carries, and who may reach it.
+/// unique in its scope, the deletion whose mark it carries, who may reach it,
+/// and its revision.
 #[derive(Debug, Clone)]
 pub struct Document {
     pub id: Uuid,
+    /// Its revision (issue 492): the one it is written as, and what a write
+    /// in its place is judged against.
+    pub revision: Revision,
     /// Its name, if its kind keeps names unique in their scope
     /// (`Stored::unique_name`): no other document of the kind that is not
     /// deleted may have it. A storage compares names by `==`, or - where it
@@ -53,6 +59,7 @@ impl Document {
             .map_err(|e| StoreError::Backend(format!("a {} cannot be serialized: {e}", T::KIND)))?;
         Ok(Self {
             id: value.id().into(),
+            revision: value.revision(),
             name: value.unique_name(),
             removal_id: value.deleted().map(|removal| removal.id),
             security_attributes: value.security_attributes().clone(),
@@ -70,6 +77,7 @@ impl Document {
         let value: T = read_as(body.clone())?;
         Ok(Self {
             id: value.id().into(),
+            revision: value.revision(),
             name: value.unique_name(),
             removal_id: value.deleted().map(|removal| removal.id),
             security_attributes: value.security_attributes().clone(),
@@ -85,7 +93,9 @@ pub type DocumentOf = fn(Value) -> StoreResult<Document>;
 /// The documents of one kind, as a backend keeps them (issue 446): by id,
 /// serialized, without asking anything. What is kept unique - an id, a name
 /// in its scope - a storage keeps so in the step that writes, so that it
-/// holds against every writer of the storage, also of another process.
+/// holds against every writer of the storage, also of another process; so
+/// does the revision a write in place of a document is judged against
+/// (issue 492).
 #[async_trait]
 pub trait DocumentStorage: Debug + Send + Sync {
     /// The body of the document `id`, deleted or not; `None` if there is
@@ -120,14 +130,17 @@ pub trait DocumentStorage: Debug + Send + Sync {
     /// has its name.
     async fn insert(&self, document: Document) -> StoreResult<()>;
 
-    /// Writes `document` in place of the one of its id:
-    /// `StoreError::NameTaken` if another that is not deleted has its name.
-    async fn replace(&self, document: Document) -> StoreResult<()>;
+    /// Writes `document` in place of the one of its id, if that one is at
+    /// the revision `read` - in the same step, so that it holds against
+    /// every writer of the storage (issue 492) -: `StoreError::Outdated` if
+    /// it is at another, or gone; `StoreError::NameTaken` if another that
+    /// is not deleted has its name.
+    async fn replace(&self, document: Document, read: Revision) -> StoreResult<()>;
 
-    /// Removes the document `id` for good if it is marked deleted, in the
-    /// same step; whether it was removed. What was restored meanwhile
-    /// stays.
-    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool>;
+    /// Removes the document `id` for good if it is at the revision `read`,
+    /// in the same step: whether there was one; `StoreError::Outdated` if
+    /// it is at another. What was restored or changed meanwhile stays.
+    async fn remove(&self, id: Uuid, read: Revision) -> StoreResult<bool>;
 }
 
 /// How many documents a list asks a storage for at a time (issue 447):
@@ -207,11 +220,28 @@ impl<T: Stored> CheckedStore<T> {
         self.access(ctx).read(found, id.to_string(), Presence::Present).await
     }
 
-    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+    async fn update(&self, ctx: &SecurityContext, value: &mut T) -> StoreResult<()> {
         let id = value.id();
         let stored = self.stored(&id).await?;
         self.access(ctx).change(stored.as_ref(), value, id.to_string()).await?;
-        self.storage.replace(Document::of(value)?).await
+        self.write(value).await
+    }
+
+    /// Writes `value` - read at its revision, changed - as the next one, in
+    /// place of what was read (issue 492); `value` then carries the
+    /// revision it was written as, or the one it had if it was not written.
+    ///
+    /// # Errors
+    /// `StoreError::Outdated` if it was changed meanwhile, or whatever else
+    /// the storage reports.
+    async fn write(&self, value: &mut T) -> StoreResult<()> {
+        let read = value.revision();
+        value.set_revision(read.next());
+        let written = self.storage.replace(Document::of(value)?, read).await;
+        if written.is_err() {
+            value.set_revision(read);
+        }
+        written
     }
 
     /// The page `query` asks for, among the entities of `presence`: read
@@ -270,47 +300,66 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
         CheckedStore::get(self, ctx, id).await
     }
 
-    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+    async fn update(&self, ctx: &SecurityContext, value: &mut T) -> StoreResult<()> {
         CheckedStore::update(self, ctx, value).await
     }
 
-    /// Marks the entity deleted with `removal` (issues 164, 469).
+    /// Marks the entity deleted with `removal` (issues 164, 469): read,
+    /// asked about and written as it was read - again if it was changed
+    /// meanwhile (issue 492).
     async fn delete(
         &self,
         ctx: &SecurityContext,
         id: T::Id,
         removal: &Removal,
     ) -> StoreResult<bool> {
-        let stored = self.stored(&id).await?;
-        if !self.access(ctx).delete(stored.as_ref(), removal).await? {
-            return Ok(false);
+        loop {
+            let stored = self.stored(&id).await?;
+            if !self.access(ctx).delete(stored.as_ref(), removal).await? {
+                return Ok(false);
+            }
+            let Some(mut marked) = stored else { return Ok(false) };
+            marked.set_deleted(Some(removal.clone()));
+            match self.write(&mut marked).await {
+                Err(StoreError::Outdated { .. }) => continue,
+                written => return written.map(|()| true),
+            }
         }
-        let Some(mut marked) = stored else { return Ok(false) };
-        marked.set_deleted(Some(removal.clone()));
-        self.storage.replace(Document::of(&marked)?).await?;
-        Ok(true)
     }
 
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
         self.page(ctx, query, Presence::Present).await
     }
 
+    /// Read, asked about and written as it was read - again if it was
+    /// changed meanwhile (issue 492).
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
-        let stored = self.stored(&id).await?;
-        let mut restored = self.access(ctx).restore(stored, id.to_string()).await?;
-        restored.set_deleted(None);
-        self.storage.replace(Document::of(&restored)?).await?;
-        Ok(restored)
+        loop {
+            let stored = self.stored(&id).await?;
+            let mut restored = self.access(ctx).restore(stored, id.to_string()).await?;
+            restored.set_deleted(None);
+            match self.write(&mut restored).await {
+                Err(StoreError::Outdated { .. }) => continue,
+                written => return written.map(|()| restored),
+            }
+        }
     }
 
+    /// Read, asked about and removed as it was read - again if it was
+    /// changed meanwhile (issue 492): restored, it is then not the
+    /// caller's to purge, and stays.
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
-        let stored = self.stored(&id).await?;
-        if !self.access(ctx).purge(stored.as_ref()).await? {
-            return Ok(false);
+        loop {
+            let stored = self.stored(&id).await?;
+            if !self.access(ctx).purge(stored.as_ref()).await? {
+                return Ok(false);
+            }
+            let Some(stored) = stored else { return Ok(false) };
+            match self.storage.remove(id.clone().into(), stored.revision()).await {
+                Err(StoreError::Outdated { .. }) => continue,
+                removed => return removed,
+            }
         }
-        // Only if it is still marked: restored while the purge was asked
-        // about, it stays.
-        self.storage.remove_deleted(id.into()).await
     }
 
     /// Read as deleted, it carries the mark (`Presence::Deleted`).
@@ -361,9 +410,11 @@ mod tests {
     use crate::group::{Group, GroupField};
     use crate::scope::Scope;
     use crate::security::AllowAllPolicy;
+    use crate::store::memory::MemoryStore;
     use crate::store::query::ordered_after;
+    use crate::store::{EntityKind, PersistenceBackend};
     use crate::user::UserId;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     /// Keeps documents in a list and hands out every one a scan reaches,
@@ -408,13 +459,118 @@ mod tests {
             Ok(())
         }
 
-        async fn replace(&self, _document: Document) -> StoreResult<()> {
+        async fn replace(&self, _document: Document, _read: Revision) -> StoreResult<()> {
             Ok(())
         }
 
-        async fn remove_deleted(&self, _id: Uuid) -> StoreResult<bool> {
+        async fn remove(&self, _id: Uuid, _read: Revision) -> StoreResult<bool> {
             Ok(false)
         }
+    }
+
+    /// Keeps documents in memory, and answers the next write in place of
+    /// one as outdated when told to (`refuse_once`): a storage another
+    /// writer got to between a read and the write.
+    #[derive(Debug)]
+    struct Contended {
+        inner: Arc<dyn DocumentStorage>,
+        refuse_next: AtomicBool,
+    }
+
+    impl Contended {
+        fn of(kind: EntityKind) -> Self {
+            let inner = MemoryStore::new()
+                .documents(kind, |_| Err(StoreError::Backend("not read".to_string())))
+                .unwrap();
+            Self { inner, refuse_next: AtomicBool::new(false) }
+        }
+
+        /// The next write is refused as outdated.
+        fn refuse_once(&self) {
+            self.refuse_next.store(true, Ordering::SeqCst);
+        }
+
+        /// Whether the refusal was given.
+        fn refused(&self) -> bool {
+            !self.refuse_next.load(Ordering::SeqCst)
+        }
+
+        fn contend(&self, id: Uuid) -> StoreResult<()> {
+            match self.refuse_next.swap(false, Ordering::SeqCst) {
+                true => Err(StoreError::Outdated { entity: "group", id: id.to_string() }),
+                false => Ok(()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DocumentStorage for Contended {
+        async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
+            self.inner.get(id).await
+        }
+
+        async fn scan(
+            &self,
+            filter: Option<&Filter<FieldPath>>,
+            admission: Option<&Admission>,
+            presence: Presence,
+            after: Option<Uuid>,
+            limit: usize,
+        ) -> StoreResult<Vec<(Uuid, Value)>> {
+            self.inner.scan(filter, admission, presence, after, limit).await
+        }
+
+        async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
+            self.inner.named(name).await
+        }
+
+        async fn insert(&self, document: Document) -> StoreResult<()> {
+            self.inner.insert(document).await
+        }
+
+        async fn replace(&self, document: Document, read: Revision) -> StoreResult<()> {
+            self.contend(document.id)?;
+            self.inner.replace(document, read).await
+        }
+
+        async fn remove(&self, id: Uuid, read: Revision) -> StoreResult<bool> {
+            self.contend(id)?;
+            self.inner.remove(id, read).await
+        }
+    }
+
+    /// What deletes, restores and purges reads again what was changed
+    /// meanwhile and goes through (issue 492); what updates is given the
+    /// refusal, since only its caller can change again.
+    #[tokio::test]
+    async fn what_reads_what_it_writes_writes_again_when_it_was_changed_meanwhile() {
+        let storage = Arc::new(Contended::of(Group::KIND));
+        let policies: Policies =
+            (Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
+        let groups = CheckedStore::<Group>::new(Arc::<Contended>::clone(&storage), &policies);
+        let system = SecurityContext::system();
+        let alice = UserId::new();
+        let mut team = Group::team(
+            ScopedName::new("team", Scope::UserScope { user_id: alice }).unwrap(),
+            alice,
+        );
+        groups.create(&system, &team).await.unwrap();
+
+        storage.refuse_once();
+        let refused = groups.update(&system, &mut team).await;
+        assert!(matches!(refused, Err(StoreError::Outdated { .. })), "{refused:?}");
+        let mark = Removal::now(ActorId::System);
+        storage.refuse_once();
+        assert!(groups.delete(&system, team.id, &mark).await.expect("deleted all the same"));
+        assert!(storage.refused(), "refused once, then through");
+        storage.refuse_once();
+        groups.restore(&system, team.id).await.expect("restored all the same");
+        assert!(storage.refused());
+        assert!(groups.delete(&system, team.id, &mark).await.unwrap());
+        storage.refuse_once();
+        assert!(groups.purge(&system, team.id).await.expect("purged all the same"));
+        assert!(storage.refused());
+        assert!(groups.get_deleted(&system, team.id).await.is_err(), "gone");
     }
 
     /// A list judges what a scan hands out against its whole filter and the

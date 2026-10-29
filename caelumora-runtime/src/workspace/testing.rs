@@ -102,6 +102,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
         reasoning_visibility: Visibility::Channel,
         hears_during_turn: Default::default(),
         deleted: None,
+        revision: Default::default(),
     };
     store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
     let agent = Agent::new(

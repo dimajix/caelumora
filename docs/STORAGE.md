@@ -136,8 +136,9 @@ over one pool.
     `jsonb_array_elements`, and what can be asked as containment as `body @> …` besides, for the
     index. What compares names folded is left to the store, and so is the negation of anything that
     is.
-*   **Two processes that change one entity at once** are not kept apart yet: the last write wins
-    (issue [450](../issues/450-store-overwrites-a-change-made-meanwhile.md)).
+*   **The revision beside the body** (`revision`): a write in place of a document names the one it
+    read in its `WHERE`, so that two processes that change one entity at once do not overwrite
+    each other (issue [492](../issues/492-a-document-is-written-under-two-locks.md)).
 *   **The states in tables of their own shape**, made by the migrations: `agent_state`,
     `agent_channel_state` - with `has_work_under_way` and a partial index on it, the index of the
     work under way -, `channel_state` and `user_channel_state`, each holding the state's document
@@ -228,6 +229,20 @@ a session's name is not unique.
     was opened (`DocumentOf`). Where a storage needs a name as one value - a column of a unique
     index -, it takes its key: its scope and its folded name in one text (`ScopedName::key`, issue
     447), equal exactly where the names are. The store suite states the rule for every kind.
+
+**Every write is judged on the revision it read** (issue
+[492](../issues/492-a-document-is-written-under-two-locks.md)). Every entity carries its revision
+(`Stored::revision`, a `Revision`), counted up by every write of it, and a write names the
+revision it was read at: the storage writes only if that is still the one stored - in the same
+step as the write, as it keeps the names unique, so that it holds against every writer of the
+storage, also of another process - and refuses it otherwise (`StoreError::Outdated`). Nothing is
+overwritten unseen, and the policy was asked about exactly what is replaced. `update` is given a
+document the caller read and changed, and leaves the refusal to the caller, who reads again and
+changes again; a controller does so by itself (`Writing::apply`). `delete`, `restore` and `purge`
+read what they write themselves, in the store, and do so again if it was changed meanwhile - what
+was restored while a purge was asked about is then not the caller's to purge, and stays. A new
+entity carries the first revision; none is needed in a document written by hand, as seeds are. The
+store suite holds every backend to it (`writes_are_judged_on_their_revision`).
 
 **Values with rules.** A text whose content has rules - a `Name`, a `Language`, the free texts
 people write for others (`Text<R>`) - has a type made only through its constructor and checked again
@@ -579,9 +594,10 @@ This holds because a session starts only once, however many requests ask for it 
 starting, stopping and deleting a session take one lock per session id, so a stop cannot miss a
 start under way, and a deleted session cannot be started again meanwhile.
 
-Entities have no such rule: two requests may change one at the same time, and the last write wins.
-The JSON stores write every file through a temporary file of its own, so that neither write fails
-for the other's.
+Entities have no such rule: two requests may change one at the same time, and the second is refused
+as outdated, for its writer to make again (see [The entity store](#the-entity-store)). The JSON
+stores write every file through a temporary file of its own, so that neither write fails for the
+other's.
 
 ### Work under way
 
@@ -617,7 +633,9 @@ controller changes and what its entity's manager does is in
 *   **Live state.** A controller holds its entity for atomic, lock-free reads of the current value.
 *   **One writer.** A controller is the one writer of its document. It holds a write lock while it
     changes the document, stores the change first - which is where the permission is checked - and
-    only then takes it over live and announces it.
+    only then takes it over live and announces it. A change refused as outdated - the document was
+    written elsewhere since the controller took it over - is read again as stored and applied once
+    more (issue 492).
 *   **Events.** Controllers publish their changes on the `EventBus` (see [EVENTS.md](EVENTS.md)) and
     take over changes announced elsewhere.
 *   **One shape.** Every controller holds its document as a `LiveDocument` (issue 358), which does
@@ -678,7 +696,7 @@ The server is meant to run in several instances one day
 *   **Agents and users run in several instances at once**, with an actor, a controller and an
     `AgentState` in each. Between instances they are kept in step through the global events, carried
     by an event bus the instances share.
-*   **Writes across instances** cannot be serialised by a lock in one process. The shared stores
-    will have to refuse a write made on an outdated version (issue
-    [450](../issues/450-store-overwrites-a-change-made-meanwhile.md)), and events will have to
-    carry the version they result in, so that an instance skips one older than what it has.
+*   **Writes across instances** cannot be serialised by a lock in one process. The stores refuse a
+    write made on an outdated revision (issue
+    [492](../issues/492-a-document-is-written-under-two-locks.md)); events will have to carry the
+    revision they result in, so that an instance skips one older than what it has.

@@ -211,6 +211,7 @@ mod tests {
             updated_at: Default::default(),
             security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)),
             deleted: None,
+            revision: Default::default(),
         };
         let privacy = SessionPrivacy::of(&session);
         assert_eq!(privacy.people, [alice, bob].into_iter().collect());

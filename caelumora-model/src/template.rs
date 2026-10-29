@@ -17,7 +17,7 @@ use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::security::{AclEntry, Secured, SecurityAttributes};
 use crate::session::{Session, SessionId};
-use crate::store::{EntityKind, NoEntity, Stored};
+use crate::store::{EntityKind, NoEntity, Revision, Stored};
 use crate::user::UserId;
 use crate::value::language::Language;
 use crate::value::name::{Name, ScopedName};
@@ -265,6 +265,9 @@ pub struct SessionTemplate {
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 /// The workspace of a template's sessions (issue 251, decision 13): found
@@ -322,6 +325,14 @@ impl Stored for SessionTemplate {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -407,6 +418,7 @@ impl SessionTemplate {
             updated_at: now,
             security_attributes,
             deleted: None,
+            revision: Default::default(),
         };
         Ok((session, own, channels))
     }
@@ -514,6 +526,7 @@ pub mod testing {
             access: Vec::new(),
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
+            revision: Default::default(),
         }
     }
 

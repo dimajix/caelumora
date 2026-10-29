@@ -1389,6 +1389,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(
@@ -1513,6 +1514,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(
@@ -1560,6 +1562,7 @@ mod tests {
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
+            revision: Default::default(),
         };
         runtime.entity_stores().users.create(&system, &alice).await.unwrap();
         let template = SessionTemplate {
@@ -2091,6 +2094,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         personalities.create(&system, &personality).await.unwrap();
         let bundle = ComponentBundle::new(
@@ -2336,6 +2340,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let thinker = Agent::new(

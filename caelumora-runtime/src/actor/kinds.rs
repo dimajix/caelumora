@@ -134,6 +134,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         }
     }
 

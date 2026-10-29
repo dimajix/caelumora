@@ -17,7 +17,7 @@ use crate::scope::{Scope, ScopeField, Scoped};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::SessionId;
 use crate::store::query::{FieldValue, Filter};
-use crate::store::{EntityKind, NoEntity, Stored, Updatable};
+use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Description;
@@ -73,6 +73,9 @@ pub struct Project {
     /// those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 impl Project {
@@ -119,6 +122,7 @@ impl Project {
             created_at: now,
             updated_at: now,
             deleted: None,
+            revision: Default::default(),
         }
     }
 
@@ -153,6 +157,14 @@ impl Stored for Project {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 
     /// A project is a user's and lies in the global scope or its owner's -

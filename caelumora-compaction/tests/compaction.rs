@@ -60,7 +60,7 @@ async fn helper_with(
 ) -> (Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
     let mut components = vec![ComponentDescriptor::new("model", "scripted")];
     components.extend(listed);
-    let personality = Personality {
+    let mut personality = Personality {
         components: ComponentConfig { component_nodes: components },
         ..world.personality("helping", None, &[]).await
     };
@@ -68,7 +68,7 @@ async fn helper_with(
         .runtime
         .entity_stores()
         .personalities
-        .update(&World::system(), &personality)
+        .update(&World::system(), &mut personality)
         .await
         .unwrap();
     let helper = world.agent("helper", world.alice, &personality).await;

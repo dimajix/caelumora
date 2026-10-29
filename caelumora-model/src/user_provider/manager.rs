@@ -117,13 +117,14 @@ impl UserManager {
             self.events.announce(GlobalEvent::created::<User>(&found.id), &found);
             return Ok(found);
         };
-        let user = User { deleted: stored.deleted.clone(), ..found };
-        let renamed = user.username != stored.username;
-        let roles_changed = user.roles != stored.roles;
-        if !renamed && !roles_changed && user.email == stored.email {
+        let renamed = found.username != stored.username;
+        let roles_changed = found.roles != stored.roles;
+        if !renamed && !roles_changed && found.email == stored.email {
             return Ok(stored);
         }
-        self.store.update(&system, &user).await.map_err(backend)?;
+        let mut user =
+            User { username: found.username, email: found.email, roles: found.roles, ..stored };
+        self.store.update(&system, &mut user).await.map_err(backend)?;
         if renamed {
             self.events.announce(
                 GlobalEvent::updated::<User>(
@@ -202,6 +203,7 @@ mod tests {
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
+            revision: Default::default(),
         }
     }
 

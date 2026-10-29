@@ -1096,6 +1096,7 @@ mod tests {
             components: Default::default(),
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
+            revision: Default::default(),
         };
         store
             .entity_stores()
@@ -1461,7 +1462,13 @@ mod tests {
             .unwrap();
         personality.introduction =
             Some(Introduction::new("Answers questions about the weather.").unwrap());
-        store.entity_stores().unwrap().personalities.update(&system, &personality).await.unwrap();
+        store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .update(&system, &mut personality)
+            .await
+            .unwrap();
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(remote.id));
@@ -3069,6 +3076,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let thinker = Agent::new(

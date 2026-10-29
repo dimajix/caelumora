@@ -12,7 +12,7 @@ use crate::scope::{Scope, Scoped};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{Session, SessionId};
 use crate::store::query::Field;
-use crate::store::{EntityKind, Journaled, Stored, Updatable};
+use crate::store::{EntityKind, Journaled, Revision, Stored, Updatable};
 use crate::user::UserId;
 use crate::value::language::Language;
 use crate::value::name::{Name, ScopedName};
@@ -140,6 +140,9 @@ pub struct Channel {
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 /// How much of a channel's history a new participant may see, as asked for
@@ -254,6 +257,14 @@ impl Stored for Channel {
         self.deleted = deleted;
     }
 
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
+    }
+
     fn classification(&self) -> Option<&Classification> {
         Some(&self.classification)
     }
@@ -363,6 +374,7 @@ impl Channel {
             approval_rules: Vec::new(),
             uses_workspace: uses_workspace_by_default(),
             deleted: None,
+            revision: Default::default(),
         }
     }
 
@@ -626,6 +638,7 @@ mod tests {
             updated_at: now,
             security_attributes: Session::attributes_of(id, owner, &[]),
             deleted: None,
+            revision: Default::default(),
         };
         let tag = |tag: &str| Some(Language::new(tag).unwrap());
         let mut channel = Channel::build(

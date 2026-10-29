@@ -293,7 +293,7 @@ mod tests {
         w.runtime
             .entity_stores()
             .channels
-            .update(&SecurityContext::system(), &channel)
+            .update(&SecurityContext::system(), &mut channel)
             .await
             .unwrap();
         channel
@@ -338,7 +338,7 @@ mod tests {
         w.runtime
             .entity_stores()
             .channels
-            .update(&SecurityContext::system(), &channel)
+            .update(&SecurityContext::system(), &mut channel)
             .await
             .unwrap();
         reaper.end_unusable_commands().await;
@@ -352,7 +352,7 @@ mod tests {
         w.runtime
             .entity_stores()
             .channels
-            .update(&SecurityContext::system(), &channel)
+            .update(&SecurityContext::system(), &mut channel)
             .await
             .unwrap();
         reaper.end_unusable_commands().await;

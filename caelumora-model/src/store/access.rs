@@ -317,6 +317,7 @@ mod tests {
             security_attributes: SecurityAttributes::owned_by(owner)
                 .granting_read(contributors.into_iter().map(Subject::Actor)),
             deleted: None,
+            revision: Default::default(),
         }
     }
 
@@ -366,7 +367,10 @@ mod tests {
             "not in a list"
         );
         assert!(
-            matches!(store.update(&uncleared, &workspace).await, Err(StoreError::NotFound { .. })),
+            matches!(
+                store.update(&uncleared, &mut workspace.clone()).await,
+                Err(StoreError::NotFound { .. })
+            ),
             "not to change"
         );
         assert!(
@@ -451,16 +455,19 @@ mod tests {
         let mut forged = hers.clone();
         forged.security_attributes.owner_id = carol;
         assert!(matches!(
-            store.update(&carol_ctx, &forged).await,
+            store.update(&carol_ctx, &mut forged).await,
             Err(StoreError::NotFound { .. })
         ));
         let mut forged = hers.clone();
         forged.security_attributes.owner_id = bob;
         assert!(
-            matches!(store.update(&bob_ctx, &forged).await, Err(StoreError::PermissionDenied(_))),
+            matches!(
+                store.update(&bob_ctx, &mut forged).await,
+                Err(StoreError::PermissionDenied(_))
+            ),
             "a contributor may read, not change"
         );
-        assert!(store.update(&alice_ctx, &hers).await.is_ok());
+        assert!(store.update(&alice_ctx, &mut hers.clone()).await.is_ok());
 
         assert!(
             !store.delete(&carol_ctx, hers.id, &Removal::now(carol_ctx.caller_id)).await.unwrap(),
@@ -622,6 +629,7 @@ mod tests {
             email: String::new(),
             roles: vec![RoleId::new()],
             deleted: None,
+            revision: Default::default(),
         };
 
         let own = store.create(&alice_ctx, &record).await;
@@ -653,9 +661,9 @@ mod tests {
             1
         );
 
-        let promoted = User { roles: vec![RoleId::new()], ..record.clone() };
+        let mut promoted = User { roles: vec![RoleId::new()], ..record.clone() };
         for ctx in [&alice_ctx, &bob_ctx] {
-            let update = store.update(ctx, &promoted).await;
+            let update = store.update(ctx, &mut promoted).await;
             assert!(
                 matches!(update, Err(StoreError::PermissionDenied(_))),
                 "not even she changes her roles, got {update:?}"
@@ -666,7 +674,7 @@ mod tests {
                 "nor deletes her, got {delete:?}"
             );
         }
-        store.update(&system, &promoted).await.expect("the system changes users");
+        store.update(&system, &mut promoted).await.expect("the system changes users");
         assert!(store
             .delete(&system, alice_id, &Removal::now(system.caller_id))
             .await

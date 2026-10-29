@@ -147,7 +147,7 @@ pub async fn asked_for_a_call(
     done: impl Fn(&Path, &Path) -> bool,
     owner: UserId,
 ) -> Vec<String> {
-    let working = Personality {
+    let mut working = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", ONCE_MODEL_KIND),
@@ -159,7 +159,13 @@ pub async fn asked_for_a_call(
         },
         ..world.personality("working", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut working)
+        .await
+        .unwrap();
     let helper = world.agent("helper", owner, &working).await;
     let alice = World::as_user(world.alice);
     let docs = world

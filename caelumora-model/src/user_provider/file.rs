@@ -139,6 +139,7 @@ impl FileUserProvider {
                     email: entry.email,
                     roles,
                     deleted: None,
+                    revision: Default::default(),
                 };
                 Ok(Known { user, password_hash })
             })

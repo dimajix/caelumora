@@ -182,7 +182,7 @@ pub(crate) async fn keep_participants(
     }
     stored.members = participants.members;
     stored.updated_at = Utc::now();
-    store.update(&system, &stored).await
+    store.update(&system, &mut stored).await
 }
 
 #[cfg(test)]
@@ -238,7 +238,7 @@ mod tests {
         async fn get(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
             self.inner.get(ctx, id).await
         }
-        async fn update(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
+        async fn update(&self, ctx: &SecurityContext, value: &mut Group) -> StoreResult<()> {
             self.inner.update(ctx, value).await
         }
         async fn delete(
@@ -420,13 +420,17 @@ mod tests {
             .documents(Group::KIND, |_| Err(StoreError::Backend("not read".to_string())))
             .unwrap();
         storage
-            .replace(Document {
-                id: unreadable.id.into(),
-                name: None,
-                removal_id: None,
-                security_attributes: SecurityAttributes::systems(),
-                body: Value::from("not a group"),
-            })
+            .replace(
+                Document {
+                    id: unreadable.id.into(),
+                    revision: unreadable.revision.next(),
+                    name: None,
+                    removal_id: None,
+                    security_attributes: SecurityAttributes::systems(),
+                    body: Value::from("not a group"),
+                },
+                unreadable.revision,
+            )
             .await
             .unwrap();
 

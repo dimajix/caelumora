@@ -196,11 +196,11 @@ async fn agent_channel_hearing(
         .await
         .expect("stored")
         .personality_id;
-    let personality = Personality {
+    let mut personality = Personality {
         hears_during_turn: hears,
         ..personalities.get(&system, personality_id).await.expect("stored")
     };
-    personalities.update(&system, &personality).await.expect("stored");
+    personalities.update(&system, &mut personality).await.expect("stored");
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
     let mut registry = test_registry(&store);

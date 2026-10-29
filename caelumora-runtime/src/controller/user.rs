@@ -185,7 +185,7 @@ impl UserController {
         let mut profile = (**self.profile.load()).clone();
         let changed = change(&mut profile)?;
         profile.prune_approval_rules(Utc::now());
-        self.save(ctx, &profile).await?;
+        self.save(ctx, &mut profile).await?;
         log_changed(ctx, &profile);
         self.profile.store(Arc::new(profile.clone()));
         self.event_publisher
@@ -197,7 +197,7 @@ impl UserController {
     /// changed if there is one, else created - and changed after all if one
     /// was created meanwhile, in another instance. The store asks whether
     /// `ctx` may.
-    async fn save(&self, ctx: &SecurityContext, profile: &UserProfile) -> StoreResult<()> {
+    async fn save(&self, ctx: &SecurityContext, profile: &mut UserProfile) -> StoreResult<()> {
         match self.profiles.update(ctx, profile).await {
             Err(StoreError::NotFound { .. }) => match self.profiles.create(ctx, profile).await {
                 Err(StoreError::Conflict(_)) => self.profiles.update(ctx, profile).await,
@@ -310,6 +310,7 @@ mod tests {
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
+            revision: Default::default(),
         }
     }
 

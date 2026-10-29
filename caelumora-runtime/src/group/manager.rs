@@ -159,7 +159,7 @@ impl GroupManager {
             group.members = actors;
         }
         group.updated_at = Utc::now();
-        self.groups.update(ctx, &group).await.map_err(store_error(id))?;
+        self.groups.update(ctx, &mut group).await.map_err(store_error(id))?;
         // Who left is told too: they read it no longer once it is stored.
         told.retain(|actor| !group.has_member(*actor));
         self.events.announce_also_to(

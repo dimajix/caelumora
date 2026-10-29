@@ -37,7 +37,7 @@ use caelumora_model::store::query::{FieldPath, Filter};
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::Persistence;
 use caelumora_model::store::{
-    EntityKind, PersistenceBackend, Presence, StateStore, StoreError, StoreResult,
+    EntityKind, PersistenceBackend, Presence, Revision, StateStore, StoreError, StoreResult,
 };
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::Name;
@@ -58,6 +58,7 @@ pub fn user(name: &str) -> User {
         email: String::new(),
         roles: Vec::new(),
         deleted: None,
+        revision: Default::default(),
     }
 }
 
@@ -139,6 +140,7 @@ pub fn bare_session(session_id: SessionId) -> Session {
         updated_at: now,
         security_attributes: SecurityAttributes::systems(),
         deleted: None,
+        revision: Default::default(),
     }
 }
 
@@ -179,6 +181,7 @@ pub fn make_session(name: &str, owner: UserId) -> Session {
         updated_at: now,
         security_attributes: Session::attributes_of(id, owner, &[]),
         deleted: None,
+        revision: Default::default(),
     }
 }
 
@@ -399,13 +402,13 @@ impl DocumentStorage for FailingDocuments {
     async fn insert(&self, document: Document) -> StoreResult<()> {
         self.inner.insert(document).await
     }
-    async fn replace(&self, document: Document) -> StoreResult<()> {
+    async fn replace(&self, document: Document, read: Revision) -> StoreResult<()> {
         if self.passing.fetch_sub(1, Ordering::SeqCst) == 0 {
             return Err(StoreError::Backend("failing".to_string()));
         }
-        self.inner.replace(document).await
+        self.inner.replace(document, read).await
     }
-    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
-        self.inner.remove_deleted(id).await
+    async fn remove(&self, id: Uuid, read: Revision) -> StoreResult<bool> {
+        self.inner.remove(id, read).await
     }
 }

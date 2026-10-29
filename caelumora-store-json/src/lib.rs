@@ -11,7 +11,8 @@ use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
 use caelumora_model::store::transcript::{load_named_by_turn, TranscriptStore};
 use caelumora_model::store::{
-    EntityKind, Journaled, PersistenceBackend, Presence, StateStore, StoreError, StoreResult,
+    EntityKind, Journaled, PersistenceBackend, Presence, Revision, StateStore, StoreError,
+    StoreResult,
 };
 use caelumora_model::user::{UserChannelState, UserId};
 use caelumora_model::value::name::ScopedName;
@@ -28,7 +29,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use tokio::fs;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -410,18 +411,19 @@ impl PersistenceBackend for JsonFileStore {
 }
 
 /// The documents of one kind as JSON files (issue 446), one per document in
-/// the kind's directory, `entities/<kind>`, named by its id. A write of a
-/// document with a name holds the kind's lock from reading the others to
-/// writing it, so that no two take one name.
+/// the kind's directory, `entities/<kind>`, named by its id. Every write
+/// holds the kind's lock from reading what it judges - the revision it
+/// writes in place of (issue 492), the names of the others (issue 250) - to
+/// writing, so that no two writes miss each other and no two take one name.
 struct JsonDocuments {
     kind: EntityKind,
     dir: PathBuf,
     /// What a document read is told by: its id, its name, its mark, its
-    /// security attributes.
+    /// security attributes, its revision.
     document_of: DocumentOf,
-    /// Held by the writes that may take a name, so that no two take one:
-    /// within this process, which is the only one that writes the files.
-    names: Mutex<()>,
+    /// Held by every write: within this process, which is the only one that
+    /// writes the files.
+    writes: Mutex<()>,
 }
 
 impl Debug for JsonDocuments {
@@ -441,20 +443,12 @@ impl JsonDocuments {
     fn new(root: &Path, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Self> {
         let dir = root.join("entities").join(kind.name());
         std_fs::create_dir_all(&dir).map_err(to_backend_error)?;
-        Ok(Self { kind, dir, document_of, names: Mutex::new(()) })
+        Ok(Self { kind, dir, document_of, writes: Mutex::new(()) })
     }
 
     /// Where the document of `id` is.
     fn path(&self, id: Uuid) -> PathBuf {
         self.dir.join(format!("{id}.json"))
-    }
-
-    /// The kind's lock for names, if `document` has one to take.
-    async fn names_lock(&self, document: &Document) -> Option<MutexGuard<'_, ()>> {
-        match named(document) {
-            Some(_) => Some(self.names.lock().await),
-            None => None,
-        }
     }
 
     /// The document at `path`; `None` if there is none, or it cannot be read
@@ -473,6 +467,16 @@ impl JsonDocuments {
                 warn!("Failed to read the document {:?}: {}", path, err);
                 None
             }
+        }
+    }
+
+    /// The document `id` as stored, if it is at the revision `read`:
+    /// `StoreError::Outdated` otherwise, also if there is none (issue 492).
+    /// Called under the kind's lock.
+    async fn at_revision(&self, id: Uuid, read: Revision) -> StoreResult<Document> {
+        match self.read(&self.path(id)).await {
+            Some(stored) if stored.revision == read => Ok(stored),
+            _ => Err(StoreError::Outdated { entity: self.kind.name(), id: id.to_string() }),
         }
     }
 
@@ -541,7 +545,7 @@ impl DocumentStorage for JsonDocuments {
 
     async fn insert(&self, document: Document) -> StoreResult<()> {
         let path = self.path(document.id);
-        let _names = self.names_lock(&document).await;
+        let _writing = self.writes.lock().await;
         if fs::try_exists(&path).await.map_err(to_backend_error)? {
             return Err(StoreError::Conflict(format!(
                 "{} {} already exists",
@@ -555,28 +559,24 @@ impl DocumentStorage for JsonDocuments {
 
     /// Reads the others of the kind only if `document` takes another name
     /// than it has as stored: whatever else changes takes nobody's name.
-    async fn replace(&self, document: Document) -> StoreResult<()> {
+    async fn replace(&self, document: Document, read: Revision) -> StoreResult<()> {
         let path = self.path(document.id);
-        let _names = self.names_lock(&document).await;
-        if named(&document).is_some() {
-            let stored = self.read(&path).await;
-            if stored.as_ref().and_then(named) != named(&document) {
-                self.name_free(&document).await?;
-            }
+        let _writing = self.writes.lock().await;
+        let stored = self.at_revision(document.id, read).await?;
+        if named(&document).is_some() && named(&stored) != named(&document) {
+            self.name_free(&document).await?;
         }
         debug!("Writing {} {} to {}", self.kind, document.id, path.display());
         write_json_atomic(&path, &document.body).await
     }
 
-    /// Reads the document right before: restored meanwhile, it stays. A file
-    /// cannot be removed on that condition atomically; whoever restores and
-    /// purges at once serialises them (`SessionManager`).
-    async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
+    async fn remove(&self, id: Uuid, read: Revision) -> StoreResult<bool> {
         let path = self.path(id);
-        let Some(body) = read_json_opt::<Value>(&path).await? else { return Ok(false) };
-        if (self.document_of)(body)?.removal_id.is_none() {
+        let _writing = self.writes.lock().await;
+        if !fs::try_exists(&path).await.map_err(to_backend_error)? {
             return Ok(false);
         }
+        self.at_revision(id, read).await?;
         debug!("Purging {} at {}", self.kind, path.display());
         delete_if_exists(&path).await
     }
@@ -798,7 +798,9 @@ mod tests {
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::query::Query;
     use caelumora_model::store::suite;
-    use caelumora_model::store::{EntityStore, EntityStoreFactory, Persistence, Stored};
+    use caelumora_model::store::{
+        EntityStore, EntityStoreFactory, Persistence, StoreError, Stored,
+    };
     use caelumora_model::turn::TurnState;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Description;
@@ -836,6 +838,7 @@ mod tests {
             updated_at: Utc::now(),
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
+            revision: Default::default(),
         }
     }
 
@@ -925,6 +928,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn judges_writes_on_their_revision() {
+        let dir = tempdir().unwrap();
+        suite::writes_are_judged_on_their_revision(
+            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+        )
+        .await;
+        suite::storage_judges_writes_on_their_revision(&store(dir.path())).await;
+    }
+
+    #[tokio::test]
     async fn keeps_names_unique() {
         let dir = tempdir().unwrap();
         suite::names_are_unique(
@@ -991,17 +1004,25 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         personalities.create(&system, &personality).await.unwrap();
 
         let mut writes = JoinSet::new();
         for i in 0..16 {
             let (personalities, system) = (Arc::clone(&personalities), system.clone());
-            let changed = Personality {
-                description: Some(Description::new(format!("version {i}")).unwrap()),
-                ..personality.clone()
-            };
-            writes.spawn(async move { personalities.update(&system, &changed).await });
+            let id = personality.id;
+            // Each writer in place of what was written since (issue 492).
+            writes.spawn(async move {
+                loop {
+                    let mut changed = personalities.get(&system, id).await?;
+                    changed.description = Some(Description::new(format!("version {i}")).unwrap());
+                    match personalities.update(&system, &mut changed).await {
+                        Err(StoreError::Outdated { .. }) => continue,
+                        written => return written,
+                    }
+                }
+            });
         }
         while let Some(result) = writes.join_next().await {
             result.unwrap().expect("no writer loses its temporary file to another");
@@ -1050,6 +1071,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
 
         let mut writes = JoinSet::new();

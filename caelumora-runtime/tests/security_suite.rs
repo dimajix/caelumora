@@ -105,12 +105,13 @@ async fn an_agent_whose_personality_was_withdrawn_cannot_join_a_channel() {
     let session = world.shared_session(&[], &[helper]).await;
     let main = Arc::clone(&session.channels()[0]);
 
-    let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
+    let mut withdrawn =
+        Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
     world
         .runtime
         .entity_stores()
         .personalities
-        .update(&World::as_user(world.bob), &withdrawn)
+        .update(&World::as_user(world.bob), &mut withdrawn)
         .await
         .unwrap();
 
@@ -137,10 +138,10 @@ async fn a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with
         world.runtime.entity_stores().personalities.get(&alice, shared.id).await.is_ok(),
         "shared with her"
     );
-    let changed =
+    let mut changed =
         Personality { description: Some(Description::new("hers now").unwrap()), ..shared.clone() };
     assert!(
-        world.runtime.entity_stores().personalities.update(&alice, &changed).await.is_err(),
+        world.runtime.entity_stores().personalities.update(&alice, &mut changed).await.is_err(),
         "but not hers to change"
     );
     assert!(
@@ -177,7 +178,7 @@ async fn a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with
         .runtime
         .entity_stores()
         .personalities
-        .update(&bob, &changed)
+        .update(&bob, &mut changed)
         .await
         .expect("its owner changes it");
 }
@@ -822,13 +823,13 @@ async fn an_agent_is_taken_in_only_by_who_may_read_it_and_only_if_it_may_run() {
         "asked after what is hers to ask: {asked:?}"
     );
 
-    let withdrawn =
+    let mut withdrawn =
         Personality { security_attributes: attributes(Some(world.bob), &[world.carol]), ..shared };
     world
         .runtime
         .entity_stores()
         .personalities
-        .update(&World::as_user(world.bob), &withdrawn)
+        .update(&World::as_user(world.bob), &mut withdrawn)
         .await
         .unwrap();
     let (refused, asked) = world
@@ -868,9 +869,10 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
         email: String::new(),
         roles: vec![],
         deleted: None,
+        revision: Default::default(),
     };
     world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
-    let limited = Personality {
+    let mut limited = Personality {
         roles: Some(vec![]),
         ..world.personality("limited", Some(world.alice), &[]).await
     };
@@ -878,7 +880,7 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
         .runtime
         .entity_stores()
         .personalities
-        .update(&World::as_user(world.alice), &limited)
+        .update(&World::as_user(world.alice), &mut limited)
         .await
         .unwrap();
     let helper = world.agent("limited-helper", world.alice, &limited).await;
@@ -920,6 +922,7 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
         email: String::new(),
         roles: vec![],
         deleted: None,
+        revision: Default::default(),
     };
     world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
@@ -1332,9 +1335,9 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
         .create(&alice, &profile)
         .await
         .expect("she writes her own");
-    let forged = UserProfile::new(world.alice, Some(Introduction::new("I quit.").unwrap()));
+    let mut forged = UserProfile::new(world.alice, Some(Introduction::new("I quit.").unwrap()));
     assert!(
-        world.runtime.entity_stores().user_profiles.update(&bob, &forged).await.is_err(),
+        world.runtime.entity_stores().user_profiles.update(&bob, &mut forged).await.is_err(),
         "bob does not write hers"
     );
     let carols = UserProfile::new(world.carol, Some(Introduction::new("hello").unwrap()));
@@ -1352,7 +1355,7 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
         .expect("everyone reads a user");
     promoted.roles.push(RoleId::new());
     assert!(
-        world.runtime.entity_stores().users.update(&alice, &promoted).await.is_err(),
+        world.runtime.entity_stores().users.update(&alice, &mut promoted).await.is_err(),
         "nobody grants themselves roles"
     );
 
@@ -1580,7 +1583,7 @@ async fn renaming_an_agent_needs_changing_it() {
         world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap();
     shared.security_attributes =
         shared.security_attributes.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Read);
-    world.runtime.entity_stores().agents.update(&World::system(), &shared).await.unwrap();
+    world.runtime.entity_stores().agents.update(&World::system(), &mut shared).await.unwrap();
     let (renamed, asked) = world.asked(agent.update_name(&World::as_user(world.bob), "his")).await;
     assert!(
         matches!(renamed, Err(StoreError::PermissionDenied(_))),
@@ -1592,7 +1595,17 @@ async fn renaming_an_agent_needs_changing_it() {
     let (renamed, asked) =
         world.asked(agent.update_name(&World::as_user(world.alice), "assistant")).await;
     renamed.expect("hers to rename");
-    assert_eq!(asked, checks(&["alice: GetAgent(alice's) yes", "alice: UpdateAgent(alice's) yes"]));
+    // Shared past its controller, whose copy was outdated by that: asked, refused as outdated,
+    // read again and asked again (issue 492).
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: GetAgent(alice's) yes",
+            "alice: UpdateAgent(alice's) yes",
+            "alice: GetAgent(alice's) yes",
+            "alice: UpdateAgent(alice's) yes",
+        ])
+    );
     assert_eq!(
         world
             .runtime
@@ -2399,6 +2412,7 @@ async fn a_founder_who_is_not_cleared_leaves_no_channel() {
         email: String::new(),
         roles: vec![],
         deleted: None,
+        revision: Default::default(),
     };
     world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
     world.access_policy.names.lock().unwrap().insert(ActorId::User(dave.id), "dave".to_string());
@@ -2517,14 +2531,14 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
         "alice: JoinChannel(alice) yes",
     ]), "read as she names it, and again as the channel is built in its owner's name - hers; then its founder joins");
 
-    let withdrawn =
+    let mut withdrawn =
         ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..policy };
     world
         .store
         .entity_stores()
         .unwrap()
         .component_bundles
-        .update(&World::as_user(world.bob), &withdrawn)
+        .update(&World::as_user(world.bob), &mut withdrawn)
         .await
         .expect("bob owns it");
     let (refused, asked) =
@@ -2578,9 +2592,9 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
     };
     let side = session.create_channel(&alice, spec).await.expect("shared with her").id();
     let main = session.channel_named("main").expect("runs").id();
-    let withdrawn =
+    let mut withdrawn =
         ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..shared.clone() };
-    bundles.update(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
+    bundles.update(&World::as_user(world.bob), &mut withdrawn).await.expect("bob owns it");
     world.manager.stop(&alice, session.id()).await.unwrap();
 
     let (opened, asked) = world.asked(world.manager.open(&alice, session.id())).await;
@@ -2631,12 +2645,15 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
         None
     );
 
-    bundles.update(&World::as_user(world.bob), &shared).await.expect("shared again");
+    // Written in place of what was written since (issue 492).
+    let mut shared = ComponentBundle { revision: withdrawn.revision, ..shared };
+    bundles.update(&World::as_user(world.bob), &mut shared).await.expect("shared again");
     let session = world.manager.open(&alice, session.id()).await.unwrap();
     assert!(session.channel(side).is_some(), "built again as the running session is opened");
     session.channel_for(&alice, side).await.expect("and reached");
 
-    bundles.update(&World::as_user(world.bob), &withdrawn).await.unwrap();
+    withdrawn.revision = shared.revision;
+    bundles.update(&World::as_user(world.bob), &mut withdrawn).await.unwrap();
     world.manager.stop(&alice, session.id()).await.unwrap();
     let session = world.manager.open(&alice, session.id()).await.unwrap();
     session
@@ -2894,7 +2911,7 @@ async fn deleted_channels_are_restored_only_by_who_may_change_their_session() {
     let stores = world.runtime.entity_stores();
     let mut his = stores.channels.get(&World::system(), main).await.unwrap();
     his.security_attributes.owner_id = ActorId::User(world.bob);
-    stores.channels.update(&World::system(), &his).await.unwrap();
+    stores.channels.update(&World::system(), &mut his).await.unwrap();
     session.delete_channel(&World::system(), main).await.unwrap();
     let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
 
@@ -3425,7 +3442,7 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
     let mut lent = stores.workspaces.get(&World::system(), his.id).await.unwrap();
     lent.security_attributes =
         lent.security_attributes.granting(Subject::Actor(ActorId::User(world.alice)), Grant::Read);
-    stores.workspaces.update(&World::system(), &lent).await.unwrap();
+    stores.workspaces.update(&World::system(), &mut lent).await.unwrap();
     let (refused, asked) = world.asked(session.update_workspace(&alice, Some(his.id), None)).await;
     assert!(denied(&refused.unwrap_err()), "bob's, which alice reads but may not attach");
     assert_eq!(
@@ -4203,7 +4220,7 @@ async fn the_group_of_a_sessions_participants_follows_it_whoever_may_delete_grou
     let groups = &world.runtime.entity_stores().groups;
     let mut of_session = groups.get(&system, GroupId::of_session(session_id)).await.unwrap();
     of_session.security_attributes.owner_id = ActorId::User(world.bob);
-    groups.update(&system, &of_session).await.unwrap();
+    groups.update(&system, &mut of_session).await.unwrap();
     world.manager.stop(&alice, session_id).await.unwrap();
 
     let (deleted, asked) = world.asked(world.manager.delete(&alice, session_id)).await;

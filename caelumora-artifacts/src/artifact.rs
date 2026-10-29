@@ -16,7 +16,7 @@ use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Su
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::AccessSnapshot;
 use caelumora_model::store::query::Field;
-use caelumora_model::store::{EntityKind, NoEntity, Stored};
+use caelumora_model::store::{EntityKind, NoEntity, Revision, Stored};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -113,6 +113,9 @@ pub struct Artifact {
     /// kept, hidden from every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 /// One version of an artifact: what was published, where and by whom.
@@ -172,6 +175,7 @@ impl Artifact {
             created_at: now,
             updated_at: now,
             deleted: None,
+            revision: Default::default(),
         }
     }
 
@@ -244,6 +248,14 @@ impl Stored for Artifact {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 
     /// An artifact is a user's and lies in a project's scope (issue 467), and has its versions

@@ -289,6 +289,7 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         store
             .entity_stores()
@@ -331,6 +332,7 @@ mod tests {
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
+            revision: Default::default(),
         };
         let bob = User {
             id: UserId::new(),
@@ -338,6 +340,7 @@ mod tests {
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
+            revision: Default::default(),
         };
         for user in [&kaya, &bob] {
             store.entity_stores().unwrap().users.create(&system, user).await.unwrap();

@@ -132,7 +132,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
         register_scripted(registry, ONCE_MODEL_KIND, vec![write])
     })
     .await;
-    let working = Personality {
+    let mut working = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", ONCE_MODEL_KIND),
@@ -144,7 +144,13 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
         },
         ..world.personality("working", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut working)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.bob, &working).await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world

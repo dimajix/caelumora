@@ -209,6 +209,7 @@ impl ApiError {
             StoreError::PermissionDenied(refused) => refused.into(),
             StoreError::NameTaken { .. } => Self::conflict("name_taken", detail),
             StoreError::Conflict(_) => Self::conflict("already_exists", detail),
+            StoreError::Outdated { .. } => Self::conflict("changed_meanwhile", detail),
             StoreError::Validation(_) => Self::bad_request("validation_failed", detail),
             StoreError::Invalid(e) => e.into(),
             StoreError::NotFound { .. } | StoreError::Backend(_) => {

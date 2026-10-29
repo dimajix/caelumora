@@ -132,14 +132,14 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
             .await
             .expect_err("not bob's to read");
         assert!(matches!(gone, StoreError::NotFound { .. }), "{gone}");
-        let renamed =
+        let mut renamed =
             Agent { name: ScopedName::new("taken", Scope::GlobalScope).unwrap(), ..agent.clone() };
         assert!(
             world
                 .runtime
                 .entity_stores()
                 .agents
-                .update(&World::as_user(world.bob), &renamed)
+                .update(&World::as_user(world.bob), &mut renamed)
                 .await
                 .is_err(),
             "nor his to change, though the personality is his"
@@ -167,12 +167,13 @@ async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
     assert!(session.channels()[0].participant_ids().contains(&ActorId::Agent(helper)));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
-    let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
+    let mut withdrawn =
+        Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
     world
         .runtime
         .entity_stores()
         .personalities
-        .update(&World::as_user(world.bob), &withdrawn)
+        .update(&World::as_user(world.bob), &mut withdrawn)
         .await
         .expect("bob owns it");
 
@@ -236,20 +237,32 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
         register_scripted(registry, "answering", vec![answer])
     })
     .await;
-    let answering = Personality {
+    let mut answering = Personality {
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("model", "answering")],
         },
         reasoning_visibility: Visibility::Channel,
         ..world.personality("answering", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &answering).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut answering)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &answering).await;
     let other = world.agent("other", world.alice, &answering).await;
     let session = world.shared_session(&[helper], &[other]).await;
     let main = Arc::clone(&session.channels()[0]);
-    let owners = Personality { reasoning_visibility: Visibility::Owner, ..answering };
-    world.runtime.entity_stores().personalities.update(&World::system(), &owners).await.unwrap();
+    let mut owners = Personality { reasoning_visibility: Visibility::Owner, ..answering };
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut owners)
+        .await
+        .unwrap();
 
     main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All)
         .await
@@ -291,14 +304,20 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
         register_scripted(registry, "answering", vec![answer])
     })
     .await;
-    let owners = Personality {
+    let mut owners = Personality {
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("model", "answering")],
         },
         reasoning_visibility: Visibility::Owner,
         ..world.personality("answering", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &owners).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut owners)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &owners).await;
     let other = world.agent("other", world.alice, &owners).await;
     let session = world.shared_session(&[helper], &[other]).await;
@@ -475,7 +494,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
         .runtime
         .entity_stores()
         .personalities
-        .update(&World::as_user(world.alice), &hers)
+        .update(&World::as_user(world.alice), &mut hers)
         .await
         .unwrap();
     let helper = world.agent("helper", world.alice, &hers).await;
@@ -493,14 +512,14 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     assert!(session.channels()[0].participant_ids().contains(&ActorId::Agent(helper)), "it runs");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
-    let withdrawn =
+    let mut withdrawn =
         ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..tools };
     world
         .store
         .entity_stores()
         .unwrap()
         .component_bundles
-        .update(&World::as_user(world.bob), &withdrawn)
+        .update(&World::as_user(world.bob), &mut withdrawn)
         .await
         .expect("bob owns them");
     let (reopened, asked) =
@@ -581,7 +600,7 @@ async fn joining_needs_an_entry_that_lets_one_join() {
         .runtime
         .entity_stores()
         .session_templates
-        .update(&World::system(), &template)
+        .update(&World::system(), &mut template)
         .await
         .unwrap();
     let alice = World::as_user(world.alice);
@@ -740,13 +759,19 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
         register_scripted(registry, "answering", vec![answer])
     })
     .await;
-    let answering = Personality {
+    let mut answering = Personality {
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("model", "answering")],
         },
         ..world.personality("answering", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &answering).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut answering)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &answering).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -829,13 +854,19 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])
     })
     .await;
-    let silent = Personality {
+    let mut silent = Personality {
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("model", "silent")],
         },
         ..world.personality("silent", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &silent).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut silent)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &silent).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1027,7 +1058,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
         .runtime
         .entity_stores()
         .personalities
-        .update(&World::as_user(world.alice), &hers)
+        .update(&World::as_user(world.alice), &mut hers)
         .await
         .unwrap();
     let helper = world.agent("helper", world.alice, &hers).await;
@@ -1116,13 +1147,19 @@ async fn with_a_call_of(
         });
     })
     .await;
-    let asking = Personality {
+    let mut asking = Personality {
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("model", ONCE_MODEL_KIND), tool],
         },
         ..world.personality("asking", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &asking).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut asking)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1225,7 +1262,7 @@ async fn with_a_call_asking_whom(
         );
     })
     .await;
-    let asking = Personality {
+    let mut asking = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", ONCE_MODEL_KIND),
@@ -1234,7 +1271,13 @@ async fn with_a_call_asking_whom(
         },
         ..world.personality("asking", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &asking).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut asking)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1944,7 +1987,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         });
     })
     .await;
-    let sending = Personality {
+    let mut sending = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", ONCE_MODEL_KIND),
@@ -1953,7 +1996,13 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         },
         ..world.personality("sending", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &sending).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut sending)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &sending).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -2054,7 +2103,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     let with = |name: &'static str, components: Vec<ComponentDescriptor>| {
         let world = &world;
         async move {
-            let personality = Personality {
+            let mut personality = Personality {
                 components: ComponentConfig { component_nodes: components },
                 ..world.personality(name, None, &[]).await
             };
@@ -2062,7 +2111,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
                 .runtime
                 .entity_stores()
                 .personalities
-                .update(&World::system(), &personality)
+                .update(&World::system(), &mut personality)
                 .await
                 .unwrap();
             personality
@@ -2139,7 +2188,7 @@ async fn with_a_reader_of(
     let world =
         World::with(&[&TestAgents], |registry| register_scripted(registry, "reading", vec![call]))
             .await;
-    let reading = Personality {
+    let mut reading = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "reading"),
@@ -2148,7 +2197,13 @@ async fn with_a_reader_of(
         },
         ..world.personality("reading", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &reading).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut reading)
+        .await
+        .unwrap();
     let reader = world.agent("reader", owner(&world), &reading).await;
     let session = world.shared_session(&[reader], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -2397,7 +2452,7 @@ async fn bob_speaks_while_alices_turn_works(
         );
     })
     .await;
-    let hearing = Personality {
+    let mut hearing = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "held"),
@@ -2407,7 +2462,13 @@ async fn bob_speaks_while_alices_turn_works(
         hears_during_turn: HearsDuringTurn { from: HearsFrom::All, others },
         ..world.personality("hearing", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &hearing).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut hearing)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &hearing).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -2674,7 +2735,7 @@ async fn with_remote(
 
 /// An external personality whose agent is reached as `remote_at_work`.
 async fn remote_personality(world: &World) -> Personality {
-    let remote = Personality {
+    let mut remote = Personality {
         kind: PersonalityKind::External,
         // Cleared as its owner, for the channels of the world: an external
         // personality that names no roles is limited to what is public.
@@ -2684,7 +2745,13 @@ async fn remote_personality(world: &World) -> Personality {
         },
         ..world.personality("remote", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &remote).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut remote)
+        .await
+        .unwrap();
     remote
 }
 
@@ -3250,7 +3317,7 @@ async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
         world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap();
     shared.security_attributes =
         shared.security_attributes.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Read);
-    world.runtime.entity_stores().agents.update(&World::system(), &shared).await.unwrap();
+    world.runtime.entity_stores().agents.update(&World::system(), &mut shared).await.unwrap();
     let (seen, asked) = world
         .asked(async {
             world
@@ -3309,12 +3376,13 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
         ])
     );
 
-    let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
+    let mut withdrawn =
+        Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
     world
         .runtime
         .entity_stores()
         .personalities
-        .update(&World::as_user(world.bob), &withdrawn)
+        .update(&World::as_user(world.bob), &mut withdrawn)
         .await
         .unwrap();
     let (refused, asked) =
@@ -3388,7 +3456,7 @@ async fn template_with_workspace(
         .runtime
         .entity_stores()
         .session_templates
-        .update(&World::system(), &template)
+        .update(&World::system(), &mut template)
         .await
         .unwrap();
     id
@@ -3709,7 +3777,7 @@ async fn with_a_commanded_agent(
         );
     })
     .await;
-    let commanded = Personality {
+    let mut commanded = Personality {
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "silent"),
@@ -3718,7 +3786,13 @@ async fn with_a_commanded_agent(
         },
         ..world.personality("commanded", None, &[]).await
     };
-    world.runtime.entity_stores().personalities.update(&World::system(), &commanded).await.unwrap();
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut commanded)
+        .await
+        .unwrap();
     let helper = world.agent("helper", world.alice, &commanded).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);

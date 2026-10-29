@@ -12,7 +12,7 @@ use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField, Scoped};
 use caelumora_model::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
 use caelumora_model::snapshot::ScopeSnapshot;
-use caelumora_model::store::{EntityKind, NoEntity, Stored};
+use caelumora_model::store::{EntityKind, NoEntity, Revision, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, Text, TextRule};
 use chrono::{DateTime, Utc};
@@ -75,6 +75,9 @@ pub struct Skill {
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+    /// Its revision (issue 492), counted up by every write of it.
+    #[serde(default)]
+    pub revision: Revision,
 }
 
 impl Skill {
@@ -99,6 +102,7 @@ impl Skill {
             created_at: now,
             updated_at: now,
             deleted: None,
+            revision: Default::default(),
         }
     }
 }
@@ -123,6 +127,14 @@ impl Stored for Skill {
 
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    fn set_revision(&mut self, revision: Revision) {
+        self.revision = revision;
     }
 
     /// A skill belongs to a user or to the system. A user's lies in the

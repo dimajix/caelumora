@@ -5,7 +5,7 @@ use arc_swap::{ArcSwap, Guard};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::security::{SecurityContext, Subject};
-use caelumora_model::store::{Address, EntityStore, StoreResult, Stored, Updatable};
+use caelumora_model::store::{Address, EntityStore, StoreError, StoreResult, Stored, Updatable};
 use chrono::Utc;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
@@ -77,7 +77,7 @@ where
         ctx: &SecurityContext,
         update: &T::Update,
     ) -> StoreResult<Arc<T>> {
-        let writing = self.write().await;
+        let mut writing = self.write().await;
         let document = writing.apply(ctx, update).await?;
         writing.announce_update(update, &document);
         Ok(document)
@@ -110,8 +110,13 @@ where
     /// Begins a change, under the lock until the `Writing` is dropped.
     pub(super) async fn write(&self) -> Writing<'_, T> {
         let lock = self.write_lock.lock().await;
-        let had = self.current.load().classification().cloned();
-        Writing { document: self, had, _lock: lock }
+        Writing { document: self, had: self.classification(), _lock: lock }
+    }
+
+    /// How the document is classified as it stands; `None` for a kind that
+    /// is not.
+    fn classification(&self) -> Option<Classification> {
+        self.current.load().classification().cloned()
     }
 
     /// Announces `event` about the document as it stands, without a change
@@ -197,34 +202,46 @@ where
     }
 
     /// The document with `update` applied (`Updatable::apply`), stored and
-    /// taken over as `store` does.
+    /// taken over as `store` does. Changed elsewhere meanwhile
+    /// (`StoreError::Outdated`, issue 492), it is read again as stored -
+    /// which the change then begins from, as `reached` begins it - and
+    /// `update` applied once more.
     ///
     /// # Errors
     /// `StoreError::Invalid` if what `update` says does not fit, otherwise
     /// as `store`.
     pub(super) async fn apply(
-        &self,
+        &mut self,
         ctx: &SecurityContext,
         update: &T::Update,
     ) -> StoreResult<Arc<T>> {
-        let mut document = self.current();
-        document.apply(update)?;
-        self.store(ctx, document).await
+        loop {
+            let mut document = self.current();
+            document.apply(update)?;
+            match self.store(ctx, document).await {
+                Err(StoreError::Outdated { .. }) => {
+                    self.document.reload().await?;
+                    self.had = self.document.classification();
+                }
+                stored => return stored,
+            }
+        }
     }
 
     /// Stores `document` as changed now by `ctx` (`Updatable::touch`) and
     /// takes it over live; not yet announced.
     ///
     /// # Errors
-    /// Whatever the store reports, `StoreError::PermissionDenied` included;
-    /// the document is then unchanged.
+    /// Whatever the store reports, `StoreError::PermissionDenied` included,
+    /// and `StoreError::Outdated` if the document was changed elsewhere
+    /// since it was taken over (issue 492); the document is then unchanged.
     pub(super) async fn store(
         &self,
         ctx: &SecurityContext,
         mut document: T,
     ) -> StoreResult<Arc<T>> {
         document.touch(Utc::now());
-        self.document.store.update(ctx, &document).await?;
+        self.document.store.update(ctx, &mut document).await?;
         log_changed(ctx, &document);
         let document = Arc::new(document);
         self.document.current.store(Arc::clone(&document));

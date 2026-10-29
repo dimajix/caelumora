@@ -107,6 +107,7 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         let agent = Agent::new(
             ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
@@ -147,6 +148,7 @@ mod tests {
             email: String::new(),
             roles: vec![staff],
             deleted: None,
+            revision: Default::default(),
         };
         let store = Persistence::in_memory();
         let owner = Arc::new(UserController::new(
@@ -201,6 +203,7 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         }
     }
 }

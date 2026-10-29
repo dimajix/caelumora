@@ -499,6 +499,7 @@ mod tests {
                 email: String::new(),
                 roles: vec![],
                 deleted: None,
+                revision: Default::default(),
             };
             store.entity_stores().unwrap().users.create(&system, &user).await.unwrap();
             ids.push(user.id);
@@ -515,6 +516,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
+            revision: Default::default(),
         };
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let attributes = agent(&ids);
