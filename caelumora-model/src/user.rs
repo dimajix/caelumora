@@ -1,3 +1,11 @@
+//! A user: their record, what they say of themselves, and how far they have read in each channel.
+//!
+//! - A `User` is the record a user provider keeps of them (issue 94): their name, email and roles,
+//!   the system's to change.
+//! - A `UserProfile` is what they say of themselves - their introduction, their language, their
+//!   own approval rules -, theirs to change.
+//! - A `UserChannelState` is how far they have read in one channel (`ReadMark`, issue 404).
+
 use crate::actor::ActorId;
 use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULES};
 use crate::chain::Position;
@@ -390,12 +398,14 @@ pub mod testing {
 mod tests {
     use super::*;
     use crate::confidentiality::ConfidentialityRules;
+    use crate::store::testing::{replayed, stored};
     use std::slice;
 
     /// Issue 404: two frontends of one user cannot move the mark back.
     #[test]
     fn what_was_read_only_moves_forward() {
         let mut state = UserChannelState::default();
+        let mut copy = stored(&mut state);
         assert_eq!(state.unread_from().get(), 0, "nothing read: everything is new");
         let first = ReadMark { position: Position::new(4), message: MessageId::new() };
         let later = ReadMark { position: Position::new(9), message: MessageId::new() };
@@ -404,11 +414,8 @@ mod tests {
         assert!(!state.read_up_to(first), "not back");
         assert!(!state.read_up_to(later), "nor again");
         assert_eq!((state.read, state.unread_from().get()), (Some(later), 10));
-        let mut replayed = UserChannelState::default();
-        for change in state.changes() {
-            replayed.apply(change).unwrap();
-        }
-        assert_eq!(replayed.read, Some(later), "replayed as stored");
+        replayed(&state, &mut copy);
+        assert_eq!(copy.read, Some(later), "replayed as stored");
     }
 
     #[test]

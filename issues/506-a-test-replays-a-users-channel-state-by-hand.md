@@ -1,6 +1,6 @@
 # 506 — A test replays a user's channel state by hand
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -33,3 +33,5 @@ state that does not replay idempotently, or that records something when it is re
 
 - **2026-10-29** — Opened from the findings of the review of issue
   [501](501-tests-build-a-personality-field-by-field.md), step 1.
+- **2026-10-29** — Done: `what_was_read_only_moves_forward` begins from the state as stored
+  (`stored`) and checks its changes by `replayed`, then the read mark of the copy.
