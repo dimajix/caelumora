@@ -60,6 +60,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [460](460-kinds-kept-in-one-form-in-postgres.md) | open | The Postgres store keeps every kind alike - a table of id, name, mark and body, searched by a GIN index of the body -, so a kind that is reached in a way of its own, such as the groups by their members, cannot have a table or column of its own that answers that faster. |
 | [469](469-a-failed-restore-renews-the-mark.md) | done | When restoring a session, a channel or a project fails part of the way, the roll-back marks it deleted again with a new time, so that a second restoring no longer finds what was deleted with it at the first. |
 | [478](478-what-went-with-a-deletion-is-sorted-in-code.md) | done | Restoring what went with a holder lists everything deleted in its scope and keeps in code what carries the holder's mark (`scoped::deleted_with`), since no query can ask for a deletion's mark. |
+| [492](492-a-document-is-written-under-two-locks.md) | open | A controller writes a document under its own `LiveDocument::write_lock`, its manager under the `writing` lock of the kind; neither sees the other, and since the store reads and replaces in two steps, a change of the one can overwrite the other's - a deletion among them. |
 
 ## Sessions and channels
 
