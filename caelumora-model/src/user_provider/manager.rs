@@ -168,6 +168,7 @@ mod tests {
     use crate::security::SecurityAttributes;
     use crate::store::testing::ContendedStore;
     use crate::store::{Persistence, Stored};
+    use crate::user::testing::make_user;
     use crate::value::name::Name;
     use async_trait::async_trait;
     use std::collections::HashMap;
@@ -207,17 +208,6 @@ mod tests {
             Persistence::in_memory().entity_stores().unwrap().users,
             Arc::new(Announced::default()),
         )
-    }
-
-    fn user(name: &str) -> User {
-        User {
-            id: UserId::new(),
-            username: Name::new(name).unwrap(),
-            email: String::new(),
-            roles: Vec::new(),
-            deleted: None,
-            revision: Default::default(),
-        }
     }
 
     /// Knows a fixed set of users with plaintext passwords - fine for a test.
@@ -286,7 +276,7 @@ mod tests {
         let (stores, refusals) = ContendedStore::stores(User::KIND);
         let users = stores.entity_stores().unwrap().users;
         let announced = Arc::new(Announced::default());
-        let alice = user("alice");
+        let alice = make_user("alice");
         let manager = UserManager::new(
             vec![Arc::new(MapUserProvider::new(&[(&alice, "a")]))],
             Arc::clone(&users),
@@ -309,8 +299,8 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_falls_through_to_the_provider_that_knows_the_user() {
-        let alice = user("alice");
-        let bob = user("bob");
+        let alice = make_user("alice");
+        let bob = make_user("bob");
         let manager = chain(vec![
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
             Arc::new(MapUserProvider::new(&[(&bob, "b")])),
@@ -325,8 +315,8 @@ mod tests {
 
     #[tokio::test]
     async fn wrong_credential_ends_the_chain() {
-        let first = user("alice");
-        let second = user("alice");
+        let first = make_user("alice");
+        let second = make_user("alice");
         let manager = chain(vec![
             Arc::new(MapUserProvider::new(&[(&first, "a")])),
             Arc::new(MapUserProvider::new(&[(&second, "other")])),
@@ -341,9 +331,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_trusted_frontend_is_answered_by_the_first_provider_that_knows_the_user() {
-        let alice = user("alice");
-        let other_alice = user("alice");
-        let bob = user("bob");
+        let alice = make_user("alice");
+        let other_alice = make_user("alice");
+        let bob = make_user("bob");
         let manager = chain(vec![
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
             Arc::new(MapUserProvider::new(&[(&other_alice, "a"), (&bob, "b")])),
@@ -366,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_user_is_indistinguishable_from_a_wrong_password() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let manager = chain(vec![Arc::new(MapUserProvider::new(&[(&alice, "a")]))]);
 
         let result = manager.authenticate("mallory", &Credential::Password("x")).await;
@@ -375,7 +365,7 @@ mod tests {
 
     #[tokio::test]
     async fn failing_provider_denies_instead_of_falling_through() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let manager = chain(vec![
             Arc::new(FailingUserProvider),
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
@@ -391,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn lookups_return_the_first_match_or_none() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let manager = chain(vec![
             Arc::new(MapUserProvider::new(&[])),
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
@@ -422,7 +412,7 @@ mod tests {
             )
         };
         let staff = RoleId::new();
-        let alice = user("alice");
+        let alice = make_user("alice");
         answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
         assert!(
             matches!(&announced.taken()[..], [event] if event.about::<User>() == Some((alice.id, &EntityChange::Created))),

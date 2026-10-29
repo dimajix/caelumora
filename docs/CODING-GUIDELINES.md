@@ -516,8 +516,8 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     running channel live in `channel/tests/` of the runtime, those of the agents in
     `channel_tests/` of `caelumora-agents`.
 *   **Documents in tests:** a test that needs a document of the model starts from what the
-    `testing` module of its kind makes - `make_personality`, `make_session`, `make_template`,
-    `make_channel`, `make_message` - and writes beside it only what it differs in
+    `testing` module of its kind makes - `make_personality`, `make_session`, `make_user`,
+    `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in
     (`Personality { kind, ..make_personality("remote") }`), so that a new field of the kind changes
     one place and every test says what is particular about its document. These modules are the
     model's, so that its own tests reach them too; the runtime's `testing` modules build what runs

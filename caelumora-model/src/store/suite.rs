@@ -50,6 +50,7 @@ use crate::template::{ChannelTemplate, SessionTemplate, SessionTemplateId};
 use crate::tool::{ToolCall, ToolSet, ToolVisibility};
 use crate::transcript::TranscriptEntry;
 use crate::turn::TurnState;
+use crate::user::testing::make_user;
 use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
@@ -128,14 +129,7 @@ fn channel() -> Channel {
 }
 
 fn user(username: &str) -> User {
-    User {
-        id: UserId::new(),
-        username: Name::new(username).unwrap(),
-        email: String::new(),
-        roles: vec![RoleId::new()],
-        deleted: None,
-        revision: Default::default(),
-    }
+    User { roles: vec![RoleId::new()], ..make_user(username) }
 }
 
 fn workspace(owner: UserId) -> Workspace {

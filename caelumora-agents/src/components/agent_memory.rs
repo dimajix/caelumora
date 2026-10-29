@@ -323,12 +323,13 @@ mod tests {
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::StateStore;
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
     use caelumora_runtime::runtime::ActorRuntime;
     use caelumora_runtime::session::testing::{
-        actor_runtime_in, owned_runtime, record_users, spec, user,
+        actor_runtime_in, owned_runtime, record_users, spec,
     };
     use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
     use caelumora_runtime::transport::Discard;
@@ -434,7 +435,7 @@ mod tests {
         /// A user named `name`, stored (`record_users`): to own sessions and
         /// the agent, or to take part.
         async fn user(&self, name: &str) -> UserId {
-            let user = user(name);
+            let user = make_user(name);
             record_users(&self.manager, &[&user]).await;
             user.id
         }

@@ -344,8 +344,8 @@ mod tests {
     use caelumora_model::security::OwnershipPolicy;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Persistence;
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserUpdateEvent;
-    use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
     use std::slice;
     use std::sync::Mutex;
@@ -366,17 +366,6 @@ mod tests {
             _classifications: &[Classification],
         ) {
             self.publish(event, attributes);
-        }
-    }
-
-    fn alice() -> User {
-        User {
-            id: UserId::new(),
-            username: Name::new("alice").unwrap(),
-            email: String::new(),
-            roles: Vec::new(),
-            deleted: None,
-            revision: Default::default(),
         }
     }
 
@@ -406,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn a_change_is_made_again_on_the_profile_as_written_meanwhile() {
         let store = Persistence::in_memory();
-        let user = alice();
+        let user = make_user("alice");
         let controller = controller_in(&store, &user, Arc::new(()));
         let hers = as_user(user.id);
         let rule = ApprovalRule::new(
@@ -439,7 +428,7 @@ mod tests {
             Arc::new(ConfidentialityRules::default()),
         );
         let announced = Arc::new(Announced::default());
-        let user = alice();
+        let user = make_user("alice");
         let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
         let hers = as_user(user.id);
 
@@ -478,7 +467,7 @@ mod tests {
     /// controller's, too; another user's change is not.
     #[test]
     fn the_roles_follow_their_announcement() {
-        let user = alice();
+        let user = make_user("alice");
         let controller =
             controller_in(&Persistence::in_memory(), &user, Arc::new(Announced::default()));
         let staff = RoleId::new();
@@ -506,7 +495,7 @@ mod tests {
             Arc::new(ConfidentialityRules::default()),
         );
         let announced = Arc::new(Announced::default());
-        let user = alice();
+        let user = make_user("alice");
         let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
 
         let invalid = controller.update_profile(&as_user(user.id), Some("a\u{1b}[2Jb"), None).await;
@@ -531,7 +520,7 @@ mod tests {
             Arc::new(OwnershipPolicy::new()),
             Arc::new(ConfidentialityRules::default()),
         );
-        let user = alice();
+        let user = make_user("alice");
         let controller = controller_in(&store, &user, Arc::new(()));
         let hers = as_user(user.id);
         controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
@@ -597,7 +586,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_profile_changed_elsewhere_is_taken_over() {
-        let user = alice();
+        let user = make_user("alice");
         let controller = controller_in(&Persistence::in_memory(), &user, Arc::new(()));
         let changed =
             UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));

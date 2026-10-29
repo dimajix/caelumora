@@ -268,8 +268,8 @@ mod tests {
     use crate::store::query::Query;
     use crate::store::Persistence;
     use crate::store::{StoreError, Stored};
+    use crate::user::testing::make_user;
     use crate::user::UserId;
-    use crate::value::name::Name;
     use std::sync::Arc;
 
     /// Owners do everything, whom the list names read, nobody acts for
@@ -610,14 +610,7 @@ mod tests {
         let alice_ctx =
             SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());
         let (_, bob_ctx) = user();
-        let record = User {
-            id: alice_id,
-            username: Name::new("alice").unwrap(),
-            email: String::new(),
-            roles: vec![RoleId::new()],
-            deleted: None,
-            revision: Default::default(),
-        };
+        let record = User { id: alice_id, roles: vec![RoleId::new()], ..make_user("alice") };
 
         let own = store.create(&alice_ctx, &record).await;
         assert!(

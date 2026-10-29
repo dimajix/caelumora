@@ -14,7 +14,6 @@ use crate::channel::ChannelLoop;
 use crate::command::CommandError;
 use crate::controller::SessionController;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
-use crate::session::testing::user;
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -34,6 +33,7 @@ use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
 use caelumora_model::store::StoreResult;
+use caelumora_model::user::testing::make_user;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::work::TurnId;
@@ -92,7 +92,7 @@ pub async fn alice_and_an_agent(
         .create(&SecurityContext::system(), &personality)
         .await
         .unwrap();
-    let alice = user("alice");
+    let alice = make_user("alice");
     let context =
         SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(

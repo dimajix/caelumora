@@ -197,6 +197,7 @@ impl ChannelLoop {
 mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
+    use caelumora_model::user::testing::make_user;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -219,7 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_and_waking_deliberately_ask_the_access_policy() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let context =
             SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let refused = channel_with(&[&alice], Arc::new(DenyAll)).await;
@@ -255,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_stopped_channel_refuses_what_a_user_sends() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut said = channel.observe();

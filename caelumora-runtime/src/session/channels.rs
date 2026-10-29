@@ -674,6 +674,7 @@ mod tests {
     use caelumora_model::command::HELP_COMMAND_KIND;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::session::testing::make_session;
+    use caelumora_model::user::testing::make_user;
 
     use crate::channel::ChannelLoop;
 
@@ -1151,7 +1152,7 @@ mod tests {
     async fn only_who_may_change_the_session_creates_or_deletes_its_channels() {
         let (_, manager) = owned_runtime(Default::default());
 
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let as_user = |id: UserId| {
             SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
         };
@@ -1182,7 +1183,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_its_viewer_may_not_read_is_not_there_for_them() {
         let (_, manager) = owned_runtime(Default::default());
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let as_user = |id: UserId| {
             SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
         };

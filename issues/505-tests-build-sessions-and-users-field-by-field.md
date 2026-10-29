@@ -1,6 +1,6 @@
 # 505 — Tests build sessions and users field by field
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -61,3 +61,8 @@ tests as not following it.
   which `AcceptAnyUserProvider` makes its new users with, and `user::testing::make_user(name)` in
   place of the runtime's `session::testing::user`. Step 1 done: the 9 sessions are written by what
   they differ in, `make_session` on `bare_session`.
+- **2026-10-29** — Step 2 done: `User::new(username)`, which `AcceptAnyUserProvider` makes its
+  new users with, and `user::testing::make_user(name)` on it, in place of the runtime's
+  `session::testing::user`; the 18 users are written by what they differ in. The file provider
+  keeps its literal: it fills every field from its file, and a new field is to be decided there.
+  `User::new` is `pub(crate)`: both its callers are the model's, and no provider lives elsewhere.

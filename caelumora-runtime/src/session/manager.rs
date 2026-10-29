@@ -1154,10 +1154,10 @@ mod tests {
         ChannelTemplate, InternalActorTemplate, SessionTemplate, SessionTemplateId,
     };
     use caelumora_model::turn::{GivenUpReason, TurnState};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserProfile;
     use caelumora_model::user::{User, UserId};
     use caelumora_model::value::language::Language;
-    use caelumora_model::value::name::Name;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::value::ValueError;
@@ -1531,14 +1531,7 @@ mod tests {
     async fn pairing(runtime: &RuntimeManager) -> (UserId, SessionTemplate) {
         let system = SecurityContext::system();
         let owner = UserId::new();
-        let alice = User {
-            id: owner,
-            username: Name::new("alice").unwrap(),
-            email: String::new(),
-            roles: Vec::new(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let alice = User { id: owner, ..make_user("alice") };
         runtime.entity_stores().users.create(&system, &alice).await.unwrap();
         let template = SessionTemplate {
             channels: vec![ChannelTemplate {
@@ -2290,7 +2283,7 @@ mod tests {
         .build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
-        let alice = user("alice");
+        let alice = make_user("alice");
         let participants = record_users(&manager, &[&alice]).await;
         let personality = make_personality("thinker");
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();

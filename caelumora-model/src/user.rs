@@ -59,6 +59,21 @@ pub struct User {
 /// Derived rather than stored, so that no record can say otherwise.
 static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes::systems();
 
+impl User {
+    /// A new user named `username`, of no roles and without an email: as a provider that knows
+    /// nothing else of them makes one.
+    pub(crate) fn new(username: Name) -> Self {
+        Self {
+            id: UserId::new(),
+            username,
+            email: String::new(),
+            roles: Vec::new(),
+            deleted: None,
+            revision: Default::default(),
+        }
+    }
+}
+
 impl Stored for User {
     const KIND: EntityKind = EntityKind::new("user");
     type Id = UserId;
@@ -352,6 +367,22 @@ impl Journaled for UserChannelState {
             UserChannelStateChange::Read(read) => self.read = read,
         }
         Ok(())
+    }
+}
+
+/// Users for the tests of this crate and of others, which write beside them only what they differ
+/// in.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use super::*;
+
+    /// A user `name`, not stored: `User::new`, the name a test gives taken as one.
+    #[expect(
+        clippy::expect_used,
+        reason = "test code: a name that is none fails the test that gives it"
+    )]
+    pub fn make_user(name: &str) -> User {
+        User::new(Name::new(name).expect("a test's name of a user is one"))
     }
 }
 

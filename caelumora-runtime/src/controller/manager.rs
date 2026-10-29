@@ -446,6 +446,7 @@ mod tests {
     use caelumora_model::security::{AclEntry, Grant, Subject};
     use caelumora_model::store::Persistence;
     use caelumora_model::store::StoreError;
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{User, UserUpdateEvent};
     use caelumora_model::value::language::Language;
     use caelumora_model::value::name::{Name, ScopedName};
@@ -496,14 +497,7 @@ mod tests {
     }
 
     async fn user_in(store: &Persistence) -> User {
-        let user = User {
-            id: UserId::new(),
-            username: Name::new("alice").unwrap(),
-            email: String::new(),
-            roles: Vec::new(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let user = make_user("alice");
         store
             .entity_stores()
             .unwrap()

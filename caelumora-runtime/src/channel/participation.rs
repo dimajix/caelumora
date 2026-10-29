@@ -355,6 +355,7 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, SessionId};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;
@@ -372,7 +373,7 @@ mod tests {
             Clearance, Compartment, Compartments, Confidentiality, ConfidentialityRules,
         };
         use caelumora_model::role::{RoleId, Roles};
-        use caelumora_model::user::{User, UserId};
+        use caelumora_model::user::User;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let roles = Roles::new([
@@ -397,12 +398,8 @@ mod tests {
         let runtime = Arc::clone(manager.runtime());
         let system = SecurityContext::system();
         let user = |name: &str, roles: &[&str]| User {
-            id: UserId::new(),
-            username: Name::new(name).unwrap(),
-            email: String::new(),
             roles: ids.ids_of(roles).unwrap(),
-            deleted: None,
-            revision: Default::default(),
+            ..make_user(name)
         };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));

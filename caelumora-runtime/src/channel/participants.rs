@@ -492,6 +492,7 @@ mod tests {
     use caelumora_model::channel::{Channel, HistoryAccess, JOINED, LEFT};
     use caelumora_model::history::HistoryEntry;
     use caelumora_model::session::testing::make_session;
+    use caelumora_model::user::testing::make_user;
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -500,8 +501,6 @@ mod tests {
 
     use crate::channel::tests::*;
     use crate::testing::Script;
-
-    use caelumora_model::value::name::Name;
 
     use crate::actor::user::ChannelWatch;
     use crate::actor::{Actor, Shown};
@@ -607,12 +606,8 @@ mod tests {
         let ids = roles.clone();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments).with_roles(roles));
         let user = |name: &str, roles: &[&str]| User {
-            id: UserId::new(),
-            username: Name::new(name).unwrap(),
-            email: String::new(),
             roles: ids.ids_of(roles).unwrap(),
-            deleted: None,
-            revision: Default::default(),
+            ..make_user(name)
         };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
@@ -984,7 +979,7 @@ mod tests {
     #[tokio::test]
     async fn only_who_may_change_a_channel_adds_or_removes_its_participants() {
         let (_, manager) = owned_runtime(Default::default());
-        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
         let carol_id = ActorId::User(carol.id);

@@ -1,8 +1,8 @@
 //! What tests of the runtime need to build it as a binary does, and the fixtures the tests of
-//! sessions, channels and the views share: one of each, for building a runtime and a user, storing
-//! and starting a session, and the views an actor of a running session navigates (issue 315). The
-//! documents of a session and its channels are the model's (`caelumora_model::session::testing`,
-//! `caelumora_model::channel::testing`).
+//! sessions, channels and the views share: one of each, for building a runtime, recording users,
+//! storing and starting a session, and the views an actor of a running session navigates (issue
+//! 315). The documents of a session, its channels and its users are the model's
+//! (`caelumora_model::session::testing`, `channel::testing`, `user::testing`).
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -40,8 +40,8 @@ use caelumora_model::store::Persistence;
 use caelumora_model::store::{
     EntityKind, PersistenceBackend, Presence, Revision, StateStore, StoreError, StoreResult,
 };
-use caelumora_model::user::{User, UserId};
-use caelumora_model::value::name::Name;
+use caelumora_model::user::testing::make_user;
+use caelumora_model::user::User;
 use caelumora_model::value::name::ScopedName;
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -49,18 +49,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use uuid::Uuid;
-
-/// A user named `name`, not stored.
-pub fn user(name: &str) -> User {
-    User {
-        id: UserId::new(),
-        username: Name::new(name).unwrap(),
-        email: String::new(),
-        roles: Vec::new(),
-        deleted: None,
-        revision: Default::default(),
-    }
-}
 
 /// `users` as participants, recorded in the store the session reads
 /// them from (issue 120).
@@ -170,7 +158,7 @@ pub fn drain(rx: &mut EventSubscription) -> Vec<GlobalEvent> {
 pub async fn running_session_of_a_user(
     manager: &SessionManager,
 ) -> (Arc<SessionLoop>, SecurityContext, ActorId) {
-    let (owner, other) = (user("owner"), user("other"));
+    let (owner, other) = (make_user("owner"), make_user("other"));
     let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
     let mut session = make_session("with-users", owner.id);
     session.participants = record_users(manager, &[&owner, &other]).await;

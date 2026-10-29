@@ -957,6 +957,7 @@ mod tests {
     use caelumora_model::session::ChannelId;
     use caelumora_model::tool::{ToolCall, ToolCallResult};
     use caelumora_model::turn::GivenUpReason;
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use chrono::Utc;
@@ -993,7 +994,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_users_own_message_is_shown_with_its_mentions_resolved() {
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let channel = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut following = actor.watch();
@@ -1045,7 +1046,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_sender_gets_back_only_what_the_moderator_sends_in_another_name() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let bob = ActorId::Agent(AgentId::new());
         let channel = channel_moderated_by(&[&alice], Arc::new(TellsTheSender)).await;
         let (tx, mut rx) = opened();
@@ -1131,7 +1132,7 @@ mod tests {
     #[tokio::test]
     async fn a_user_following_the_channel_is_told_when_a_chain_is_cut_off() {
         use crate::moderator::policy_moderator::{PolicyModerator, DEFAULT_CONTEXT_MESSAGES};
-        let alice = user("alice");
+        let alice = make_user("alice");
         let responders = ComponentImpl {
             id: "responders".to_string(),
             fail_policy: Default::default(),
@@ -1185,7 +1186,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_actor_cannot_speak_in_the_name_of_another() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let talker = ActorId::Agent(AgentId::new());
         let her = ActorId::User(alice.id);
@@ -1247,7 +1248,7 @@ mod tests {
 
     #[tokio::test]
     async fn who_joined_or_left_is_the_channel_s_word_alone() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let her = ActorId::User(alice.id);
         let stranger = ActorId::User(UserId::new());
@@ -1324,7 +1325,7 @@ mod tests {
     #[tokio::test]
     async fn an_answer_to_an_approval_says_its_senders_part_alone() {
         use caelumora_model::approval::{ApprovalDecision, ApprovalResponse};
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let (her, bob) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from_her = |event| {
@@ -1377,7 +1378,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_is_recorded_of_a_turn_comes_from_an_agent_in_its_own_name() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let agent = ActorId::Agent(AgentId::new());
         let her = ActorId::User(alice.id);
@@ -1443,7 +1444,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_channel_wakes_only_whom_the_moderator_asks_to_respond() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let context =
             SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let (asked, other) = (sleeper(), sleeper());
@@ -1484,7 +1485,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_admits_only_what_may_flow_into_it_in_its_senders_name() {
         use caelumora_model::security::OwnershipPolicy;
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from = |sender: ActorId, context: ActorId, classification: Classification| {
@@ -1536,7 +1537,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_change_to_a_message_enters_the_channel_only_from_its_author_as_it_stands() {
         use caelumora_model::security::OwnershipPolicy;
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from = |sender: ActorId, event| {
@@ -1721,7 +1722,7 @@ mod tests {
     #[tokio::test]
     async fn the_channel_keeps_the_end_of_its_history_and_reads_the_rest_from_the_store() {
         use caelumora_model::history::WINDOW;
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let alice_id = ActorId::User(alice.id);
         let from = |event| {
@@ -1794,7 +1795,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_user_changes_only_their_own_message_and_learns_why_not() {
         use caelumora_model::security::OwnershipPolicy;
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let said = Message {
@@ -2067,7 +2068,7 @@ mod tests {
 
     #[tokio::test]
     async fn nothing_of_a_removed_participant_enters_the_channel_once_its_task_has_ended() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let mut events = channel.observe();
         let gone = ActorId::Agent(AgentId::new());
@@ -2101,7 +2102,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_a_leaving_actor_sends_enters_the_channel_until_its_task_has_ended() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let mut events = channel.observe();
         let going = ActorId::Agent(AgentId::new());
@@ -2233,7 +2234,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_newcomer_reads_what_it_was_given_then_its_join_then_what_is_said_from_there_on() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let context =
             SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
@@ -2297,7 +2298,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancelled_channel_delivers_what_is_said_but_asks_nobody_until_it_is_asked_to_wake() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let context =
             SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let bob = ActorId::Agent(AgentId::new());
@@ -2357,7 +2358,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_one_actor_ends_its_turn_alone_and_keeps_the_channel_answering() {
-        let alice = user("alice");
+        let alice = make_user("alice");
         let context =
             SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let (cancelled, other) = (sleeper(), sleeper());
@@ -2412,7 +2413,7 @@ mod tests {
     /// delivers, or some alone.
     #[tokio::test]
     async fn what_enters_is_recorded_with_its_sender_and_whom_it_went_to() {
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let said = |text: &str| {
             Envelope::new(
                 SecurityContext::new(
@@ -2471,7 +2472,7 @@ mod tests {
     /// from the item it reads later.
     #[tokio::test]
     async fn what_is_delivered_carries_the_position_of_its_entry() {
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let channel =
             channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
         let (tx, mut rx) = opened();
@@ -2552,7 +2553,7 @@ mod tests {
             fn add_actor(&self, _: Arc<dyn Actor>) {}
             fn remove_actor(&self, _: ActorId) {}
         }
-        let alice = user("alice");
+        let alice = make_user("alice");
         let told = Arc::new(Told::default());
         let channel = channel_moderated_by(&[&alice], Arc::<Told>::clone(&told)).await;
         let (tx, mut rx) = opened();

@@ -7,13 +7,14 @@ use crate::command::{CommandContext, CommandError, CommandResult};
 use crate::error::is_forbidden;
 use caelumora_model::agent::AgentId;
 use caelumora_model::command::{CommandOutput, CommandVisibility};
+use caelumora_model::user::testing::make_user;
 use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
 use tokio::time;
 
 #[tokio::test]
 async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
-    let alice = user("alice");
+    let alice = make_user("alice");
     // `/wakeup` is hidden from everybody.
     let policy = Policy(
         |action| !matches!(action, ActionType::ShowCommand { command, .. } if command.name == "wakeup"),
@@ -53,7 +54,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
 
 #[tokio::test]
 async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
-    let alice = user("alice");
+    let alice = make_user("alice");
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let mut events = channel.observe();
@@ -97,7 +98,7 @@ async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
 
 #[tokio::test]
 async fn wakeup_reports_refusals_and_unknown_agents() {
-    let alice = user("alice");
+    let alice = make_user("alice");
     let refuse_waking = Policy(|action| !matches!(action, ActionType::WakeChannel(_)));
     let channel = channel_with(&[&alice], Arc::new(refuse_waking)).await;
     let actor = channel.user_actor(alice.id).unwrap();
@@ -287,7 +288,7 @@ async fn only_someone_else_in_the_channel_is_nudged() {
 
 #[tokio::test]
 async fn a_nudged_user_is_shown_who_asks_them_to_respond() {
-    let (alice, bob) = (user("alice"), user("bob"));
+    let (alice, bob) = (make_user("alice"), make_user("bob"));
     let channel = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
     let running = tokio::spawn({
         let channel = Arc::clone(&channel);

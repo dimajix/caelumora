@@ -505,8 +505,9 @@ mod tests {
     use caelumora_model::session::SessionId;
     use caelumora_model::store::Persistence;
     use caelumora_model::tool::ToolCall;
-    use caelumora_model::user::{User, UserId};
-    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::UserId;
+    use caelumora_model::value::name::ScopedName;
     use serde_json::json;
     use std::any::Any;
     use std::time::Duration;
@@ -537,14 +538,7 @@ mod tests {
         let system = SecurityContext::system();
         let mut ids = Vec::new();
         for n in 0..users {
-            let user = User {
-                id: UserId::new(),
-                username: Name::new(format!("user{n}")).unwrap(),
-                email: String::new(),
-                roles: vec![],
-                deleted: None,
-                revision: Default::default(),
-            };
+            let user = make_user(&format!("user{n}"));
             store.entity_stores().unwrap().users.create(&system, &user).await.unwrap();
             ids.push(user.id);
         }

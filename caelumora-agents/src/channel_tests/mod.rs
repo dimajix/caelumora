@@ -43,7 +43,6 @@ use caelumora_runtime::command::CommandError;
 use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::ComponentKind;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry};
-use caelumora_runtime::session::testing::user;
 use caelumora_runtime::testing::{test_registry, TestRuntime};
 use futures::stream;
 use futures::stream::BoxStream;

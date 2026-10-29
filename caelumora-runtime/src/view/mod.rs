@@ -1039,6 +1039,7 @@ mod tests {
     use caelumora_model::snapshot::Detail;
     use caelumora_model::store::Persistence;
     use caelumora_model::turn::GivenUpReason;
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::value::text::Introduction;
@@ -1123,7 +1124,7 @@ mod tests {
         use caelumora_model::message::{Message, MessageId};
 
         let (store, manager) = owned_runtime(Default::default());
-        let alice = user("alice");
+        let alice = make_user("alice");
         let remote =
             an_agent_of_kind(&store, ActorId::User(alice.id), PersonalityKind::External).await;
         let mut session = make_session("hers", alice.id);
@@ -1224,7 +1225,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn the_views_show_what_their_viewer_may_read_and_do_whether_the_session_runs_or_not() {
         let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
 
         let mut session = make_session("hers", alice.id);
@@ -1362,7 +1363,7 @@ mod tests {
         use caelumora_model::channel::InternalActor;
 
         let (_, manager) = owned_runtime(Default::default());
-        let alice = user("Alice Example");
+        let alice = make_user("Alice Example");
         let gone = UserId::new();
         let mut session = make_session("s", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
@@ -1404,7 +1405,7 @@ mod tests {
     #[tokio::test]
     async fn what_a_place_is_for_is_shown_its_briefing_only_where_asked_for() {
         let (_, manager) = owned_runtime(Default::default());
-        let alice = user("alice");
+        let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         (session.summary, session.briefing) = (
@@ -1446,7 +1447,7 @@ mod tests {
 
         let (store, manager) = owned_runtime(Default::default());
         let system = SecurityContext::system();
-        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         // Carol owns the agent but takes no part in the session.
         store.entity_stores().unwrap().users.create(&system, &carol).await.unwrap();
         let remote =
@@ -1552,7 +1553,10 @@ mod tests {
         use caelumora_model::user::User;
 
         let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob, carol, dave) = (user("alice"), user("bob"), user("carol"), user("dave"));
+        let alice = make_user("alice");
+        let bob = make_user("bob");
+        let carol = make_user("carol");
+        let dave = make_user("dave");
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob, &carol, &dave]).await;
         let mut channel = main_channel(&session);
@@ -1711,7 +1715,7 @@ mod tests {
         use caelumora_model::note::{NoteId, NoteOrigin};
 
         let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
@@ -1896,7 +1900,7 @@ mod tests {
         use caelumora_model::removal::Removal;
 
         let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(&store, ActorId::User(bob.id)).await;
         let mut session = make_session("shared", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
@@ -1989,7 +1993,7 @@ mod tests {
         use caelumora_model::note::{NoteId, NoteOrigin};
 
         let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
@@ -2055,7 +2059,7 @@ mod tests {
         use caelumora_model::note::{NoteId, NoteOrigin};
 
         let (store, manager) = owned_runtime(Default::default());
-        let alice = user("alice");
+        let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
@@ -2131,7 +2135,7 @@ mod tests {
         use caelumora_model::turn::TurnState;
 
         let (store, manager) = owned_runtime(Default::default());
-        let alice = user("alice");
+        let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
@@ -2202,7 +2206,7 @@ mod tests {
         use caelumora_model::turn::TurnState;
 
         let (store, manager) = owned_runtime(Default::default());
-        let alice = user("alice");
+        let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
@@ -2312,7 +2316,7 @@ mod tests {
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (store, manager) = owned_runtime(ConfidentialityRules::new(compartments));
-        let alice = user("alice");
+        let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
@@ -2531,7 +2535,7 @@ mod tests {
         use caelumora_model::message::{Message, MessageId};
 
         let (store, manager) = owned_runtime(Default::default());
-        let alice = user("alice");
+        let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
@@ -2634,7 +2638,7 @@ mod tests {
         )])
         .unwrap();
         let (store, manager) = owned_runtime(ConfidentialityRules::default().with_roles(roles));
-        let alice = user("alice");
+        let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice]).await;
         let main = Channel {
@@ -2684,7 +2688,7 @@ mod tests {
     #[tokio::test]
     async fn what_was_deleted_is_shown_to_its_owner_with_what_they_may_do_about_it() {
         let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let channel = main_channel(&session);
@@ -2735,7 +2739,7 @@ mod tests {
         use caelumora_model::removal::Removal;
 
         let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
@@ -2793,7 +2797,7 @@ mod tests {
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
         let runtime = Arc::clone(manager.runtime());
 
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
         // Her context carries her roles, as her controller gives it (issue 304).
@@ -2888,7 +2892,7 @@ mod tests {
         use caelumora_model::privacy::PrivacyConfig;
 
         let (_, manager) = owned_runtime(Default::default());
-        let (alice, carol) = (user("alice"), user("carol"));
+        let (alice, carol) = (make_user("alice"), make_user("carol"));
         let (alice_id, carol_id) = (ActorId::User(alice.id), ActorId::User(carol.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
 
@@ -2951,7 +2955,7 @@ mod tests {
         ])
         .unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
-        let alice = user("alice");
+        let alice = make_user("alice");
         let alice_id = ActorId::User(alice.id);
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let mut session = make_session("hers", alice.id);
@@ -3060,7 +3064,7 @@ mod tests {
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 
-        let alice = user("alice");
+        let alice = make_user("alice");
         let participants = record_users(&manager, &[&alice]).await;
         let personality = make_personality("thinker");
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
