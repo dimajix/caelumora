@@ -13,6 +13,7 @@ use crate::actor::{ActorEvent, Envelope, EventContext};
 use crate::actor::{ActorId, ActorState};
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::chain::{Node, Position};
+use crate::channel::testing::make_channel;
 use crate::channel::{moderation_components, Channel, ChannelId, ChannelState};
 use crate::component::{ComponentBundle, ComponentBundleId, ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::{Classification, Visibility};
@@ -154,23 +155,7 @@ fn session() -> Session {
 }
 
 fn channel() -> Channel {
-    Channel {
-        summary: None,
-        briefing: None,
-        approval_rules: Vec::new(),
-        uses_workspace: true,
-        id: ChannelId(Uuid::new_v4()),
-        session_id: SessionId(Uuid::new_v4()),
-        name: Name::new("general").unwrap(),
-        components: moderation_components(None, Some("broadcast_policy")),
-        classification: Classification::CHANNEL_DEFAULT,
-        language: None,
-        former: Vec::new(),
-        participants: Vec::new(),
-        internal_actors: Vec::new(),
-        security_attributes: Default::default(),
-        deleted: None,
-    }
+    make_channel(SessionId(Uuid::new_v4()), "general")
 }
 
 fn user(username: &str) -> User {

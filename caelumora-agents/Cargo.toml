@@ -28,6 +28,7 @@ test-support = ["caelumora-runtime/test-support"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+caelumora-model = { workspace = true, features = ["test-support"] }
 caelumora-runtime = { workspace = true, features = ["test-support"] }
 caelumora-agents = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

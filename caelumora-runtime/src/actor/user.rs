@@ -960,8 +960,7 @@ mod tests {
     use crate::session::testing::{bare_session, test_runtime};
     use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::actor::EventContext;
-    use caelumora_model::channel::{moderation_components, Channel};
-    use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::channel::testing::make_channel;
     use caelumora_model::user::{User, UserId};
     use std::iter;
     use std::time::Duration;
@@ -972,23 +971,7 @@ mod tests {
     async fn user_actor() -> (UserActor, Arc<ChannelLoop>) {
         let runtime = test_runtime();
         let session_id = SessionId::new();
-        let channel = Channel {
-            summary: None,
-            briefing: None,
-            approval_rules: Vec::new(),
-            uses_workspace: true,
-            id: ChannelId::new(),
-            session_id,
-            name: Name::new("main").unwrap(),
-            components: moderation_components(None, Some("broadcast_policy")),
-            participants: Vec::new(),
-            internal_actors: Vec::new(),
-            security_attributes: SecurityAttributes::default(),
-            classification: Classification::CHANNEL_DEFAULT,
-            language: None,
-            deleted: None,
-            former: Vec::new(),
-        };
+        let channel = make_channel(session_id, "main");
         let user = User {
             id: UserId::new(),
             username: Name::new("alice").unwrap(),
