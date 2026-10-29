@@ -45,9 +45,10 @@ bytes.workspace = true
 
 [features]
 # What the tests of other crates read of a model value held in memory
-# (`history::testing`, issue 392), the messages, channels and templates they
-# write (`message::testing`, `channel::testing`, `template::testing`) and the
-# suite every backend of the stores runs (`store::suite`, issue 446).
+# (`history::testing`, issue 392), the messages, references to contents,
+# channels and templates they write (`message::testing`, `content::testing`,
+# `channel::testing`, `template::testing`) and the suite every backend of the
+# stores runs (`store::suite`, issue 446).
 test-support = []
 
 [dev-dependencies]
