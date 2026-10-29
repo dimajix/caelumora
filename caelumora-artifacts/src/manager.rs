@@ -553,10 +553,19 @@ impl ArtifactManager {
                 StoreError::PermissionDenied,
             )
             .await?;
-        self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key(id)).await?;
+        self.remove_content(&artifact).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
         Ok(purged)
+    }
+
+    /// Removes the content of `artifact`, every version of it, which is about to be purged.
+    ///
+    /// # Errors
+    /// `StorageGone` if its storage is no longer configured, or `Content` if removing it failed.
+    async fn remove_content(&self, artifact: &Artifact) -> ArtifactResult<()> {
+        self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key(artifact.id)).await?;
+        Ok(())
     }
 }
 
@@ -579,22 +588,16 @@ impl ScopeMember for ArtifactManager {
         Some(&self.writing)
     }
 
-    /// Removes the content of `artifact`, every version of it, which is its storage too.
+    /// Removes the content of `artifact`, as `purge` does; it is its storage too.
     ///
     /// # Errors
-    /// As `StoreError::Backend`, `StorageGone` or a `ContentError` of removing the content.
+    /// As `StoreError::Backend`, what `remove_content` reports.
     async fn remove_behind(&self, artifact: &Artifact) -> StoreResult<()> {
-        let unremoved = |e: &dyn fmt::Display| {
+        self.remove_content(artifact).await.map_err(|e| {
             StoreError::Backend(format!(
                 "the content of artifact {} cannot be removed: {e}",
                 artifact.id
             ))
-        };
-        self.storages
-            .kept_in(&artifact.storage)
-            .map_err(|e| unremoved(&e))?
-            .remove_under(&versions_key(artifact.id))
-            .await
-            .map_err(|e| unremoved(&e))
+        })
     }
 }

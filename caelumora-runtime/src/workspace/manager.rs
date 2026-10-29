@@ -228,10 +228,19 @@ impl WorkspaceManager {
                 StoreError::PermissionDenied,
             )
             .await?;
-        self.storages.kept_in(&workspace.storage)?.remove(id).await?;
+        self.remove_place(&workspace).await?;
         let purged = self.workspaces.purge(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
         Ok(purged)
+    }
+
+    /// Removes the place of `workspace`, which is about to be purged.
+    ///
+    /// # Errors
+    /// `StorageGone` if its storage is no longer configured, or a `TerminalError` of removing it.
+    async fn remove_place(&self, workspace: &Workspace) -> WorkspaceResult<()> {
+        self.storages.kept_in(&workspace.storage)?.remove(workspace.id).await?;
+        Ok(())
     }
 
     /// The workspace of `name`, in exactly that scope, among those `ctx`
@@ -284,22 +293,16 @@ impl ScopeMember for WorkspaceManager {
         Some(&self.writing)
     }
 
-    /// Removes the place of `workspace`, which is its storage too.
+    /// Removes the place of `workspace`, as `purge` does; it is its storage too.
     ///
     /// # Errors
-    /// As `StoreError::Backend`, `StorageGone` or a `TerminalError` of removing the place.
+    /// As `StoreError::Backend`, what `remove_place` reports.
     async fn remove_behind(&self, workspace: &Workspace) -> StoreResult<()> {
-        let unremoved = |e: &dyn fmt::Display| {
+        self.remove_place(workspace).await.map_err(|e| {
             StoreError::Backend(format!(
                 "the place of workspace {} cannot be removed: {e}",
                 workspace.id
             ))
-        };
-        self.storages
-            .kept_in(&workspace.storage)
-            .map_err(|e| unremoved(&e))?
-            .remove(workspace.id)
-            .await
-            .map_err(|e| unremoved(&e))
+        })
     }
 }

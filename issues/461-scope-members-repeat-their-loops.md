@@ -65,3 +65,6 @@ otherwise: all of them or none, in the runtime's name. They stay apart.
   an agent is purged with its scope, its state is now removed before it, as a workspace's place and
   an artifact's content are; the agents' deletions and restorings with their scope are announced by
   `announce`, as every other kind's.
+- **2026-10-29** — The managers of workspaces and artifacts remove a place or a content in one step
+  of their own (`remove_place`, `remove_content`), which their `purge` answers in their error type
+  and their `remove_behind` as a `StoreError::Backend`, instead of writing it twice.
