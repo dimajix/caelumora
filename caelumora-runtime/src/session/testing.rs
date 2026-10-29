@@ -146,22 +146,11 @@ pub fn bare_session(session_id: SessionId) -> Session {
 /// what an actor outside a running session is in
 /// (`ChannelRuntime::outside_a_session`).
 pub fn bare_channel(session_id: SessionId) -> Channel {
+    // Neither components nor the workspace of its session: nothing but its ids.
     Channel {
-        summary: None,
-        briefing: None,
-        approval_rules: Vec::new(),
-        uses_workspace: false,
-        id: ChannelId::new(),
-        session_id,
-        name: Name::new("c").unwrap(),
         components: Default::default(),
-        classification: Default::default(),
-        language: None,
-        participants: Vec::new(),
-        internal_actors: Vec::new(),
-        security_attributes: Default::default(),
-        deleted: None,
-        former: Vec::new(),
+        uses_workspace: false,
+        ..make_channel(session_id, "c")
     }
 }
 
