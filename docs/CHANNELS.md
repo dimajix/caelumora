@@ -580,7 +580,8 @@ channel it takes part in until it is restored. The channels follow its mark inst
     what it said keeps its sender.
 
 A running session subscribes to the events of its agents, and looks at all of them again as it
-starts and after it lost events, so that a deletion or a restore it did not hear of is not missed.
+starts and after it lost events, so that a deletion or a restore it did not hear of is not missed;
+after a loss it follows every agent taking part, also one taken in whose announcement was lost.
 
 Restoring the agent is refused if another agent took its name in its scope meanwhile. Otherwise it
 takes part again in every channel it rested in: a running session builds its actor anew, gives it

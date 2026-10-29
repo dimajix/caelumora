@@ -415,10 +415,7 @@ impl SessionLoop {
         // take in (issue 121). An agent taken in later is followed once that
         // is announced (issue 221).
         let mut topics = vec![SubscriptionTopic::Session(self.id())];
-        topics.extend(self.session().participants.iter().filter_map(|p| match p {
-            Participant::Agent(id) => Some(SubscriptionTopic::Agent(*id)),
-            _ => None,
-        }));
+        topics.extend(self.agent_topics());
         let mut subscription = self.events.subscribe(topics);
         let mut following = true;
         self.follow_agents(None).await;
@@ -460,6 +457,10 @@ impl SessionLoop {
                         }
                         Err(RecvError::Lagged(lost)) => {
                             tracing::warn!("Session {} lost {} events and looks at its agents again", self.id, lost);
+                            // An agent taken in meanwhile is followed from now on (issue 502).
+                            for topic in self.agent_topics() {
+                                self.events.follow(&subscription, topic);
+                            }
                             self.follow_agents(None).await;
                         }
                         // Not while the session holds the bus.
@@ -468,6 +469,19 @@ impl SessionLoop {
                 }
             }
         }
+    }
+
+    /// The topics of the agents taking part in the session, whose deletion
+    /// and restoring its channels follow.
+    fn agent_topics(&self) -> Vec<SubscriptionTopic> {
+        self.session()
+            .participants
+            .iter()
+            .filter_map(|p| match p {
+                Participant::Agent(id) => Some(SubscriptionTopic::Agent(*id)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The agent taken into this session, if `global_event` announces one

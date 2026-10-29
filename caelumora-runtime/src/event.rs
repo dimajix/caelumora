@@ -14,8 +14,10 @@ use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserId, UserProfile};
 use dashmap::DashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(any(test, feature = "test-support"))]
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{broadcast, mpsc};
+#[cfg(any(test, feature = "test-support"))]
 use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -113,12 +115,12 @@ pub struct EventBus {
 /// The events of an `EventBus` subscription.
 ///
 /// A subscriber that falls more than `SUBSCRIPTION_CAPACITY` events behind
-/// loses the oldest ones. `recv` notes that in the log and goes on, for
-/// subscribers that have no way to catch up; one that can - a stream that
-/// sends its client a fresh snapshot - takes the receiver with
-/// `into_receiver` and handles `RecvError::Lagged` itself, or borrows it
-/// with `receiver` to keep the subscription, which `EventBus::follow`
-/// extends by a topic.
+/// loses the oldest ones, and makes up for them (issue 502): it takes the
+/// receiver with `into_receiver`, or borrows it with `receiver` to keep the
+/// subscription, which `EventBus::follow` extends by a topic, and answers
+/// `RecvError::Lagged` by reading anew what it keeps - a stream sends its
+/// client a fresh snapshot. Only tests, which read what they caused, skip a
+/// loss (`recv`, `try_recv`).
 #[derive(Debug)]
 pub struct EventSubscription {
     rx: broadcast::Receiver<GlobalEvent>,
@@ -130,7 +132,9 @@ pub struct EventSubscription {
 
 impl EventSubscription {
     /// The next event, or `None` once the bus is gone. Lost events are
-    /// logged and skipped.
+    /// logged and skipped: for tests alone, since a subscriber of the
+    /// runtime makes up for them.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn recv(&mut self) -> Option<GlobalEvent> {
         loop {
             match self.rx.recv().await {
@@ -144,6 +148,7 @@ impl EventSubscription {
     }
 
     /// The next event if one is waiting, like `recv`.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn try_recv(&mut self) -> Option<GlobalEvent> {
         loop {
             match self.rx.try_recv() {
@@ -393,6 +398,18 @@ impl EventBus {
         // Periodic cleanup of empty topics could be added here, but DashMap doesn't make it as easy
         // as retain on Mutex<HashMap>. For now, let's keep it simple. Empty Vecs will remain in the
         // DashMap.
+    }
+}
+
+#[cfg(test)]
+impl EventBus {
+    /// Publishes `event` more often than a subscription holds, in a row: a
+    /// subscriber that does not run meanwhile falls behind and loses the
+    /// oldest, which tests of making up for a loss need (issue 502).
+    pub(crate) fn publish_past_capacity(&self, event: &GlobalEvent) {
+        for _ in 0..=SUBSCRIPTION_CAPACITY {
+            self.publish(event.clone(), SecurityAttributes::systems());
+        }
     }
 }
 
