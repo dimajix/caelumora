@@ -284,23 +284,45 @@ impl Secured for Session {
     }
 }
 
-#[cfg(test)]
-mod tests {
+/// Sessions for the tests of this crate and of others, which write beside them only what they
+/// differ in.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
     use super::*;
-    use crate::agent::AgentId;
 
-    /// A new session of `owner` with `participants`, granting what `access` grants besides.
-    fn session_of(owner: UserId, participants: Vec<Participant>, access: &[AclEntry]) -> Session {
+    /// A session of `owner` named `name`, as a template builds one (`SessionTemplate::build`):
+    /// read by its members (`Session::attributes_of`), the group of its participants (issue 23),
+    /// whom the test sets. It lists one channel, `channel::testing::main_channel`. Its project is a
+    /// stand-in: the runtime makes it one of its own when it stores it (issue 467).
+    #[expect(
+        clippy::expect_used,
+        reason = "test code: a name that is none fails the test that gives it"
+    )]
+    pub fn make_session(name: &str, owner: UserId) -> Session {
         let id = SessionId::new();
+        Session {
+            name: Name::new(name).expect("a test's name of a session is one"),
+            channels: vec![ChannelId::new()],
+            security_attributes: Session::attributes_of(id, owner, &[]),
+            ..bare_session(id)
+        }
+    }
+
+    /// A session of the system's that holds nothing but its id `session_id`: what `make_session`
+    /// is made from, a test starts from whose session is nobody's, and a channel outside a running
+    /// session belongs to (the runtime's `ChannelRuntime::outside_a_session`). It lists no
+    /// channels and no participants, and its project is a stand-in.
+    #[expect(clippy::expect_used, reason = "test code: the name is one")]
+    pub fn bare_session(session_id: SessionId) -> Session {
         let now = Utc::now();
         Session {
-            id,
-            name: Name::new("s").unwrap(),
+            id: session_id,
+            name: Name::new("s").expect("a name"),
             summary: None,
             briefing: None,
             language: None,
             time_zone: None,
-            participants,
+            participants: Vec::new(),
             channels: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
@@ -309,9 +331,26 @@ mod tests {
             project: ProjectId::new(),
             created_at: now,
             updated_at: now,
-            security_attributes: Session::attributes_of(id, owner, access),
+            security_attributes: SecurityAttributes::systems(),
             deleted: None,
             revision: Default::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::AgentId;
+    use crate::session::testing::bare_session;
+
+    /// A new session of `owner` with `participants`, granting what `access` grants besides.
+    fn session_of(owner: UserId, participants: Vec<Participant>, access: &[AclEntry]) -> Session {
+        let id = SessionId::new();
+        Session {
+            participants,
+            security_attributes: Session::attributes_of(id, owner, access),
+            ..bare_session(id)
         }
     }
 

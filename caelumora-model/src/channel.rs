@@ -515,11 +515,12 @@ impl InternalActor {
     }
 }
 
-/// Channels for the tests of this crate and of others, which write beside them only what they
-/// differ in.
+/// Channels and their states for the tests of this crate and of others, which write beside them
+/// only what they differ in.
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
     use super::*;
+    use crate::history::{Audience, HistoryEntry, Recorded};
 
     /// A channel `name` of the session `session_id` as `Channel::build` makes one - broadcast to
     /// its participants, of the default classification, without participants - but the system's,
@@ -539,13 +540,60 @@ pub mod testing {
         );
         Channel { security_attributes: SecurityAttributes::systems(), ..built }
     }
+
+    /// A channel of the session `session_id` that holds nothing but its ids: what an actor outside
+    /// a running session is in (the runtime's `ChannelRuntime::outside_a_session`) - neither
+    /// components nor the workspace of its session.
+    pub fn bare_channel(session_id: SessionId) -> Channel {
+        Channel {
+            components: Default::default(),
+            uses_workspace: false,
+            ..make_channel(session_id, "c")
+        }
+    }
+
+    /// The channel `session` lists, as a document of its own (issue 70) and as `Channel::build`
+    /// makes one: "main", belonging to whom the session belongs to, read by its participants -
+    /// the session's participants. `session` lists at least one channel
+    /// (`session::testing::make_session`).
+    pub fn main_channel(session: &Session) -> Channel {
+        let id = session.channels[0];
+        // The id the session lists, and the attributes that go with it.
+        Channel {
+            id,
+            security_attributes: Channel::attributes_of(id, session.security_attributes.owner_id),
+            participants: session.participants.clone(),
+            ..make_channel(session.id, "main")
+        }
+    }
+
+    /// The state of `channel` - a channel a test stores as it is, its participants written into
+    /// its document - with their joins recorded in its history, in its owner's name, as if they
+    /// had founded it (issue 420): so that its history says who is a member, as it does of a
+    /// channel created by the one way in. What a test records in the history goes after them.
+    pub fn founded(channel: &Channel) -> ChannelState {
+        let mut state = ChannelState::new(channel.id);
+        let owner = channel.security_attributes.owner_id;
+        for participant in &channel.participants {
+            let actor = participant.actor_id();
+            let joined = HistoryEntry::ParticipantJoined {
+                participant: actor,
+                name: actor.to_string(),
+                by: owner,
+                by_name: owner.to_string(),
+                at: Utc::now(),
+            };
+            state.history.enter(Recorded::new(joined, owner, Audience::Everybody));
+        }
+        state
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::message::testing::{id, make_message};
-    use crate::project::ProjectId;
+    use crate::session::testing::make_session;
     use crate::store::testing::{replayed, stored};
 
     /// Five messages, one a day, the last one `now`.
@@ -619,30 +667,11 @@ mod tests {
 
     #[test]
     fn a_channel_without_a_language_of_its_own_is_held_in_its_sessions() {
-        let (owner, id, now) = (UserId::new(), SessionId::new(), Utc::now());
-        let mut session = Session {
-            id,
-            name: Name::new("s").unwrap(),
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            participants: Vec::new(),
-            channels: Vec::new(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            created_at: now,
-            updated_at: now,
-            security_attributes: Session::attributes_of(id, owner, &[]),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let owner = UserId::new();
+        let mut session = make_session("s", owner);
         let tag = |tag: &str| Some(Language::new(tag).unwrap());
         let mut channel = Channel::build(
-            id,
+            session.id,
             ActorId::User(owner),
             Name::new("main").unwrap(),
             ComponentConfig::default(),

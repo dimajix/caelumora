@@ -179,8 +179,9 @@ impl ChannelRuntime {
 #[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
     /// A runtime for `channel` of `session`, which is not running - in
-    /// tests: it has no loop and no user commands (`bare_session` and
-    /// `bare_channel` for ones that hold nothing but their ids).
+    /// tests: it has no loop and no user commands (the model's
+    /// `session::testing::bare_session` and `channel::testing::bare_channel`
+    /// for ones that hold nothing but their ids).
     pub fn outside_a_session(
         runtime_manager: Arc<RuntimeManager>,
         session: Session,

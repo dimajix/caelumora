@@ -10,6 +10,7 @@ use caelumora_model::channel::testing::make_channel;
 use caelumora_model::channel::{moderation_components, Channel, Participant};
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
 use caelumora_model::session::SessionId;
+use caelumora_model::user::testing::make_user;
 use caelumora_model::user::UserId;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
@@ -29,8 +30,8 @@ use std::any::Any;
 mod commands;
 
 pub(super) use crate::channel::testing::*;
-pub(super) use crate::session::testing::user;
-use crate::session::testing::{bare_session, founded};
+use caelumora_model::channel::testing::founded;
+use caelumora_model::session::testing::bare_session;
 
 /// A channel of `users`, who are recorded in the store its actors are
 /// read from.
@@ -113,7 +114,7 @@ async fn channel_built(
 
 #[tokio::test]
 async fn a_participant_that_no_longer_exists_is_left_out() {
-    let alice = user("alice");
+    let alice = make_user("alice");
     let store = Persistence::in_memory();
     store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
     let (gone_user, gone_agent) = (UserId::new(), AgentId::new());
@@ -136,8 +137,8 @@ async fn a_participant_that_no_longer_exists_is_left_out() {
 
 #[tokio::test]
 async fn every_user_has_their_own_actor_and_a_stranger_has_none() {
-    let alice = user("alice");
-    let bob = user("bob");
+    let alice = make_user("alice");
+    let bob = make_user("bob");
     let channel = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
 
     for participant in [&alice, &bob] {
@@ -222,7 +223,7 @@ fn sleeper_named(name: &str) -> Arc<StandIn> {
 pub(super) async fn channel_with_sleepers(
     names: &[&str],
 ) -> (Arc<ChannelLoop>, UserId, Vec<Arc<StandIn>>) {
-    let alice = user("alice");
+    let alice = make_user("alice");
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let sleepers: Vec<_> = names.iter().map(|name| sleeper_named(name)).collect();
     for sleeper in &sleepers {

@@ -312,21 +312,24 @@ mod tests {
     use crate::tool::ToolError;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::Participant;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::confidentiality::{Compartments, ConfidentialityRules, Place, Reading};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::security::{OwnershipPolicy, SecurityAttributes, SecurityContext};
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::StateStore;
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
     use caelumora_runtime::runtime::ActorRuntime;
     use caelumora_runtime::session::testing::{
-        actor_runtime_in, main_channel, make_session, owned_runtime, record_users, spec, user,
+        actor_runtime_in, owned_runtime, record_users, spec,
     };
     use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
     use caelumora_runtime::transport::Discard;
@@ -432,7 +435,7 @@ mod tests {
         /// A user named `name`, stored (`record_users`): to own sessions and
         /// the agent, or to take part.
         async fn user(&self, name: &str) -> UserId {
-            let user = user(name);
+            let user = make_user(name);
             record_users(&self.manager, &[&user]).await;
             user.id
         }

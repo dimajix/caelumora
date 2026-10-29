@@ -148,14 +148,7 @@ impl UserProvider for AcceptAnyUserProvider {
         if let Some(user) = self.find_user(username.as_str()).await? {
             return Ok(Some(self.configured(user)));
         }
-        let user = User {
-            id: UserId::new(),
-            username,
-            email: String::new(),
-            roles: Vec::new(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let user = User::new(username);
         tracing::warn!("AcceptAnyUserProvider accepted the new user '{}' ({}) without verifying any credential", user.username, user.id);
         Ok(Some(self.configured(user)))
     }
@@ -165,6 +158,7 @@ impl UserProvider for AcceptAnyUserProvider {
 mod tests {
     use super::*;
     use crate::store::Persistence;
+    use crate::user::testing::make_user;
     use crate::user_provider::UserManager;
 
     /// The provider in a chain of its own, whose manager keeps the records
@@ -279,12 +273,9 @@ mod tests {
     async fn finds_users_created_before_it_existed() {
         let store = store();
         let existing = User {
-            id: UserId::new(),
-            username: Name::new("user").unwrap(),
             email: "user@example.com".to_string(),
             roles: vec![RoleId::new()],
-            deleted: None,
-            revision: Default::default(),
+            ..make_user("user")
         };
         store.create(&SecurityContext::default(), &existing).await.unwrap();
 

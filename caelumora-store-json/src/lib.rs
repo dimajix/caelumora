@@ -791,11 +791,10 @@ mod tests {
     use caelumora_model::history::Reader;
     use caelumora_model::message::testing::{id, make_message};
     use caelumora_model::note::{NoteChange, NoteId};
-    use caelumora_model::project::ProjectId;
     use caelumora_model::removal::Removal;
-    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::security::{AccessPolicy, SecurityContext};
     use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::query::Query;
     use caelumora_model::store::suite;
@@ -805,7 +804,6 @@ mod tests {
     use caelumora_model::turn::TurnState;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Description;
-    use chrono::Utc;
     use tempfile::tempdir;
     use tokio::task::JoinSet;
 
@@ -821,26 +819,7 @@ mod tests {
 
     /// A new session of `name`, of the system, with nothing in it.
     fn session(name: &str) -> Session {
-        Session {
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            project: ProjectId::new(),
-            id: SessionId(Uuid::new_v4()),
-            name: Name::new(name).unwrap(),
-            participants: Vec::new(),
-            channels: Vec::new(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::systems(),
-            deleted: None,
-            revision: Default::default(),
-        }
+        Session { name: Name::new(name).unwrap(), ..bare_session(SessionId::new()) }
     }
 
     /// The store of the kind `T` in the files under `dir`, which permits

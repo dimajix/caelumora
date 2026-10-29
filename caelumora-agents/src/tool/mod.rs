@@ -1063,7 +1063,7 @@ mod tests {
     use caelumora_model::content::testing::make_content_ref;
     use caelumora_model::content::ContentId;
     use caelumora_model::event::GlobalEvent;
-    use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
+    use caelumora_runtime::session::testing::detached_actor_runtime_in;
     use caelumora_runtime::testing::TestRuntime;
 
     use caelumora_model::channel::Channel;
@@ -1071,6 +1071,7 @@ mod tests {
     use caelumora_model::context::{ContextRef, FrameRef};
     use caelumora_model::note::NoteId;
     use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy, SecurityContext};
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::{Session, SessionId, SessionUpdateEvent};
     use caelumora_model::tool::{ToolCallStatus, ToolResultStatus};
     use caelumora_model::turn::TurnState;

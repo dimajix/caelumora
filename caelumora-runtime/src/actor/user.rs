@@ -956,11 +956,12 @@ mod tests {
     use super::*;
     use crate::actor::manager::OUTBOX_CAPACITY;
     use crate::runtime::ChannelRuntime;
-    use crate::session::testing::{bare_session, test_runtime};
+    use crate::session::testing::test_runtime;
     use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::actor::EventContext;
     use caelumora_model::channel::testing::make_channel;
-    use caelumora_model::user::{User, UserId};
+    use caelumora_model::session::testing::bare_session;
+    use caelumora_model::user::testing::make_user;
     use std::iter;
     use std::time::Duration;
     use tokio::time;
@@ -971,14 +972,7 @@ mod tests {
         let runtime = test_runtime();
         let session_id = SessionId::new();
         let channel = make_channel(session_id, "main");
-        let user = User {
-            id: UserId::new(),
-            username: Name::new("alice").unwrap(),
-            email: String::new(),
-            roles: Vec::new(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let user = make_user("alice");
         let channel_runtime = ChannelRuntime::outside_a_session(
             Arc::clone(&runtime),
             bare_session(session_id),

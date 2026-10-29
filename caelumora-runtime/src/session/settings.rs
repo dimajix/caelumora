@@ -313,9 +313,11 @@ mod tests {
     use crate::view::Viewer;
     use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::store::StoreError;
+    use caelumora_model::user::testing::make_user;
     use std::sync::Arc;
 
     use crate::session::testing::*;
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
 
     #[tokio::test]
@@ -327,7 +329,7 @@ mod tests {
 
         let (_, manager) = owned_runtime(Default::default());
         let runtime = Arc::clone(manager.runtime());
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let as_user = |id: UserId| {
             SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
         };

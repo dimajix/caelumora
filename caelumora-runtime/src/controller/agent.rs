@@ -100,8 +100,9 @@ mod tests {
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
     use caelumora_model::store::Persistence;
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
-    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::value::name::ScopedName;
 
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
@@ -137,16 +138,9 @@ mod tests {
     async fn an_agent_acts_with_its_owners_roles_as_they_are_now_and_its_limit() {
         use caelumora_model::event::GlobalEvent;
         use caelumora_model::role::RoleId;
-        use caelumora_model::user::{User, UserId, UserUpdateEvent};
+        use caelumora_model::user::{User, UserUpdateEvent};
         let (staff, hr) = (RoleId::new(), RoleId::new());
-        let alice = User {
-            id: UserId::new(),
-            username: Name::new("alice").unwrap(),
-            email: String::new(),
-            roles: vec![staff],
-            deleted: None,
-            revision: Default::default(),
-        };
+        let alice = User { roles: vec![staff], ..make_user("alice") };
         let store = Persistence::in_memory();
         let owner = Arc::new(UserController::new(
             alice.clone(),

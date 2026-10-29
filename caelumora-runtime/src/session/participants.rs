@@ -202,6 +202,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, AgentId};
+    use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::{self, Channel, HistoryAccess};
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::group::GroupId;
@@ -209,8 +210,10 @@ mod tests {
     use caelumora_model::security::{
         AclEntry, Grant, SecurityAttributes, SecurityContext, Subject,
     };
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{Session, SessionUpdateEvent};
     use caelumora_model::store::StoreError;
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{User, UserId};
     use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;
@@ -229,7 +232,7 @@ mod tests {
     async fn whoever_may_change_the_session_takes_a_user_into_it_and_a_channel_at_once() {
         let (store, manager) = owned_runtime(Default::default());
         let runtime = Arc::clone(manager.runtime());
-        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(&manager, &[&alice, &carol]).await;
         record_users(&manager, &[&bob]).await;
@@ -305,7 +308,7 @@ mod tests {
     #[tokio::test]
     async fn whom_the_access_list_lets_join_takes_themselves_in_and_uses_up_an_invitation() {
         let (_, manager) = owned_runtime(Default::default());
-        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let (bob_id, carol_id) = (ActorId::User(bob.id), ActorId::User(carol.id));
         let invited = |attributes: SecurityAttributes| {
             attributes.granting(Subject::Actor(bob_id), Grant::Join)

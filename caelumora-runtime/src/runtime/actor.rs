@@ -369,7 +369,9 @@ impl ActorRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testing::{bare_channel, bare_session, test_runtime};
+    use crate::session::testing::test_runtime;
+    use caelumora_model::channel::testing::bare_channel;
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::user::UserId;
 
     fn channel_runtime() -> ChannelRuntime {

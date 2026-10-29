@@ -24,6 +24,7 @@ use caelumora_model::component::{
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
 use caelumora_model::tool::Tool;
@@ -33,7 +34,7 @@ use caelumora_model::work::Work;
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, BUNDLE_REF_KIND};
 use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
-use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
+use caelumora_runtime::session::testing::detached_actor_runtime_in;
 use caelumora_runtime::testing::{asked_for, TestRuntime, World};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;

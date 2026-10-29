@@ -14,7 +14,7 @@ use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
 use caelumora_model::chain::Position;
-use caelumora_model::channel::testing::make_channel;
+use caelumora_model::channel::testing::{founded, make_channel};
 use caelumora_model::channel::{Channel, HistoryAccess};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::Classification;
@@ -23,8 +23,10 @@ use caelumora_model::digest;
 use caelumora_model::external_agent::{OpenTaskState, TaskId};
 use caelumora_model::history::Heard;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::session::testing::{bare_session, make_session};
 use caelumora_model::session::{ChannelId, Participant, SessionId};
 use caelumora_model::store::Persistence;
+use caelumora_model::user::testing::make_user;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::work::Work;
 use caelumora_runtime::actor::user::ChannelWatch;
@@ -91,7 +93,7 @@ async fn external_channel(
         .create(&SecurityContext::system(), &personality)
         .await
         .unwrap();
-    let alice = user("alice");
+    let alice = make_user("alice");
     let context =
         SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(
@@ -1957,7 +1959,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let manager = SessionManager::new(Arc::clone(&runtime));
     let system = SecurityContext::system();
 
-    let (alice, bob) = (user("alice"), user("bob"));
+    let (alice, bob) = (make_user("alice"), make_user("bob"));
     let participants = record_users(&manager, &[&alice, &bob]).await;
     let mut roster =
         ComponentDescriptor::new("participants", "channel_participants_prompt_provider");

@@ -557,7 +557,6 @@ pub(crate) async fn purge_for_good<T: Stored>(
 #[cfg(test)]
 mod tests {
     use super::{ScopeHolders, Unowned};
-    use crate::session::testing::bare_session;
     use caelumora_model::actor::ActorId;
     use caelumora_model::channel::testing::make_channel;
     use caelumora_model::component::ComponentBundle;
@@ -565,6 +564,7 @@ mod tests {
     use caelumora_model::removal::Removal;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::{Persistence, StoreError};
     use caelumora_model::user::UserId;

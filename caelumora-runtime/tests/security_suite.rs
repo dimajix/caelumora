@@ -28,11 +28,13 @@ use caelumora_model::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_model::role::RoleId;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
+use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::Detail;
 use caelumora_model::store::{EntityKind, StoreError, Stored};
-use caelumora_model::user::{User, UserId, UserProfile};
-use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_model::user::testing::make_user;
+use caelumora_model::user::{UserId, UserProfile};
+use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_runtime::actor::Shown;
@@ -45,7 +47,7 @@ use caelumora_runtime::moderator::broadcast_policy::BroadcastPolicy;
 use caelumora_runtime::moderator::ResponderPolicy;
 use caelumora_runtime::project::ProjectError;
 use caelumora_runtime::scoped::ScopeNotEmpty;
-use caelumora_runtime::session::testing::{create, make_session};
+use caelumora_runtime::session::testing::create;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_runtime::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_runtime::testing::{
@@ -863,14 +865,7 @@ async fn an_agent_is_taken_in_only_by_who_may_read_it_and_only_if_it_may_run() {
 #[tokio::test]
 async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
     let world = World::new().await;
-    let dave = User {
-        id: UserId::new(),
-        username: Name::new("dave").unwrap(),
-        email: String::new(),
-        roles: vec![],
-        deleted: None,
-        revision: Default::default(),
-    };
+    let dave = make_user("dave");
     world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
     let mut limited = Personality {
         roles: Some(vec![]),
@@ -916,14 +911,7 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
 async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     use caelumora_model::snapshot::CandidateRefusal;
     let world = World::new().await;
-    let dave = User {
-        id: UserId::new(),
-        username: Name::new("dave").unwrap(),
-        email: String::new(),
-        roles: vec![],
-        deleted: None,
-        revision: Default::default(),
-    };
+    let dave = make_user("dave");
     world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
@@ -2405,14 +2393,7 @@ async fn creating_a_channel_needs_owning_its_session() {
 #[tokio::test]
 async fn a_founder_who_is_not_cleared_leaves_no_channel() {
     let world = World::new().await;
-    let dave = User {
-        id: UserId::new(),
-        username: Name::new("dave").unwrap(),
-        email: String::new(),
-        roles: vec![],
-        deleted: None,
-        revision: Default::default(),
-    };
+    let dave = make_user("dave");
     world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
     world.access_policy.names.lock().unwrap().insert(ActorId::User(dave.id), "dave".to_string());
     let session = world.shared_session(&[], &[]).await;

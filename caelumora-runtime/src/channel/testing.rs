@@ -14,7 +14,6 @@ use crate::channel::ChannelLoop;
 use crate::command::CommandError;
 use crate::controller::SessionController;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
-use crate::session::testing::{bare_session, founded, user};
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -22,7 +21,7 @@ use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::chain::Position;
-use caelumora_model::channel::testing::make_channel;
+use caelumora_model::channel::testing::{founded, make_channel};
 use caelumora_model::channel::{Channel, InternalActor, Participant};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::history::testing::{items_of, messages_of};
@@ -30,9 +29,11 @@ use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::Message;
 use caelumora_model::message::MessageId;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
+use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
 use caelumora_model::store::StoreResult;
+use caelumora_model::user::testing::make_user;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::work::TurnId;
@@ -91,7 +92,7 @@ pub async fn alice_and_an_agent(
         .create(&SecurityContext::system(), &personality)
         .await
         .unwrap();
-    let alice = user("alice");
+    let alice = make_user("alice");
     let context =
         SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(

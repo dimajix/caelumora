@@ -177,13 +177,15 @@ mod tests {
     use caelumora_model::channel::{Channel, InternalActor, Participant};
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
-    use caelumora_model::user::{User, UserId, UserProfile};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::{actor_runtime_in, make_session};
+    use caelumora_runtime::session::testing::actor_runtime_in;
     use caelumora_runtime::session::SessionManager;
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::view::ViewError;
@@ -309,7 +311,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn the_participants_of_the_channel_are_read_with_their_introductions() {
         let store = Persistence::in_memory();
         let runtime =
@@ -317,22 +318,8 @@ mod tests {
                 .build();
         let system = SecurityContext::system();
 
-        let kaya = User {
-            id: UserId::new(),
-            username: Name::new("Kaya").unwrap(),
-            email: String::new(),
-            roles: Vec::new(),
-            deleted: None,
-            revision: Default::default(),
-        };
-        let bob = User {
-            id: UserId::new(),
-            username: Name::new("Bob").unwrap(),
-            email: String::new(),
-            roles: Vec::new(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let kaya = make_user("Kaya");
+        let bob = make_user("Bob");
         for user in [&kaya, &bob] {
             store.entity_stores().unwrap().users.create(&system, user).await.unwrap();
         }

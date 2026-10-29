@@ -4,7 +4,6 @@
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::runtime::RuntimeManager;
-use crate::session::testing::{make_session, user};
 use crate::session::{SessionLoop, SessionManager};
 use crate::terminal::{Shell, Terminal};
 use crate::testing::TestRuntime;
@@ -19,8 +18,10 @@ use caelumora_model::config::AppConfig;
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{Grant, SecurityContext};
+use caelumora_model::session::testing::make_session;
 use caelumora_model::session::Session;
 use caelumora_model::store::Persistence;
+use caelumora_model::user::testing::make_user;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::workspace::Workspace;
 use serde_json::json;
@@ -73,7 +74,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
     .build();
     let system = SecurityContext::system();
 
-    let owner = user("owner");
+    let owner = make_user("owner");
     store.entity_stores().unwrap().users.create(&system, &owner).await.unwrap();
     let owner = owner.id;
     let as_owner =

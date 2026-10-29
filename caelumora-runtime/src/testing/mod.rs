@@ -30,7 +30,6 @@ use crate::error::refusal;
 use crate::plugin::Plugin;
 use crate::project::{ProjectError, ProjectManager};
 use crate::runtime::{ActorRuntime, RuntimeManager};
-use crate::session::testing::make_session;
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::terminal::{ByteStream, Terminal, WorkspacePath};
 use crate::view::Viewer;
@@ -59,6 +58,7 @@ use caelumora_model::security::{
     AccessPolicy, ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified,
     SecurityAttributes, SecurityContext, Subject, Verb,
 };
+use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::query::Query;
@@ -68,6 +68,7 @@ use caelumora_model::template::{
     ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate,
     SessionTemplateId,
 };
+use caelumora_model::user::testing::make_user;
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
@@ -429,14 +430,7 @@ impl World {
     }
 
     pub async fn user(&self, name: &str) -> UserId {
-        let user = User {
-            id: UserId::new(),
-            username: Name::new(name).unwrap(),
-            email: String::new(),
-            roles: vec![*STAFF],
-            deleted: None,
-            revision: Default::default(),
-        };
+        let user = User { roles: vec![*STAFF], ..make_user(name) };
         self.runtime.entity_stores().users.create(&Self::system(), &user).await.unwrap();
         self.access_policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id

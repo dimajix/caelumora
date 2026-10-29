@@ -233,7 +233,6 @@ mod tests {
     use super::*;
     use crate::event::EventBus;
     use crate::scoped::ScopeHolders;
-    use crate::session::testing::bare_session;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Personality;
     use caelumora_model::confidentiality::ConfidentialityRules;
@@ -241,6 +240,7 @@ mod tests {
     use caelumora_model::security::{
         AccessPolicy, ActionType, AllowAllPolicy, SecurityAttributes, Verb,
     };
+    use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::Query;
@@ -248,6 +248,7 @@ mod tests {
     use caelumora_model::store::Stored;
     use caelumora_model::template::testing::make_template;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, TemplateError};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::User;
     use caelumora_model::value::name::{Name, ScopedName};
     use std::sync::atomic::AtomicBool;
@@ -743,17 +744,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .users
-            .create(
-                &SecurityContext::system(),
-                &User {
-                    id: owner,
-                    username: Name::new("alice").unwrap(),
-                    email: String::new(),
-                    roles: Vec::new(),
-                    deleted: None,
-                    revision: Default::default(),
-                },
-            )
+            .create(&SecurityContext::system(), &User { id: owner, ..make_user("alice") })
             .await
             .unwrap();
         let participants =

@@ -311,9 +311,10 @@ fn in_project(id: ProjectId) -> Query<SessionField> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testing::{create, failing_runtime, make_session};
+    use crate::session::testing::{create, failing_runtime};
     use caelumora_model::component::ComponentBundle;
     use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::user::UserId;
     use std::sync::atomic::Ordering;
 

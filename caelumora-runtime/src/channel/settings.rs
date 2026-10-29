@@ -153,7 +153,9 @@ mod tests {
 
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::store::StoreError;
+    use caelumora_model::user::testing::make_user;
     use std::sync::Arc;
 
     use crate::error::is_forbidden;
@@ -207,7 +209,7 @@ mod tests {
         .unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
         let runtime = Arc::clone(manager.runtime());
-        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let bob_ctx = SecurityContext::new(bob_id, Default::default(), Default::default());
@@ -298,7 +300,7 @@ mod tests {
         use caelumora_model::actor::ActorId;
 
         let (store, manager) = owned_runtime(Default::default());
-        let users = (user("alice"), user("bob"));
+        let users = (make_user("alice"), make_user("bob"));
         let (alice, bob) = (ActorId::User(users.0.id), ActorId::User(users.1.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", users.0.id);
