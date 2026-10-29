@@ -138,7 +138,10 @@ that whoever no longer reaches it learns so.
 
 These subscriptions are served by one dispatcher task. The policy is asked asynchronously, and
 `publish` must not wait for it; a single task keeps every party's events in the order they were
-published.
+published. Each event is asked of all parties at once (`may_reach_each`, by
+`AccessPolicy::check_each`, issue [503](../issues/503-bus-asks-every-stream.md)): the ownership
+policy reads a group the event's attributes name once for all of them, not once per open stream -
+for an event about a part, once for the whole and once for the part.
 
 ## Who follows the bus
 

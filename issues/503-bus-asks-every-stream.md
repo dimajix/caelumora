@@ -1,6 +1,6 @@
 # 503 — The event bus asks the policy of every event for every stream
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Identity and access management
@@ -65,3 +65,28 @@ and every event behind it waits. Most events reach a handful of readers among al
 
 - **2026-10-29** — Opened from a review of the event bus with the maintainer, following the
   reassessment of issue 287 the same day.
+- **2026-10-29** — Decided with the maintainer: the bus asks one question of all parties at once,
+  rather than taking the admission of each party when it subscribes:
+  `AccessPolicy::check_each(contexts, action)`, context by context by default, beside `check`, as
+  `admission` is; and `confidentiality::may_reach_each` beside `may_reach`. The ownership policy
+  decides a verb on entities for every context by its admission, over memberships read once for
+  the question (`ReadOnce`, private, living for that one call - no cache, so nothing to go stale);
+  any other action context by context. `Arc<GlobalEvent>` is a second step of this issue. Not
+  part of it: the index of the parties by actor and role, and the unbounded queue of the
+  dispatcher.
+- **2026-10-29** — Step 1 done, branch `issue-503-bus-asks-every-stream`: the dispatcher asks
+  `may_reach_each` once per event, and of an event about a part `check_each` with the part's
+  attributes. The `Recorder` of the security suite keeps the default `check_each`, so that every
+  question is still recorded. Tests: `check_each` answers every context as `check` does - owner,
+  member, member of a deleted group, role, a member's agent, stranger, the system; reading and
+  being told of a deletion and changing - and reads each named group once (failing with the
+  memberships asked directly); `may_reach_each` answers as `may_reach`, clearances included; the
+  bus reads a channel's group once for six parties.
+- **2026-10-29** — After the review of step 1: a group is read once per question, not once per
+  event as *Done when* says - an event about a part asks twice, the whole and the part, so a
+  version of an artifact published reads the channel's and the project's group twice, both named
+  in the artifact's list and the version's. Sharing the reads across both questions would change
+  the agreed interface; left as it is unless the maintainer decides otherwise. Two differences
+  from asking context by context, both refusing rather than granting: a group changed during the
+  question is answered for every context as first read, and a group whose reading failed
+  (`StoreMemberships` answers `None`) admits nobody for the rest of the question.

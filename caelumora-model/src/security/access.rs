@@ -19,6 +19,16 @@ pub trait AccessPolicy: Debug + Sync + Send {
     /// Whether `context` may do `action`.
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool;
 
+    /// Whether each of `contexts` may do `action`, in their order: one
+    /// question asked of many at once, as the event bus asks it of every
+    /// party (issue 503) - one answer per context, each what `check`
+    /// answers for it. Asked context by context by default; a policy may
+    /// answer it at once, reading what the question needs of others - a
+    /// group's members - once.
+    async fn check_each(&self, contexts: &[SecurityContext], action: ActionType<'_>) -> Vec<bool> {
+        check_one_by_one(self, contexts, action).await
+    }
+
     /// Which entities of `kind` `context` may do `verb` with, by their
     /// security attributes alone (issue 332) - what a store narrows a list
     /// by before each entity is decided; `None` where nothing is narrowed
@@ -32,6 +42,20 @@ pub trait AccessPolicy: Debug + Sync + Send {
     ) -> Option<Admission> {
         None
     }
+}
+
+/// Whether each of `contexts` may do `action`, asked of `policy` one after
+/// the other: `check_each` of a policy that answers no faster at once.
+pub(super) async fn check_one_by_one<P: AccessPolicy + ?Sized>(
+    policy: &P,
+    contexts: &[SecurityContext],
+    action: ActionType<'_>,
+) -> Vec<bool> {
+    let mut allowed = Vec::with_capacity(contexts.len());
+    for context in contexts {
+        allowed.push(policy.check(context, action).await);
+    }
+    allowed
 }
 
 /// The pure questions "may they?" that are asked from outside an entity -

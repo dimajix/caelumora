@@ -807,9 +807,10 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
 /// it may read it (`access_policy`), and, where it is classified, is cleared
 /// for one of them (`confidentiality`) - one, the entity's; two as it is
 /// reclassified, the one it had and the one it has. The question the store
-/// asks of what it lists and the event bus of whom an event reaches, so
-/// that both reach alike. A question, for filtering: an operation reads
-/// through the store, which enforces it.
+/// asks of what it lists, and - as `may_reach_each`, which answers alike -
+/// the event bus of whom an event reaches, so that both reach alike. A
+/// question, for filtering: an operation reads through the store, which
+/// enforces it.
 pub async fn may_reach(
     access_policy: &dyn AccessPolicy,
     confidentiality: &dyn ConfidentialityPolicy,
@@ -817,11 +818,39 @@ pub async fn may_reach(
     read: ActionType<'_>,
     classifications: &[Classification],
 ) -> bool {
-    access_policy.check(context, read).await
-        && (classifications.is_empty()
-            || classifications
-                .iter()
-                .any(|classification| confidentiality.cleared_for(context, classification)))
+    access_policy.check(context, read).await && cleared(confidentiality, context, classifications)
+}
+
+/// `may_reach` for each of `contexts` at once, in their order, each
+/// answered as `may_reach` answers it: the read question asked of all of
+/// them together (`AccessPolicy::check_each`), as the event bus asks it of
+/// every party whom an event reaches (issue 503).
+pub async fn may_reach_each(
+    access_policy: &dyn AccessPolicy,
+    confidentiality: &dyn ConfidentialityPolicy,
+    contexts: &[SecurityContext],
+    read: ActionType<'_>,
+    classifications: &[Classification],
+) -> Vec<bool> {
+    let readable = access_policy.check_each(contexts, read).await;
+    contexts
+        .iter()
+        .zip(readable)
+        .map(|(context, readable)| readable && cleared(confidentiality, context, classifications))
+        .collect()
+}
+
+/// Whether `context` is cleared for one of `classifications`, or they are
+/// none: the second half of `may_reach`.
+fn cleared(
+    confidentiality: &dyn ConfidentialityPolicy,
+    context: &SecurityContext,
+    classifications: &[Classification],
+) -> bool {
+    classifications.is_empty()
+        || classifications
+            .iter()
+            .any(|classification| confidentiality.cleared_for(context, classification))
 }
 
 /// `Ok` if `allowed`, else `refusal()`, logged at `debug!` by what
@@ -948,8 +977,10 @@ mod tests {
     use crate::content::testing::make_content_ref;
     use crate::content::ContentRef;
     use crate::context::ModelProfile;
-    use crate::session::SessionId;
+    use crate::security::{OwnershipPolicy, SecurityAttributes};
+    use crate::session::{Session, SessionId};
     use crate::store::query::meets_exactly_its_equals;
+    use crate::store::Stored;
     use crate::tool::{ToolCall, ToolCallResult};
     use crate::user::UserId;
     use Confidentiality::*;
@@ -1381,6 +1412,39 @@ mod tests {
                 && rules.cleared(&anyone, nobody, &[], &Classification::general(Public)),
             "with roles, nobody else but for what is public"
         );
+    }
+
+    /// Issue 503: asked of several contexts at once, each reaches as it does
+    /// alone - read, and cleared for what it is.
+    #[tokio::test]
+    async fn reaching_asked_of_many_at_once_is_reaching_asked_of_each() {
+        let hr = RoleId::new();
+        let roles = Roles::new([(
+            hr,
+            "hr".to_string(),
+            vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }],
+        )])
+        .unwrap();
+        let rules = ConfidentialityRules::new(organisation()).with_roles(roles);
+        let owner = ActorId::User(UserId::new());
+        let attributes = SecurityAttributes::owned_by(owner);
+        let secret = [classified(Confidential, &["hr"])];
+        let as_owner = SecurityContext::new(owner, Default::default(), Default::default());
+        let contexts = [
+            as_owner.clone().with_roles(vec![hr], None),
+            as_owner,
+            someone().with_roles(vec![hr], None),
+        ];
+        let access_policy = OwnershipPolicy::new();
+        let read = ActionType::get(Session::KIND, &attributes);
+
+        let at_once = may_reach_each(&access_policy, &rules, &contexts, read, &secret).await;
+        let mut alone = Vec::new();
+        for context in &contexts {
+            alone.push(may_reach(&access_policy, &rules, context, read, &secret).await);
+        }
+        assert_eq!(at_once, alone);
+        assert_eq!(at_once, [true, false, false], "read and cleared; not cleared; not read");
     }
 
     /// Issue 304: a viewer is cleared by the roles of their context, and a

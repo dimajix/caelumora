@@ -1,15 +1,18 @@
 //! The access policy of a process (issues 11, 23), deciding by who owns
 //! an entity and whom its access list names.
 
+use super::access::check_one_by_one;
 use super::{
     AccessPolicy, ActionType, Admission, Grant, Memberships, NoMemberships, Reclassified,
     Requirement, SecurityAttributes, SecurityContext, Verb,
 };
 use crate::actor::ActorId;
+use crate::group::{Group, GroupId};
 use crate::store::EntityKind;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// The ownership policy (issues 11, 23): what is yours you may do
 /// everything with, what an access list grants you you may read and use,
@@ -238,6 +241,26 @@ impl AccessPolicy for OwnershipPolicy {
         }
     }
 
+    /// A verb on entities decided for every context by its admission, as
+    /// `check` decides it, over memberships read once for the question
+    /// (`ReadOnce`): a group named in the attributes is read once, however
+    /// many contexts ask (issue 503). Any other action is asked context by
+    /// context.
+    async fn check_each(&self, contexts: &[SecurityContext], action: ActionType<'_>) -> Vec<bool> {
+        let ActionType::Entity { verb, attributes, .. } = action else {
+            return check_one_by_one(self, contexts, action).await;
+        };
+        let memberships = ReadOnce::new(self.memberships.as_ref());
+        let mut allowed = Vec::with_capacity(contexts.len());
+        for context in contexts {
+            allowed.push(
+                context.is_system()
+                    || Self::admission_for(context, verb).admits(attributes, &memberships).await,
+            );
+        }
+        allowed
+    }
+
     /// Nothing narrowed for the system itself, which may do everything; the
     /// admission it decides `check` by for everybody else.
     fn admission(
@@ -247,6 +270,40 @@ impl AccessPolicy for OwnershipPolicy {
         verb: Verb,
     ) -> Option<Admission> {
         (!context.is_system()).then(|| Self::admission_for(context, verb))
+    }
+}
+
+/// The memberships of one question asked of several contexts
+/// (`OwnershipPolicy::check_each`): each group read at its first need and
+/// answered as read from then on. It lives for that question alone, so that
+/// it cannot go stale.
+#[derive(Debug)]
+struct ReadOnce<'a> {
+    memberships: &'a dyn Memberships,
+    read: Mutex<HashMap<GroupId, Option<Group>>>,
+}
+
+impl<'a> ReadOnce<'a> {
+    fn new(memberships: &'a dyn Memberships) -> Self {
+        Self { memberships, read: Mutex::new(HashMap::new()) }
+    }
+
+    /// The groups read so far; held only between the reads, never across
+    /// one.
+    fn read(&self) -> MutexGuard<'_, HashMap<GroupId, Option<Group>>> {
+        self.read.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+#[async_trait]
+impl Memberships for ReadOnce<'_> {
+    async fn group(&self, id: GroupId) -> Option<Group> {
+        if let Some(read) = self.read().get(&id).cloned() {
+            return read;
+        }
+        let group = self.memberships.group(id).await;
+        self.read().insert(id, group.clone());
+        group
     }
 }
 
@@ -641,6 +698,54 @@ mod tests {
         assert!(
             allows(alice, ActionType::hear_deleted(Session::KIND, &hers)).await,
             "its owner is"
+        );
+    }
+
+    /// Issue 503: asked of several contexts at once, each is answered as
+    /// `check` answers it alone, and a group the attributes name is read once
+    /// for all of them.
+    #[tokio::test]
+    async fn asked_of_many_at_once_each_is_answered_as_alone_and_a_group_read_once() {
+        let (alice, bob, carol) = (user(), user(), user());
+        let (place, gone) = (GroupId::new(), GroupId::new());
+        let hr = RoleId::new();
+        let known = Known { members: vec![(bob, place), (carol, gone)], deleted: vec![gone] };
+        let counted = Arc::new(Counted::new(known));
+        let access_policy = OwnershipPolicy::with_memberships(Arc::<Counted>::clone(&counted));
+        let hers = SecurityAttributes::owned_by(alice)
+            .granting(Subject::Group(place), Grant::Read)
+            .granting(Subject::Group(gone), Grant::Read)
+            .granting(Subject::Role(hr), Grant::Read);
+        let his_agent = context(bob).next(ActorId::Agent(AgentId::new()), bob, bob);
+        let contexts = [
+            context(alice),
+            context(bob),
+            context(carol),
+            context(user()).with_roles(vec![hr], None),
+            his_agent,
+            context(user()),
+            SecurityContext::system(),
+        ];
+
+        for action in [
+            ActionType::get(Session::KIND, &hers),
+            ActionType::hear_deleted(Session::KIND, &hers),
+            ActionType::update(Session::KIND, &hers),
+        ] {
+            let mut alone = Vec::new();
+            for context in &contexts {
+                alone.push(access_policy.check(context, action).await);
+            }
+            let before = counted.asked();
+            let at_once = access_policy.check_each(&contexts, action).await;
+            assert_eq!(at_once, alone, "{action:?}");
+            assert!(counted.asked() - before <= 2, "each of the two groups read once: {action:?}");
+        }
+        assert_eq!(
+            access_policy.check_each(&contexts, ActionType::get(Session::KIND, &hers)).await,
+            [true, true, false, true, true, false, true],
+            "the owner, a member, not a member of a deleted group, a role, a member's agent, \
+             not a stranger, the system"
         );
     }
 
