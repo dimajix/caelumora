@@ -221,22 +221,21 @@ pub fn founded(channel: &Channel) -> ChannelState {
 /// to, read by its participants - the session's participants.
 pub fn main_channel(session: &Session) -> Channel {
     let id = session.channels[0];
+    let owner = session.security_attributes.owner_id;
+    let built = Channel::build(
+        session.id,
+        owner,
+        Name::new("main").unwrap(),
+        moderation_components(None, Some("broadcast_policy")),
+        Classification::CHANNEL_DEFAULT,
+        None,
+    );
+    // The id the session lists, and the attributes that go with it.
     Channel {
-        summary: None,
-        briefing: None,
-        approval_rules: Vec::new(),
-        uses_workspace: true,
         id,
-        session_id: session.id,
-        name: Name::new("main").unwrap(),
-        components: moderation_components(None, Some("broadcast_policy")),
-        classification: Classification::CHANNEL_DEFAULT,
-        language: None,
+        security_attributes: Channel::attributes_of(id, owner),
         participants: session.participants.clone(),
-        internal_actors: Vec::new(),
-        security_attributes: Channel::attributes_of(id, session.security_attributes.owner_id),
-        deleted: None,
-        former: Vec::new(),
+        ..built
     }
 }
 

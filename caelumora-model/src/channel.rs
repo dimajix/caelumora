@@ -356,7 +356,7 @@ impl Channel {
             language,
             former: Vec::new(),
             approval_rules: Vec::new(),
-            uses_workspace: true,
+            uses_workspace: uses_workspace_by_default(),
             deleted: None,
         }
     }
