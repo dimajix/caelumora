@@ -72,3 +72,12 @@ classifications), has to be made ten times.
   and a version of an artifact (`publish_classified_part`). The unclassified kinds - sessions,
   agents, users - still publish with `publish(event, attributes)`, some forty times; `announce`
   serves them as well, and moving them is left for when they are touched.
+- **2026-10-29** — The unclassified kinds moved to `announce` (found in the work on issue
+  [461](461-scope-members-repeat-their-loops.md)): agents, sessions, groups, users and user
+  profiles. Two stay with `publish`, each saying why: a group's change, told to whoever left it as
+  well (issue 23), and the change of an agent's state, whose holder keeps the agent's attributes,
+  not the agent.
+- **2026-10-29** — A leave is announced by `Announcing::announce_also_to`, the attributes read
+  besides by `SecurityAttributes::granting_read`: a group's change, told to whoever left it as
+  well, is no longer assembled by hand. The controllers' `Writing::announce_also_to` stays beside
+  their `Writing::announce`, with the classification a document had as the change began.

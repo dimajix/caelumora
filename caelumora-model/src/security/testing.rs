@@ -3,8 +3,8 @@
 //! policy answers.
 
 use super::{
-    AccessPolicy, ActionType, Grant, Memberships, OwnershipPolicy, SecurityAttributes,
-    SecurityContext, Subject,
+    AccessPolicy, ActionType, Memberships, OwnershipPolicy, SecurityAttributes, SecurityContext,
+    Subject,
 };
 use crate::actor::ActorId;
 use crate::channel::ChannelId;
@@ -30,9 +30,7 @@ pub(super) async fn allows(actor: ActorId, action: ActionType<'_>) -> bool {
 
 /// Owned by `owner`, read by `readers` (issue 23).
 pub(super) fn shared(owner: ActorId, readers: &[ActorId]) -> SecurityAttributes {
-    readers.iter().fold(SecurityAttributes::owned_by(owner), |attributes, reader| {
-        attributes.granting(Subject::Actor(*reader), Grant::Read)
-    })
+    SecurityAttributes::owned_by(owner).granting_read(readers.iter().copied().map(Subject::Actor))
 }
 
 /// Memberships as a test sets them: who belongs to which group, and which

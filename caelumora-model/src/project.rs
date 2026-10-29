@@ -109,9 +109,7 @@ impl Project {
         let (id, now) = (ProjectId::new(), Utc::now());
         let members = SecurityAttributes::owned_by(ActorId::User(owner))
             .granting(Subject::Group(GroupId::of_project(id)), Grant::Read);
-        let security_attributes = readers
-            .iter()
-            .fold(members, |attributes, reader| attributes.granting(*reader, Grant::Read));
+        let security_attributes = members.granting_read(readers.iter().copied());
         Self {
             id,
             name,

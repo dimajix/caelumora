@@ -257,8 +257,8 @@ mod tests {
     use crate::removal::Removal;
     use crate::role::RoleId;
     use crate::security::{
-        AccessPolicy, ActionType, Grant, OwnershipPolicy, SecurityAttributes, SecurityContext,
-        Subject, Verb,
+        AccessPolicy, ActionType, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject,
+        Verb,
     };
     use crate::session::{Session, SessionId};
     use crate::store::query::Query;
@@ -314,11 +314,8 @@ mod tests {
             privacy: Default::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            security_attributes: contributors
-                .into_iter()
-                .fold(SecurityAttributes::owned_by(owner), |a, c| {
-                    a.granting(Subject::Actor(c), Grant::Read)
-                }),
+            security_attributes: SecurityAttributes::owned_by(owner)
+                .granting_read(contributors.into_iter().map(Subject::Actor)),
             deleted: None,
         }
     }

@@ -1,6 +1,6 @@
 //! The one owner of "an artifact and its content" (issue 271): it publishes versions - their
 //! content kept first, then the document, then announced -, deletes, restores and purges them -
-//! also with the project that holds their scope (`…_lying_in`, called by `scoped`) -, and is the
+//! also with the project that holds their scope (`scoped`, as their `ScopeMember`) -, and is the
 //! only code that keeps content in the key space `artifacts` of the storages of content (issue
 //! 282): a version under `artifacts/<artifact>/<number>`, an artifact's versions under
 //! `artifacts/<artifact>`.
@@ -19,7 +19,7 @@ use caelumora_model::confidentiality::{
     Classification, ConfidentialityPolicy, ConfidentialityQuestions,
 };
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
-use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
@@ -28,10 +28,8 @@ use caelumora_model::security::{
     AccessPolicy, AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, Subject,
     WRITE,
 };
-use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
-    Address, Deleted, EntityKind, EntityStore, EntityStores, StoreError, StoreResult,
-    StoreResultExt, Stored,
+    Address, Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -41,7 +39,7 @@ use caelumora_runtime::component::{ComponentError, ComponentResult};
 use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::group::{prune_gone_groups, require_nameable};
-use caelumora_runtime::scoped::{deleted_unless_refused, restored_unless_refused, ScopeMember};
+use caelumora_runtime::scoped::ScopeMember;
 use caelumora_runtime::terminal::ByteStream;
 use chrono::Utc;
 use serde::Deserialize;
@@ -555,110 +553,51 @@ impl ArtifactManager {
                 StoreError::PermissionDenied,
             )
             .await?;
-        self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key(id)).await?;
+        self.remove_content(&artifact).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
         Ok(purged)
     }
+
+    /// Removes the content of `artifact`, every version of it, which is about to be purged.
+    ///
+    /// # Errors
+    /// `StorageGone` if its storage is no longer configured, or `Content` if removing it failed.
+    async fn remove_content(&self, artifact: &Artifact) -> ArtifactResult<()> {
+        self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key(artifact.id)).await?;
+        Ok(())
+    }
 }
 
+/// Artifacts go with what holds the scope they lie in, their content kept while they are deleted,
+/// announced as `delete` and `restore` announce them, under the lock of writing, and purged with
+/// their content (`scoped`).
 #[async_trait]
 impl ScopeMember for ArtifactManager {
-    fn kind(&self) -> EntityKind {
-        Artifact::KIND
+    type Entity = Artifact;
+
+    fn store(&self) -> &dyn EntityStore<Artifact> {
+        self.artifacts.as_ref()
     }
 
-    /// Deletes the artifacts that lie in `holder` or within it, their content kept, on behalf of
-    /// `ctx` (`scoped`), as far as they may, marked with `removal`, and announces them as `delete`
-    /// does; answers how many are left.
-    ///
-    /// # Errors
-    /// Whatever else the store reports; what was deleted before stays
-    /// deleted.
-    async fn delete_lying_in(
-        &self,
-        ctx: &SecurityContext,
-        holder: &Scope,
-        removal: &Removal,
-    ) -> StoreResult<usize> {
-        let system = SecurityContext::system();
-        let _writing = self.writing.lock().await;
-        let mut left = 0;
-        for artifact in self
-            .artifacts
-            .list(&system, &Query::filtered(Filter::lying_within(holder)))
-            .await?
-            .items
-        {
-            if deleted_unless_refused(self.artifacts.delete(ctx, artifact.id, removal).await)? {
-                self.events.announce(GlobalEvent::deleted::<Artifact>(&artifact.id), &artifact);
-            } else {
-                left += 1;
-            }
-        }
-        Ok(left)
+    fn events(&self) -> Option<&dyn EventPublisher> {
+        Some(self.events.as_ref())
     }
 
-    /// Restores the artifacts that lie in `holder` or within it and carry `removal`, the holder's
-    /// mark, on behalf of `ctx` (`scoped`), and announces them as `restore` does. One whose name
-    /// was taken meanwhile stays deleted, as does one `ctx` may not restore.
-    ///
-    /// # Errors
-    /// Whatever else the store reports; what was restored before stays
-    /// restored.
-    async fn restore_lying_in(
-        &self,
-        ctx: &SecurityContext,
-        holder: &Scope,
-        removal: &Removal,
-    ) -> StoreResult<()> {
-        let system = SecurityContext::system();
-        let _writing = self.writing.lock().await;
-        for artifact in self
-            .artifacts
-            .list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder)))
-            .await?
-            .items
-        {
-            if let Some(restored) =
-                restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)?
-            {
-                self.events.announce(GlobalEvent::restored::<Artifact>(&restored.id), &restored);
-            }
-        }
-        Ok(())
+    fn writing(&self) -> Option<&Mutex<()>> {
+        Some(&self.writing)
     }
 
-    /// Purges the deleted artifacts that lie in `holder` or within it,
-    /// their content first.
+    /// Removes the content of `artifact`, as `purge` does; it is its storage too.
     ///
     /// # Errors
-    /// `StorageGone`, `Content`, or whatever the store reports; what was purged before stays
-    /// purged.
-    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
-        let system = SecurityContext::system();
-        let _writing = self.writing.lock().await;
-        for Deleted { entity: artifact, .. } in self
-            .artifacts
-            .list_deleted(&system, &Query::filtered(Filter::lying_within(holder)))
-            .await?
-            .items
-        {
-            // Its content is its storage too.
-            let unremoved = |e: &dyn fmt::Display| {
-                StoreError::Backend(format!(
-                    "the content of artifact {} cannot be removed: {e}",
-                    artifact.id
-                ))
-            };
-            self.storages
-                .kept_in(&artifact.storage)
-                .map_err(|e| unremoved(&e))?
-                .remove_under(&versions_key(artifact.id))
-                .await
-                .map_err(|e| unremoved(&e))?;
-            self.artifacts.purge(&system, artifact.id).await?;
-        }
-        Ok(())
+    /// As `StoreError::Backend`, what `remove_content` reports.
+    async fn remove_behind(&self, artifact: &Artifact) -> StoreResult<()> {
+        self.remove_content(artifact).await.map_err(|e| {
+            StoreError::Backend(format!(
+                "the content of artifact {} cannot be removed: {e}",
+                artifact.id
+            ))
+        })
     }
 }

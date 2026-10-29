@@ -22,7 +22,7 @@ use caelumora_model::channel::{Channel, HistoryAccess, LEFT};
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::group::{Group, GroupId};
+use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_model::role::RoleId;
@@ -3916,14 +3916,20 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
         "its owner sees the team by its name"
     );
 
+    let mut bobs = world.runtime.event_bus().subscribe_as(bob.clone());
     groups.set_members(&alice, project.id, Vec::new()).await.unwrap();
     assert!(
         matches!(views(&bob).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))),
         "who left no longer reads it"
     );
+    // But learns that he left (issue 23).
+    hears(
+        &mut bobs,
+        [GlobalEvent::updated::<Group>(&project.id, &GroupUpdateEvent::MembersChanged)],
+    )
+    .await;
 
     groups.set_members(&alice, project.id, vec![world.bob]).await.unwrap();
-    let mut bobs = world.runtime.event_bus().subscribe_as(bob.clone());
     groups.delete(&alice, project.id).await.unwrap();
     assert!(
         matches!(views(&elsewhere).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))),

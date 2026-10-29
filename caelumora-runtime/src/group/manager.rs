@@ -5,13 +5,11 @@
 use super::{store_error, GroupError, GroupResult};
 use crate::event::EventBus;
 use caelumora_model::actor::ActorId;
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupField, GroupId, GroupUpdateEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{
-    AccessPolicy, ActionType, Enforcement, Grant, SecurityContext, Subject,
-};
+use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext, Subject};
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
     Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
@@ -75,8 +73,7 @@ impl GroupManager {
         let group = Group::team(ScopedName::new(name, scope)?, owner);
         let _writing = self.writing.lock().await;
         self.groups.create(ctx, &group).await?;
-        self.events
-            .publish(GlobalEvent::created::<Group>(&group.id), group.security_attributes.clone());
+        self.events.announce(GlobalEvent::created::<Group>(&group.id), &group);
         info!(group = %group.id, by = %ctx.caller_id, "Group created");
         Ok(group)
     }
@@ -134,7 +131,6 @@ impl GroupManager {
         if !group.is_team() {
             return Err(GroupError::NotATeam(id));
         }
-        let before = group.security_attributes.clone();
         let mut told: Vec<ActorId> = group.members.clone();
         match &event {
             GroupUpdateEvent::NameChanged(name) => {
@@ -166,10 +162,11 @@ impl GroupManager {
         self.groups.update(ctx, &group).await.map_err(store_error(id))?;
         // Who left is told too: they read it no longer once it is stored.
         told.retain(|actor| !group.has_member(*actor));
-        let attributes = told.into_iter().fold(before, |attributes, actor| {
-            attributes.granting(Subject::Actor(actor), Grant::Read)
-        });
-        self.events.publish(GlobalEvent::updated::<Group>(&id, &event), attributes);
+        self.events.announce_also_to(
+            GlobalEvent::updated::<Group>(&id, &event),
+            &group,
+            told.into_iter().map(Subject::Actor),
+        );
         info!(group = %id, by = %ctx.caller_id, "Group changed");
         Ok(group)
     }
@@ -190,7 +187,7 @@ impl GroupManager {
         if !self.groups.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
-        self.events.publish(GlobalEvent::deleted::<Group>(&id), group.security_attributes);
+        self.events.announce(GlobalEvent::deleted::<Group>(&id), &group);
         info!(group = %id, by = %ctx.caller_id, "Group deleted");
         Ok(true)
     }
@@ -211,7 +208,7 @@ impl GroupManager {
             return Err(GroupError::NotATeam(id));
         }
         let group = self.groups.restore(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::restored::<Group>(&id), group.security_attributes.clone());
+        self.events.announce(GlobalEvent::restored::<Group>(&id), &group);
         info!(group = %id, by = %ctx.caller_id, "Group restored");
         Ok(group)
     }
@@ -274,8 +271,7 @@ impl GroupManager {
             deleted.push(group);
         }
         for group in deleted {
-            self.events
-                .publish(GlobalEvent::deleted::<Group>(&group.id), group.security_attributes);
+            self.events.announce(GlobalEvent::deleted::<Group>(&group.id), &group);
         }
         Ok(())
     }
@@ -312,8 +308,7 @@ impl GroupManager {
             }
         }
         for group in restored {
-            self.events
-                .publish(GlobalEvent::restored::<Group>(&group.id), group.security_attributes);
+            self.events.announce(GlobalEvent::restored::<Group>(&group.id), &group);
         }
         Ok(())
     }

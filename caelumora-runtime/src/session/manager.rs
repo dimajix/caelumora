@@ -189,7 +189,6 @@ impl SessionManager {
     ) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
         let id = session.id;
-        let attributes = session.security_attributes.clone();
         let session_loop =
             SessionLoop::new(session, channels, Arc::clone(&self.runtime_manager)).await?;
         self.sessions.insert(id, Arc::clone(&session_loop));
@@ -202,7 +201,10 @@ impl SessionManager {
         });
         self.handles.insert(id, handle);
 
-        self.events.publish(GlobalEvent::custom::<Session>(&id, session::STARTED, &()), attributes);
+        self.events.announce(
+            GlobalEvent::custom::<Session>(&id, session::STARTED, &()),
+            &**session_loop.session(),
+        );
         Ok(session_loop)
     }
 
@@ -476,8 +478,7 @@ impl SessionManager {
         self.persist(context, &session, own, &channels).await?;
 
         let event_bus = &self.events;
-        event_bus
-            .publish(GlobalEvent::created::<Session>(&id), session.security_attributes.clone());
+        event_bus.announce(GlobalEvent::created::<Session>(&id), &session);
         event_bus.announce(GlobalEvent::created::<Project>(&own.id), own);
         for channel in &channels {
             event_bus.announce(GlobalEvent::created::<Channel>(&(id, channel.id)), channel);
@@ -759,10 +760,8 @@ impl SessionManager {
         }
         if let Some(session_loop) = &removed {
             let session = Arc::clone(&session_loop.session());
-            self.events.publish(
-                GlobalEvent::custom::<Session>(&id, session::STOPPED, &()),
-                session.security_attributes.clone(),
-            );
+            self.events
+                .announce(GlobalEvent::custom::<Session>(&id, session::STOPPED, &()), &*session);
         }
         removed
     }
@@ -859,8 +858,7 @@ impl SessionManager {
         for channel in &channels {
             event_bus.announce(GlobalEvent::deleted::<Channel>(&(id, channel.id)), channel);
         }
-        event_bus
-            .publish(GlobalEvent::deleted::<Session>(&id), session.security_attributes.clone());
+        event_bus.announce(GlobalEvent::deleted::<Session>(&id), &session);
         self.starts.remove(&id);
         Ok(true)
     }
@@ -932,8 +930,7 @@ impl SessionManager {
                 id, e
             );
         }
-        self.events
-            .publish(GlobalEvent::restored::<Session>(&id), session.security_attributes.clone());
+        self.events.announce(GlobalEvent::restored::<Session>(&id), &session);
         info!("Session {} restored by {}", id, context.caller_id);
         Ok(session)
     }
@@ -2205,6 +2202,70 @@ mod tests {
         }
         assert!(personalities.get_deleted(&system, personality.id).await.is_err());
         assert!(present(&users).await, "the user's is not");
+    }
+
+    #[tokio::test]
+    async fn the_agents_of_a_scope_are_announced_as_they_go_and_purged_with_their_state() {
+        use caelumora_model::agent::{AgentState, PersonalityId};
+        use caelumora_model::memory::{MemoryChange, MemoryId};
+        use caelumora_model::message::MessageId;
+
+        let runtime = test_runtime();
+        let agents = Arc::clone(&runtime.entity_stores().agents);
+        let states = Arc::clone(runtime.state_store());
+        let mut events = runtime.event_bus().subscribe_all();
+        let manager = SessionManager::new(runtime);
+        let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
+        let session = make_session("scoped", UserId::new());
+        let id = session.id;
+        create(&manager, &ctx, session).await.unwrap();
+        let agent_in = |scope| {
+            Agent::new(
+                ScopedName::new("helper", scope).unwrap(),
+                PersonalityId::new(),
+                ActorId::User(UserId::new()),
+            )
+        };
+        let sessions = agent_in(Scope::SessionScope { session_id: id });
+        let users = agent_in(Scope::UserScope { user_id: UserId::new() });
+        for agent in [&sessions, &users] {
+            agents.create(&system, agent).await.unwrap();
+            let mut state = AgentState::default();
+            state.memory.push(
+                MemoryChange::Add {
+                    id: MemoryId(1),
+                    text: "kept".to_string(),
+                    classification: Classification::CHANNEL_DEFAULT,
+                },
+                Default::default(),
+                MessageId::default(),
+            );
+            states.put_agent_state(agent.id, &mut state).await.unwrap();
+        }
+
+        manager.delete(&ctx, id).await.unwrap();
+        assert!(
+            drain(&mut events)
+                .iter()
+                .any(|e| e.about::<Agent>() == Some((sessions.id, &EntityChange::Deleted))),
+            "the session's agent is announced as it goes"
+        );
+        manager.restore(&ctx, id).await.unwrap();
+        assert!(
+            drain(&mut events)
+                .iter()
+                .any(|e| e.about::<Agent>() == Some((sessions.id, &EntityChange::Restored))),
+            "and as it comes back"
+        );
+
+        manager.delete(&ctx, id).await.unwrap();
+        manager.purge(&ctx, id).await.unwrap();
+        let remembered = |agent: AgentId| {
+            let states = Arc::clone(&states);
+            async move { states.get_agent_state(agent).await.unwrap().memory.current().len() }
+        };
+        assert_eq!(remembered(sessions.id).await, 0, "its state is purged with it");
+        assert_eq!(remembered(users.id).await, 1, "the user's agent keeps its own");
     }
 
     #[tokio::test]
