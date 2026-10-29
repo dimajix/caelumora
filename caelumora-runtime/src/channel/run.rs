@@ -547,11 +547,7 @@ impl ChannelLoop {
                     .await
                     .map_err(|_| Rejection::Invalid)?;
                 self.access_policy
-                    .require(
-                        context,
-                        ActionType::ApproveToolCall { agent: &agent, channel: &channel },
-                        forbidden,
-                    )
+                    .require(context, ActionType::ApproveToolCall(&agent), forbidden)
                     .await
             }
             ActorEvent::ApprovalGranted(_)

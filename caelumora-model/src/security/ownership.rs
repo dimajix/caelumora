@@ -16,7 +16,8 @@ use std::sync::Arc;
 /// what belongs to the system everybody may read and use - and nobody acts
 /// in someone else's name.
 ///
-/// - The system (`ActorId::System`) may do everything.
+/// - The system itself (`SecurityContext::is_system`) may do everything; the system acting on
+///   someone's behalf is judged as them (issue 477).
 /// - Reading - which also covers using, e.g. starting a session from a
 ///   template, or working on a workspace outside a session - is allowed to
 ///   the owner, to whom an entry of the access list grants it, and to
@@ -39,8 +40,7 @@ use std::sync::Arc;
 /// - A channel may be reclassified by its owner, a message by the channel's
 ///   owner or its author, a note or memory entry by its author.
 /// - A tool call of an agent is approved by the agent's owner and whom its
-///   access list lets read it, of an agent of the system by the channel's
-///   owner (issue 14).
+///   access list lets read it (issue 14); of an agent of nobody, by nobody.
 /// - Searching and listing are allowed; their results are narrowed to what
 ///   the caller may read. Tool calls, secrets and commands are governed
 ///   elsewhere for now (issues 12 and 23).
@@ -75,23 +75,14 @@ impl OwnershipPolicy {
         Self { memberships }
     }
 
-    /// Whether the context answers for the agent with `agent` attributes in
-    /// the channel with `channel` attributes - approves its calls, runs the
-    /// commands that are its owners' (issues 14, 269): who is responsible
+    /// Whether the context answers for the agent with `agent` attributes -
+    /// approves its calls, runs the commands that are its owners' (issues
+    /// 14, 269): who is responsible
     /// for the agent - its owner, or whom its access list lets read it -,
-    /// also in someone else's channel; for an agent of the system, whose
-    /// channel it is.
-    async fn answers_for(
-        &self,
-        agent: &SecurityAttributes,
-        channel: &SecurityAttributes,
-        context: &SecurityContext,
-    ) -> bool {
-        if agent.unowned() {
-            self.owns(channel, context).await
-        } else {
-            self.granted(agent, Grant::Read, context).await
-        }
+    /// also in someone else's channel. Nobody answers for an agent of nobody,
+    /// which everybody could read (issue 491); none is the system's (issue 477).
+    async fn answers_for(&self, agent: &SecurityAttributes, context: &SecurityContext) -> bool {
+        !agent.unowned() && self.granted(agent, Grant::Read, context).await
     }
 
     /// Whether the principal owns an entity with `attributes`.
@@ -186,7 +177,7 @@ impl OwnershipPolicy {
 #[async_trait]
 impl AccessPolicy for OwnershipPolicy {
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-        if context.principal_id == ActorId::System {
+        if context.is_system() {
             return true;
         }
         match action {
@@ -204,16 +195,14 @@ impl AccessPolicy for OwnershipPolicy {
                 self.granted(agent, Grant::Read, context).await
                     || self.granted(channel, Grant::Read, context).await
             }
-            ActionType::ApproveToolCall { agent, channel } => {
-                self.answers_for(agent, channel, context).await
-            }
+            ActionType::ApproveToolCall(agent) => self.answers_for(agent, context).await,
             // A command of an agent is run by whoever may write in the
             // channel - its participants -, unless the command is for the agent's
             // owners alone, as approving its calls is (issue 269).
             ActionType::ShowAgentCommand { command, agent, channel }
             | ActionType::ExecuteAgentCommand { command, agent, channel } => {
                 if command.owners_only {
-                    self.answers_for(agent, channel, context).await
+                    self.answers_for(agent, context).await
                 } else {
                     self.granted(channel, Grant::Read, context).await
                 }
@@ -252,7 +241,7 @@ impl AccessPolicy for OwnershipPolicy {
         }
     }
 
-    /// Nothing narrowed for the system, which may do everything; the
+    /// Nothing narrowed for the system itself, which may do everything; the
     /// admission it decides `check` by for everybody else.
     fn admission(
         &self,
@@ -260,7 +249,7 @@ impl AccessPolicy for OwnershipPolicy {
         _kind: EntityKind,
         verb: Verb,
     ) -> Option<Admission> {
-        (context.principal_id != ActorId::System).then(|| Self::admission_for(context, verb))
+        (!context.is_system()).then(|| Self::admission_for(context, verb))
     }
 }
 
@@ -343,6 +332,36 @@ mod tests {
         );
     }
 
+    /// Issue 477: only the system itself has the system's rights. Whoever else acts in its name
+    /// is judged as any principal is, and the system acting for someone as them.
+    #[tokio::test]
+    async fn only_the_system_itself_may_do_everything() {
+        let (alice, bob) = (user(), user());
+        let (hers, his) = (SecurityAttributes::owned_by(alice), SecurityAttributes::owned_by(bob));
+        let access_policy = OwnershipPolicy::new();
+        let system = SecurityContext::system();
+        assert!(access_policy.check(&system, ActionType::delete(Session::KIND, &hers)).await);
+        let agent = ActorId::Agent(AgentId::new());
+        let in_its_name = system.next(agent, ActorId::System, ActorId::System);
+        assert!(
+            !access_policy.check(&in_its_name, ActionType::get(Session::KIND, &hers)).await,
+            "an agent in the system's name: no right of the system's"
+        );
+        assert!(
+            access_policy.admission(&in_its_name, Session::KIND, Verb::Get).is_some(),
+            "and its lists narrowed"
+        );
+        let for_alice = system.next(ActorId::System, ActorId::System, alice);
+        assert!(
+            access_policy.check(&for_alice, ActionType::update(Session::KIND, &hers)).await,
+            "the system acting for alice: with her rights"
+        );
+        assert!(
+            !access_policy.check(&for_alice, ActionType::get(Session::KIND, &his)).await,
+            "and hers alone"
+        );
+    }
+
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn owners_do_everything_whom_the_list_grants_read_strangers_nothing() {
@@ -377,22 +396,14 @@ mod tests {
         );
         assert!(allows(carol, tools(&hers, &theirs)).await, "and every member of the channel");
         assert!(!allows(carol, tools(&hers, &hers)).await, "but nobody else");
-        let approve = |agent, channel| ActionType::ApproveToolCall { agent, channel };
+        let approve = ActionType::ApproveToolCall;
+        assert!(allows(alice, approve(&hers)).await, "the agent's owner approves its calls");
+        assert!(allows(bob, approve(&hers)).await, "and so do its readers");
+        assert!(!allows(carol, approve(&hers)).await, "nobody else");
+        let nobodys = SecurityAttributes::default();
         assert!(
-            allows(alice, approve(&hers, &theirs)).await,
-            "the agent's owner approves its calls, in any channel"
-        );
-        assert!(allows(bob, approve(&hers, &theirs)).await, "and so do its readers");
-        assert!(!allows(carol, approve(&hers, &theirs)).await, "not whose channel it is");
-        let systems = SecurityAttributes::owned_by(ActorId::System);
-        assert!(
-            allows(carol, approve(&systems, &theirs)).await,
-            "an agent of the system: whose channel it is"
-        );
-        assert!(!allows(alice, approve(&systems, &theirs)).await, "nobody else");
-        assert!(
-            !allows(bob, approve(&SecurityAttributes::default(), &hers)).await,
-            "not even a reader of the channel"
+            !allows(carol, approve(&nobodys)).await,
+            "an agent of nobody, which everybody reads: nobody (issue 491)"
         );
         let command = |owners_only| Command {
             name: "x".to_string(),
@@ -424,10 +435,7 @@ mod tests {
             !allows(carol, show(&owners, &hers, &theirs)).await,
             "who may not run it does not see it"
         );
-        assert!(
-            allows(carol, run(&owners, &systems, &theirs)).await,
-            "an agent of the system: whose channel it is"
-        );
+        assert!(!allows(carol, run(&owners, &nobodys, &theirs)).await, "nor of an agent of nobody");
         // A command of the session is decided alike (issue 304), by the
         // channel alone.
         let run = |command, channel| ActionType::ExecuteCommand { command, channel };
@@ -456,7 +464,11 @@ mod tests {
         assert!(allows(bob, ActionType::custom(SKILL, &USE, &hers)).await, "a reader uses it");
         assert!(!allows(carol, ActionType::custom(SKILL, &USE, &hers)).await, "nobody else");
         assert!(
-            allows(carol, ActionType::custom(SKILL, &USE, &systems)).await,
+            allows(
+                carol,
+                ActionType::custom(SKILL, &USE, &SecurityAttributes::owned_by(ActorId::System))
+            )
+            .await,
             "the system's, everybody"
         );
         assert!(

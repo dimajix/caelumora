@@ -228,6 +228,12 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     see [Groups](#groups)), whatever whoever deletes or restores it may do with groups.
 *   The runtime acting on its own uses `SecurityContext::system()`, which may do everything. This is
     deliberate and never a default: an empty context has no rights.
+*   Only the system itself acts in the system's name (issue
+    [477](../issues/477-only-the-system-acts-as-the-system.md)): what may do everything is the
+    context whose caller, owner and principal are all the system (`SecurityContext::is_system`).
+    The system acting on someone's behalf - its principal another - has that principal's rights,
+    and the clearance of the roles it is given; no agent is the system's (`Agent::validate`), so
+    none acts with the system's rights.
 
 What may flow where is not the ownership policy's to decide: copying, publishing and the clearance
 at a channel's door are asked of the `ConfidentialityPolicy`. Of a reclassification the policy
@@ -391,10 +397,9 @@ rights. In three parts:
     owner, not by who happens to ask.
 2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`): the policy,
     the owner's rules for the place - evaluated in their name, as their own answer - and the
-    approval of the owner or whom the agent's list lets read it, for an agent of the system the
-    channel's owner (see [APPROVALS.md](APPROVALS.md#who-may-approve)). A
-    personality's limiting roles narrow the agent further. A tool that needs no approval is the
-    owner's approval given in advance.
+    approval of the owner or whom the agent's list lets read it (see
+    [APPROVALS.md](APPROVALS.md#who-may-approve)). A personality's limiting roles narrow the agent
+    further. A tool that needs no approval is the owner's approval given in advance.
 3.  **Whoever asks may ask** - today by taking part in the channel the owner put the agent into.
     What comes of it reaches them only as the flow rule lets it into the channel.
 

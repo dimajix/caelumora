@@ -26,10 +26,11 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 
 ## Which concept decides each action
 
-From `OwnershipPolicy::check` (`caelumora-model/src/security/ownership.rs`). The system principal
-is allowed everything before any variant is looked at. "Principal" is the context's principal - a
-user themselves, an agent its owner -, "caller" the one acting - the agent itself. What is done with
-a stored entity is decided by the verb, never by the kind (issue
+From `OwnershipPolicy::check` (`caelumora-model/src/security/ownership.rs`). The system itself -
+caller, owner and principal the system (`SecurityContext::is_system`, issue 477) - is allowed
+everything before any variant is looked at. "Principal" is the context's principal - a user
+themselves, an agent its owner -, "caller" the one acting - the agent itself. What is done with a
+stored entity is decided by the verb, never by the kind (issue
 [323](../issues/323-kinds-enumerated-in-the-core.md)); a kind's own verb by what it requires.
 
 | Actions | Rule | Concept |
@@ -39,7 +40,7 @@ a stored entity is decided by the verb, never by the kind (issue
 | a kind's own verb requiring `Write` (`WriteWorkspace`, `WriteArtifact`) | as reading, with `Write` | 1 |
 | `CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion` | the principal reads the channel | 1: reading grants acting in the conversation |
 | `ReadAgentTools` | the principal reads the agent or the channel | 1, two objects |
-| `ApproveToolCall` | `answers_for`: the principal reads the agent; for an agent of the system, owns the channel | 3, built from 1 |
+| `ApproveToolCall` | `answers_for`: the principal reads the agent; nobody for an agent of nobody (issue 491) | 3, built from 1 |
 | `ShowAgentCommand`, `ExecuteAgentCommand` | `owners_only`: `answers_for`; else the principal reads the channel | 3, built from 1 |
 | `ShowCommand`, `ExecuteCommand` | `owners_only`: the principal owns the channel; else reads it | 3, built from 1 |
 | `Create` of every kind | the new entity's owner is the principal | 1 |
@@ -104,7 +105,7 @@ in the same context (issue 322), named in the rows where it is the reason of a r
 | Put into a project, take out (`update_project`, issue 467) | `UpdateSession` (U,1); the project reached: store `GetProject` (U,1), else `NotFound`; another session's own refused (structural); a new own made in S where its own was lifted; the project shared with its participants in S - the session's act was asked -; store `UpdateSession`; the share of the one it leaves taken away in S | R2 + R1 | `UpdateSession` (pair) | `PermissionDenied`, `NotFound`, `ProjectOutOfScope`, `OwnerNotAUser` |
 | Take someone in (`SessionLoop::add_participant`) | `UpdateSession` (U,1) unless in the session and a channel is named; with a channel `channel_for` (U,1-2) and `UpdateChannel` (U,1); `GetUser` or `GetAgent` (U,1); `GetPersonality` (A,1); scope; `require_cleared` with the member's roles (U,2); store `GetSession` + `UpdateSession`; group in S; then the channel's `add_participant` | R2 + R1 | `UpdateSession`, `UpdateChannel` (pair) | `PermissionDenied`, `NotFound`, `AlreadyParticipant`, `CannotTakeIn`, `OutOfScope`, `NotCleared` |
 | Join (`SessionManager::join`, `SessionLoop::join`) | `JoinSession` or `GetSession` (U,1), else `NotFound`; `GetUser` or `GetAgent` (U,1); `GetPersonality` (A,1); scope; `require_cleared` (U,2); `JoinSession` in the participant's context (M,1); `JoinChannel` (M,1); store in S; then the channel's `join` | R2 + R1 | `JoinSession`, `JoinChannel` (pair) | `NotFound`, `PermissionDenied`, `NotCleared` |
-| Make an agent (`AgentManager::create`, behind a template and `POST /agents`) | `CreateAgent` (U,1); in a session's or a channel's scope store `GetSession` or `GetChannel` (U,1) - what lies there keeps the session from being deleted; store `GetPersonality`; scope; store `CreateAgent` | R2 + R1 | `CreateAgent` (pair) | `Invalid`, `NotFound`, `PermissionDenied`, `PersonalityOutOfScope`, `NameTaken` |
+| Make an agent (`AgentManager::create`, behind a template and `POST /agents`) | `CreateAgent` (U,1); in a session's or a channel's scope store `GetSession` or `GetChannel` (U,1) - what lies there keeps the session from being deleted; store `GetPersonality`; scope; store `CreateAgent` | R2 + R1 | `CreateAgent` (pair) | `Invalid`, `NotFound`, `PermissionDenied`, `PersonalityOutOfScope`, `NameTaken`, `Validation` (a project's scope, the system as owner) |
 | Delete an agent (`AgentManager::delete`) | store `GetAgent`; `DeleteAgent` (U,1); store `DeleteAgent`; it rests in its channels, which follow it in S | R2 + R1 | `DeleteAgent` (pair) | `NotFound`, `PermissionDenied` |
 | Restore, purge an agent (`AgentManager::restore`, `purge`) | store only | R1 | - | `NotFound`, `PermissionDenied` |
 | Rename an agent (`AgentController::update_name`) | store `GetAgent` + `UpdateAgent` (U,1) | R1 | - | `NotFound`, `PermissionDenied`, `Invalid` |

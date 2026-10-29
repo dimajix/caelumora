@@ -73,11 +73,8 @@ pub enum ActionType<'a> {
     ReadAgentComponents(&'a SecurityAttributes),
     /// Answering whether a tool call of an agent may run (issue 14): an
     /// answer that counts for the approval it was asked for. Carries the
-    /// agent's attributes and those of the channel the call is made in.
-    ApproveToolCall {
-        agent: &'a SecurityAttributes,
-        channel: &'a SecurityAttributes,
-    },
+    /// agent's attributes.
+    ApproveToolCall(&'a SecurityAttributes),
     /// Stopping a running session - all its channels and actors - without
     /// deleting it, carrying its attributes. It stops for everybody in it.
     StopSession(&'a SecurityAttributes),
@@ -212,7 +209,7 @@ impl<'a> ActionType<'a> {
             ActionType::ReadAgentContext(_) => "ReadAgentContext".into(),
             ActionType::ReadAgentTools { .. } => "ReadAgentTools".into(),
             ActionType::ReadAgentComponents(_) => "ReadAgentComponents".into(),
-            ActionType::ApproveToolCall { .. } => "ApproveToolCall".into(),
+            ActionType::ApproveToolCall(_) => "ApproveToolCall".into(),
             ActionType::StopSession(_) => "StopSession".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
@@ -244,7 +241,7 @@ impl<'a> ActionType<'a> {
             ActionType::Entity { kind, .. } | ActionType::List(kind) => kind.name(),
             ActionType::ReadAgentContext(_) => "context",
             ActionType::ReadAgentTools { .. } | ActionType::ReadAgentComponents(_) => "agent",
-            ActionType::ApproveToolCall { .. } => "approval",
+            ActionType::ApproveToolCall(_) => "approval",
             ActionType::StopSession(_) => "session",
             ActionType::CancelChannel(_) => "cancel",
             ActionType::WakeChannel(_) => "channel",

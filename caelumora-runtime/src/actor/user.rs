@@ -621,8 +621,7 @@ impl UserActor {
                 return None;
             }
         };
-        let channel = self.channel.load().security_attributes.clone();
-        if !self.access_policy.may_approve(&self.security_context(), &agent, &channel).await {
+        if !self.access_policy.may_approve(&self.security_context(), &agent).await {
             debug!(rule = %rule_id, "UserActor {} may not approve the calls of agent {}; its rule does not answer", self.id(), request.agent_id);
             return None;
         }

@@ -315,10 +315,10 @@ given (`EntityStore::delete`): a deletion makes its mark once - its id, who, whe
 everything that goes with what it deletes, so that what went with it is what carries its mark (issue
 469), told by the mark's id (`RemovalId`), not by its time, which not every backend keeps exactly:
 restoring takes back what carries the mark of what is restored, and a restoring that fails puts the
-mark back as it was, so that it can be tried again. The mark names the caller; only the system's
-names another, as it deletes the groups that go with a session in the runtime's name, by whoever
-deleted the session (`Validation` otherwise). What was deleted is reached by operations of its own,
-each with a permission of its own:
+mark back as it was, so that it can be tried again. The mark names the caller; only that of the
+system itself (`SecurityContext::is_system`) names another, as it deletes the groups that go with a
+session in the runtime's name, by whoever deleted the session (`Validation` otherwise). What was
+deleted is reached by operations of its own, each with a permission of its own:
 
 | Operation | asks | does |
 |---|---|---|

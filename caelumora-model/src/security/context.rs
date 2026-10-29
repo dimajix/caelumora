@@ -88,6 +88,13 @@ impl SecurityContext {
         Self::new(ActorId::System, SessionId::default(), ChannelId::default())
     }
 
+    /// Whether this is the system itself: caller, owner and principal the system, as `system`
+    /// makes it (issue 477). Only the system itself has the system's rights; the system acting
+    /// on someone's behalf - its principal another - has that principal's.
+    pub fn is_system(&self) -> bool {
+        [self.caller_id, self.owner_id, self.principal_id].iter().all(|id| *id == ActorId::System)
+    }
+
     /// This context continued by `caller_id`, answered for by `owner_id`,
     /// acting with the rights of `principal_id` - an agent taking up a
     /// request, owned by and acting for its owner - for the same initiator,
