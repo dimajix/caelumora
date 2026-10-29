@@ -1,6 +1,6 @@
 # 468 — The AttachmentManager takes the view of a channel where it needs its coordinates
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -80,3 +80,28 @@ document yet.
   `ArtifactManager::publish` was given the channel's view after the pattern of
   `AttachmentManager::create`, and the maintainer preferred coordinates: a view is a layer of
   access, an interface speaks of coordinates and properties.
+- **2026-10-29** — Done. Decided for neither A nor B: B described the `WorkspaceManager`
+  wrongly - `WorkspaceController::terminal_in` and `shell_in` take the session's and the channel's
+  documents, not their ids, and ask the reading question themselves -, and taking the running
+  sessions into the `AttachmentManager` would have made a cycle with the `SessionManager`, which
+  holds it. The channel's document is its properties: `create` and `copy` take
+  `(ctx, &Channel, …)`, and read id, classification and participants from it (`Channel::lists`,
+  moved into the model). The manager asks what is its own - participation, the flow into the channel
+  and the storage - and not whether the caller reads the channel: that was decided by whoever handed
+  the channel over, the REST server through `SessionLoop::channel_for` (`open_channel`, which also
+  opens the session, where `channel_of` did not), the agent's tool through its `ActorRuntime`
+  (`ActorRuntime::channel`, `Situation::channel_document`). On the way, the maintainer rejected the
+  plan to put the upload beside `ChannelLoop::workspace_terminal` and `workspace_shell`: the
+  `ChannelLoop` is for the exchange of messages and the collaboration of its actors, and gives out
+  what it holds; it does not act on other resources for its callers. Both methods were removed;
+  their callers - the `ActorRuntime`, the REST server's `kill_command`, the tests through
+  `workspace::testing::terminal_in` and `shell_in` - reach the `WorkspaceController` with the
+  documents from the loops and controllers that hold them. The rule is written into
+  `CODING-GUIDELINES.md` ("Runtimes and their entities" and the checklist). The three places that
+  build a `Place` from a session and a channel to ask `channel_reading` stay as they were: the
+  manager asks it no more, so the fourth copy was not made.
+- **2026-10-29** — After the review: `SessionLoop::workspace` answers `WorkspaceResult`, so that
+  the one place that says what a session without a workspace means for its channels is the
+  runtime's, not the REST server's; and the views of a `Situation` are named `session_view`,
+  `channel_view` and `workspace_view`, so that `Situation::channel` is the channel's document as
+  `ActorRuntime::channel` is - one name, one kind of thing.

@@ -266,14 +266,15 @@ fn changes_who_may_run(event: &GlobalEvent) -> bool {
 mod tests {
     use super::*;
     use crate::terminal::Shell;
-    use crate::workspace::testing::{session_with_workspace, WithWorkspace};
+    use crate::workspace::testing::{session_with_workspace, shell_in, WithWorkspace};
     use caelumora_model::channel::ChannelUpdateEvent;
     use caelumora_model::workspace::CommandStatus;
 
     /// A command started by the agent in the session's channel, still
     /// running, with its shell.
     async fn running(w: &WithWorkspace) -> (Arc<dyn Shell>, String) {
-        let (_, shell) = w.session.channels()[0].workspace_shell(&w.context).await.unwrap();
+        let main = w.session.channels()[0].id();
+        let (_, shell) = shell_in(&w.session, main, &w.context).await.unwrap();
         let shell = shell.expect("its storage gives a shell");
         let id = shell.start("sleep 30").await.unwrap();
         (shell, id)

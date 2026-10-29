@@ -277,7 +277,7 @@ impl NotesComponent {
             channel: Option<String>,
         }
         let ReadNotes { channel } = arguments(params)?;
-        let Some(session) = turn.situation().session().await? else {
+        let Some(session) = turn.situation().session_view().await? else {
             return Err(ToolError::ExecutionFailed(
                 "the turn is in no session to read from".to_string(),
             ));
@@ -346,7 +346,7 @@ impl PromptProvider for NotesComponent {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         let own = ActorId::Agent(situation.agent_id());
         let mut others = Vec::new();
-        let published = match situation.channel().await {
+        let published = match situation.channel_view().await {
             Ok(Some(channel)) => channel.notes().await,
             Ok(None) => Ok(Vec::new()),
             Err(e) => Err(e),

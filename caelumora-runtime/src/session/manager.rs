@@ -2040,18 +2040,11 @@ mod tests {
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
         let (alice, system) = (World::as_user(world.alice), SecurityContext::system());
-        let main = world
-            .manager
-            .views(Viewer::new(alice.clone()))
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(session.channels()[0].id())
-            .await
-            .unwrap();
+        let main = Arc::clone(&session.channels()[0].channel());
         let attachments = world.runtime.attachment_manager();
         let uploaded = attachments
             .create(
+                &alice,
                 &main,
                 "a.txt",
                 None,

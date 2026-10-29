@@ -11,7 +11,7 @@
 //! `agent_memory` component uses it for its tools and prompt part; anything
 //! else that works with an agent's memory in a turn uses it too. What it
 //! needs of the session - its privacy, and that of the sessions entries
-//! come from - it reads through the turn's views (`Situation::session`, issue
+//! come from - it reads through the turn's views (`Situation::session_view`, issue
 //! 163).
 
 use crate::situation::Situation;
@@ -291,12 +291,12 @@ impl AgentMemory {
         MemoryOrigin { channel: turn.situation().channel_id(), session }
     }
 
-    /// The agent's session as `situation` reads it (`Situation::session`),
+    /// The agent's session as `situation` reads it (`Situation::session_view`),
     /// through which what it remembers is recalled and placed; `None` if it
     /// reaches none, or reading it failed - which is logged, since the turn
     /// goes on as one in no session.
     async fn own_session(situation: &Situation<'_>) -> Option<SessionView> {
-        situation.session().await.unwrap_or_else(|e| {
+        situation.session_view().await.unwrap_or_else(|e| {
             warn!(
                 "Agent {}: its session could not be read for its memory: {e}",
                 situation.agent_id()

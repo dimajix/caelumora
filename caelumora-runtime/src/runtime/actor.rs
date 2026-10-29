@@ -5,7 +5,7 @@ use crate::attachment::{AttachmentManager, AttachmentResult};
 use crate::channel::ChannelLoop;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::ComponentRegistry;
-use crate::controller::{ChannelController, SessionController};
+use crate::controller::{ChannelController, SessionController, WorkspaceController};
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::terminal::{Shell, Terminal};
 use crate::view::{SessionView, ViewResult, Viewer};
@@ -267,7 +267,7 @@ impl ActorRuntime {
     /// the actor says there is bound by (issues 141, 212): read from its
     /// controller, as it stood last once the channel is gone (issue 374).
     pub fn channel_classification(&self) -> Classification {
-        self.channel_controller().load().classification.clone()
+        self.channel().classification.clone()
     }
 
     /// The time zone of the actor's session as it is now (issue 424) - UTC
@@ -282,7 +282,7 @@ impl ActorRuntime {
     /// carry out (issue 269), an act on what an agent keeps there (issue
     /// 312): read from its controller, as `channel_classification`.
     pub fn channel_attributes(&self) -> SecurityAttributes {
-        self.channel_controller().load().security_attributes.clone()
+        self.channel().security_attributes.clone()
     }
 
     /// `questions` put to the users of the actor's channel, their addressees
@@ -300,25 +300,33 @@ impl ActorRuntime {
         Some(self.channel_loop()?.address_questions(questions, context))
     }
 
-    /// The workspace of the actor's session and its terminal, for what
-    /// `need` asks, as `context` may use it in the actor's channel
-    /// (`ChannelLoop::workspace_terminal`, issue 344).
+    /// The actor's channel as it stands, read from its controller - as it stood last once the
+    /// channel is gone (issue 374): what `channel_classification` and `channel_attributes` are read
+    /// from, and what an operation in the channel is given as the channel's properties
+    /// (`AttachmentManager::copy`).
+    pub fn channel(&self) -> Arc<Channel> {
+        Arc::clone(&self.channel_controller().load())
+    }
+
+    /// The workspace of the actor's session and its terminal, for what `need` asks, as `context`
+    /// may use it in the actor's channel (`WorkspaceController::terminal_in`, issue 344): asked by
+    /// the workspace the session holds, of the session and the channel as they are now.
     ///
     /// # Errors
-    /// `NotUsableInChannel` while the channel is still being built or once
-    /// it is gone, or what `ChannelLoop::workspace_terminal` reports.
+    /// `NotUsableInChannel` while the channel is still being built or once it or its session is
+    /// gone, or no workspace is attached to the session; else what `terminal_in` reports.
     pub async fn workspace_terminal(
         &self,
         context: &SecurityContext,
         need: Grant,
     ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        let channel = self.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
-        channel.workspace_terminal(context, need).await
+        let (session, workspace) = self.session_workspace()?;
+        workspace.terminal_in(context, &session, &self.channel(), need).await
     }
 
-    /// The workspace of the actor's session and its shell as the actor's
-    /// channel sees it, for `context` (`ChannelLoop::workspace_shell`, issue
-    /// 344).
+    /// The workspace of the actor's session and its shell as the actor's channel sees it - the
+    /// commands started in that channel alone -, for `context` (`WorkspaceController::shell_in`,
+    /// issue 344).
     ///
     /// # Errors
     /// As [`Self::workspace_terminal`].
@@ -326,8 +334,22 @@ impl ActorRuntime {
         &self,
         context: &SecurityContext,
     ) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        let channel = self.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
-        channel.workspace_shell(context).await
+        let (session, workspace) = self.session_workspace()?;
+        workspace.shell_in(context, &session, &self.channel()).await
+    }
+
+    /// The actor's session as it is now and the workspace it holds.
+    ///
+    /// # Errors
+    /// `NotUsableInChannel` while the channel is still being built or once it or its session is
+    /// gone, or no workspace is attached to the session (`SessionLoop::workspace`).
+    fn session_workspace(&self) -> WorkspaceResult<(Arc<Session>, Arc<WorkspaceController>)> {
+        let session_loop = self
+            .channel_loop()
+            .and_then(|channel| channel.session_loop())
+            .ok_or(WorkspaceError::NotUsableInChannel)?;
+        let workspace = session_loop.workspace()?;
+        Ok((Arc::clone(&session_loop.session()), workspace))
     }
 
     /// The channel the actor is in, or `None` while the channel is still

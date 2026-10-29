@@ -6,7 +6,7 @@
 //! It says what is there, whatever tools a personality has to work on it,
 //! so a personality with several gets it once. Read afresh at the start of
 //! every turn through the agent's views: the workspace the channel may use
-//! now (`Situation::workspace`). In the system prompt by default
+//! now (`Situation::workspace_view`). In the system prompt by default
 //! (parameter `position`): it changes rarely. The part is classified as the
 //! workspace, which flows into the channel where it may be used there.
 //!
@@ -156,7 +156,7 @@ impl PromptProvider for WorkspacePromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        Ok(match situation.workspace().await? {
+        Ok(match situation.workspace_view().await? {
             Some(workspace) => {
                 let found = self.instruction_files_in(&workspace, situation).await;
                 let writable = workspace.may_write().await;

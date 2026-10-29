@@ -215,12 +215,14 @@ is the same turn. Every message the turn produces carries it (`Message::turn_id`
 belong to one turn can be told from the messages alone. It is not covered by the digest, and a
 modification does not take it over: a changed message stays in the turn it was produced in.
 
-Beside its state, a turn reaches its session through its views (`Situation::session`), from which
-components read other channels as the confidentiality rules allow - at the classification the turn
-began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The views only read: its session,
-its channel and the workspace it may use there (`Situation::session`, `channel`, `workspace`) are
-views, named after what they show, and answer alike - nothing where the work reaches no session,
-an error where it may not read what it reaches. What is done with the workspace's files goes
+Beside its state, a turn reaches its session through its views (`Situation::session_view`), from
+which components read other channels as the confidentiality rules allow - at the classification the
+turn began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The views only read: its
+session, its channel and the workspace it may use there (`Situation::session_view`, `channel_view`,
+`workspace_view`) are views, named `…_view` after what they show, and answer alike - nothing where
+the work reaches no session, an error where it may not read what it reaches. The channel as it
+stands - its document, what an operation in the channel is given as its properties
+(`AttachmentManager::copy`) - is `Situation::channel`. What is done with the workspace's files goes
 through a handle instead, named after the handle: its terminal, to read them
 (`Situation::workspace_terminal`), and to change them or run commands, the turn's
 (`Turn::workspace_terminal`, `Turn::workspace_shell`). Both are reached through the actor's

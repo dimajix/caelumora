@@ -169,9 +169,9 @@ impl ChannelView {
     }
 
     /// Whether `actor` is among the channel's participants - resting in it
-    /// included.
+    /// included (`Channel::lists`).
     pub fn lists(&self, actor: ActorId) -> bool {
-        self.channel.participants.iter().any(|p| p.actor_id() == actor)
+        self.channel.lists(actor)
     }
 
     /// Whether the channel runs: its loop is where an operation goes.

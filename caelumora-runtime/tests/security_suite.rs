@@ -37,7 +37,7 @@ use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_runtime::actor::Shown;
 use caelumora_runtime::agent::AgentError;
-use caelumora_runtime::channel::{ChannelError, ChannelLoop};
+use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
 use caelumora_runtime::event::EventSubscription;
 use caelumora_runtime::group::GroupError;
@@ -46,12 +46,13 @@ use caelumora_runtime::moderator::ResponderPolicy;
 use caelumora_runtime::project::ProjectError;
 use caelumora_runtime::scoped::ScopeNotEmpty;
 use caelumora_runtime::session::testing::{create, make_session};
-use caelumora_runtime::session::{ChannelSpec, SessionError, SessionSpec};
+use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_runtime::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_runtime::testing::{
     attributes, checks, denied, file, not_found, quiet, read, shown, workspace, World, STAFF,
 };
 use caelumora_runtime::view::{ViewError, Viewer};
+use caelumora_runtime::workspace::testing::{shell_in, terminal_in};
 use caelumora_runtime::workspace::WorkspaceError;
 use serde_json::json;
 use tokio::time;
@@ -1189,10 +1190,17 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
             .channel(channel_id)
             .await
     };
-    let hers = channel_of(world.alice).await.unwrap();
 
-    let (uploaded, asked) =
-        world.asked(attachments.create(&hers, "notes.txt", None, (5, file("notes")))).await;
+    let channel = Arc::clone(&main.channel());
+    let (uploaded, asked) = world
+        .asked(attachments.create(
+            &World::as_user(world.alice),
+            &channel,
+            "notes.txt",
+            None,
+            (5, file("notes")),
+        ))
+        .await;
     let uploaded = uploaded.expect("hers to upload");
     assert_eq!(
         asked,
@@ -3038,13 +3046,15 @@ async fn who_may_not_add_to_a_channel_is_refused_before_the_agent_is_looked_at()
 // --- Workspaces (issues 251, 253) ---
 
 /// Ends command `id` as the REST server does (issue 294): through the
-/// shell of the channel it was started in, as `ctx` reaches it there.
+/// shell of channel `channel` of `session`, where it was started, as `ctx`
+/// reaches it there (`WorkspaceController::shell_in`).
 async fn kill(
-    channel: &ChannelLoop,
+    session: &SessionLoop,
+    channel: ChannelId,
     ctx: &SecurityContext,
     id: &str,
 ) -> Result<CommandState, WorkspaceError> {
-    let (_, shell) = channel.workspace_shell(ctx).await?;
+    let (_, shell) = shell_in(session, channel, ctx).await?;
     let shell = shell.ok_or_else(|| TerminalError::UnknownCommand(id.to_string()))?;
     Ok(shell.kill(id, 0).await?)
 }
@@ -3510,8 +3520,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
         "its list, then both ways: {asked:?}"
     );
     assert_eq!(bobs.id(), docs.id);
-    let in_channel = session.channel(main).expect("the channel");
-    let his = |need| in_channel.workspace_terminal(&bob, need);
+    let his = |need| terminal_in(&session, main, &bob, need);
     assert!(
         matches!(his(Grant::Write).await, Err(WorkspaceError::ReadOnly { .. })),
         "reading, not changing, where it grants reading"
@@ -3583,7 +3592,7 @@ async fn a_command_runs_on_only_while_some_participant_could_start_it_in_its_cha
         .unwrap();
     let session = world.shared_session(&[], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
-    let (_, shell) = session.channels()[0].workspace_shell(&alice).await.unwrap();
+    let (_, shell) = shell_in(&session, session.channels()[0].id(), &alice).await.unwrap();
     let shell = shell.expect("a shell");
     let id = shell.start("sleep 30").await.unwrap();
 
@@ -3651,7 +3660,7 @@ async fn a_command_runs_on_only_while_some_participant_could_start_it_in_its_cha
     // Stopping the session ends what runs in its channels, asking nothing
     // besides what stopping it asks.
     channel.update_uses_workspace(&alice, true).await.unwrap();
-    let (_, shell) = channel.workspace_shell(&alice).await.unwrap();
+    let (_, shell) = shell_in(&session, channel.id(), &alice).await.unwrap();
     let shell = shell.expect("a shell");
     let id = shell.start("sleep 30").await.unwrap();
     let (stopped, asked) = world.asked(world.manager.stop(&alice, session.id())).await;
@@ -3689,14 +3698,13 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     // As `run_command` starts them: in the shell of the channel.
-    let in_channel = session.channel(main).expect("the channel");
-    let (_, shell) = in_channel.workspace_shell(&alice).await.unwrap();
+    let (_, shell) = shell_in(&session, main, &alice).await.unwrap();
     let started = shell.expect("a shell").start("sleep 30").await.unwrap();
     let terminal = workspace(&world, docs.id).await.terminal(&alice, Grant::Write).await.unwrap();
     let other = terminal.shell(&ChannelId::new().to_string()).expect("a shell");
     let elsewhere = other.start("sleep 30").await.unwrap();
 
-    let (refused, asked) = world.asked(kill(&in_channel, &bob, &started)).await;
+    let (refused, asked) = world.asked(kill(&session, main, &bob, &started)).await;
     assert!(
         matches!(refused, Err(WorkspaceError::ReadOnly { .. })),
         "not by who only reads its files: {refused:?}"
@@ -3718,10 +3726,10 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
         .share(&alice, Subject::Group(GroupId::of_session(session_id)), Grant::Write)
         .await
         .unwrap();
-    let (killed, asked) = world.asked(kill(&in_channel, &bob, &started)).await;
+    let (killed, asked) = world.asked(kill(&session, main, &bob, &started)).await;
     assert_eq!(killed.expect("by who may change them").status, CommandStatus::Killed);
     assert_eq!(asked, checks(&[&reached[..], &["bob: WriteWorkspace(alice's) yes"]].concat()));
-    let unknown = kill(&in_channel, &bob, &elsewhere).await;
+    let unknown = kill(&session, main, &bob, &elsewhere).await;
     assert!(
         matches!(unknown, Err(WorkspaceError::Terminal(TerminalError::UnknownCommand(_)))),
         "not one of another channel: {unknown:?}"

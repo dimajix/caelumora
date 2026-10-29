@@ -173,20 +173,20 @@ async fn place_of(
         })?;
     let channel = turn
         .situation()
-        .channel()
+        .channel_view()
         .await?
         .ok_or_else(|| ToolError::ExecutionFailed("the turn is in no channel".to_string()))?;
     Ok((place, channel))
 }
 
-/// The attachment the model of `turn` names `reference`, as its message stands, and the view of
-/// the agent's channel it was read through.
+/// The attachment the model of `turn` names `reference`, as its message stands, read through the
+/// view of the agent's channel.
 ///
 /// # Errors
 /// As `place_of`; `InvalidParameter` if its message no longer carries it.
-async fn attachment(turn: &Turn<'_>, reference: &str) -> ToolResult<(ContentRef, ChannelView)> {
+async fn attachment(turn: &Turn<'_>, reference: &str) -> ToolResult<ContentRef> {
     let ((message, id), channel) = place_of(turn, reference).await?;
-    Ok((channel.attachment(message, id).await?, channel))
+    Ok(channel.attachment(message, id).await?)
 }
 
 /// The same with its content.
@@ -243,7 +243,7 @@ impl ToolProvider for AttachmentTool {
         match name {
             VIEW_ATTACHMENT => {
                 let Named { reference } = arguments(params)?;
-                let (attachment, _) = attachment(turn, &reference).await?;
+                let attachment = attachment(turn, &reference).await?;
                 if !attachment.is_image() {
                     return Err(ToolError::InvalidParameter(format!("'{reference}' is no image but {}; read it or copy it into the workspace instead", attachment.media_type)));
                 }
@@ -297,8 +297,12 @@ impl ToolProvider for AttachmentTool {
             }
             ATTACH => {
                 let Named { reference } = arguments(params)?;
-                let (attachment, channel) = attachment(turn, &reference).await?;
-                let copy = self.attachments.copy(&channel, &attachment).await?;
+                let attachment = attachment(turn, &reference).await?;
+                let situation = turn.situation();
+                let copy = self
+                    .attachments
+                    .copy(situation.security_context(), &situation.channel(), &attachment)
+                    .await?;
                 let classification = copy.classification.clone();
                 turn.put_aside(copy);
                 let value = json!({ "ref": reference, "name": attachment.name.as_str(), "attached": self.text("attached", ()).unwrap_or_default() });
@@ -412,24 +416,27 @@ mod tests {
     /// message as its history holds it.
     async fn said_with_attachments(world: &World, session: &SessionLoop) -> Message {
         let main = &session.channels()[0];
+        let channel = Arc::clone(&main.channel());
+        let hers = World::as_user(world.alice);
+        let attachments = world.runtime.attachment_manager();
+        let notes = attachments
+            .create(&hers, &channel, "notes.txt", None, bytes(b"line one\nline two\n"))
+            .await
+            .unwrap();
+        let chart =
+            attachments.create(&hers, &channel, "chart.png", None, bytes(PNG)).await.unwrap();
+        main.user_actor(world.alice)
+            .unwrap()
+            .send_message(Some("look".to_string()), None, vec![notes.id, chart.id])
+            .await
+            .unwrap();
         let view = world
             .manager
-            .views(Viewer::new(World::as_user(world.alice)))
+            .views(Viewer::new(hers))
             .session(session.id())
             .await
             .unwrap()
             .channel(main.id())
-            .await
-            .unwrap();
-        let attachments = world.runtime.attachment_manager();
-        let notes = attachments
-            .create(&view, "notes.txt", None, bytes(b"line one\nline two\n"))
-            .await
-            .unwrap();
-        let chart = attachments.create(&view, "chart.png", None, bytes(PNG)).await.unwrap();
-        main.user_actor(world.alice)
-            .unwrap()
-            .send_message(Some("look".to_string()), None, vec![notes.id, chart.id])
             .await
             .unwrap();
         time::timeout(Duration::from_secs(5), async {

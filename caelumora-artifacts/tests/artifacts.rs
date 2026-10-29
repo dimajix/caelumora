@@ -64,6 +64,7 @@ use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
 use caelumora_runtime::testing::{quiet, TestRuntime, World, STAFF};
 use caelumora_runtime::view::Viewer;
+use caelumora_runtime::workspace::testing::terminal_in;
 use futures::stream;
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -562,12 +563,7 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
     let session = world.shared_session(&[], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session
-        .channel(main)
-        .expect("the channel")
-        .workspace_terminal(&alice, Grant::Write)
-        .await
-        .unwrap();
+    let (_, terminal) = terminal_in(&session, main, &alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (artifact, _) =
@@ -643,12 +639,8 @@ async fn publish(
     let running = world.manager.open(&World::system(), session).await.expect("the session");
     let name =
         ScopedName::new(name, Scope::ProjectScope { project_id: running.session().project })?;
-    let (workspace, terminal) = running
-        .channel(channel)
-        .expect("the channel")
-        .workspace_terminal(ctx, Grant::Read)
-        .await
-        .expect("the workspace, to read");
+    let (workspace, terminal) =
+        terminal_in(&running, channel, ctx, Grant::Read).await.expect("the workspace, to read");
     let content = terminal.read(at).await.expect("the file");
     manager(world)
         .publish(ctx, (session, channel), content, &workspace.classification, &name, description)
@@ -684,12 +676,8 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let session = world.shared_session(&[], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session
-        .channel(main)
-        .expect("the channel")
-        .workspace_terminal(&alice, Grant::Write)
-        .await
-        .expect("hers to use");
+    let (_, terminal) =
+        terminal_in(&session, main, &alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
     let (whole, _) = publish(&world, &alice, session_id, main, &at, "report.md", None)
@@ -813,12 +801,8 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
     };
-    let (_, terminal) = session
-        .channel(main)
-        .expect("the channel")
-        .workspace_terminal(&alice, Grant::Write)
-        .await
-        .expect("hers to use");
+    let (_, terminal) =
+        terminal_in(&session, main, &alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
 
@@ -967,12 +951,7 @@ async fn session_with_artifacts(world: &World) -> (Arc<SessionLoop>, Artifact, A
     let session = world.shared_session(&[], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session
-        .channel(main)
-        .expect("the channel")
-        .workspace_terminal(&alice, Grant::Write)
-        .await
-        .unwrap();
+    let (_, terminal) = terminal_in(&session, main, &alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (hers, _) = publish(world, &alice, session_id, main, &at, "hers.csv", None).await.unwrap();
@@ -1109,12 +1088,7 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     let session = world.shared_session(&[], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session
-        .channel(main)
-        .expect("the channel")
-        .workspace_terminal(&alice, Grant::Write)
-        .await
-        .unwrap();
+    let (_, terminal) = terminal_in(&session, main, &alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (artifact, _) =
@@ -1199,12 +1173,8 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     let write_in = |channel, text| {
         let (alice, session) = (&alice, &session);
         async move {
-            let (_, terminal) = session
-                .channel(channel)
-                .expect("the channel")
-                .workspace_terminal(alice, Grant::Write)
-                .await
-                .expect("hers to use");
+            let (_, terminal) =
+                terminal_in(session, channel, alice, Grant::Write).await.expect("hers to use");
             terminal
                 .write(&WorkspacePath::parse("report.md").unwrap(), file(text), 100)
                 .await
@@ -1332,12 +1302,8 @@ async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_p
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let session_id = session.id();
     let main = session.channels()[0].id();
-    let (_, terminal) = session
-        .channel(main)
-        .expect("the channel")
-        .workspace_terminal(&alice, Grant::Write)
-        .await
-        .expect("hers to use");
+    let (_, terminal) =
+        terminal_in(&session, main, &alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
     let (artifact, _) =
@@ -1414,12 +1380,7 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     session.update_project(&alice, Some(project.id)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session
-        .channel(main)
-        .expect("the channel")
-        .workspace_terminal(&alice, Grant::Write)
-        .await
-        .unwrap();
+    let (_, terminal) = terminal_in(&session, main, &alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
     let (artifact, _) =

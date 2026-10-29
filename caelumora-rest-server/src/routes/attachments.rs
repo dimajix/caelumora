@@ -3,7 +3,7 @@
 
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Query};
-use crate::routes::{channel_of, content_response};
+use crate::routes::{channel_of, content_response, open_channel};
 use crate::state::AppState;
 use axum::body::Body;
 use axum::extract::State;
@@ -42,12 +42,13 @@ pub(super) async fn upload_attachment(
             )
         })?;
     let classification = classification_of(&query)?;
-    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel_loop) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = Arc::clone(&channel_loop.channel());
     let content = Box::pin(body.into_data_stream().map_err(Error::other));
     let uploaded = state
         .runtime_manager
         .attachment_manager()
-        .create(&channel, &query.name, classification, (size, content))
+        .create(&user.security_context(), &channel, &query.name, classification, (size, content))
         .await?;
     Ok((StatusCode::CREATED, Json(uploaded)))
 }

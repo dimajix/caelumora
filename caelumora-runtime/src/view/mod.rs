@@ -18,7 +18,7 @@
 //! their classifications (`ConfidentialityQuestions::may_copy_information`, issue 133),
 //! else entry by entry - only what was released to it - and a channel it
 //! may not read at all is one that does not exist. Its root is its own
-//! session, reached through its situation (`Situation::session`); a
+//! session, reached through its situation (`Situation::session_view`); a
 //! frontend's root is [`SessionManager::views`].
 //!
 //! A node answers with a snapshot (`caelumora_model::snapshot`, issue 80)

@@ -323,6 +323,11 @@ impl Channel {
             .granting(Subject::Group(GroupId::of_channel(id)), Grant::Read)
     }
 
+    /// Whether `actor` is among the channel's participants - resting in it included.
+    pub fn lists(&self, actor: ActorId) -> bool {
+        self.participants.iter().any(|p| p.actor_id() == actor)
+    }
+
     /// A new channel, owned by `owner`, as every channel is built - from a
     /// template or on request (issue 09) -, read by its participants (issue
     /// 23): every user and agent in it, whoever they are at the time - the

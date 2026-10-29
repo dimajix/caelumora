@@ -3,7 +3,7 @@
 //! contain a text -, each with what it says and the attachments it carries
 //! (issue 282). Only channels the agent's channel may read by their
 //! classifications can be read - as the turn's views answer
-//! (`Situation::session`, issues 133, 163); every read is recorded as a
+//! (`Situation::session_view`, issues 133, 163); every read is recorded as a
 //! `KnowledgeRef` with the turn's messages. When a message was said is
 //! written as the model is given the times of its own channel's (issue
 //! 424): in the turn's time zone, in the same form.
@@ -127,7 +127,7 @@ impl ToolProvider for ChannelHistoryComponent {
         let last = last.map(|n| n.clamp(1, MAX_LAST)).unwrap_or(DEFAULT_LAST);
         let query = query.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
-        let Some(session) = turn.situation().session().await? else {
+        let Some(session) = turn.situation().session_view().await? else {
             return Err(ToolError::ExecutionFailed(
                 "the turn is in no session to read from".to_string(),
             ));

@@ -91,8 +91,8 @@ impl PromptProvider for ChannelBriefingPromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`Situation::channel`) has no place to describe.
-        let Some(channel) = situation.channel().await? else {
+        // Work that reaches no session (`Situation::channel_view`) has no place to describe.
+        let Some(channel) = situation.channel_view().await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
         let session = channel.session();

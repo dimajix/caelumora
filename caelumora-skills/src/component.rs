@@ -111,10 +111,10 @@ fn joined(skills: &[SkillView], bound: &Classification) -> Classification {
     })
 }
 
-/// The session `turn` reads from (`Situation::session`); a turn that
+/// The session `turn` reads from (`Situation::session_view`); a turn that
 /// reaches none has no skills.
 async fn session_of(turn: &Turn<'_>) -> Result<SessionView, ToolError> {
-    turn.situation().session().await?.ok_or_else(|| {
+    turn.situation().session_view().await?.ok_or_else(|| {
         ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string())
     })
 }
@@ -313,7 +313,7 @@ impl PromptProvider for SkillsComponent {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        let Some(session) = situation.session().await? else {
+        let Some(session) = situation.session_view().await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
         let skills = session.views().usable_skills().await?;
@@ -538,7 +538,7 @@ impl AgentCommandProvider for SkillsComponent {
         };
         let session = turn
             .situation()
-            .session()
+            .session_view()
             .await
             .map_err(|e| {
                 warn!("/{} could not read the agent's session: {:#}", name, e);
@@ -573,7 +573,7 @@ impl AgentCommandProvider for SkillsComponent {
                     .map_err(|e| command_error(name, e))?;
                 // In the name of who asked, as the channel knows them.
                 let issuer = turn.situation().security_context().initiator_id;
-                let issuer_name = match turn.situation().channel().await {
+                let issuer_name = match turn.situation().channel_view().await {
                     Ok(Some(channel)) => channel
                         .participant(issuer)
                         .await
@@ -624,7 +624,7 @@ impl KnowledgeRestorer for SkillsComponent {
         };
         let session = turn
             .situation()
-            .session()
+            .session_view()
             .await
             .map_err(|e| unreadable(&e))?
             .ok_or(CompactionError::NoSession)?;

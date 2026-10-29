@@ -14,6 +14,7 @@
 
 use caelumora_model::actor::{ActorId, RequestReason};
 use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ModelProfile};
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
@@ -94,6 +95,13 @@ impl<'a> Situation<'a> {
         self.runtime.channel_attributes()
     }
 
+    /// The agent's channel as it stands (`ActorRuntime::channel`): what an operation in the
+    /// channel is given as the channel's properties (`AttachmentManager::copy`); `channel_view` is
+    /// how the work reads it.
+    pub fn channel(&self) -> Arc<Channel> {
+        self.runtime.channel()
+    }
+
     /// The classification of what the work writes (issue 168): the join of
     /// everything it has seen so far, at most `classification`.
     pub fn label(&self) -> Classification {
@@ -109,7 +117,7 @@ impl<'a> Situation<'a> {
     /// # Errors
     /// As `ActorRuntime::session_view`: the agent may not read it, or reading
     /// it failed.
-    pub async fn session(&self) -> ViewResult<Option<SessionView>> {
+    pub async fn session_view(&self) -> ViewResult<Option<SessionView>> {
         self.runtime
             .session_view(&self.work.security_context, self.work.classification.clone())
             .await
@@ -121,8 +129,8 @@ impl<'a> Situation<'a> {
     ///
     /// # Errors
     /// What following the views to it reports.
-    pub async fn channel(&self) -> ViewResult<Option<ChannelView>> {
-        let Some(session) = self.session().await? else { return Ok(None) };
+    pub async fn channel_view(&self) -> ViewResult<Option<ChannelView>> {
+        let Some(session) = self.session_view().await? else { return Ok(None) };
         session.channel(self.channel_id()).await.map(Some)
     }
 
@@ -133,8 +141,8 @@ impl<'a> Situation<'a> {
     ///
     /// # Errors
     /// What following the views to it reports.
-    pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
-        let Some(channel) = self.channel().await? else { return Ok(None) };
+    pub async fn workspace_view(&self) -> ViewResult<Option<WorkspaceView>> {
+        let Some(channel) = self.channel_view().await? else { return Ok(None) };
         channel.workspace().await
     }
 

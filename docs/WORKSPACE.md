@@ -61,9 +61,11 @@ So a session for a request can have a channel with the person who asked, classif
 workspace or with the switch off, and channels with helpers that work on its files. A view of a
 channel offers the workspace only where it may be used there, and says nothing of it otherwise.
 Using it in a channel is asked by its `WorkspaceController`, which the running session holds, of
-the session and the channel as they are then (`ChannelLoop::workspace_terminal`): as the views ask -
-whether the caller may read the session and the channel, whether the workspace is usable there - and
-for changing files `WriteWorkspace`.
+the session and the channel as they are then (`WorkspaceController::terminal_in`, `shell_in`): as
+the views ask - whether the caller may read the session and the channel, whether the workspace is
+usable there - and for changing files `WriteWorkspace`. Whoever holds the running session hands the
+documents over: an actor's `ActorRuntime` (`workspace_terminal`, `workspace_shell`), the REST server
+from the session it opened.
 
 ## Storages
 
@@ -129,7 +131,7 @@ anything.
 running outlives the call that started it. A command is its channel's, not its starter's: it runs on
 as long as some current participant of the channel could start it there, and an agent removed from
 the channel leaves its command to the participants who remain. Whoever ends a command reaches the
-shell bound to the channel (`ChannelLoop::workspace_shell`), so that who may end a command is who
+shell bound to the channel (`WorkspaceController::shell_in`), so that who may end a command is who
 could have started it there.
 
 A command nobody ends is ended by the runtime:

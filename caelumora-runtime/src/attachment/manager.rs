@@ -8,9 +8,9 @@ use crate::backend::NamedBackends;
 use crate::component::{ComponentError, ComponentResult};
 use crate::content::{keep_digested, ContentError, ContentStorage};
 use crate::terminal::ByteStream;
-use crate::view::ChannelView;
 use bytes::{Bytes, BytesMut};
 use caelumora_model::actor::ActorId;
+use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::{
     Classification, ConfidentialityPolicy, ConfidentialityQuestions,
 };
@@ -19,6 +19,7 @@ use caelumora_model::content::{self, ContentId, ContentRef};
 use caelumora_model::context::ModelProfile;
 use caelumora_model::digest;
 use caelumora_model::message::Message;
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::ChannelId;
 use caelumora_model::value::text::FileName;
 use futures::{stream, StreamExt};
@@ -40,12 +41,12 @@ fn channel_key(channel: ChannelId) -> String {
     format!("{KEY_SPACE}/{channel}")
 }
 
-/// Who keeps content for a message in `channel`: its viewer, who takes part in it.
+/// Who keeps content for a message in `channel`: the caller of `ctx`, who takes part in it.
 ///
 /// # Errors
-/// `NotAParticipant` for a viewer who does not.
-fn uploader(channel: &ChannelView) -> AttachmentResult<ActorId> {
-    let by = channel.views().context().caller_id;
+/// `NotAParticipant` for a caller who does not.
+fn uploader(ctx: &SecurityContext, channel: &Channel) -> AttachmentResult<ActorId> {
+    let by = ctx.caller_id;
     channel.lists(by).then_some(by).ok_or(AttachmentError::NotAParticipant(by))
 }
 
@@ -121,12 +122,13 @@ impl AttachmentManager {
         })
     }
 
-    /// Keeps `content` - its size and its bytes - as the file `name`, uploaded by the viewer of
-    /// `channel` for a message they will say there (issue 282): classified `classification` - the
-    /// channel's if `None` -, which may flow into the channel and into the storage it is kept
-    /// in, by a viewer taking part in the channel. What it is, is told by its first bytes, never
-    /// by the name. It waits for the message that claims it (`named`, `claim`) as long as
-    /// configured, and is removed once it waited longer, as the next upload is kept.
+    /// Keeps `content` - its size and its bytes - as the file `name`, uploaded by the caller of
+    /// `ctx` for a message they will say in `channel` - the channel as it stands, handed over by
+    /// whoever reached it in the caller's name - (issue 282): classified `classification` - the
+    /// channel's if `None` -, which may flow into the channel and into the storage it is kept in,
+    /// by a caller taking part in the channel. What it is, is told by its first bytes, never by
+    /// the name. It waits for the message that claims it (`named`, `claim`) as long as configured,
+    /// and is removed once it waited longer, as the next upload is kept.
     ///
     /// # Errors
     /// `NotConfigured`, `NotAParticipant`, `Invalid` for a name that is none,
@@ -134,34 +136,34 @@ impl AttachmentManager {
     /// said, or a storage that failed.
     pub async fn create(
         &self,
-        channel: &ChannelView,
+        ctx: &SecurityContext,
+        channel: &Channel,
         name: &str,
         classification: Option<Classification>,
         (size, content): (u64, ByteStream),
     ) -> AttachmentResult<ContentRef> {
-        let context = channel.views().context();
-        let by = uploader(channel)?;
+        let by = uploader(ctx, channel)?;
         let name = FileName::new(name)?;
-        let classification = classification.unwrap_or_else(|| channel.classification().clone());
+        let classification = classification.unwrap_or_else(|| channel.classification.clone());
         self.confidentiality
             .require_classifiable(&classification, || AttachmentError::ClassificationRefused)?;
         self.confidentiality.require_publish(
-            context,
+            ctx,
             &classification,
-            channel.classification(),
+            &channel.classification,
             || AttachmentError::ClassificationRefused,
         )?;
         let (storage_name, storage) =
             self.keep_in.as_ref().ok_or(AttachmentError::NotConfigured)?;
         self.confidentiality.require_storable(
-            context,
+            ctx,
             &classification,
             storage.destination(),
             || AttachmentError::StorageNotCleared(storage_name.to_string()),
         )?;
         self.forget_expired().await;
 
-        let (id, key) = new_key(channel.id());
+        let (id, key) = new_key(channel.id);
         let (head, content) = head_of(content).await;
         let digest = keep_digested(storage.as_ref(), &key, size, content, self.max_bytes).await?;
         let content = ContentRef {
@@ -176,8 +178,8 @@ impl AttachmentManager {
             number: None,
             content: None,
         };
-        self.wait(by, channel.id(), content.clone());
-        debug!(attachment = %id, channel = %channel.id(), by = %by, size, "Attachment uploaded");
+        self.wait(by, channel.id, content.clone());
+        debug!(attachment = %id, channel = %channel.id, by = %by, size, "Attachment uploaded");
         Ok(content)
     }
 
@@ -265,25 +267,27 @@ impl AttachmentManager {
         })
     }
 
-    /// A copy of `attachment` - one of the channel's, as the viewer of `channel` read it there -
-    /// for a message the viewer will say there (issue 282): the same content, label and name under
-    /// an id and a key of its own in the same storage, waiting for the message that claims it as an
-    /// upload does. What an agent shows of what it heard, so that each message holds its own.
+    /// A copy of `attachment` - one of the channel's, as the caller of `ctx` read it there - for
+    /// a message the caller will say in `channel`, handed over as for `create` (issue 282): the
+    /// same content, label and name under an id and a key of its own in the same storage, waiting
+    /// for the message that claims it as an upload does. What an agent shows of what it heard, so
+    /// that each message holds its own.
     ///
     /// # Errors
     /// `NotAParticipant`; `NotFound` for content that is none of the channel's, or that its storage
     /// has nothing of; `StorageGone`, `Content`.
     pub async fn copy(
         &self,
-        channel: &ChannelView,
+        ctx: &SecurityContext,
+        channel: &Channel,
         attachment: &ContentRef,
     ) -> AttachmentResult<ContentRef> {
-        let by = uploader(channel)?;
-        if !self.lies_in(channel.id(), attachment) {
+        let by = uploader(ctx, channel)?;
+        if !self.lies_in(channel.id, attachment) {
             return Err(AttachmentError::NotFound(attachment.id));
         }
         self.forget_expired().await;
-        let (id, key) = new_key(channel.id());
+        let (id, key) = new_key(channel.id);
         self.storages.kept_in(&attachment.storage)?.copy(&attachment.key, &key).await.map_err(
             |e| match e {
                 ContentError::NotFound(_) => AttachmentError::NotFound(attachment.id),
@@ -291,8 +295,8 @@ impl AttachmentManager {
             },
         )?;
         let copy = ContentRef { id, key, number: None, content: None, ..attachment.clone() };
-        self.wait(by, channel.id(), copy.clone());
-        debug!(attachment = %id, of = %attachment.id, channel = %channel.id(), by = %by, "Attachment copied");
+        self.wait(by, channel.id, copy.clone());
+        debug!(attachment = %id, of = %attachment.id, channel = %channel.id, by = %by, "Attachment copied");
         Ok(copy)
     }
 
@@ -432,7 +436,6 @@ mod tests {
     use super::*;
     use crate::session::SessionLoop;
     use crate::testing::World;
-    use crate::view::Viewer;
     use bytes::Bytes;
     use caelumora_model::confidentiality::{Compartment, Confidentiality};
     use caelumora_model::digest;
@@ -457,52 +460,45 @@ mod tests {
             .collect()
     }
 
-    /// The channel "main" of `session`, as `viewer` reaches it.
-    async fn main_of(world: &World, session: &SessionLoop, viewer: SecurityContext) -> ChannelView {
-        let views = world.manager.views(Viewer::new(viewer));
-        views
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(session.channels()[0].id())
-            .await
-            .unwrap()
+    /// The channel "main" of `session` as it stands.
+    fn main_of(session: &SessionLoop) -> Arc<Channel> {
+        Arc::clone(&session.channels()[0].channel())
     }
 
     #[tokio::test]
     async fn an_upload_is_kept_as_its_bytes_say_and_claimed_by_one_message_of_its_uploader() {
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
-        let main = main_of(&world, &session, World::as_user(world.alice)).await;
+        let main = main_of(&session);
+        let hers = World::as_user(world.alice);
         let (alice, bob) = (ActorId::User(world.alice), ActorId::User(world.bob));
         let attachments = world.runtime.attachment_manager();
 
-        let uploaded =
-            attachments.create(&main, "chart.txt", None, bytes(PNG)).await.expect("hers to upload");
+        let uploaded = attachments
+            .create(&hers, &main, "chart.txt", None, bytes(PNG))
+            .await
+            .expect("hers to upload");
         assert_eq!(
             (uploaded.name.as_str(), uploaded.media_type.as_str(), uploaded.size),
             ("chart.txt", "image/png", PNG.len() as u64),
             "what it is, as its bytes say"
         );
         assert_eq!(uploaded.digest, digest::content(PNG));
-        assert_eq!(uploaded.classification, *main.classification(), "the channel's, unless given");
+        assert_eq!(uploaded.classification, main.classification, "the channel's, unless given");
         assert_eq!(
             (uploaded.storage.as_str(), uploaded.key.clone()),
-            ("kept", format!("attachments/{}/{}", main.id(), uploaded.id))
+            ("kept", format!("attachments/{}/{}", main.id, uploaded.id))
         );
         assert_eq!(read(attachments.content_of(&uploaded).await.unwrap()).await, PNG);
 
         let ids = [uploaded.id];
         assert_eq!(
-            attachments.named(alice, main.id(), &ids, &[]).unwrap(),
+            attachments.named(alice, main.id, &ids, &[]).unwrap(),
             slice::from_ref(&uploaded),
             "hers, for the channel"
         );
         assert!(
-            matches!(
-                attachments.named(bob, main.id(), &ids, &[]),
-                Err(AttachmentError::NotFound(_))
-            ),
+            matches!(attachments.named(bob, main.id, &ids, &[]), Err(AttachmentError::NotFound(_))),
             "not his"
         );
         assert!(
@@ -513,7 +509,7 @@ mod tests {
             "not for another channel"
         );
         assert!(
-            !attachments.claim(bob, main.id(), slice::from_ref(&uploaded), &[]),
+            !attachments.claim(bob, main.id, slice::from_ref(&uploaded), &[]),
             "not his to claim"
         );
         assert!(
@@ -521,39 +517,40 @@ mod tests {
             "not for another channel"
         );
         assert!(
-            !attachments.claim(alice, main.id(), &[uploaded.clone(), uploaded.clone()], &[]),
+            !attachments.claim(alice, main.id, &[uploaded.clone(), uploaded.clone()], &[]),
             "none twice"
         );
         let elsewhere = ContentRef {
             key: format!("attachments/{}/{}", ChannelId::new(), uploaded.id),
             ..uploaded.clone()
         };
-        assert!(!attachments.claim(alice, main.id(), &[elsewhere], &[]), "only as it was uploaded");
+        assert!(!attachments.claim(alice, main.id, &[elsewhere], &[]), "only as it was uploaded");
 
         assert!(
-            attachments.claim(alice, main.id(), slice::from_ref(&uploaded), &[]),
+            attachments.claim(alice, main.id, slice::from_ref(&uploaded), &[]),
             "nothing claimed by what was refused"
         );
         assert!(
-            !attachments.claim(alice, main.id(), slice::from_ref(&uploaded), &[]),
+            !attachments.claim(alice, main.id, slice::from_ref(&uploaded), &[]),
             "claimed once"
         );
         assert!(
             attachments.claim(
                 alice,
-                main.id(),
+                main.id,
                 slice::from_ref(&uploaded),
                 slice::from_ref(&uploaded)
             ),
             "kept by the message that has it"
         );
         assert!(matches!(
-            attachments.named(alice, main.id(), &ids, &[]),
+            attachments.named(alice, main.id, &ids, &[]),
             Err(AttachmentError::NotFound(_))
         ));
         assert_eq!(read(attachments.content_of(&uploaded).await.unwrap()).await, PNG, "and kept");
 
-        let copy = attachments.copy(&main, &uploaded).await.expect("a copy for her next message");
+        let copy =
+            attachments.copy(&hers, &main, &uploaded).await.expect("a copy for her next message");
         assert!(
             copy.id != uploaded.id
                 && copy.key != uploaded.key
@@ -563,11 +560,11 @@ mod tests {
         );
         assert_eq!(read(attachments.content_of(&copy).await.unwrap()).await, PNG);
         assert!(
-            attachments.lies_in(main.id(), &copy) && !attachments.lies_in(ChannelId::new(), &copy),
+            attachments.lies_in(main.id, &copy) && !attachments.lies_in(ChannelId::new(), &copy),
             "in the channel's key space alone"
         );
         assert!(
-            attachments.claim(alice, main.id(), slice::from_ref(&copy), &[]),
+            attachments.claim(alice, main.id, slice::from_ref(&copy), &[]),
             "waiting for her message as an upload does"
         );
     }
@@ -576,13 +573,15 @@ mod tests {
     async fn an_upload_is_refused_unless_it_may_enter_the_channel() {
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
-        let main = main_of(&world, &session, World::as_user(world.alice)).await;
+        let main = main_of(&session);
+        let hers = World::as_user(world.alice);
         let attachments = world.runtime.attachment_manager();
 
-        let outsider = main_of(&world, &session, SecurityContext::system()).await;
         assert!(
             matches!(
-                attachments.create(&outsider, "a.txt", None, bytes(b"a")).await,
+                attachments
+                    .create(&SecurityContext::system(), &main, "a.txt", None, bytes(b"a"))
+                    .await,
                 Err(AttachmentError::NotAParticipant(ActorId::System))
             ),
             "who takes no part in it"
@@ -590,7 +589,7 @@ mod tests {
         let above = Classification::general(Confidentiality::Confidential);
         assert!(
             matches!(
-                attachments.create(&main, "a.txt", Some(above), bytes(b"a")).await,
+                attachments.create(&hers, &main, "a.txt", Some(above), bytes(b"a")).await,
                 Err(AttachmentError::ClassificationRefused)
             ),
             "above the channel"
@@ -599,14 +598,14 @@ mod tests {
             Classification::new(Confidentiality::Internal, [Compartment::new("hr")]).unwrap();
         assert!(
             matches!(
-                attachments.create(&main, "a.txt", Some(unknown), bytes(b"a")).await,
+                attachments.create(&hers, &main, "a.txt", Some(unknown), bytes(b"a")).await,
                 Err(AttachmentError::ClassificationRefused)
             ),
             "a compartment not configured"
         );
         assert!(
             matches!(
-                attachments.create(&main, "../a.txt", None, bytes(b"a")).await,
+                attachments.create(&hers, &main, "../a.txt", None, bytes(b"a")).await,
                 Err(AttachmentError::Invalid(_))
             ),
             "a path for a name"
@@ -614,13 +613,13 @@ mod tests {
         let (_, content) = bytes(b"a");
         let too_large = AttachmentsConfig::default().max_bytes + 1;
         assert!(matches!(
-            attachments.create(&main, "a.txt", None, (too_large, content)).await,
+            attachments.create(&hers, &main, "a.txt", None, (too_large, content)).await,
             Err(AttachmentError::Content(ContentError::TooLarge { .. }))
         ));
         let (_, content) = bytes(b"abc");
         assert!(
             matches!(
-                attachments.create(&main, "a.txt", None, (2, content)).await,
+                attachments.create(&hers, &main, "a.txt", None, (2, content)).await,
                 Err(AttachmentError::Content(ContentError::Changed))
             ),
             "other than it was said to be"
@@ -629,7 +628,7 @@ mod tests {
         assert!(!kept.exists() || walk(&kept).is_empty(), "nothing kept of any of them");
         assert!(
             attachments
-                .create(&main, "a.txt", Some(Classification::PUBLIC), bytes(b"a"))
+                .create(&hers, &main, "a.txt", Some(Classification::PUBLIC), bytes(b"a"))
                 .await
                 .is_ok(),
             "released, below the channel"
@@ -644,10 +643,12 @@ mod tests {
         use serde_json::Value;
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
-        let main = main_of(&world, &session, World::as_user(world.alice)).await;
+        let main = main_of(&session);
+        let hers = World::as_user(world.alice);
         let attachments = world.runtime.attachment_manager();
-        let image = attachments.create(&main, "chart.png", None, bytes(PNG)).await.unwrap();
-        let text = attachments.create(&main, "notes.txt", None, bytes(b"notes")).await.unwrap();
+        let image = attachments.create(&hers, &main, "chart.png", None, bytes(PNG)).await.unwrap();
+        let text =
+            attachments.create(&hers, &main, "notes.txt", None, bytes(b"notes")).await.unwrap();
         let showing = ToolCallResult {
             shown: vec![image.clone()],
             ..ToolCallResult::of(
@@ -660,18 +661,18 @@ mod tests {
                 },
                 Default::default(),
                 String::new(),
-                main.classification().clone(),
+                main.classification.clone(),
             )
         };
         let messages = || {
             vec![
                 Message {
                     attachments: vec![image.clone(), text.clone()],
-                    ..Message::new(main.classification().clone())
+                    ..Message::new(main.classification.clone())
                 },
                 Message {
                     tool_results: vec![showing.clone()],
-                    ..Message::new(main.classification().clone())
+                    ..Message::new(main.classification.clone())
                 },
             ]
         };
@@ -714,7 +715,7 @@ mod tests {
                 .is_ok(),
             "held: not read again"
         );
-        attachments.purge(main.id()).await.unwrap();
+        attachments.purge(main.id).await.unwrap();
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, b"another image").unwrap();
         let changed = attachments
@@ -745,36 +746,37 @@ mod tests {
     async fn an_upload_waits_for_its_message_only_so_long_and_goes_with_its_channel() {
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
-        let main = main_of(&world, &session, World::as_user(world.alice)).await;
+        let main = main_of(&session);
+        let hers = World::as_user(world.alice);
         let alice = ActorId::User(world.alice);
         let attachments = world.runtime.attachment_manager();
 
-        let unclaimed = attachments.create(&main, "a.txt", None, bytes(b"a")).await.unwrap();
+        let unclaimed = attachments.create(&hers, &main, "a.txt", None, bytes(b"a")).await.unwrap();
         time::advance(Duration::from_secs(3601)).await;
         assert!(
             matches!(
-                attachments.named(alice, main.id(), &[unclaimed.id], &[]),
+                attachments.named(alice, main.id, &[unclaimed.id], &[]),
                 Err(AttachmentError::NotFound(_))
             ),
             "waited too long"
         );
-        assert!(!attachments.claim(alice, main.id(), slice::from_ref(&unclaimed), &[]));
-        let claimed = attachments.create(&main, "b.txt", None, bytes(b"b")).await.unwrap();
+        assert!(!attachments.claim(alice, main.id, slice::from_ref(&unclaimed), &[]));
+        let claimed = attachments.create(&hers, &main, "b.txt", None, bytes(b"b")).await.unwrap();
         assert!(
             matches!(attachments.content_of(&unclaimed).await, Err(AttachmentError::NotFound(_))),
             "removed as the next is uploaded"
         );
-        assert!(attachments.claim(alice, main.id(), slice::from_ref(&claimed), &[]));
-        let waiting = attachments.create(&main, "c.txt", None, bytes(b"c")).await.unwrap();
+        assert!(attachments.claim(alice, main.id, slice::from_ref(&claimed), &[]));
+        let waiting = attachments.create(&hers, &main, "c.txt", None, bytes(b"c")).await.unwrap();
 
-        attachments.purge(main.id()).await.unwrap();
+        attachments.purge(main.id).await.unwrap();
         assert!(
             matches!(attachments.content_of(&claimed).await, Err(AttachmentError::NotFound(_))),
             "gone with its channel"
         );
         assert!(
             matches!(
-                attachments.named(alice, main.id(), &[waiting.id], &[]),
+                attachments.named(alice, main.id, &[waiting.id], &[]),
                 Err(AttachmentError::NotFound(_))
             ),
             "and what waited there"

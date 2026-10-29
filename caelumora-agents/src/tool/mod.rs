@@ -586,11 +586,11 @@ pub trait ToolProvider: Send + Sync + Debug {
 
 /// The workspace the tools of a set on it may be offered on in `situation`
 /// (issue 290): the one of the agent's session the work may use in its
-/// channel (`Situation::workspace`). `Err` with why the set is unavailable,
+/// channel (`Situation::workspace_view`). `Err` with why the set is unavailable,
 /// in general terms: there is none, or it cannot be read now - which is
 /// logged.
 pub async fn usable_workspace(situation: &Situation<'_>) -> Result<WorkspaceView, String> {
-    match situation.workspace().await {
+    match situation.workspace_view().await {
         Ok(Some(workspace)) => Ok(workspace),
         Ok(None) => Err(WorkspaceError::NotUsableInChannel.to_string()),
         Err(error) => {

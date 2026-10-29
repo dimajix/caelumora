@@ -9,7 +9,7 @@ use crate::group::{keep_participants, GroupManager};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::view::{Viewer, Views};
-use crate::workspace::WorkspaceManager;
+use crate::workspace::{WorkspaceError, WorkspaceManager, WorkspaceResult};
 use anyhow::{anyhow, Result};
 use arc_swap::{ArcSwapOption, Guard};
 use caelumora_model::actor::ActorId;
@@ -389,10 +389,13 @@ impl SessionLoop {
         self.session_controller.name()
     }
 
-    /// The workspace attached to the session, as it holds it live (issue
-    /// 344); `None` if none is, or it is gone.
-    pub(crate) fn workspace(&self) -> Option<Arc<WorkspaceController>> {
-        self.workspace.load_full()
+    /// The workspace attached to the session, as it holds it live (issue 344).
+    ///
+    /// # Errors
+    /// `NotUsableInChannel` if none is, or it is gone: nothing of a workspace is usable in the
+    /// session's channels then.
+    pub fn workspace(&self) -> WorkspaceResult<Arc<WorkspaceController>> {
+        self.workspace.load_full().ok_or(WorkspaceError::NotUsableInChannel)
     }
 
     /// Runs the session's channels, those it has and those created while it

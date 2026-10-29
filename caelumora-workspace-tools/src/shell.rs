@@ -8,7 +8,7 @@
 //! the drop does not await. A command left running would go on writing into
 //! the workspace after the turn that started it. One handed back as running
 //! is the model's to end, or a user's (issue 294): `kill_command` ends it
-//! through the same shell of the channel (`ChannelLoop::workspace_shell`)
+//! through the same shell of the channel (`WorkspaceController::shell_in`)
 //! as the REST server does for them.
 
 use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};

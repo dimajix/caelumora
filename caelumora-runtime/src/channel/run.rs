@@ -942,7 +942,6 @@ mod tests {
     use crate::testing::StandIn;
     use crate::testing::{file, shown, World};
     use crate::transport::{EventReceiver, EventSender};
-    use crate::view::Viewer;
     use anyhow::Result;
     use caelumora_model::actor::{
         ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RequestReason,
@@ -2695,17 +2694,10 @@ mod tests {
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
         let main = Arc::clone(&session.channels()[0]);
-        let view = world
-            .manager
-            .views(Viewer::new(World::as_user(world.alice)))
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(main.id())
-            .await
-            .unwrap();
+        let channel = Arc::clone(&main.channel());
+        let hers = World::as_user(world.alice);
         let attachments = world.runtime.attachment_manager();
-        let upload = || attachments.create(&view, "a.txt", None, (1, file("a")));
+        let upload = || attachments.create(&hers, &channel, "a.txt", None, (1, file("a")));
         let (alice, bob) = (ActorId::User(world.alice), ActorId::User(world.bob));
         let sent = |sender: ActorId, event: ActorEvent| {
             Envelope::new(
@@ -2870,16 +2862,10 @@ mod tests {
             Ok(()),
             "what it carries, and what she uploaded"
         );
-        let his = world
-            .manager
-            .views(Viewer::new(World::as_user(world.bob)))
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(main.id())
+        let his = attachments
+            .create(&World::as_user(world.bob), &channel, "b.txt", None, (1, file("b")))
             .await
             .unwrap();
-        let his = attachments.create(&his, "b.txt", None, (1, file("b"))).await.unwrap();
         assert_eq!(
             main.admission(&modified(vec![hers, his])).await,
             Err(Rejection::Invalid),

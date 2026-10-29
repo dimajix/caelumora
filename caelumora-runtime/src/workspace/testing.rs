@@ -1,21 +1,23 @@
-//! What the tests of the components that work on a workspace share: a
-//! running session whose channel "main" an agent takes part in, with a
-//! workspace attached that its storage gives a shell.
+//! What tests that reach a workspace share: a running session whose channel "main" an agent takes
+//! part in, with a workspace attached that its storage gives a shell; and the workspace's terminal
+//! and shell in a channel, as a frontend reaches them.
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::runtime::RuntimeManager;
 use crate::session::testing::{make_session, user};
 use crate::session::{SessionLoop, SessionManager};
+use crate::terminal::{Shell, Terminal};
 use crate::testing::TestRuntime;
+use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
-use caelumora_model::channel::{Channel, InternalActor, Participant};
+use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant};
 use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
 use caelumora_model::config::AppConfig;
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::store::Persistence;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -136,4 +138,49 @@ pub async fn session_with_workspace() -> WithWorkspace {
     )
     .next(ActorId::Agent(agent.id), ActorId::User(owner), ActorId::User(owner));
     WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }
+}
+
+/// The session's workspace and its terminal in channel `channel` of `session`, for what `need`
+/// asks, as a frontend reaches them (`WorkspaceController::terminal_in`): of the session and the
+/// channel as the running session holds them.
+///
+/// # Errors
+/// `NotUsableInChannel` where no workspace is attached (`SessionLoop::workspace`) or the channel
+/// does not run, else what `terminal_in` reports.
+pub async fn terminal_in(
+    session: &SessionLoop,
+    channel: ChannelId,
+    ctx: &SecurityContext,
+    need: Grant,
+) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+    let workspace = session.workspace()?;
+    let (session, channel) = documents_of(session, channel)?;
+    workspace.terminal_in(ctx, &session, &channel, need).await
+}
+
+/// The session's workspace and its shell as channel `channel` of `session` sees it, as a frontend
+/// reaches them (`WorkspaceController::shell_in`).
+///
+/// # Errors
+/// As `terminal_in`.
+pub async fn shell_in(
+    session: &SessionLoop,
+    channel: ChannelId,
+    ctx: &SecurityContext,
+) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+    let workspace = session.workspace()?;
+    let (session, channel) = documents_of(session, channel)?;
+    workspace.shell_in(ctx, &session, &channel).await
+}
+
+/// The session and its channel `channel` as `session` holds them.
+///
+/// # Errors
+/// `NotUsableInChannel` where the channel does not run.
+fn documents_of(
+    session: &SessionLoop,
+    channel: ChannelId,
+) -> WorkspaceResult<(Arc<Session>, Arc<Channel>)> {
+    let channel = session.channel(channel).ok_or(WorkspaceError::NotUsableInChannel)?;
+    Ok((Arc::clone(&session.session()), Arc::clone(&channel.channel())))
 }

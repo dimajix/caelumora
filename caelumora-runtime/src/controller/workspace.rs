@@ -134,8 +134,7 @@ impl WorkspaceController {
         session: &Session,
         channel: &Channel,
     ) -> WorkspaceResult<Option<Workspace>> {
-        let takes_part =
-            channel.participants.iter().any(|participant| participant.actor_id() == ctx.caller_id);
+        let takes_part = channel.lists(ctx.caller_id);
         if session.workspace != Some(self.id())
             || channel.session_id != session.id
             || !channel.uses_workspace
@@ -168,7 +167,7 @@ impl WorkspaceController {
     ///
     /// # Errors
     /// What `usable_in_channel` reports, `StorageGone`, or a `TerminalError` of reaching its place.
-    pub(crate) async fn terminal_in(
+    pub async fn terminal_in(
         &self,
         ctx: &SecurityContext,
         session: &Session,
@@ -188,7 +187,7 @@ impl WorkspaceController {
     ///
     /// # Errors
     /// What `terminal_in` reports.
-    pub(crate) async fn shell_in(
+    pub async fn shell_in(
         &self,
         ctx: &SecurityContext,
         session: &Session,
