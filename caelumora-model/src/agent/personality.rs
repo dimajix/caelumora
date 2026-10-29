@@ -229,7 +229,7 @@ pub struct Personality {
     /// extended planning is just another tool a personality opts into.
     #[serde(default)]
     pub components: ComponentConfig,
-    #[serde(default)]
+    #[serde(default = "SecurityAttributes::systems")]
     pub security_attributes: SecurityAttributes,
     /// Who sees the reasoning of its agents (issues 61, 133): `owner` keeps
     /// it from the channel always; otherwise what a turn saw decides.

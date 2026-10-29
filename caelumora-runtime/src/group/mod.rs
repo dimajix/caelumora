@@ -197,8 +197,8 @@ mod tests {
     use caelumora_model::project::Project;
     use caelumora_model::removal::{Removal, RemovalId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::security::Grant;
+    use caelumora_model::security::{AllowAllPolicy, SecurityAttributes};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::documents::Document;
     use caelumora_model::store::memory::MemoryStore;
@@ -424,7 +424,7 @@ mod tests {
                 id: unreadable.id.into(),
                 name: None,
                 removal_id: None,
-                security_attributes: Default::default(),
+                security_attributes: SecurityAttributes::systems(),
                 body: Value::from("not a group"),
             })
             .await

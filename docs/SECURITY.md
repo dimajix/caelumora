@@ -158,7 +158,10 @@ list. This is the one place ownership and access are recorded; see [Access lists
     it, and its members read it by an entry of its own list that names it. The group of the
     participants of a session or channel is owned by the session's owner and changed only by the
     runtime, as someone joins or leaves.
-*   Initial data belongs to the system.
+*   Every entity has an owner - a user, an agent or the system -, who answers for it (issue
+    [491](../issues/491-every-entity-has-an-owner.md)): the store refuses one owned by nobody
+    (`SecurityAttributes::validate`). Initial data belongs to the system: what a seed file leaves
+    without attributes is the system's (`SecurityAttributes::systems`).
 *   A `User` record belongs to the system, too: only the `UserManager` writes it, so that nobody can
     grant themselves roles. What a user writes about themselves - how they introduce themselves, the
     language they prefer - lives in a `UserProfile` of its own, whose owner is derived from the user

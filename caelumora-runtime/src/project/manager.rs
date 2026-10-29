@@ -299,6 +299,7 @@ mod tests {
     use super::*;
     use crate::session::testing::{create, failing_runtime, make_session};
     use caelumora_model::component::ComponentBundle;
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::user::UserId;
     use std::sync::atomic::Ordering;
 
@@ -323,7 +324,7 @@ mod tests {
         let bundle = ComponentBundle::new(
             ScopedName::new("tools", project.holds()).unwrap(),
             Default::default(),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
         stores.component_bundles.create(&system, &bundle).await.unwrap();
         projects.delete(&ctx, project.id).await.unwrap();

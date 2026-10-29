@@ -517,7 +517,7 @@ impl SessionLoop {
 mod tests {
 
     use caelumora_model::event::GlobalEvent;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
 
     use std::sync::Arc;
 
@@ -549,7 +549,7 @@ mod tests {
                         &owner,
                         &UserUpdateEvent::NameChanged("renamed".to_string()),
                     ),
-                    Default::default(),
+                    SecurityAttributes::systems(),
                 );
                 let names: Vec<String> = [&first, &second]
                     .iter()

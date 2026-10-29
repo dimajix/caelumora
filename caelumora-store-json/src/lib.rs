@@ -817,7 +817,7 @@ mod tests {
             .unwrap()
     }
 
-    /// A new session of `name`, of nobody, with nothing in it.
+    /// A new session of `name`, of the system, with nothing in it.
     fn session(name: &str) -> Session {
         Session {
             summary: None,
@@ -835,7 +835,7 @@ mod tests {
             privacy: Default::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(),
+            security_attributes: SecurityAttributes::systems(),
             deleted: None,
         }
     }
@@ -988,7 +988,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -1047,7 +1047,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -1059,7 +1059,7 @@ mod tests {
             let agent = Agent::new(
                 ScopedName::new("Helper", Default::default()).unwrap(),
                 personality.id,
-                ActorId::None,
+                ActorId::User(UserId::new()),
             );
             writes.spawn(async move { agents.create(&system, &agent).await });
         }
@@ -1105,7 +1105,7 @@ mod tests {
             former: Vec::new(),
             participants: Vec::new(),
             internal_actors: Vec::new(),
-            security_attributes: SecurityAttributes::default(),
+            security_attributes: SecurityAttributes::systems(),
             deleted: None,
         };
         let channel_id = channel.id;

@@ -111,7 +111,9 @@ mod tests {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::component::ComponentConfig;
     use caelumora_model::scope::Scope;
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Persistence;
+    use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
 
     /// The names of `facets`, to compare them by.
@@ -128,7 +130,7 @@ mod tests {
             description: None,
             introduction: None,
             components: ComponentConfig::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -142,7 +144,7 @@ mod tests {
         let agent = Agent::new(
             ScopedName::new("agent", Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), &stores));
         kinds

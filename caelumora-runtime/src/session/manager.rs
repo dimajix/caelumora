@@ -1334,7 +1334,7 @@ mod tests {
         let runtime = test_runtime();
         let names = |executor: CommandExecutor<dyn ChannelCommandProvider>| async move {
             executor
-                .visible(&SecurityContext::default(), &SecurityAttributes::default())
+                .visible(&SecurityContext::default(), &SecurityAttributes::systems())
                 .await
                 .into_iter()
                 .map(|c| c.name)
@@ -1391,7 +1391,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -1400,7 +1400,7 @@ mod tests {
         let helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
@@ -1477,7 +1477,7 @@ mod tests {
         let again = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         runtime.entity_stores().agents.create(&system, &again).await.unwrap();
         let taken = agents.restore(&ctx, helper.id).await.expect_err("its name is taken");
@@ -1515,7 +1515,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -1524,7 +1524,7 @@ mod tests {
         let helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
@@ -1595,7 +1595,7 @@ mod tests {
                     strategy: ApprovalStrategy::All,
                 }],
             }],
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             commands: Default::default(),
             privacy: Default::default(),
             deleted: None,
@@ -1909,7 +1909,7 @@ mod tests {
         let bundle = ComponentBundle::new(
             ScopedName::new("tools", Scope::ProjectScope { project_id: project }).unwrap(),
             Default::default(),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
         stores.component_bundles.create(&system, &bundle).await.unwrap();
 
@@ -1984,7 +1984,7 @@ mod tests {
         let bundle = ComponentBundle::new(
             ScopedName::new("tools", Scope::SessionScope { session_id: id }).unwrap(),
             Default::default(),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
         stores.component_bundles.create(&system, &bundle).await.unwrap();
         manager.delete(&ctx, id).await.expect("deleted now");
@@ -2122,7 +2122,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -2131,11 +2131,15 @@ mod tests {
         let bundle = ComponentBundle::new(
             ScopedName::new("tools", Scope::SessionScope { session_id: id }).unwrap(),
             Default::default(),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
         bundles.create(&system, &bundle).await.unwrap();
         let agent_in = |name: &str, scope| {
-            Agent::new(ScopedName::new(name, scope).unwrap(), personality.id, ActorId::None)
+            Agent::new(
+                ScopedName::new(name, scope).unwrap(),
+                personality.id,
+                ActorId::User(UserId::new()),
+            )
         };
         let sessions = agent_in("helper", Scope::SessionScope { session_id: id });
         let sides = agent_in("aside", Scope::ChannelScope { session_id: id, channel_id: side });
@@ -2299,7 +2303,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,

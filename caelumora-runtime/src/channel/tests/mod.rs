@@ -93,7 +93,7 @@ async fn channel_built(
         components,
         participants,
         internal_actors: Vec::new(),
-        security_attributes: SecurityAttributes::default(),
+        security_attributes: SecurityAttributes::systems(),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
         deleted: None,

@@ -14,9 +14,9 @@ use uuid::Uuid;
 /// The subject of an entry for everyone, which has no id of its own.
 const EVERYONE: Uuid = Uuid::max();
 
-/// The owner of what the system or nobody owns, who have no id of their
-/// own (`ActorId::id`).
-const UNOWNED: Uuid = Uuid::nil();
+/// The owner of what the system owns, which has no id of its own
+/// (`ActorId::id`).
+const SYSTEM: Uuid = Uuid::nil();
 
 /// The relation of the owner's row; an entry's is its grant (`relation`).
 const OWNER: &str = "owner";
@@ -82,7 +82,7 @@ impl Admitted {
             .actors
             .iter()
             .map(ActorId::id)
-            .chain(admission.unowned.then_some(UNOWNED))
+            .chain(admission.systems.then_some(SYSTEM))
             .collect();
         let relations: Vec<String> = admission
             .grant
@@ -153,12 +153,10 @@ mod tests {
         let (subjects, relations) = entries(&attributes);
         assert_eq!(subjects, [alice.into(), bob.into(), role.into(), group.into(), EVERYONE]);
         assert_eq!(relations, [OWNER, "read", "write", "join", "read"]);
-        for unowned in [ActorId::System, ActorId::None] {
-            assert_eq!(
-                entries(&SecurityAttributes::owned_by(unowned)).0,
-                [UNOWNED],
-                "{unowned} by no id of its own"
-            );
-        }
+        assert_eq!(
+            entries(&SecurityAttributes::systems()).0,
+            [SYSTEM],
+            "the system by no id of its own"
+        );
     }
 }

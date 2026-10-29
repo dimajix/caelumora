@@ -59,3 +59,6 @@ with a message, which rustfmt lays out over five lines each.
 - **2026-10-29** — Opened at the maintainer's request in the work on issue 487: the maintainer
   chose to keep the limit at 100 lines and to mark the functions rustfmt made longer, instead of
   raising the limit to about 140, which would have hidden 44 of them.
+- **2026-10-29** — Issue 491 made `owners_do_everything_whom_the_list_grants_read_strangers_nothing`
+  (`caelumora-model/src/security/ownership.rs`) shorter than 100 lines, and took its `expect` away:
+  62 are left.

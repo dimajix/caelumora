@@ -173,7 +173,7 @@ mod tests {
     use caelumora_model::agent::{AgentId, Personality, PersonalityId};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
     use caelumora_model::value::name::ScopedName;
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -215,7 +215,7 @@ mod tests {
             kind: Default::default(),
             roles: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,

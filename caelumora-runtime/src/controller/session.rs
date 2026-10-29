@@ -269,7 +269,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use std::sync::Mutex;
 
-    /// A session's document alone, owned by nobody: what the controller
+    /// A session's document alone, owned by the system: what the controller
     /// changes and stores. Its tests are about storing a change, not about a
     /// session the runtime makes, with the groups of its participants and a
     /// project of its own (issue 486).

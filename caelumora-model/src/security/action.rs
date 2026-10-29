@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(described, "CallTool(web_search)");
         assert!(!described.contains("secret plans"), "no arguments in the log");
         assert_eq!(
-            ActionType::get(Session::KIND, &SecurityAttributes::default()).describe(),
+            ActionType::get(Session::KIND, &SecurityAttributes::systems()).describe(),
             "GetSession"
         );
     }

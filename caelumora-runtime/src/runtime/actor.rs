@@ -362,7 +362,10 @@ mod tests {
         let hers = runtime.new_actor_runtime(ActorId::User(UserId::new()));
 
         assert!(hers.load_channel_state().await.is_err(), "a user has no agent state");
-        assert!(hers.agent_state(Default::default()).await.is_err());
+        assert!(hers
+            .agent_state(SecurityAttributes::owned_by(ActorId::User(UserId::new())))
+            .await
+            .is_err());
 
         let its = runtime.new_actor_runtime(ActorId::Agent(AgentId::new()));
         its.store_channel_state(&mut AgentChannelState::default())

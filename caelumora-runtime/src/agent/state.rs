@@ -71,14 +71,16 @@ impl AgentStateHandle {
     /// announced to nobody - for turns in tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn detached() -> Arc<Self> {
+        use caelumora_model::actor::ActorId;
         use caelumora_model::store::memory::MemoryStore;
+        use caelumora_model::user::UserId;
         let state_store = Arc::new(MemoryStore::new());
         Arc::new(Self::new(
             AgentId::default(),
             AgentState::default(),
             state_store,
             Arc::new(()),
-            SecurityAttributes::default(),
+            SecurityAttributes::owned_by(ActorId::User(UserId::new())),
         ))
     }
 
@@ -179,11 +181,18 @@ impl AgentStates {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::actor::ActorId;
     use caelumora_model::agent;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::event::EntityChange;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::user::UserId;
     use std::sync::Mutex;
+
+    /// The attributes of an agent of a user's, which its state is read by.
+    fn hers() -> SecurityAttributes {
+        SecurityAttributes::owned_by(ActorId::User(UserId::new()))
+    }
 
     fn remember(id: MemoryId, text: &str) -> (MemoryChange, MemoryOrigin) {
         (
@@ -201,8 +210,8 @@ mod tests {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
         let states = AgentStates::new(Arc::clone(&store), Arc::new(()));
         let agent = AgentId::new();
-        let in_main = states.get(agent, Default::default()).await.unwrap();
-        let in_research = states.get(agent, Default::default()).await.unwrap();
+        let in_main = states.get(agent, hers()).await.unwrap();
+        let in_research = states.get(agent, hers()).await.unwrap();
         assert!(Arc::ptr_eq(&in_main, &in_research), "one handle for both channels");
 
         // Two turns, each from a snapshot taken before the other's changes.
@@ -225,12 +234,12 @@ mod tests {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
         let states = AgentStates::new(store, Arc::new(()));
         let agent = AgentId::new();
-        let handle = states.get(agent, Default::default()).await.unwrap();
+        let handle = states.get(agent, hers()).await.unwrap();
         let id = handle.reserve_memory_id();
         handle.apply(vec![remember(id, "kept")], MessageId::new()).await.unwrap();
         drop(handle);
 
-        let again = states.get(agent, Default::default()).await.unwrap();
+        let again = states.get(agent, hers()).await.unwrap();
         assert_eq!(again.current().memory.current()[0].text, "kept");
         assert_eq!(
             again.reserve_memory_id(),
@@ -263,7 +272,7 @@ mod tests {
         let announced = Arc::new(Announced::default());
         let states = AgentStates::new(store, Arc::<Announced>::clone(&announced));
         let agent = AgentId::new();
-        let handle = states.get(agent, Default::default()).await.unwrap();
+        let handle = states.get(agent, hers()).await.unwrap();
 
         handle.apply(Vec::new(), MessageId::new()).await.unwrap();
         assert!(announced.0.lock().unwrap().is_empty(), "nothing changed, nothing announced");

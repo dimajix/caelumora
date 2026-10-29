@@ -61,9 +61,9 @@ fn external_components() -> ComponentConfig {
 /// not running - with the agent's state in it `stored`, as a restart
 /// finds it.
 /// What an agent of a channel `external_channel` builds hears first: its
-/// own join, in the name of the channel's owner, nobody here - recorded as
-/// the channel was founded, and read from its history as the agent starts
-/// (issue 223), as a founder hears it live.
+/// own join, in the name of the channel's owner, alice, who has no name
+/// here - recorded as the channel was founded, and read from its history as
+/// the agent starts (issue 223), as a founder hears it live.
 const FOUNDED: &str = "Channel notice:  added you to the channel.";
 
 /// Where an agent stands in a channel `external_channel` builds once it
@@ -91,7 +91,7 @@ async fn external_channel(
         kind: PersonalityKind::External,
         roles: None,
         components,
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         deleted: None,
     };
     store
@@ -146,7 +146,7 @@ async fn external_channel(
         components: moderation_components(None, Some("broadcast_policy")),
         participants: vec![Participant::User(alice.id), Participant::Agent(agent_id)],
         internal_actors: Vec::new(),
-        security_attributes: SecurityAttributes::default(),
+        security_attributes: SecurityAttributes::owned_by(ActorId::User(alice.id)),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
         deleted: None,
@@ -1994,7 +1994,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), roster],
         },
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         reasoning_visibility: Default::default(),
         hears_during_turn: Default::default(),
         deleted: None,

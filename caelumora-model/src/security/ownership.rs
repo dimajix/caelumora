@@ -18,13 +18,11 @@ use std::sync::Arc;
 ///
 /// - The system itself (`SecurityContext::is_system`) may do everything; the system acting on
 ///   someone's behalf is judged as them (issue 477).
-/// - Reading - which also covers using, e.g. starting a session from a
-///   template, or working on a workspace outside a session - is allowed to
-///   the owner, to whom an entry of the access list grants it, and to
-///   everybody for entities owned by the system or by no one. An agent
-///   reads what its owner may read, and what it takes part in itself - a
-///   participant as the caller (issue 264); everything else it does, it does as
-///   its owner.
+/// - Reading - which also covers using, e.g. starting a session from a template, or working on a
+///   workspace outside a session - is allowed to the owner, to whom an entry of the access list
+///   grants it, and to everybody for entities owned by the system. An agent reads what its owner
+///   may read, and what it takes part in itself - a participant as the caller (issue 264);
+///   everything else it does, it does as its owner.
 /// - Being told of a deletion is allowed to whom reading it was until then;
 ///   a deleted group grants nothing else.
 /// - Creating is allowed only with oneself as owner.
@@ -40,7 +38,7 @@ use std::sync::Arc;
 /// - A channel may be reclassified by its owner, a message by the channel's
 ///   owner or its author, a note or memory entry by its author.
 /// - A tool call of an agent is approved by the agent's owner and whom its
-///   access list lets read it (issue 14); of an agent of nobody, by nobody.
+///   access list lets read it (issue 14).
 /// - Searching and listing are allowed; their results are narrowed to what
 ///   the caller may read. Tool calls, secrets and commands are governed
 ///   elsewhere for now (issues 12 and 23).
@@ -77,12 +75,11 @@ impl OwnershipPolicy {
 
     /// Whether the context answers for the agent with `agent` attributes -
     /// approves its calls, runs the commands that are its owners' (issues
-    /// 14, 269): who is responsible
-    /// for the agent - its owner, or whom its access list lets read it -,
-    /// also in someone else's channel. Nobody answers for an agent of nobody,
-    /// which everybody could read (issue 491); none is the system's (issue 477).
+    /// 14, 269): who is responsible for the agent - its owner, or whom its
+    /// access list lets read it -, also in someone else's channel. No agent
+    /// is the system's, which everybody reads (`Agent::validate`, issue 477).
     async fn answers_for(&self, agent: &SecurityAttributes, context: &SecurityContext) -> bool {
-        !agent.unowned() && self.granted(agent, Grant::Read, context).await
+        self.granted(agent, Grant::Read, context).await
     }
 
     /// Whether the principal owns an entity with `attributes`.
@@ -154,7 +151,7 @@ impl OwnershipPolicy {
         Admission {
             everyone: actors.iter().any(|actor| matches!(actor, ActorId::User(_))),
             actors,
-            unowned: true,
+            systems: true,
             grant: Some(needed),
             roles: context.counting_roles(),
             deleted_groups: false,
@@ -363,7 +360,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn owners_do_everything_whom_the_list_grants_read_strangers_nothing() {
         let (alice, bob, carol) = (user(), user(), user());
         let hers = shared(alice, &[bob]);
@@ -400,11 +396,6 @@ mod tests {
         assert!(allows(alice, approve(&hers)).await, "the agent's owner approves its calls");
         assert!(allows(bob, approve(&hers)).await, "and so do its readers");
         assert!(!allows(carol, approve(&hers)).await, "nobody else");
-        let nobodys = SecurityAttributes::default();
-        assert!(
-            !allows(carol, approve(&nobodys)).await,
-            "an agent of nobody, which everybody reads: nobody (issue 491)"
-        );
         let command = |owners_only| Command {
             name: "x".to_string(),
             description: String::new(),
@@ -435,7 +426,6 @@ mod tests {
             !allows(carol, show(&owners, &hers, &theirs)).await,
             "who may not run it does not see it"
         );
-        assert!(!allows(carol, run(&owners, &nobodys, &theirs)).await, "nor of an agent of nobody");
         // A command of the session is decided alike (issue 304), by the
         // channel alone.
         let run = |command, channel| ActionType::ExecuteCommand { command, channel };
@@ -464,11 +454,7 @@ mod tests {
         assert!(allows(bob, ActionType::custom(SKILL, &USE, &hers)).await, "a reader uses it");
         assert!(!allows(carol, ActionType::custom(SKILL, &USE, &hers)).await, "nobody else");
         assert!(
-            allows(
-                carol,
-                ActionType::custom(SKILL, &USE, &SecurityAttributes::owned_by(ActorId::System))
-            )
-            .await,
+            allows(carol, ActionType::custom(SKILL, &USE, &SecurityAttributes::systems())).await,
             "the system's, everybody"
         );
         assert!(
@@ -569,17 +555,10 @@ mod tests {
     #[tokio::test]
     async fn what_belongs_to_the_system_everybody_uses_and_only_the_system_changes() {
         let alice = user();
-        for shared in [SecurityAttributes::default(), SecurityAttributes::owned_by(ActorId::System)]
-        {
-            assert!(
-                allows(alice, ActionType::get(SessionTemplate::KIND, &shared)).await,
-                "stored without an owner, or the system's"
-            );
-            assert!(!allows(alice, ActionType::update(SessionTemplate::KIND, &shared)).await);
-            assert!(
-                allows(ActorId::System, ActionType::update(SessionTemplate::KIND, &shared)).await
-            );
-        }
+        let systems = SecurityAttributes::systems();
+        assert!(allows(alice, ActionType::get(SessionTemplate::KIND, &systems)).await);
+        assert!(!allows(alice, ActionType::update(SessionTemplate::KIND, &systems)).await);
+        assert!(allows(ActorId::System, ActionType::update(SessionTemplate::KIND, &systems)).await);
     }
 
     #[tokio::test]
@@ -596,7 +575,7 @@ mod tests {
         assert!(
             !allows(
                 ActorId::None,
-                ActionType::create(Session::KIND, &SecurityAttributes::default())
+                ActionType::create(Session::KIND, &SecurityAttributes::owned_by(ActorId::None))
             )
             .await,
             "an empty context has no rights"
@@ -604,7 +583,7 @@ mod tests {
         assert!(
             !allows(
                 ActorId::None,
-                ActionType::update(Session::KIND, &SecurityAttributes::default())
+                ActionType::update(Session::KIND, &SecurityAttributes::owned_by(ActorId::None))
             )
             .await
         );
@@ -679,7 +658,7 @@ mod tests {
         };
         let reading = Admission {
             actors: vec![alice],
-            unowned: true,
+            systems: true,
             grant: Some(Grant::Read),
             roles: vec![role],
             everyone: true,

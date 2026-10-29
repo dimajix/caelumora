@@ -54,8 +54,7 @@ pub struct User {
 /// the user providers and the initial setup, creates, changes or deletes
 /// it. Owning it themselves would let users grant themselves `roles`.
 /// Derived rather than stored, so that no record can say otherwise.
-static SYSTEM_OWNED: SecurityAttributes =
-    SecurityAttributes { owner_id: ActorId::System, acl: Vec::new() };
+static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes::systems();
 
 impl Stored for User {
     const KIND: EntityKind = EntityKind::new("user");

@@ -23,7 +23,7 @@ use caelumora_model::component::{
 };
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
 use caelumora_model::tool::Tool;
@@ -312,7 +312,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
                         fail_policy: ComponentFailPolicy::FailOpen,
                     }],
                 },
-                Default::default(),
+                SecurityAttributes::systems(),
             ),
         )
         .await

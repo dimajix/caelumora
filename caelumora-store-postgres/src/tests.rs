@@ -552,7 +552,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
         shared(Subject::Group(team.id), Grant::Write),
         shared(Subject::Group(gone.id), Grant::Read),
         SecurityAttributes::owned_by(hers),
-        SecurityAttributes::owned_by(ActorId::System),
+        SecurityAttributes::systems(),
         shared(Subject::Group(other.id), Grant::Read),
     ];
     let id_of = |at: usize| Uuid::from_u128(at as u128 + 1);
@@ -582,7 +582,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     };
     let reading = Admission {
         actors: vec![his],
-        unowned: true,
+        systems: true,
         grant: Some(Grant::Read),
         roles: vec![role],
         everyone: true,
@@ -722,7 +722,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
                 id: id_of(at),
                 name: None,
                 removal_id: None,
-                security_attributes: Default::default(),
+                security_attributes: SecurityAttributes::systems(),
                 body: body.clone(),
             })
             .await

@@ -94,7 +94,7 @@ pub async fn alice_and_an_agent(
         kind: Default::default(),
         roles: None,
         components,
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         deleted: None,
     };
     store
@@ -135,7 +135,7 @@ pub async fn channel_of_alice_and(
         components: moderation_components(None, Some("broadcast_policy")),
         participants: vec![Participant::User(alice), Participant::Agent(agent)],
         internal_actors: vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))],
-        security_attributes: SecurityAttributes::default(),
+        security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
         deleted: None,

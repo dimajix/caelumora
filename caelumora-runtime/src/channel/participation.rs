@@ -350,7 +350,7 @@ mod tests {
     use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subject};
     use caelumora_model::session::{ChannelId, SessionId};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
@@ -420,7 +420,7 @@ mod tests {
                     description: None,
                     introduction: None,
                     components: Default::default(),
-                    security_attributes: Default::default(),
+                    security_attributes: SecurityAttributes::systems(),
                     reasoning_visibility: Default::default(),
                     hears_during_turn: Default::default(),
                     deleted: None,
@@ -542,7 +542,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,
@@ -558,13 +558,13 @@ mod tests {
                 )
                 .unwrap(),
                 personality.id,
-                ActorId::None,
+                ActorId::User(UserId::new()),
             ),
             Agent::new(
                 ScopedName::new("visitor", Scope::SessionScope { session_id: SessionId::new() })
                     .unwrap(),
                 personality.id,
-                ActorId::None,
+                ActorId::User(UserId::new()),
             ),
         ];
         for agent in &elsewhere {

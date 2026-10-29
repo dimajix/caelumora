@@ -26,8 +26,8 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::project::ProjectId;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::security::{AccessPolicy, Admission, AllowAllPolicy, OwnershipPolicy};
+use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::Participant;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
@@ -138,7 +138,7 @@ pub fn bare_session(session_id: SessionId) -> Session {
         project: ProjectId::new(),
         created_at: now,
         updated_at: now,
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         deleted: None,
     }
 }
@@ -160,7 +160,7 @@ pub fn bare_channel(session_id: SessionId) -> Channel {
         language: None,
         participants: Vec::new(),
         internal_actors: Vec::new(),
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         deleted: None,
         former: Vec::new(),
     }

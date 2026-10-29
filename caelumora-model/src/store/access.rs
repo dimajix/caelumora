@@ -241,8 +241,8 @@ fn unmarked<T: Stored>(value: &T) -> StoreResult<()> {
     }
 }
 
-/// Refuses `value` if it may not be stored as it is: its access list
-/// (`SecurityAttributes::validate`, issue 23), and what its T::KIND says
+/// Refuses `value` if it may not be stored as it is: its owner and its access
+/// list (`SecurityAttributes::validate`, issues 23, 491), and what its T::KIND says
 /// (`Stored::validate`).
 fn valid<T: Stored>(value: &T) -> StoreResult<()> {
     value.security_attributes().validate().map_err(StoreError::Validation)?;

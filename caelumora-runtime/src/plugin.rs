@@ -72,7 +72,7 @@ mod tests {
     struct Note {
         id: NoteId,
         text: String,
-        #[serde(default)]
+        #[serde(default = "SecurityAttributes::systems")]
         security_attributes: SecurityAttributes,
         #[serde(default)]
         deleted: Option<Removal>,

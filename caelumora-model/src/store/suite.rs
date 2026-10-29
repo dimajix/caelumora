@@ -109,7 +109,7 @@ fn personality() -> Personality {
         introduction: None,
         reasoning_visibility: Visibility::Channel,
         hears_during_turn: Default::default(),
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         id: PersonalityId(Uuid::new_v4()),
         name: scoped("assistant"),
         kind: Default::default(),
@@ -129,7 +129,7 @@ fn session_template() -> SessionTemplate {
         time_zone: None,
         approval_rules: Vec::new(),
         workspace: None,
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         commands: Default::default(),
         privacy: Default::default(),
         id: SessionTemplateId(Uuid::new_v4()),
@@ -170,7 +170,7 @@ fn session() -> Session {
         channels: Vec::new(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         deleted: None,
     }
 }
@@ -190,7 +190,7 @@ fn channel() -> Channel {
         former: Vec::new(),
         participants: Vec::new(),
         internal_actors: Vec::new(),
-        security_attributes: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
         deleted: None,
     }
 }
@@ -347,7 +347,7 @@ fn bundle() -> ComponentBundle {
     ComponentBundle::new(
         scoped("search"),
         ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search")] },
-        Default::default(),
+        SecurityAttributes::systems(),
     )
 }
 
@@ -608,7 +608,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     );
     lifecycle!(
         stores.agents.as_ref(),
-        Agent::new(scoped("assistant-1"), personality().id, ActorId::None),
+        Agent::new(scoped("assistant-1"), personality().id, ActorId::User(UserId::new())),
         |v: &Agent| v.id,
         name.name,
         "agent",
@@ -774,7 +774,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     );
     found_by_name!(
         stores.agents.as_ref(),
-        |name| Agent::new(name, personality().id, ActorId::None),
+        |name| Agent::new(name, personality().id, ActorId::User(UserId::new())),
         "agent",
         create,
         delete,
@@ -798,16 +798,31 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         delete,
         find_by_name
     );
-    let nobodys = stores
+    let systems = stores
         .workspaces
         .create(
             &ctx,
-            &Workspace { security_attributes: Default::default(), ..workspace(UserId::new()) },
+            &Workspace {
+                security_attributes: SecurityAttributes::systems(),
+                ..workspace(UserId::new())
+            },
         )
         .await;
     assert!(
-        matches!(nobodys, Err(StoreError::Validation(_))),
-        "workspace: one that belongs to no user is not stored, got {nobodys:?}"
+        matches!(systems, Err(StoreError::Validation(_))),
+        "workspace: one that belongs to no user is not stored, got {systems:?}"
+    );
+    // Every entity has an owner (issue 491), whatever its kind.
+    let nobodys = Personality {
+        id: PersonalityId::new(),
+        name: scoped("nobodys"),
+        security_attributes: SecurityAttributes::owned_by(ActorId::None),
+        ..personality()
+    };
+    let created = stores.personalities.create(&ctx, &nobodys).await;
+    assert!(
+        matches!(created, Err(StoreError::Validation(_))),
+        "personality: one of nobody is not stored, got {created:?}"
     );
 
     found_by_name!(stores.groups.as_ref(), group_named, "group", create, delete, find_by_name);
@@ -856,7 +871,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
             members: vec![UserId::new()],
             ..Project::own_of(SessionId::new(), UserId::new())
         },
-        Project { security_attributes: Default::default(), ..project(UserId::new()) },
+        Project { security_attributes: SecurityAttributes::systems(), ..project(UserId::new()) },
     ];
     for project in refused {
         let stored = stores.projects.create(&ctx, &project).await;
@@ -913,8 +928,8 @@ pub async fn names_are_unique(stores: &EntityStores) {
         elsewhere: |name| SessionTemplate { name: in_scope(name, &users), id: SessionTemplateId::new(), ..session_template() },
         rename: |value: SessionTemplate, name| SessionTemplate { name: in_scope(name, &value.name.scope), ..value }, "session_template",
         create, update, delete, restore);
-    unique_by_name!(stores.agents.as_ref(), |name| Agent::new(in_scope(name, &global), personality().id, ActorId::None),
-        elsewhere: |name| Agent::new(in_scope(name, &users), personality().id, ActorId::None),
+    unique_by_name!(stores.agents.as_ref(), |name| Agent::new(in_scope(name, &global), personality().id, ActorId::User(UserId::new())),
+        elsewhere: |name| Agent::new(in_scope(name, &users), personality().id, ActorId::User(UserId::new())),
         rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value }, "agent",
         create, update, delete, restore);
     let (session_id, other_session) = (SessionId::new(), SessionId::new());
@@ -944,11 +959,19 @@ pub async fn names_are_unique(stores: &EntityStores) {
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();
-    let mine = Agent::new(in_scope("Moving", &users), personality().id, ActorId::None);
+    let mine =
+        Agent::new(in_scope("Moving", &users), personality().id, ActorId::User(UserId::new()));
     stores.agents.create(&ctx, &mine).await.expect("create");
     stores
         .agents
-        .create(&ctx, &Agent::new(in_scope("moving", &global), personality().id, ActorId::None))
+        .create(
+            &ctx,
+            &Agent::new(
+                in_scope("moving", &global),
+                personality().id,
+                ActorId::User(UserId::new()),
+            ),
+        )
         .await
         .expect("create");
     let moved =
@@ -2106,7 +2129,7 @@ pub async fn lists_admit_what_check_decides(
         Subject::Everyone,
     ];
     let mut made = Vec::new();
-    for owner in [hers, his, agent, ActorId::System, ActorId::None] {
+    for owner in [hers, his, agent, ActorId::System] {
         made.push(SecurityAttributes::owned_by(owner));
         for subject in subjects {
             for grant in Grant::ALL {

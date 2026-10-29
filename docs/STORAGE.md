@@ -111,10 +111,10 @@ over one pool.
 *   **The access entries of a kind** (issue [332](../issues/332-policy-as-a-predicate.md)),
     `entity_<kind>_access(subject, relation, entity_id)`: a row for the owner (`owner`) and one for
     each entry of the access list (`read`, `write`, `join`), the subject by its id alone - everyone
-    by the largest UUID, what the system or nobody owns by the nil one -, written from the
-    document's `SecurityAttributes` in the transaction that writes it and removed with it. A list is
-    narrowed by them: the admission becomes a semi-join over the entries of the actors, their roles
-    and everyone, and over those of the groups an actor belongs to, found in `entity_group` by
+    by the largest UUID, what the system owns by the nil one -, written from the document's
+    `SecurityAttributes` in the transaction that writes it and removed with it. A list is narrowed
+    by them: the admission becomes a semi-join over the entries of the actors, their roles and
+    everyone, and over those of the groups an actor belongs to, found in `entity_group` by
     containment of the members in its bodies (`Filter::with_member`), a deleted group only where the
     admission counts it. Ids of different subjects that met would only let more through, which the
     store decides again. Laying a kind out in a form of its own - the memberships of the groups in a

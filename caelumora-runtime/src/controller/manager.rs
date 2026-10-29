@@ -410,7 +410,7 @@ mod tests {
             kind: Default::default(),
             roles: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Visibility::Channel,
             hears_during_turn: Default::default(),
             deleted: None,
@@ -425,7 +425,7 @@ mod tests {
         let agent = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
-            ActorId::None,
+            ActorId::User(UserId::new()),
         );
         store
             .entity_stores()
@@ -588,14 +588,14 @@ mod tests {
                 &agent.id,
                 &AgentUpdateEvent::NameChanged("from elsewhere".to_string()),
             ),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
         bus.publish(
             GlobalEvent::updated::<User>(
                 &user.id,
                 &UserUpdateEvent::NameChanged("alice b.".to_string()),
             ),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
 
         eventually(|| {
@@ -661,7 +661,7 @@ mod tests {
             .unwrap();
         bus.publish(
             GlobalEvent::updated::<Workspace>(&workspace.id, &WorkspaceUpdateEvent::AccessChanged),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
 
         eventually(|| {
@@ -714,7 +714,7 @@ mod tests {
             .unwrap();
         bus.publish(
             GlobalEvent::updated::<Project>(&project.id, &ProjectUpdateEvent::AccessChanged),
-            Default::default(),
+            SecurityAttributes::systems(),
         );
 
         eventually(|| {

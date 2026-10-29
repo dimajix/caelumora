@@ -422,6 +422,16 @@ mod tests {
             !bundles.is_empty() && bundles.len() == seed.component_bundles.len(),
             "the component bundles, once (issues 270, 455)"
         );
+        let personalities = stores.personalities.list(&system, &Query::all()).await.unwrap().items;
+        let templates = stores.session_templates.list(&system, &Query::all()).await.unwrap().items;
+        let mut owners = (bundles.iter().map(|b| &b.security_attributes))
+            .chain(personalities.iter().map(|p| &p.security_attributes))
+            .chain(templates.iter().map(|t| &t.security_attributes))
+            .map(|attributes| attributes.owner_id);
+        assert!(
+            owners.all(|owner| owner == ActorId::System),
+            "what the seed leaves without attributes is the system's (issue 491)"
+        );
     }
 
     /// A seeded document that was deleted stays deleted, of every kind the

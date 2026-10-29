@@ -236,7 +236,7 @@ pub struct SessionTemplate {
     /// participant: the channel names it (`ChannelTemplate::internal_actors`).
     pub participants: Vec<ParticipantTemplate>,
     pub channels: Vec<ChannelTemplate>,
-    #[serde(default)]
+    #[serde(default = "SecurityAttributes::systems")]
     pub security_attributes: SecurityAttributes,
     /// User commands of sessions made from this template, in addition to the
     /// global ones from `AppConfig` (issue 28) - for commands that belong to
@@ -498,7 +498,7 @@ mod tests {
             time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             id: SessionTemplateId(Uuid::new_v4()),
             name: ScopedName::new("pairing", Scope::GlobalScope).unwrap(),
             description: None,

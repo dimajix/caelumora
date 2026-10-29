@@ -982,7 +982,7 @@ mod tests {
             components: moderation_components(None, Some("broadcast_policy")),
             participants: Vec::new(),
             internal_actors: Vec::new(),
-            security_attributes: SecurityAttributes::default(),
+            security_attributes: SecurityAttributes::systems(),
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             deleted: None,

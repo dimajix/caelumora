@@ -1094,7 +1094,7 @@ mod tests {
             kind,
             roles: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             deleted: None,
         };
         store
@@ -3065,7 +3065,7 @@ mod tests {
             description: None,
             introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(),
+            security_attributes: SecurityAttributes::systems(),
             reasoning_visibility: Default::default(),
             hears_during_turn: Default::default(),
             deleted: None,

@@ -705,9 +705,11 @@ mod tests {
     use crate::component::testing::*;
     use crate::component::ComponentContainer;
     use async_trait::async_trait;
+    use caelumora_model::actor::ActorId;
     use caelumora_model::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
     use caelumora_model::removal::{Removal, RemovalId};
     use caelumora_model::scope::ScopeField;
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::store::{Deleted, Persistence, StoreError, StoreResult};
@@ -736,7 +738,7 @@ mod tests {
         ComponentBundle::new(
             ScopedName::new(name, Scope::GlobalScope).unwrap(),
             components,
-            Default::default(),
+            SecurityAttributes::systems(),
         )
     }
 
@@ -1007,7 +1009,7 @@ mod tests {
         let own = ComponentBundle::new(
             ScopedName::new("mine", Scope::UserScope { user_id }).unwrap(),
             config(&[("stop", "named")]),
-            Default::default(),
+            SecurityAttributes::owned_by(ActorId::User(user_id)),
         );
         store.create(&SecurityContext::default(), &own).await.unwrap();
         let registry = named_registry(store);
