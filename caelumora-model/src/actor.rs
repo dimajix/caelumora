@@ -1226,7 +1226,8 @@ mod tests {
     #[test]
     fn how_an_answer_comes_about_concerns_the_users_alone() {
         let present = Present::new();
-        let (turn_id, message) = (TurnId::new(), Message::new(Classification::CHANNEL_DEFAULT));
+        let turn_id = TurnId::new();
+        let message = Message::new(Classification::CHANNEL_DEFAULT);
         let step = |index| (index, 2, "first".to_string());
         let target = RetryTarget::Turn(turn_id);
         for event in [

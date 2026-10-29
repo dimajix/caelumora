@@ -157,7 +157,8 @@ mod tests {
 
     #[test]
     fn a_place_is_described_by_its_summary_and_briefing() {
-        let (summary, briefing) = (Summary::new("Planning the release.").unwrap(), Briefing::new("Dates are in UTC.\nBe brief.").unwrap());
+        let summary = Summary::new("Planning the release.").unwrap();
+        let briefing = Briefing::new("Dates are in UTC.\nBe brief.").unwrap();
         let prompts = testing::prompts();
         assert_eq!(render(&prompts, &[("channel", Some(&summary), Some(&briefing))]).unwrap(),
             "[About this channel]\nWhat this channel is for, as its owner describes it.\nIn short: Planning the release.\n\nDates are in UTC.\nBe brief.\n");
@@ -222,7 +223,8 @@ mod tests {
         let running = session_loop.channel(channel.id).expect("the channel runs");
         running.update_description(&system, Some("Planning"), Some("Dates are in UTC.")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
-        let (ours, its) = (prompt.text.find("[About this session]").unwrap(), prompt.text.find("[About this channel]").unwrap());
+        let ours = prompt.text.find("[About this session]").unwrap();
+        let its = prompt.text.find("[About this channel]").unwrap();
         assert!(ours < its, "the session's first: {}", prompt.text);
         assert!(prompt.text.contains("Dates are in UTC."), "the channel's as it is now: {}", prompt.text);
         assert_eq!(prompt.classification, Some(confidential), "a channel's are classified as the channel");

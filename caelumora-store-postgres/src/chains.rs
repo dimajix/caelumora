@@ -88,7 +88,8 @@ impl<E: Entry> Chains<E> {
         }
         let columns = self.key.join(", ");
         let keys: Vec<String> = (1..=self.key.len()).map(|at| format!("${at}::text")).collect();
-        let (first, about) = (self.key.len() + 1, if self.by_message { ", message_id" } else { "" });
+        let first = self.key.len() + 1;
+        let about = if self.by_message { ", message_id" } else { "" };
         let given = match self.by_message {
             true => format!("${first}::bigint[], ${}::text[], ${}::jsonb[]", first + 1, first + 2),
             false => format!("${first}::bigint[], ${}::jsonb[]", first + 1),

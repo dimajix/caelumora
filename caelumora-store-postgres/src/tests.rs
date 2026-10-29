@@ -144,7 +144,8 @@ async fn keeps_names_unique_beyond_what_is_read() {
 #[tokio::test]
 async fn backends_of_one_schema_keep_one_store() {
     let Some(database) = Database::new() else { return };
-    let (here, there) = (database.stores(Arc::new(AllowAllPolicy::new())).await, database.stores(Arc::new(AllowAllPolicy::new())).await);
+    let here = database.stores(Arc::new(AllowAllPolicy::new())).await;
+    let there = database.stores(Arc::new(AllowAllPolicy::new())).await;
     let owner = UserId::new();
     let team = |name: &str| Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner);
     let system = SecurityContext::system();
@@ -281,7 +282,9 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
     let Some(database) = Database::new() else { return };
     let store = database.backend();
     let channel = ChannelId::new();
-    let (alice, bob, agent) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+    let alice = ActorId::User(UserId::new());
+    let bob = ActorId::User(UserId::new());
+    let agent = ActorId::Agent(AgentId::new());
     let approver = ActorId::Approver(ApproverId::new());
     let joined = |participant| HistoryEntry::ParticipantJoined { participant, name: String::new(), by: participant, by_name: String::new(), at: Utc::now() };
     let said = |by: ActorId, content: Option<&str>| HistoryEntry::Said { message: Message { sender_id: by, content: content.map(str::to_string), ..Message::new(Classification::CHANNEL_DEFAULT) } };
@@ -336,7 +339,9 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     let (hers, his) = (ActorId::User(alice), ActorId::User(bob));
     let role = RoleId::new();
     let group = |name: &str, members: Vec<ActorId>| Group { members, ..Group::team(ScopedName::new(name, Scope::GlobalScope).unwrap(), alice) };
-    let (team, gone, other) = (group("team", vec![his]), group("gone", vec![his]), group("other", vec![hers]));
+    let team = group("team", vec![his]);
+    let gone = group("gone", vec![his]);
+    let other = group("other", vec![hers]);
     for (group, removal_id) in [(&team, None), (&gone, Some(RemovalId::new())), (&other, None)] {
         groups.insert(Document { id: group.id.into(), name: None, removal_id, security_attributes: group.security_attributes.clone(), body: json!(group) }).await.unwrap();
     }

@@ -514,7 +514,8 @@ mod tests {
         let bus = EventBus::new(Arc::new(DeletionsOnly), Arc::new(ConfidentialityRules::default()));
         let alice = UserId::new();
         let mut alices = bus.subscribe_as(as_user(alice));
-        let (session, attributes) = (SessionId::new(), SecurityAttributes::owned_by(ActorId::User(alice)));
+        let session = SessionId::new();
+        let attributes = SecurityAttributes::owned_by(ActorId::User(alice));
         bus.publish(GlobalEvent::created::<Session>(&session), attributes.clone());
         bus.publish(GlobalEvent::deleted::<Session>(&session), attributes.clone());
         bus.publish(GlobalEvent::restored::<Session>(&session), attributes);
@@ -536,7 +537,8 @@ mod tests {
 
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let shared = SecurityAttributes::owned_by(ActorId::User(alice)).granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
-        let (public, internal) = (Classification::general(Confidentiality::Public), Classification::general(Confidentiality::Internal));
+        let public = Classification::general(Confidentiality::Public);
+        let internal = Classification::general(Confidentiality::Internal);
         bus.publish_classified(GlobalEvent::created::<Channel>(&(session, channel)), shared.clone(), slice::from_ref(&internal));
         bus.publish_classified(GlobalEvent::custom::<Channel>(&(session, channel), channel::STARTED, &()), shared.clone(), slice::from_ref(&public));
         let lowered = ChannelUpdateEvent::ClassificationChanged(public.clone());
@@ -566,7 +568,10 @@ mod tests {
     #[tokio::test]
     async fn a_part_s_events_reach_whoever_reads_the_entity_and_the_part() {
         let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
-        let (alice, bob, carol, dave) = (UserId::new(), UserId::new(), UserId::new(), UserId::new());
+        let alice = UserId::new();
+        let bob = UserId::new();
+        let carol = UserId::new();
+        let dave = UserId::new();
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
         let mut carols = bus.subscribe_as(as_user(carol));

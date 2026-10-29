@@ -1019,7 +1019,8 @@ mod tests {
         let raised = Message { classification: confidential.clone(), ..hello.clone() };
         assert_eq!(notice(&hello, Some(&raised), at).classification, confidential, "what it says and what it quotes");
         let of = |compartment: &str| Classification::new(Confidentiality::Internal, [Compartment::new(compartment)]).expect("a classification");
-        let (was, now) = (Message { classification: of("hr"), ..hello.clone() }, Message { classification: of("sales"), ..hello });
+        let was = Message { classification: of("hr"), ..hello.clone() };
+        let now = Message { classification: of("sales"), ..hello };
         let apart = notice(&was, Some(&now), at);
         assert_eq!((apart.content.as_deref(), apart.classification), (Some("[changed an earlier message; it now reads:] hello"), of("sales")), "no audience in common: without the quote");
     }

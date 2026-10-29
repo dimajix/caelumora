@@ -93,7 +93,9 @@ async fn an_agent_whose_personality_was_withdrawn_cannot_join_a_channel() {
 async fn a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with() {
     let world = World::new().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
-    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let alice = World::as_user(world.alice);
+    let bob = World::as_user(world.bob);
+    let carol = World::as_user(world.carol);
 
     assert!(world.runtime.entity_stores().personalities.get(&alice, shared.id).await.is_ok(), "shared with her");
     let changed = Personality { description: Some(Description::new("hers now").unwrap()), ..shared.clone() };
@@ -300,7 +302,8 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::None).await.expect("without what was said");
     let after = say("after bob").await;
     let mark = |user: UserId, message: MessageId| {
-        let (controllers, session, channel) = (world.runtime.controller_manager(), session.id(), side.id());
+        let controllers = world.runtime.controller_manager();
+        let (session, channel) = (session.id(), side.id());
         async move { controllers.user_controller(user).await.unwrap().mark_read(&World::as_user(user), session, channel, message).await }
     };
     let unread = |user: UserId| {
@@ -658,7 +661,8 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
         let result = ToolCallResult { shown: vec![uploaded.clone()], ..ToolCallResult::of(&call, Default::default(), "shown".to_string(), main.classification()) };
         Message { id: MessageId::new(), sender_id: ActorId::Agent(AgentId::new()), role: MessageRole::Tool, tool_results: vec![result], ..Message::new(main.classification()) }
     };
-    let (shown, withheld) = (showing(ToolVisibility::SHOWN), showing(ToolVisibility::WITHOUT_RESULT));
+    let shown = showing(ToolVisibility::SHOWN);
+    let withheld = showing(ToolVisibility::WITHOUT_RESULT);
     main.record_said(vec![shown.clone(), withheld.clone()]).await;
     let (read, asked) = world.asked(async { channel_of(world.bob).await.unwrap().attachment(shown.id, uploaded.id).await }).await;
     assert_eq!(read.expect("what a result shown to him showed"), uploaded);
@@ -713,7 +717,8 @@ async fn making_an_agent_needs_creating_it_then_its_personality() {
     let world = World::new().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let bobs = world.personality("bobs", Some(world.bob), &[]).await;
-    let (agents, alice) = (world.runtime.agent_manager(), World::as_user(world.alice));
+    let agents = world.runtime.agent_manager();
+    let alice = World::as_user(world.alice);
     let hers = Scope::UserScope { user_id: world.alice };
 
     let (made, asked) = world.asked(agents.create(&alice, "helper", hers.clone(), shared.id)).await;
@@ -872,7 +877,8 @@ async fn deleting_a_session_needs_owning_it() {
 async fn a_session_s_own_project_is_read_by_its_participants_and_goes_with_it() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let (alice, project) = (World::as_user(world.alice), session.session().project);
+    let alice = World::as_user(world.alice);
+    let project = session.session().project;
     let stores = world.runtime.entity_stores();
     for (user, reads) in [(world.alice, true), (world.bob, true), (world.carol, false)] {
         assert_eq!(stores.projects.get(&World::as_user(user), project).await.is_ok(), reads, "{user}");
@@ -902,7 +908,9 @@ async fn a_session_s_own_project_is_read_by_its_participants_and_goes_with_it() 
 #[tokio::test]
 async fn a_project_is_its_owners_and_read_by_its_members() {
     let world = World::new().await;
-    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let alice = World::as_user(world.alice);
+    let bob = World::as_user(world.bob);
+    let carol = World::as_user(world.carol);
     let projects = &world.projects;
     let mine = Scope::UserScope { user_id: world.alice };
     let project = projects.create(&alice, "report", mine.clone(), Some("The yearly report")).await.expect("in her own scope");
@@ -959,7 +967,9 @@ async fn a_project_is_its_owners_and_read_by_its_members() {
 async fn a_project_is_seen_by_who_reads_it() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let alice = World::as_user(world.alice);
+    let bob = World::as_user(world.bob);
+    let carol = World::as_user(world.carol);
     let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
     let project = world.projects.create(&alice, "report", Scope::UserScope { user_id: world.alice }, None).await.unwrap();
     world.runtime.controller_manager().project_controller(project.id).await.unwrap().update_members(&alice, vec![world.bob]).await.unwrap();
@@ -1917,7 +1927,9 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
 async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     let world = World::new().await;
     let workspaces = world.runtime.workspace_manager();
-    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let alice = World::as_user(world.alice);
+    let bob = World::as_user(world.bob);
+    let carol = World::as_user(world.carol);
     let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
     assert!(matches!(views(&bob).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))), "not shared: not there for him");
@@ -1960,7 +1972,9 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
 #[tokio::test]
 async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_members() {
     let world = World::new().await;
-    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let alice = World::as_user(world.alice);
+    let bob = World::as_user(world.bob);
+    let carol = World::as_user(world.carol);
     let groups = world.runtime.group_manager();
     let workspaces = world.runtime.workspace_manager();
     let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));

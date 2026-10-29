@@ -179,7 +179,8 @@ mod tests {
         };
         let confidential = Classification::general(Confidentiality::Confidential);
         let png: &[u8] = b"\x89PNG\r\n\x1a\nthe rest";
-        let (image, notes) = (kept("chart.png", png, &confidential), kept("notes.txt", b"notes", &Classification::PUBLIC));
+        let image = kept("chart.png", png, &confidential);
+        let notes = kept("notes.txt", b"notes", &Classification::PUBLIC);
 
         let given = |images: bool, attachments: Vec<ContentRef>| {
             let runtime = detached_actor_runtime_in(Arc::clone(&runtime), session.clone(), channel.clone());
@@ -223,12 +224,14 @@ mod tests {
         let other = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
         // An answer of an earlier turn, and another agent's message.
-        let (earlier, theirs) = (thought(ActorId::Agent(agent), "earlier"), thought(other, "theirs"));
+        let earlier = thought(ActorId::Agent(agent), "earlier");
+        let theirs = thought(other, "theirs");
         state.transcript.push(earlier.clone());
         state.transcript.push(theirs.clone());
 
         let profile = |reasoning_history| ModelProfile { reasoning_history, ..ModelProfile::default() };
-        let (first, second) = (thought(ActorId::Agent(agent), "first"), thought(ActorId::Agent(agent), "second"));
+        let first = thought(ActorId::Agent(agent), "first");
+        let second = thought(ActorId::Agent(agent), "second");
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
         let (first, second) = {
             state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::default(), Default::default()).given_as(profile(ReasoningHistory::CurrentTurn)));
@@ -269,7 +272,8 @@ mod tests {
         let question = text(MessageRole::User, "What is 2+2?");
         state.transcript.push(question.clone());
 
-        let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
+        let first = text(MessageRole::Assistant, "Let me think.");
+        let second = text(MessageRole::Assistant, "4");
         let system = || PromptPart { role: MessageRole::System, text: "You are good at sums.".to_string(), after: None, classification: None, source: None };
         let order = |items: &[ContextItem]| items.iter().map(|item| match item {
             ContextItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
@@ -294,7 +298,8 @@ mod tests {
         assert!(seen(&state, agent, &question).is_none(), "not produced by the agent");
 
         // Knowledge read in a turn counts for the messages after it.
-        let (before, after) = (text(MessageRole::Assistant, "Let me look."), text(MessageRole::Assistant, "Found it."));
+        let before = text(MessageRole::Assistant, "Let me look.");
+        let after = text(MessageRole::Assistant, "Found it.");
         let read = KnowledgeRef {
             channel: Default::default(),
             session: Default::default(),
@@ -337,7 +342,10 @@ mod tests {
         };
         let answer = |content: &str| Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
-        let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
+        let first = answer("first");
+        let second = answer("second");
+        let third = answer("third");
+        let fourth = answer("fourth");
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
             let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools.clone())] };
             state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));

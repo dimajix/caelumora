@@ -453,7 +453,8 @@ mod tests {
     async fn the_model_is_asked_to_choose_among_the_candidates_by_their_introductions() {
         let fake = FakeModel::answering(choosing("coder", json!({ "coder": 0.8, "reviewer": 0.15, "nobody": 0.05 })));
         let url = serve(fake.clone()).await;
-        let (coder, reviewer) = (agent("Coder", Some("Writes\nthe code.")), agent("Reviewer", None));
+        let coder = agent("Coder", Some("Writes\nthe code."));
+        let reviewer = agent("Reviewer", None);
         let (event, messages) = said("The test fails.", Classification::PUBLIC);
 
         let chosen = policy(&url, json!({ "keep_alive": "5m" })).choose(&event, &messages, vec![coder.clone(), reviewer]).await.unwrap();

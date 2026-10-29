@@ -642,7 +642,9 @@ mod tests {
         use crate::agent::AgentId;
         use crate::approval::ApproverId;
         use crate::history::Recipients;
-        let (alice, bob, agent) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+        let alice = ActorId::User(UserId::new());
+        let bob = ActorId::User(UserId::new());
+        let agent = ActorId::Agent(AgentId::new());
         let approver = ActorId::Approver(ApproverId::new());
         let actors = [alice, bob, agent, approver, ActorId::System];
         let entries = [

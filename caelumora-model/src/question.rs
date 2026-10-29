@@ -465,7 +465,9 @@ mod tests {
 
     #[test]
     fn addressees_are_found_among_the_users_of_the_channel() {
-        let (alice, bob, helper) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+        let alice = ActorId::User(UserId::new());
+        let bob = ActorId::User(UserId::new());
+        let helper = ActorId::Agent(AgentId::new());
         let participants = MentionDirectory::new([(alice, "Alice"), (bob, "Bob"), (helper, "Helper")]);
         let users = [alice, bob];
         let asking = |ask: Vec<Addressee>| Questions { ask, ..questions(vec![question(&[], false)]) };

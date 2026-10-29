@@ -923,7 +923,9 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(OLLAMA_CLIENT_KIND).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>().uses::<PromptCatalogue>(),
         move |descriptor, context| {
-            let (control_tokens, running_context_sizes, vision) = (Arc::clone(&control_tokens), Arc::clone(&running_context_sizes), Arc::clone(&vision));
+            let control_tokens = Arc::clone(&control_tokens);
+            let running_context_sizes = Arc::clone(&running_context_sizes);
+            let vision = Arc::clone(&vision);
             async move {
                 let config = OllamaClientConfig::of(&descriptor.params)?;
                 context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;

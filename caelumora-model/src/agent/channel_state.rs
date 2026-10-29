@@ -1289,7 +1289,9 @@ mod tests {
     fn the_attachments_of_its_transcript_are_numbered_on_its_copy_alone() {
         use crate::content::testing::make_content_ref;
         use crate::message::testing::{id, make_message};
-        let (a, b, c) = (make_content_ref("a.png", b"a"), make_content_ref("b.png", b"b"), make_content_ref("c.png", b"c"));
+        let a = make_content_ref("a.png", b"a");
+        let b = make_content_ref("b.png", b"b");
+        let c = make_content_ref("c.png", b"c");
         let mut state = AgentChannelState::default();
         let heard = Message { attachments: vec![a.clone()], ..make_message(id(1)) };
         state.perceive(vec![heard.clone()]);

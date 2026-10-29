@@ -248,7 +248,8 @@ mod tests {
         let runtime = TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 
-        let (kaya, bob) = (User { id: UserId::new(), username: Name::new("Kaya").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: Name::new("Bob").unwrap(), email: String::new(), roles: Vec::new(), deleted: None });
+        let kaya = User { id: UserId::new(), username: Name::new("Kaya").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
+        let bob = User { id: UserId::new(), username: Name::new("Bob").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         for user in [&kaya, &bob] {
             store.entity_stores().unwrap().users.create(&system, user).await.unwrap();
         }

@@ -256,7 +256,8 @@ mod tests {
 
     #[test]
     fn a_session_s_own_project_is_its_alone_and_read_by_its_participants() {
-        let (session_id, alice) = (SessionId::new(), UserId::new());
+        let session_id = SessionId::new();
+        let alice = UserId::new();
         let own = Project::own_of(session_id, alice);
         assert!(own.is_own() && !shared(Scope::GlobalScope, alice).is_own());
         assert_eq!((own.name.name.as_str(), &own.name.scope, own.owner()), (Project::OWN, &Scope::SessionScope { session_id }, Some(alice)));
@@ -277,7 +278,8 @@ mod tests {
 
     #[test]
     fn a_change_is_made_into_the_project_where_it_lies() {
-        let (session_id, alice, bob) = (SessionId::new(), UserId::new(), UserId::new());
+        let session_id = SessionId::new();
+        let (alice, bob) = (UserId::new(), UserId::new());
         let mut project = Project::own_of(session_id, alice);
         project.apply(&ProjectUpdateEvent::DescriptionChanged(Some("The figures of Q3".to_string()))).unwrap();
         assert_eq!(project.description.as_ref().map(ToString::to_string).as_deref(), Some("The figures of Q3"));

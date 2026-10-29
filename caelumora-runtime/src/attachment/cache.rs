@@ -100,7 +100,9 @@ mod tests {
     #[test]
     fn what_was_used_least_recently_leaves_first_to_keep_within_the_budget() {
         let cache = ContentCache::new(10);
-        let (first, second, third) = (at_key("attachments/a/1", b"aaaa"), at_key("attachments/a/2", b"bbbb"), at_key("attachments/b/3", b"cccc"));
+        let first = at_key("attachments/a/1", b"aaaa");
+        let second = at_key("attachments/a/2", b"bbbb");
+        let third = at_key("attachments/b/3", b"cccc");
         cache.put(&first, Bytes::from_static(b"aaaa"));
         cache.put(&second, Bytes::from_static(b"bbbb"));
         assert!(cache.get(&first).is_some(), "used again");

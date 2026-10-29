@@ -328,7 +328,8 @@ mod tests {
     fn what_was_read_only_moves_forward() {
         let mut state = UserChannelState::default();
         assert_eq!(state.unread_from().get(), 0, "nothing read: everything is new");
-        let (first, later) = (ReadMark { position: Position::new(4), message: MessageId::new() }, ReadMark { position: Position::new(9), message: MessageId::new() });
+        let first = ReadMark { position: Position::new(4), message: MessageId::new() };
+        let later = ReadMark { position: Position::new(9), message: MessageId::new() };
         assert!(state.read_up_to(first));
         assert!(state.read_up_to(later));
         assert!(!state.read_up_to(first), "not back");

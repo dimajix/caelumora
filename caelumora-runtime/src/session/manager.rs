@@ -1404,7 +1404,8 @@ mod tests {
         let id = session.id;
         let project = create(&manager, &ctx, session).await.unwrap().session().project;
         let groups_there = async || {
-            let (session, project) = (stores.groups.get(&system, GroupId::of_session(id)).await, stores.groups.get(&system, GroupId::of_project(project)).await);
+            let session = stores.groups.get(&system, GroupId::of_session(id)).await;
+            let project = stores.groups.get(&system, GroupId::of_project(project)).await;
             (session.is_ok(), project.is_ok())
         };
 

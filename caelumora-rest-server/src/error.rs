@@ -709,7 +709,8 @@ mod tests {
 
     #[test]
     fn the_core_s_errors_answer_with_status_and_code() {
-        let (session, channel, someone) = (SessionId::new(), ChannelId::new(), ActorId::None);
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let someone = ActorId::None;
         assert_eq!(answer(SessionError::ChannelNotFound { session, channel }), (404, "channel_not_found".to_string()));
         let gone = ComponentError::Bundle { name: "shared".to_string(), cause: StoreError::NotFound { entity: "component_bundle", id: "shared".to_string() } };
         assert_eq!(answer(SessionError::ChannelUnavailable { session, channel, cause: Arc::new(gone) }), (409, "channel_unavailable".to_string()));

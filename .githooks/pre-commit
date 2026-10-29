@@ -1,5 +1,5 @@
 #!/bin/sh
-# Three checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Four checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
@@ -11,8 +11,11 @@
 #   line too long, and none beginning with a dash, in the Markdown, Rust and TypeScript files a
 #   commit adds or changes, read whole from the working tree; files the commit leaves out are not
 #   checked.
+# - Tuple bindings stay on one line (docs/CODING-GUIDELINES.md, "Small return values"):
+#   `scripts/tuple-bindings.sh` must find none longer than 100 characters or across lines in the
+#   Rust files a commit adds or changes, read whole from the working tree.
 #
-# `git commit --no-verify` skips all three.
+# `git commit --no-verify` skips all four.
 set -eu
 
 if ! git diff --cached --quiet -- issues/; then
@@ -30,4 +33,9 @@ fi
 committed=$(git diff --cached --name-only --diff-filter=ACMR -- '*.md' '*.rs' '*.ts' '*.tsx')
 if [ -n "$committed" ]; then
     scripts/wrapping.sh $committed
+fi
+
+rust=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
+if [ -n "$rust" ]; then
+    scripts/tuple-bindings.sh $rust
 fi

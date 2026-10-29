@@ -137,7 +137,8 @@ mod tests {
     #[test]
     fn a_private_session_is_read_by_no_other() {
         let alice = UserId::new();
-        let (source, reader) = (session(PrivacyConfig::Private, alice, &[]), session(PrivacyConfig::Private, alice, &[]));
+        let source = session(PrivacyConfig::Private, alice, &[]);
+        let reader = session(PrivacyConfig::Private, alice, &[]);
         assert!(!source.permits(&reader), "not even by its owner's");
         assert_eq!(PrivacyConfig::default(), PrivacyConfig::Private, "the default");
         let names: Vec<_> = [PrivacyConfig::Private, PrivacyConfig::SameOwner, PrivacyConfig::SharedAudience].iter().map(|p| serde_json::to_value(p).unwrap()).collect();

@@ -81,7 +81,9 @@ impl Admitted {
             .chain(admission.roles.iter().map(|role| Uuid::from(*role)))
             .chain(admission.everyone.then_some(EVERYONE))
             .collect();
-        let (owned, related, named) = (format!("${first}"), format!("${}", first + 1), format!("${}", first + 2));
+        let owned = format!("${first}");
+        let related = format!("${}", first + 1);
+        let named = format!("${}", first + 2);
         let mut sql = format!("id IN (SELECT entity_id FROM {access} WHERE (relation = '{OWNER}' AND subject = ANY({owned})) \
             OR (relation = ANY({related}) AND subject = ANY({named}))");
         let mut groups_of = Vec::new();

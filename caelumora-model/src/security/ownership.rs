@@ -334,7 +334,9 @@ mod tests {
     #[tokio::test]
     async fn an_agent_reads_what_its_owner_may_read_or_it_takes_part_in_and_changes_as_its_owner() {
         let (alice, bob) = (user(), user());
-        let (hers, his, member) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
+        let hers = ActorId::Agent(AgentId::new());
+        let his = ActorId::Agent(AgentId::new());
+        let member = ActorId::Agent(AgentId::new());
         let place = GroupId::of_channel(ChannelId::new());
         let alices = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let access_policy = knowing(Known { members: vec![(member, place)], ..Known::default() });
@@ -420,7 +422,8 @@ mod tests {
     /// decides an entity by - for whom, by which entries.
     #[tokio::test]
     async fn the_admission_of_a_verb_names_who_and_what_admits() {
-        let (alice, role) = (user(), RoleId::new());
+        let alice = user();
+        let role = RoleId::new();
         let agent = ActorId::Agent(AgentId::new());
         let policy = OwnershipPolicy::new();
         let hers = context(alice).with_roles(vec![role], None);
