@@ -2,8 +2,8 @@
 //! content kept first, then the document, then announced -, deletes, restores and purges them -
 //! also with the project that holds their scope (`scoped`, as their `ScopeMember`) -, and is the
 //! only code that keeps content in the key space `artifacts` of the storages of content (issue
-//! 282): a version under `artifacts/<artifact>/<number>`, an artifact's versions under
-//! `artifacts/<artifact>`.
+//! 282): a version under `artifacts/<artifact>/<content>` - a key of its publication's own,
+//! which the version names (issue 492) -, an artifact's versions under `artifacts/<artifact>`.
 //!
 //! An artifact is published into the scope of the project its session's results go to (issue 467),
 //! made with the first version of its name there and gone with the project: with the session where
@@ -19,6 +19,7 @@ use caelumora_model::confidentiality::{
     Classification, ConfidentialityPolicy, ConfidentialityQuestions,
 };
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
+use caelumora_model::content::ContentId;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::removal::Removal;
@@ -107,14 +108,14 @@ impl Default for ArtifactsConfig {
     }
 }
 
-/// The key the content of version `number` of artifact `id` lies under.
-fn version_key(id: ArtifactId, number: u32) -> String {
-    format!("{}/{number}", versions_key(id))
+/// The key the content `content` of artifact `artifact` lies under.
+fn content_key(artifact: ArtifactId, content: ContentId) -> String {
+    format!("{}/{content}", versions_key(artifact))
 }
 
-/// The key every version of artifact `id` lies under.
-fn versions_key(id: ArtifactId) -> String {
-    format!("artifacts/{id}")
+/// The key every version of artifact `artifact` lies under.
+fn versions_key(artifact: ArtifactId) -> String {
+    format!("artifacts/{artifact}")
 }
 
 /// `NotFound` for artifact `id` where the store found nothing.
@@ -138,8 +139,9 @@ pub struct ArtifactManager {
     /// The storage new artifacts are made in, with its name.
     keep_in: Option<(String, Arc<dyn ContentStorage>)>,
     max_bytes: u64,
-    /// Held while a document and its content are changed together, so that
-    /// two versions of one artifact are not numbered alike.
+    /// Held by every write of a document, so that one published into a
+    /// project is listed by the project's deletion or refused after it
+    /// (issue 458) - until issue 492 takes the lock away.
     writing: Mutex<()>,
 }
 
@@ -220,8 +222,7 @@ impl ArtifactManager {
     /// `StorageNotCleared`, `StorageGone` for an artifact whose storage is no longer configured,
     /// `Content` for a version too large, other than said, or a storage that failed, or whatever
     /// the store reports - `NotFound` for a project the caller does not read, `PermissionDenied`
-    /// and `NameTaken` among it, and `Outdated` if a version published meanwhile took the number
-    /// (issue 492): the caller publishes again.
+    /// and `NameTaken` among it.
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     pub async fn publish(
         &self,
@@ -245,7 +246,7 @@ impl ArtifactManager {
         // refused as such rather than taken for a name to make anew.
         let existing =
             self.artifacts.find_by_name(&SecurityContext::system(), name).await.optional()?;
-        let (id, number, (storage_name, storage)) = match &existing {
+        let (id, (storage_name, storage)) = match &existing {
             Some(artifact) => {
                 self.access_policy
                     .require(
@@ -257,11 +258,7 @@ impl ArtifactManager {
                 if artifact.classification != *classification {
                     return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
                 }
-                (
-                    artifact.id,
-                    artifact.latest().map_or(1, |latest| latest.number + 1),
-                    (&artifact.storage, self.storages.kept_in(&artifact.storage)?),
-                )
+                (artifact.id, (&artifact.storage, self.storages.kept_in(&artifact.storage)?))
             }
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
@@ -273,7 +270,7 @@ impl ArtifactManager {
                     )
                     .await?;
                 let (name, storage) = self.keep_in.as_ref().ok_or(ArtifactError::NotConfigured)?;
-                (ArtifactId::new(), 1, (name, storage))
+                (ArtifactId::new(), (name, storage))
             }
         };
         self.confidentiality.require_storable(
@@ -283,9 +280,12 @@ impl ArtifactManager {
             || ArtifactError::StorageNotCleared(storage_name.clone()),
         )?;
 
+        // Under a key of this publication's own, so that another publication of the artifact
+        // meanwhile keeps its content beside it, whichever number each is given (issue 492).
+        let content_id = ContentId::new();
         let digest = keep_digested(
             storage.as_ref(),
-            &version_key(id, number),
+            &content_key(id, content_id),
             size,
             content,
             self.max_bytes,
@@ -300,8 +300,10 @@ impl ArtifactManager {
         // so.
         let participants = Subject::Group(GroupId::of_channel(channel));
         let members = Subject::Group(GroupId::of_project(project_id));
+        // Numbered as the document is written (`Artifact::new`, `Artifact::add_version`).
         let mut version = ArtifactVersion {
-            number,
+            number: 0,
+            content: content_id,
             size,
             digest,
             media_type: None,
@@ -313,6 +315,7 @@ impl ArtifactManager {
             acl: Vec::new(),
         };
         version.grant_reading(participants);
+        let made = existing.is_none();
         let stored = match existing {
             Some(artifact) => self.add_version(artifact, version, participants).await,
             None => {
@@ -326,23 +329,23 @@ impl ArtifactManager {
                 );
                 artifact.grant_reading(participants);
                 artifact.grant_reading(members);
-                self.artifacts.create(ctx, &artifact).await.map(|()| artifact)
+                self.artifacts.create(ctx, &artifact).await.map(|()| (artifact, 1))
             }
         };
-        let artifact = match stored {
-            Ok(artifact) => artifact,
+        let (artifact, number) = match stored {
+            Ok(written) => written,
             Err(e) => {
-                self.forget(storage, id, number, number == 1).await;
+                self.forget(storage, id, content_id, made).await;
                 return Err(e.into());
             }
         };
         // A new artifact is kept only if the project is still there (issue 458); one that was
         // there before went with the project if it was deleted meanwhile, under `writing`.
-        if number == 1 {
+        if made {
             self.holders.keep_made(self, &artifact).await?;
         }
         // Heard by whoever reads the artifact and the version.
-        let event = if number == 1 {
+        let event = if made {
             GlobalEvent::created::<Artifact>(&id)
         } else {
             GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::VersionPublished(number))
@@ -362,30 +365,23 @@ impl ArtifactManager {
     /// Adds `version` to `artifact`, read by `participants`, in the runtime's name: whoever may
     /// add a version need not own the artifact (`WriteArtifact`, asked before), and lets the
     /// channel they publish it in read it. Written meanwhile elsewhere, the artifact is read
-    /// again (issue 492); a version published meanwhile has taken the number, and `version` is
-    /// not added. Answers the artifact as written.
+    /// again and the version added once more, numbered after what was published meanwhile
+    /// (issue 492). Answers the artifact as written, and the version's number.
     ///
     /// # Errors
-    /// `StoreError::Outdated` for a number taken meanwhile - the caller publishes again -, or
-    /// whatever else the store reports.
+    /// Whatever the store reports.
     async fn add_version(
         &self,
         mut artifact: Artifact,
         version: ArtifactVersion,
         participants: Subject,
-    ) -> StoreResult<Artifact> {
+    ) -> StoreResult<(Artifact, u32)> {
         let system = SecurityContext::system();
         loop {
-            if artifact.version(version.number).is_some() {
-                return Err(StoreError::Outdated {
-                    entity: Artifact::KIND.name(),
-                    id: artifact.id.to_string(),
-                });
-            }
-            artifact.add_version(version.clone());
+            let number = artifact.add_version(version.clone());
             artifact.grant_reading(participants);
             if self.update(&system, &mut artifact).await.written()?.is_some() {
-                return Ok(artifact);
+                return Ok((artifact, number));
             }
             artifact = self.artifacts.get(&system, artifact.id).await?;
         }
@@ -403,24 +399,24 @@ impl ArtifactManager {
         self.artifacts.update(ctx, artifact).await
     }
 
-    /// Removes what was kept of version `number` of artifact `id` for a
+    /// Removes what was kept as `content` of artifact `artifact` for a
     /// publication that failed after - all of it for an artifact that was
     /// to be made by it. Logged where it fails: the failure that led here
     /// is what the caller is told.
     async fn forget(
         &self,
         storage: &Arc<dyn ContentStorage>,
-        id: ArtifactId,
-        number: u32,
+        artifact: ArtifactId,
+        content: ContentId,
         made: bool,
     ) {
         let removed = if made {
-            storage.remove_under(&versions_key(id)).await
+            storage.remove_under(&versions_key(artifact)).await
         } else {
-            storage.delete(&version_key(id, number)).await
+            storage.delete(&content_key(artifact, content)).await
         };
         if let Err(e) = removed {
-            warn!(artifact = %id, version = number, "What was kept of a publication that failed stays: {e}");
+            warn!(%artifact, %content, "What was kept of a publication that failed stays: {e}");
         }
     }
 
@@ -435,12 +431,12 @@ impl ArtifactManager {
         artifact: &Artifact,
         number: u32,
     ) -> ArtifactResult<(u64, ByteStream)> {
-        if artifact.version(number).is_none() {
+        let Some(version) = artifact.version(number) else {
             return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
-        }
+        };
         self.storages
             .kept_in(&artifact.storage)?
-            .get(&version_key(artifact.id, number))
+            .get(&content_key(artifact.id, version.content))
             .await
             .map_err(|e| match e {
                 ContentError::NotFound(_) => {

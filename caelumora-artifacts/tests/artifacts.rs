@@ -44,7 +44,8 @@ use caelumora_model::security::{
     AclEntry, Grant, Refused, Secured, SecurityAttributes, SecurityContext, Subject,
 };
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError, Stored};
+use caelumora_model::store::testing::ContendedStore;
+use caelumora_model::store::{EntityStore, EntityStoreFactory, Persistence, StoreError, Stored};
 use caelumora_model::user::UserId;
 use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
 use caelumora_model::user_provider::UserManager;
@@ -71,8 +72,10 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+use tempfile::TempDir;
 use tokio::time;
 use tower::ServiceExt;
 
@@ -202,16 +205,14 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
         (first["artifact"].clone(), Some(2)),
         "a version of the same artifact"
     );
-    let kept = world
-        .files
-        .path()
-        .join("content")
-        .join("artifacts")
-        .join(first["artifact"].as_str().unwrap());
-    assert_eq!(fs::read_to_string(kept.join("1")).unwrap(), "a,b", "the first as it was");
-    assert_eq!(fs::read_to_string(kept.join("2")).unwrap(), "a,b\n1,2");
+    let id: ArtifactId = first["artifact"].as_str().unwrap().parse().unwrap();
+    let artifact = store(&world).get(&World::system(), id).await.unwrap();
+    let kept = world.files.path().join("content").join("artifacts").join(id.to_string());
+    let content = |number: usize| kept.join(artifact.versions[number - 1].content.to_string());
+    assert_eq!(fs::read_to_string(content(1)).unwrap(), "a,b", "the first as it was");
+    assert_eq!(fs::read_to_string(content(2)).unwrap(), "a,b\n1,2");
     fs::remove_file(dir.join("out/report.csv")).unwrap();
-    assert!(kept.join("2").is_file(), "kept beyond the file");
+    assert!(content(2).is_file(), "kept beyond the file");
 
     let missing =
         tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv" }), None, &mut turn).await;
@@ -304,8 +305,19 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
 /// A storage of content takes no version classified above its
 /// `destination` (`require_storable`, issue 282): refused before anything
 /// is kept.
-#[tokio::test]
-async fn a_storage_of_content_takes_nothing_above_its_destination() {
+/// A runtime over `store` with the plugin and one storage of content, "kept", a local one whose
+/// destination is public: what a test of publishing into it needs.
+struct Kept {
+    /// Where "kept" keeps its files.
+    files: TempDir,
+    manager: Arc<ArtifactManager>,
+    /// A user with a project of her own.
+    alice: SecurityContext,
+    /// A name in her project's scope.
+    name: ScopedName,
+}
+
+async fn kept_in(store: Persistence) -> Kept {
     let files = tempfile::tempdir().unwrap();
     let storage = [(
         "kept".to_string(),
@@ -316,9 +328,13 @@ async fn a_storage_of_content_takes_nothing_above_its_destination() {
     )]
     .into();
     let config = AppConfig { content: ContentConfig { storage }, ..Default::default() };
-    let runtime =
-        TestRuntime { config, plugins: vec![&TestAgents, &ArtifactsPlugin], ..Default::default() }
-            .build();
+    let runtime = TestRuntime {
+        store,
+        config,
+        plugins: vec![&TestAgents, &ArtifactsPlugin],
+        ..Default::default()
+    }
+    .build();
     let manager = Arc::clone(runtime.services().get::<ArtifactManager>().unwrap());
     let owner = UserId::new();
     let alice = SecurityContext::new(ActorId::User(owner), SessionId::new(), ChannelId::new());
@@ -328,6 +344,12 @@ async fn a_storage_of_content_takes_nothing_above_its_destination() {
     );
     runtime.entity_stores().projects.create(&SecurityContext::system(), &project).await.unwrap();
     let name = ScopedName::new("r.csv", project.holds()).unwrap();
+    Kept { files, manager, alice, name }
+}
+
+#[tokio::test]
+async fn a_storage_of_content_takes_nothing_above_its_destination() {
+    let Kept { files, manager, alice, name } = kept_in(Persistence::in_memory()).await;
     let internal = Classification::general(Confidentiality::Internal);
     let refused = manager
         .publish(
@@ -1499,4 +1521,45 @@ async fn an_agents_artifact_is_published_for_its_owner() {
         asked.contains(&"alice as helper, asked by bob: CreateArtifact(alice's) yes".to_string()),
         "its owner's: {asked:?}"
     );
+}
+
+/// Every file under `root`, by its content.
+fn files_under(root: &Path) -> Vec<Vec<u8>> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(files_under(&path));
+        } else {
+            found.push(fs::read(&path).unwrap());
+        }
+    }
+    found
+}
+
+/// Issue 492: a version published while another was written is added once more, numbered after
+/// it, and each keeps its content under a key of its own.
+#[tokio::test]
+async fn a_version_published_meanwhile_is_numbered_after_what_was_published() {
+    let (store, refusals) = ContendedStore::stores(Artifact::KIND);
+    let Kept { files, manager, alice, name } = kept_in(store).await;
+    let at = (SessionId::new(), ChannelId::new());
+    let public = Classification::PUBLIC;
+    let publish = |content: &'static str| {
+        manager.publish(&alice, at, (content.len() as u64, file(content)), &public, &name, None)
+    };
+    let (_, first) = publish("a,b").await.expect("published");
+    assert_eq!(first, 1);
+
+    refusals.store(1, Ordering::SeqCst);
+    let (artifact, second) = publish("c,d,e").await.expect("added once more");
+    assert_eq!(second, 2, "numbered after what was published meanwhile");
+    assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
+    assert_ne!(
+        artifact.versions[0].content, artifact.versions[1].content,
+        "each under its own key"
+    );
+    let mut kept = files_under(files.path());
+    kept.sort();
+    assert_eq!(kept, [b"a,b".to_vec(), b"c,d,e".to_vec()], "both kept");
 }

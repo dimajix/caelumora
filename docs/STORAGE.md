@@ -165,12 +165,15 @@ and is the only code that writes there; who may read what a key names is that ow
 what the key belongs to. What one owner keeps of one thing lies under one prefix, removed with it at
 once.
 
-The `ArtifactManager` keeps a version under `artifacts/<artifact>/<number>` and is the one writer
-of artifact documents: a version's content is kept before the document says it exists, and removed
-again if the document cannot be stored; an artifact is purged with its content, the content first.
-It knows no workspace: where the content comes from is its caller's. Artifacts are entities, not
-state: each has its own owner, permissions and a name unique in its scope, and is marked when
-deleted rather than removed; one that is there outlives the session it was published in.
+The `ArtifactManager` keeps a version under `artifacts/<artifact>/<content>` - a `ContentId` of
+the publication's own, which the version names (`ArtifactVersion::content`), so that two
+publications of one artifact at once never share one (issue 492); the number is given as the
+document is written - and is the one writer of artifact documents: a version's content is kept
+before the document says it exists, and removed again if the document cannot be stored; an
+artifact is purged with its content, the content first. It knows no workspace: where the content
+comes from is its caller's. Artifacts are entities, not state: each has its own owner, permissions
+and a name unique in its scope, and is marked when deleted rather than removed; one that is there
+outlives the session it was published in.
 
 The `AttachmentManager` keeps an attachment under `attachments/<channel>/<id>`, in the storage
 `attachments.keep_in` names. An attachment is no entity: it is part of the message that carries it,

@@ -100,3 +100,9 @@ The first is the goal; the second is acceptable as a step towards it.
   such a copy passes against a document created meanwhile under its id; the one writer that
   held such a copy, the user's profile controller, now holds none until one is stored, creates
   rather than changes, and takes a creation meanwhile as a refusal.
+- **2026-10-29** — The content of a version lies under a key of the publication's own
+  (`ArtifactVersion::content`, a `ContentId`; `artifacts/<artifact>/<content>`), decided for the
+  first of the options above: two publications at once never share a key, the one written second
+  is numbered after the first as the document is written (`Artifact::add_version`), and a
+  publication refused as outdated is made again instead of handed back. The second question
+  stays as it is: the one writer that held a copy never stored is the profile controller.
