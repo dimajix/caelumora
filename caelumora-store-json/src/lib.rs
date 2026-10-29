@@ -945,8 +945,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let sessions = of_kind::<Session>(dir.path());
         let system = SecurityContext::system();
-        let session = session("old");
-        sessions.create(&system, &session).await.unwrap();
+        let mut session = session("old");
+        sessions.create(&system, &mut session).await.unwrap();
         let text = fs::read_to_string(path_of::<Session>(dir.path(), &session.id)).await.unwrap();
         assert!(!text.contains("deleted"), "{text}");
         assert!(sessions.get(&system, session.id).await.unwrap().deleted.is_none());
@@ -960,8 +960,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let sessions = of_kind::<Session>(dir.path());
         let system = SecurityContext::system();
-        let session = session("kept");
-        sessions.create(&system, &session).await.unwrap();
+        let mut session = session("kept");
+        sessions.create(&system, &mut session).await.unwrap();
         let stray = path_of::<Session>(dir.path(), &session.id).with_file_name("notes.json");
         fs::copy(path_of::<Session>(dir.path(), &session.id), &stray).await.unwrap();
 
@@ -981,8 +981,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let personalities = of_kind::<Personality>(dir.path());
         let system = SecurityContext::system();
-        let personality = make_personality("plain");
-        personalities.create(&system, &personality).await.unwrap();
+        let mut personality = make_personality("plain");
+        personalities.create(&system, &mut personality).await.unwrap();
 
         let mut writes = JoinSet::new();
         for i in 0..16 {
@@ -1040,12 +1040,12 @@ mod tests {
         let mut writes = JoinSet::new();
         for _ in 0..16 {
             let (agents, system) = (Arc::clone(&agents), system.clone());
-            let agent = Agent::new(
+            let mut agent = Agent::new(
                 ScopedName::new("Helper", Default::default()).unwrap(),
                 personality.id,
                 ActorId::User(UserId::new()),
             );
-            writes.spawn(async move { agents.create(&system, &agent).await });
+            writes.spawn(async move { agents.create(&system, &mut agent).await });
         }
         let mut made = 0;
         while let Some(result) = writes.join_next().await {
@@ -1077,9 +1077,9 @@ mod tests {
         let session_id = SessionId(Uuid::new_v4());
         let channel = make_channel(session_id, "general");
         let channel_id = channel.id;
-        let session =
+        let mut session =
             Session { id: session_id, channels: vec![channel.id], ..session("to-delete") };
-        sessions.create(&ctx, &session).await.unwrap();
+        sessions.create(&ctx, &mut session).await.unwrap();
 
         // Write out channel state so we can assert it gets removed.
         let agent_id = AgentId(Uuid::new_v4());
@@ -1119,8 +1119,8 @@ mod tests {
         let sessions = of_kind::<Session>(dir.path());
         let ctx = SecurityContext::default();
 
-        let s1 = session("session-1");
-        sessions.create(&ctx, &s1).await.unwrap();
+        let mut s1 = session("session-1");
+        sessions.create(&ctx, &mut s1).await.unwrap();
 
         // Create a corrupted JSON file
         let corrupted_path = dir.path().join(format!("entities/session/{}.json", Uuid::new_v4()));

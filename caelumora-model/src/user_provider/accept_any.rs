@@ -272,12 +272,12 @@ mod tests {
     #[tokio::test]
     async fn finds_users_created_before_it_existed() {
         let store = store();
-        let existing = User {
+        let mut existing = User {
             email: "user@example.com".to_string(),
             roles: vec![RoleId::new()],
             ..make_user("user")
         };
-        store.create(&SecurityContext::default(), &existing).await.unwrap();
+        store.create(&SecurityContext::default(), &mut existing).await.unwrap();
 
         let provider = AcceptAnyUserProvider::new(store);
         let user = provider

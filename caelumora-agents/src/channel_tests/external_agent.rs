@@ -84,26 +84,38 @@ async fn external_channel(
     use caelumora_model::scope::Scope;
 
     let store = Persistence::in_memory();
-    let personality =
+    let mut personality =
         Personality { kind: PersonalityKind::External, components, ..make_personality("remote") };
     store
         .entity_stores()
         .unwrap()
         .personalities
-        .create(&SecurityContext::system(), &personality)
+        .create(&SecurityContext::system(), &mut personality)
         .await
         .unwrap();
-    let alice = make_user("alice");
+    let mut alice = make_user("alice");
     let context =
         SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let agent = Agent::new(
+    let mut agent = Agent::new(
         ScopedName::new("hermes", Scope::GlobalScope).unwrap(),
         personality.id,
         context.initiator_id,
     );
     let agent_id = agent.id;
-    store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
-    store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
+    store
+        .entity_stores()
+        .unwrap()
+        .users
+        .create(&SecurityContext::system(), &mut alice)
+        .await
+        .unwrap();
+    store
+        .entity_stores()
+        .unwrap()
+        .agents
+        .create(&SecurityContext::system(), &mut agent)
+        .await
+        .unwrap();
 
     let mut registry = test_registry(&store);
     registry.register(
@@ -127,12 +139,17 @@ async fn external_channel(
         ..Default::default()
     }
     .build();
-    let channel = Channel {
+    let mut channel = Channel {
         participants: vec![Participant::User(alice.id), Participant::Agent(agent_id)],
         security_attributes: SecurityAttributes::owned_by(ActorId::User(alice.id)),
         ..make_channel(SessionId::new(), "main")
     };
-    runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
+    runtime
+        .entity_stores()
+        .channels
+        .create(&SecurityContext::system(), &mut channel)
+        .await
+        .unwrap();
     // Its participants' joins recorded, as if they had founded it (issue 420).
     runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     if let Some(mut stored) = stored(agent_id) {
@@ -145,8 +162,13 @@ async fn external_channel(
     // Stored too, so that a test can change it (issue 424): the document alone, of a session
     // that does not run - the channel runs outside one (`ChannelRuntime::outside_a_session`), and
     // what its tests read of the session is its time zone (issue 486).
-    let session = bare_session(channel.session_id);
-    runtime.entity_stores().sessions.create(&SecurityContext::system(), &session).await.unwrap();
+    let mut session = bare_session(channel.session_id);
+    runtime
+        .entity_stores()
+        .sessions
+        .create(&SecurityContext::system(), &mut session)
+        .await
+        .unwrap();
     let channel =
         ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, session, channel)).await?;
     Ok((channel, context, agent_id, alice.id))
@@ -1964,20 +1986,20 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let mut roster =
         ComponentDescriptor::new("participants", "channel_participants_prompt_provider");
     roster.params = serde_json::json!({ "changes_only": true });
-    let personality = Personality {
+    let mut personality = Personality {
         kind: PersonalityKind::External,
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), roster],
         },
         ..make_personality("remote")
     };
-    store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
-    let hermes = Agent::new(
+    store.entity_stores().unwrap().personalities.create(&system, &mut personality).await.unwrap();
+    let mut hermes = Agent::new(
         ScopedName::new("hermes", Scope::GlobalScope).unwrap(),
         personality.id,
         ActorId::User(alice.id),
     );
-    store.entity_stores().unwrap().agents.create(&system, &hermes).await.unwrap();
+    store.entity_stores().unwrap().agents.create(&system, &mut hermes).await.unwrap();
 
     let alice_ctx =
         SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());

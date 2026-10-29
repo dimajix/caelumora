@@ -322,13 +322,13 @@ mod tests {
     /// way, so that what it read before the change cannot set it back.
     #[tokio::test]
     async fn taking_over_what_is_stored_waits_for_a_change_under_way() {
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
             PersonalityId::new(),
             ActorId::User(UserId::new()),
         );
         let agents = Persistence::in_memory().entity_stores().unwrap().agents;
-        agents.create(&SecurityContext::system(), &agent).await.unwrap();
+        agents.create(&SecurityContext::system(), &mut agent).await.unwrap();
         let document = LiveDocument::new(agent.id, agent, agents, Arc::new(()));
 
         let writing = document.write().await;

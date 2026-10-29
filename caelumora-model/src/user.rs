@@ -525,15 +525,16 @@ mod tests {
             SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default())
         };
 
-        let hers = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
+        let mut hers =
+            UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
         assert!(
             matches!(
-                store.create(&as_user(bob), &hers).await,
+                store.create(&as_user(bob), &mut hers).await,
                 Err(StoreError::PermissionDenied(_))
             ),
             "nobody writes a profile of someone else"
         );
-        store.create(&as_user(alice), &hers).await.expect("her own");
+        store.create(&as_user(alice), &mut hers).await.expect("her own");
         let mut changed =
             UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
         assert!(

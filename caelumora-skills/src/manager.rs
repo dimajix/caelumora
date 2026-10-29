@@ -136,7 +136,7 @@ impl SkillManager {
             owner @ (ActorId::User(_) | ActorId::System) => owner,
             _ => return Err(SkillError::OwnerNotAUser),
         };
-        let skill = Skill::new(
+        let mut skill = Skill::new(
             ScopedName::new(name, scope)?,
             Description::new(description)?,
             SkillBody::new(body)?,
@@ -150,7 +150,7 @@ impl SkillManager {
         // session is read in the caller's name, who learns nothing they could not read.
         self.holders.require(ctx, &skill.name.scope).await?;
 
-        self.skills.create(ctx, &skill).await?;
+        self.skills.create(ctx, &mut skill).await?;
         self.holders.keep_made(self, &skill).await?;
         self.events.announce(GlobalEvent::created::<Skill>(&skill.id), &skill);
         info!(skill = %skill.id, by = %ctx.caller_id, "Skill created");

@@ -799,8 +799,9 @@ mod tests {
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
             let name =
                 ScopedName::new(format!("w{index}"), Scope::UserScope { user_id: owner }).unwrap();
-            let workspace = Workspace::new(name, "main", Classification::CHANNEL_DEFAULT, owner);
-            store.create(&SecurityContext::system(), &workspace).await.unwrap();
+            let mut workspace =
+                Workspace::new(name, "main", Classification::CHANNEL_DEFAULT, owner);
+            store.create(&SecurityContext::system(), &mut workspace).await.unwrap();
             if owner == alice {
                 hers.push(workspace.id);
             }

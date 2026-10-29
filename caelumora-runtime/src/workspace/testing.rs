@@ -74,8 +74,8 @@ pub async fn session_with_workspace() -> WithWorkspace {
     .build();
     let system = SecurityContext::system();
 
-    let owner = make_user("owner");
-    store.entity_stores().unwrap().users.create(&system, &owner).await.unwrap();
+    let mut owner = make_user("owner");
+    store.entity_stores().unwrap().users.create(&system, &mut owner).await.unwrap();
     let owner = owner.id;
     let as_owner =
         SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -92,14 +92,14 @@ pub async fn session_with_workspace() -> WithWorkspace {
         .await
         .unwrap();
 
-    let personality = make_personality("plain");
-    store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
-    let agent = Agent::new(
+    let mut personality = make_personality("plain");
+    store.entity_stores().unwrap().personalities.create(&system, &mut personality).await.unwrap();
+    let mut agent = Agent::new(
         ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),
         personality.id,
         ActorId::User(owner),
     );
-    store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
+    store.entity_stores().unwrap().agents.create(&system, &mut agent).await.unwrap();
     let session = make_session("s", owner);
     let mut channel = Channel::build(
         session.id,

@@ -191,7 +191,7 @@ impl SessionLoop {
                 StoreError::PermissionDenied,
             )
             .await?;
-        let (target, made) = match project {
+        let (mut target, made) = match project {
             Some(id) => (self.reached_project(context, id).await?, false),
             None => match load_own(&self.stores, self.id).await? {
                 Some(own) => (own, false),
@@ -216,7 +216,7 @@ impl SessionLoop {
             .filter(|left| !left.is_own());
         let participants = Subject::Group(GroupId::of_session(self.id));
         if made {
-            make_own(&self.stores, &target).await?;
+            make_own(&self.stores, &mut target).await?;
         } else if !target.is_own() {
             self.controllers
                 .project_controller(target.id)

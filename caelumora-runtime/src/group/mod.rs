@@ -187,7 +187,7 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
 /// Whatever the store reports.
 pub(crate) async fn keep_participants(
     store: &dyn EntityStore<Group>,
-    participants: Group,
+    mut participants: Group,
 ) -> StoreResult<()> {
     let system = SecurityContext::system();
     loop {
@@ -195,7 +195,7 @@ pub(crate) async fn keep_participants(
             Some(stored) => stored,
             None => match store.get_deleted(&system, participants.id).await.optional()? {
                 Some(_) => store.restore(&system, participants.id).await?,
-                None => return store.create(&system, &participants).await,
+                None => return store.create(&system, &mut participants).await,
             },
         };
         if stored.members == participants.members {
@@ -257,7 +257,7 @@ mod tests {
 
     #[async_trait]
     impl EntityStore<Group> for Failing {
-        async fn create(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
+        async fn create(&self, ctx: &SecurityContext, value: &mut Group) -> StoreResult<()> {
             self.inner.create(ctx, value).await
         }
         async fn get(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
@@ -483,11 +483,11 @@ mod tests {
         let team = |name: &str| {
             Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner)
         };
-        let there = team("there");
-        let deleted = team("deleted");
-        let purged = team("purged");
-        let unreadable = team("unreadable");
-        for group in [&there, &deleted, &purged, &unreadable] {
+        let mut there = team("there");
+        let mut deleted = team("deleted");
+        let mut purged = team("purged");
+        let mut unreadable = team("unreadable");
+        for group in [&mut there, &mut deleted, &mut purged, &mut unreadable] {
             groups.create(&system, group).await.unwrap();
         }
         groups.delete(&system, deleted.id, &Removal::now(system.caller_id)).await.unwrap();

@@ -632,7 +632,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_session_is_made_in_the_project_asked_for_or_not_at_all() {
         let state = state();
-        let template = SessionTemplate {
+        let mut template = SessionTemplate {
             channels: vec![ChannelTemplate {
                 uses_workspace: false,
                 ..make_channel_template("main")
@@ -643,7 +643,7 @@ pub(crate) mod tests {
             .runtime_manager
             .entity_stores()
             .session_templates
-            .create(&SecurityContext::system(), &template)
+            .create(&SecurityContext::system(), &mut template)
             .await
             .unwrap();
         let api = api(Arc::clone(&state), &[]);

@@ -972,7 +972,7 @@ mod tests {
         let runtime = test_runtime();
         let session_id = SessionId::new();
         let channel = make_channel(session_id, "main");
-        let user = make_user("alice");
+        let mut user = make_user("alice");
         let channel_runtime = ChannelRuntime::outside_a_session(
             Arc::clone(&runtime),
             bare_session(session_id),
@@ -980,7 +980,7 @@ mod tests {
         );
         let channel_loop = ChannelLoop::new(channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id));
-        runtime.entity_stores().users.create(&SecurityContext::system(), &user).await.unwrap();
+        runtime.entity_stores().users.create(&SecurityContext::system(), &mut user).await.unwrap();
         let actor = UserActor::new(
             runtime.controller_manager().user_controller(user.id).await.unwrap(),
             actor_runtime,

@@ -110,14 +110,14 @@ impl UserManager {
     /// kept -, and announced. Written meanwhile elsewhere, the record is
     /// read again and changed once more (issue 492). Answers the record as
     /// it now stands.
-    async fn record(&self, found: User) -> AuthResult<User> {
+    async fn record(&self, mut found: User) -> AuthResult<User> {
         let system = SecurityContext::system();
         let backend = |e: StoreError| AuthError::Backend(e.to_string());
         let (user, renamed, roles_changed) = loop {
             let Some(stored) =
                 self.store.get(&system, found.id).await.optional().map_err(backend)?
             else {
-                self.store.create(&system, &found).await.map_err(backend)?;
+                self.store.create(&system, &mut found).await.map_err(backend)?;
                 self.events.announce(GlobalEvent::created::<User>(&found.id), &found);
                 return Ok(found);
             };

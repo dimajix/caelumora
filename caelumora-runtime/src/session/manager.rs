@@ -301,7 +301,7 @@ impl SessionManager {
         // made once the session is, so that one of its scope is made where
         // `context` may put it (issue 344).
         session.workspace = existing;
-        let session_loop = self.establish(context, session, &own, channels).await?;
+        let session_loop = self.establish(context, session, own, channels).await?;
         // A channel whose components the owner cannot read is left out as a
         // session opens (issue 463), but making it is the owner's own request,
         // refused as `create_channel` refuses it.
@@ -445,7 +445,7 @@ impl SessionManager {
             .iter_mut()
             .map(|channel| (channel.id, mem::take(&mut channel.participants)))
             .collect();
-        let session_loop = self.establish(context, session, &own, channels).await?;
+        let session_loop = self.establish(context, session, own, channels).await?;
         for (channel, participants) in founders {
             let channel = session_loop
                 .channel(channel)
@@ -468,18 +468,18 @@ impl SessionManager {
     async fn establish(
         &self,
         context: &SecurityContext,
-        session: Session,
-        own: &Project,
-        channels: Vec<Channel>,
+        mut session: Session,
+        mut own: Project,
+        mut channels: Vec<Channel>,
     ) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        self.persist(context, &session, own, &channels).await?;
+        self.persist(context, &mut session, &mut own, &mut channels).await?;
 
         let event_bus = &self.events;
         event_bus.announce(GlobalEvent::created::<Session>(&id), &session);
-        event_bus.announce(GlobalEvent::created::<Project>(&own.id), own);
+        event_bus.announce(GlobalEvent::created::<Project>(&own.id), &own);
         for channel in &channels {
             event_bus.announce(GlobalEvent::created::<Channel>(&(id, channel.id)), channel);
         }
@@ -501,18 +501,18 @@ impl SessionManager {
     pub(super) async fn persist(
         &self,
         context: &SecurityContext,
-        session: &Session,
-        own: &Project,
-        channels: &[Channel],
+        session: &mut Session,
+        own: &mut Project,
+        channels: &mut [Channel],
     ) -> Result<()> {
-        for channel in channels {
+        for channel in channels.iter() {
             require_classification(self.confidentiality.as_ref(), &channel.classification)?;
         }
         self.stores.sessions.create(context, session).await?;
         let made = async {
             keep_participants(self.stores.groups.as_ref(), Group::of_session(session)).await?;
             make_own(&self.stores, own).await?;
-            for channel in channels {
+            for channel in channels.iter_mut() {
                 self.stores.channels.create(context, channel).await?;
                 keep_participants(self.stores.groups.as_ref(), Group::of_channel(channel)).await?;
             }
@@ -522,7 +522,7 @@ impl SessionManager {
         if let Err(error) = made {
             // The session's creation was permitted, so it is rolled back in the runtime's name -
             // what was not made yet is not found, which is no matter.
-            for channel in channels {
+            for channel in channels.iter() {
                 let _ = purge_channel_document(&self.stores, channel.id).await;
             }
             let _ = self.purge_own(own).await;
@@ -1247,8 +1247,8 @@ mod tests {
         // Persist a session directly, without going through `create`.
         let session = make_session("s3", UserId::new());
         let session_id = session.id;
-        let channels = [main_channel(&session)];
-        persist(&manager, &ctx, session, &channels).await;
+        let mut channels = [main_channel(&session)];
+        persist(&manager, &ctx, session, &mut channels).await;
 
         let mut rx = runtime.event_bus().subscribe_all();
         manager.open(&ctx, session_id).await.unwrap();
@@ -1276,8 +1276,8 @@ mod tests {
         let ctx = SecurityContext::default();
         let session = make_session("concurrent", UserId::new());
         let session_id = session.id;
-        let channels = [main_channel(&session)];
-        persist(&manager, &ctx, session, &channels).await;
+        let mut channels = [main_channel(&session)];
+        persist(&manager, &ctx, session, &mut channels).await;
 
         let mut rx = runtime.event_bus().subscribe_all();
         let (first, second, third) = tokio::join!(
@@ -1303,8 +1303,8 @@ mod tests {
         let ctx = SecurityContext::default();
         let session = make_session("stopped", UserId::new());
         let session_id = session.id;
-        let channels = [main_channel(&session)];
-        let session = persist(&manager, &ctx, session, &channels).await;
+        let mut channels = [main_channel(&session)];
+        let session = persist(&manager, &ctx, session, &mut channels).await;
 
         // A start under way holds the lock ...
         let start = manager.start_lock(session_id);
@@ -1379,14 +1379,14 @@ mod tests {
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let agents = runtime.agent_manager();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
-        let personality = make_personality("plain");
-        runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let helper = Agent::new(
+        let mut personality = make_personality("plain");
+        runtime.entity_stores().personalities.create(&system, &mut personality).await.unwrap();
+        let mut helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
         );
-        runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
+        runtime.entity_stores().agents.create(&system, &mut helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
 
         // In a running session's channel, and in a stopped one's.
@@ -1396,8 +1396,8 @@ mod tests {
         let talk = running.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
         let mut stopped = make_session("stopped", UserId::new());
         stopped.participants = vec![Participant::Agent(helper.id)];
-        let channels = [main_channel(&stopped)];
-        let stopped = persist(&manager, &system, stopped, &channels).await;
+        let mut channels = [main_channel(&stopped)];
+        let stopped = persist(&manager, &system, stopped, &mut channels).await;
 
         assert!(agents.delete(&ctx, helper.id).await.expect("deleted"));
         until(
@@ -1458,12 +1458,12 @@ mod tests {
         );
 
         // Its name taken meanwhile: not restored.
-        let again = Agent::new(
+        let mut again = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
         );
-        runtime.entity_stores().agents.create(&system, &again).await.unwrap();
+        runtime.entity_stores().agents.create(&system, &mut again).await.unwrap();
         let taken = agents.restore(&ctx, helper.id).await.expect_err("its name is taken");
         assert!(
             matches!(taken, AgentError::Store(StoreError::NameTaken { entity: "agent" })),
@@ -1490,14 +1490,14 @@ mod tests {
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
-        let personality = make_personality("plain");
-        runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let helper = Agent::new(
+        let mut personality = make_personality("plain");
+        runtime.entity_stores().personalities.create(&system, &mut personality).await.unwrap();
+        let mut helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
         );
-        runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
+        runtime.entity_stores().agents.create(&system, &mut helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
         let mut session = make_session("running", UserId::new());
         session.participants = vec![Participant::Agent(helper.id)];
@@ -1531,9 +1531,9 @@ mod tests {
     async fn pairing(runtime: &RuntimeManager) -> (UserId, SessionTemplate) {
         let system = SecurityContext::system();
         let owner = UserId::new();
-        let alice = User { id: owner, ..make_user("alice") };
-        runtime.entity_stores().users.create(&system, &alice).await.unwrap();
-        let template = SessionTemplate {
+        let mut alice = User { id: owner, ..make_user("alice") };
+        runtime.entity_stores().users.create(&system, &mut alice).await.unwrap();
+        let mut template = SessionTemplate {
             channels: vec![ChannelTemplate {
                 components: moderation_components(None, Some("broadcast_policy")),
                 internal_actors: vec![InternalActorTemplate::Approver {
@@ -1543,7 +1543,7 @@ mod tests {
             }],
             ..make_template("pairing")
         };
-        runtime.entity_stores().session_templates.create(&system, &template).await.unwrap();
+        runtime.entity_stores().session_templates.create(&system, &mut template).await.unwrap();
         (owner, template)
     }
 
@@ -1557,7 +1557,7 @@ mod tests {
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let mut profile = UserProfile::new(owner, None);
         profile.preferred_language = Some(Language::new("de").unwrap());
-        runtime.entity_stores().user_profiles.create(&hers, &profile).await.unwrap();
+        runtime.entity_stores().user_profiles.create(&hers, &mut profile).await.unwrap();
 
         let session = manager
             .create_from_template(&hers, template.id, SessionSpec::default())
@@ -1683,7 +1683,7 @@ mod tests {
             components: ComponentConfig { component_nodes: vec![gone] },
             ..template.channels[0].clone()
         };
-        let broken = SessionTemplate {
+        let mut broken = SessionTemplate {
             id: SessionTemplateId::new(),
             name: ScopedName::new("broken", Default::default()).unwrap(),
             channels: vec![channel],
@@ -1692,7 +1692,7 @@ mod tests {
         runtime
             .entity_stores()
             .session_templates
-            .create(&SecurityContext::system(), &broken)
+            .create(&SecurityContext::system(), &mut broken)
             .await
             .unwrap();
         let refused = manager
@@ -1723,13 +1723,13 @@ mod tests {
         let hers =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let system = SecurityContext::system();
-        let docs = Workspace::new(
+        let mut docs = Workspace::new(
             ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
             "dev",
             Classification::default(),
             owner,
         );
-        stores.workspaces.create(&system, &docs).await.unwrap();
+        stores.workspaces.create(&system, &mut docs).await.unwrap();
 
         passing.store(0, Ordering::SeqCst);
         manager
@@ -1849,12 +1849,12 @@ mod tests {
                 .any(|e| e.about::<Project>() == Some((project, &EntityChange::Created))),
             "announced"
         );
-        let bundle = ComponentBundle::new(
+        let mut bundle = ComponentBundle::new(
             ScopedName::new("tools", Scope::ProjectScope { project_id: project }).unwrap(),
             Default::default(),
             SecurityAttributes::systems(),
         );
-        stores.component_bundles.create(&system, &bundle).await.unwrap();
+        stores.component_bundles.create(&system, &mut bundle).await.unwrap();
 
         manager.delete(&ctx, id).await.unwrap();
         assert!(stores.projects.get(&system, project).await.is_err(), "deleted with it");
@@ -1924,12 +1924,12 @@ mod tests {
             "and its groups, deleted before and restored again"
         );
 
-        let bundle = ComponentBundle::new(
+        let mut bundle = ComponentBundle::new(
             ScopedName::new("tools", Scope::SessionScope { session_id: id }).unwrap(),
             Default::default(),
             SecurityAttributes::systems(),
         );
-        stores.component_bundles.create(&system, &bundle).await.unwrap();
+        stores.component_bundles.create(&system, &mut bundle).await.unwrap();
         manager.delete(&ctx, id).await.expect("deleted now");
         assert_eq!(groups_there().await, (false, false));
         let mark = stores.sessions.get_deleted(&system, id).await.unwrap().removal;
@@ -2050,17 +2050,17 @@ mod tests {
         let running = create(&manager, &ctx, session).await.unwrap();
         let side = running.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
 
-        let personality = Personality {
+        let mut personality = Personality {
             name: ScopedName::new("planner", Scope::SessionScope { session_id: id }).unwrap(),
             ..make_personality("planner")
         };
-        personalities.create(&system, &personality).await.unwrap();
-        let bundle = ComponentBundle::new(
+        personalities.create(&system, &mut personality).await.unwrap();
+        let mut bundle = ComponentBundle::new(
             ScopedName::new("tools", Scope::SessionScope { session_id: id }).unwrap(),
             Default::default(),
             SecurityAttributes::systems(),
         );
-        bundles.create(&system, &bundle).await.unwrap();
+        bundles.create(&system, &mut bundle).await.unwrap();
         let agent_in = |name: &str, scope| {
             Agent::new(
                 ScopedName::new(name, scope).unwrap(),
@@ -2068,11 +2068,11 @@ mod tests {
                 ActorId::User(UserId::new()),
             )
         };
-        let sessions = agent_in("helper", Scope::SessionScope { session_id: id });
-        let sides = agent_in("aside", Scope::ChannelScope { session_id: id, channel_id: side });
-        let users = agent_in("own", Scope::UserScope { user_id: UserId::new() });
-        let earlier = agent_in("earlier", Scope::SessionScope { session_id: id });
-        for agent in [&sessions, &sides, &users, &earlier] {
+        let mut sessions = agent_in("helper", Scope::SessionScope { session_id: id });
+        let mut sides = agent_in("aside", Scope::ChannelScope { session_id: id, channel_id: side });
+        let mut users = agent_in("own", Scope::UserScope { user_id: UserId::new() });
+        let mut earlier = agent_in("earlier", Scope::SessionScope { session_id: id });
+        for agent in [&mut sessions, &mut sides, &mut users, &mut earlier] {
             agents.create(&system, agent).await.unwrap();
         }
         agents.delete(&system, earlier.id, &Removal::now(system.caller_id)).await.unwrap();
@@ -2135,8 +2135,8 @@ mod tests {
         // A name taken meanwhile (issue 250): that one stays deleted, the
         // others come back.
         manager.delete(&ctx, id).await.unwrap();
-        let taker = agent_in("Aside", Scope::ChannelScope { session_id: id, channel_id: side });
-        agents.create(&system, &taker).await.unwrap();
+        let mut taker = agent_in("Aside", Scope::ChannelScope { session_id: id, channel_id: side });
+        agents.create(&system, &mut taker).await.unwrap();
         manager.restore(&ctx, id).await.unwrap();
         assert!(!present(&sides).await, "the one whose name is taken stays deleted");
         assert!(present(&sessions).await && present(&taker).await, "the others are back");
@@ -2176,9 +2176,9 @@ mod tests {
                 ActorId::User(UserId::new()),
             )
         };
-        let sessions = agent_in(Scope::SessionScope { session_id: id });
-        let users = agent_in(Scope::UserScope { user_id: UserId::new() });
-        for agent in [&sessions, &users] {
+        let mut sessions = agent_in(Scope::SessionScope { session_id: id });
+        let mut users = agent_in(Scope::UserScope { user_id: UserId::new() });
+        for agent in [&mut sessions, &mut users] {
             agents.create(&system, agent).await.unwrap();
             let mut state = AgentState::default();
             state.memory.push(
@@ -2285,14 +2285,20 @@ mod tests {
         let system = SecurityContext::system();
         let alice = make_user("alice");
         let participants = record_users(&manager, &[&alice]).await;
-        let personality = make_personality("thinker");
-        store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
-        let thinker = Agent::new(
+        let mut personality = make_personality("thinker");
+        store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .create(&system, &mut personality)
+            .await
+            .unwrap();
+        let mut thinker = Agent::new(
             ScopedName::new("thinker", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(alice.id),
         );
-        store.entity_stores().unwrap().agents.create(&system, &thinker).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&system, &mut thinker).await.unwrap();
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx =
@@ -2412,7 +2418,7 @@ mod tests {
         let sessions = ["interrupted", "waiting", "idle", "deleted"]
             .map(|name| make_session(name, UserId::new()));
         for session in &sessions {
-            persist(&manager, &ctx, session.clone(), &[main_channel(session)]).await;
+            persist(&manager, &ctx, session.clone(), &mut [main_channel(session)]).await;
         }
         let [interrupted, waiting, idle, deleted] =
             sessions.map(|session| (session.id, session.channels[0]));

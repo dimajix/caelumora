@@ -107,14 +107,14 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
         let personality = make_personality("plain");
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
         );
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().agents.create(&ctx, &agent).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&ctx, &mut agent).await.unwrap();
         let controller = AgentController::new(
             agent.clone(),
             None,

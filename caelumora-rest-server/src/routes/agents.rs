@@ -205,12 +205,12 @@ mod tests {
     #[tokio::test]
     async fn an_agent_is_made_of_a_personality_read_and_renamed() {
         let state = state();
-        let plain = make_personality("plain");
+        let mut plain = make_personality("plain");
         state
             .runtime_manager
             .entity_stores()
             .personalities
-            .create(&SecurityContext::system(), &plain)
+            .create(&SecurityContext::system(), &mut plain)
             .await
             .unwrap();
         let api = api(Arc::clone(&state), &[]);

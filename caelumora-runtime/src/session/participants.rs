@@ -352,14 +352,14 @@ mod tests {
     /// An agent of a personality of its own, stored, owned by nobody here.
     async fn stored_agent(runtime: &RuntimeManager) -> Agent {
         let system = SecurityContext::system();
-        let personality = make_personality("plain");
-        runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let helper = Agent::new(
+        let mut personality = make_personality("plain");
+        runtime.entity_stores().personalities.create(&system, &mut personality).await.unwrap();
+        let mut helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
         );
-        runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
+        runtime.entity_stores().agents.create(&system, &mut helper).await.unwrap();
         helper
     }
 

@@ -302,7 +302,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .component_bundles
         .create(
             &SecurityContext::default(),
-            &ComponentBundle::new(
+            &mut ComponentBundle::new(
                 ScopedName::new("shared-echo", Scope::GlobalScope).unwrap(),
                 ComponentConfig {
                     component_nodes: vec![ComponentDescriptor {

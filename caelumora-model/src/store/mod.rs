@@ -471,7 +471,7 @@ impl<T: Stored> Deleted<T> {
 /// write themselves, and do so again if it was changed meanwhile; no caller sees that.
 #[async_trait]
 pub trait EntityStore<T: Stored>: Debug + Send + Sync {
-    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
+    async fn create(&self, ctx: &SecurityContext, value: &mut T) -> StoreResult<()>;
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     /// Changes the entity into `value`, which carries the revision it was read at; `value` then
     /// carries the one it was written as. `Outdated` if it is no longer the stored one.
@@ -890,15 +890,15 @@ mod tests {
 
     #[tokio::test]
     async fn list_sessions_works() {
-        let session1 =
+        let mut session1 =
             Session { name: Name::new("session1").unwrap(), ..bare_session(SessionId::new()) };
-        let session2 =
+        let mut session2 =
             Session { name: Name::new("session2").unwrap(), ..bare_session(SessionId::new()) };
         let store = Persistence::in_memory().entity_stores().unwrap().sessions;
         let ctx = SecurityContext::default();
 
-        store.create(&ctx, &session1).await.unwrap();
-        store.create(&ctx, &session2).await.unwrap();
+        store.create(&ctx, &mut session1).await.unwrap();
+        store.create(&ctx, &mut session2).await.unwrap();
 
         let sessions = store.list(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(sessions.len(), 2);
@@ -998,13 +998,13 @@ mod tests {
         )
         .unwrap();
         let notes = backend.entity_store::<Note>().unwrap();
-        let note = Note {
+        let mut note = Note {
             id: NoteId::new(),
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
             revision: Default::default(),
         };
-        notes.create(&SecurityContext::system(), &note).await.unwrap();
+        notes.create(&SecurityContext::system(), &mut note).await.unwrap();
         let again = backend.entity_store::<Note>().unwrap();
         assert!(
             again.get(&SecurityContext::system(), note.id).await.is_ok(),

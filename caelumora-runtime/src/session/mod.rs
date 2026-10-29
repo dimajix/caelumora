@@ -250,7 +250,7 @@ async fn load_own(stores: &EntityStores, id: SessionId) -> StoreResult<Option<Pr
 ///
 /// # Errors
 /// Whatever the store reports.
-async fn make_own(stores: &EntityStores, own: &Project) -> StoreResult<()> {
+async fn make_own(stores: &EntityStores, own: &mut Project) -> StoreResult<()> {
     stores.projects.create(&SecurityContext::system(), own).await?;
     if let Err(error) = keep_participants(stores.groups.as_ref(), Group::of_project(own)).await {
         if let Err(undo) = purge_for_good(stores.projects.as_ref(), own.id).await {

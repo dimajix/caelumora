@@ -279,7 +279,7 @@ mod tests {
     async fn personality(store: &Persistence, introduction: Option<&str>) -> Personality {
         // Named apart: a name is unique in its scope (issue 250).
         let id = PersonalityId::new();
-        let personality = Personality {
+        let mut personality = Personality {
             id,
             introduction: introduction.map(|text| Introduction::new(text).unwrap()),
             ..make_personality(&format!("plain {id}"))
@@ -288,14 +288,14 @@ mod tests {
             .entity_stores()
             .unwrap()
             .personalities
-            .create(&SecurityContext::system(), &personality)
+            .create(&SecurityContext::system(), &mut personality)
             .await
             .unwrap();
         personality
     }
 
     async fn agent(store: &Persistence, name: &str, personality: &Personality) -> Agent {
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             ScopedName::new(name, Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
@@ -304,7 +304,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .agents
-            .create(&SecurityContext::system(), &agent)
+            .create(&SecurityContext::system(), &mut agent)
             .await
             .unwrap();
         agent
@@ -318,9 +318,9 @@ mod tests {
                 .build();
         let system = SecurityContext::system();
 
-        let kaya = make_user("Kaya");
-        let bob = make_user("Bob");
-        for user in [&kaya, &bob] {
+        let mut kaya = make_user("Kaya");
+        let mut bob = make_user("Bob");
+        for user in [&mut kaya, &mut bob] {
             store.entity_stores().unwrap().users.create(&system, user).await.unwrap();
         }
         store
@@ -329,7 +329,10 @@ mod tests {
             .user_profiles
             .create(
                 &system,
-                &UserProfile::new(kaya.id, Some(Introduction::new("I run the budget.").unwrap())),
+                &mut UserProfile::new(
+                    kaya.id,
+                    Some(Introduction::new("I run the budget.").unwrap()),
+                ),
             )
             .await
             .unwrap();

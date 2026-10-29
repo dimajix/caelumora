@@ -46,7 +46,7 @@ pub(super) async fn channel_with(
             .entity_stores()
             .unwrap()
             .users
-            .create(&SecurityContext::system(), user)
+            .create(&SecurityContext::system(), &mut (*user).clone())
             .await
             .unwrap();
         participants.push(Participant::User(user.id));
@@ -114,9 +114,15 @@ async fn channel_built(
 
 #[tokio::test]
 async fn a_participant_that_no_longer_exists_is_left_out() {
-    let alice = make_user("alice");
+    let mut alice = make_user("alice");
     let store = Persistence::in_memory();
-    store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
+    store
+        .entity_stores()
+        .unwrap()
+        .users
+        .create(&SecurityContext::system(), &mut alice)
+        .await
+        .unwrap();
     let (gone_user, gone_agent) = (UserId::new(), AgentId::new());
 
     let channel = channel_of(
@@ -190,7 +196,7 @@ pub(super) async fn channel_moderated_by(
             .entity_stores()
             .unwrap()
             .users
-            .create(&SecurityContext::system(), user)
+            .create(&SecurityContext::system(), &mut (*user).clone())
             .await
             .unwrap();
         participants.push(Participant::User(user.id));

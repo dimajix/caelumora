@@ -117,18 +117,20 @@ impl Seed {
             bail!("The seed has a section '{name}' that no plugin claims");
         }
         for bundle in &self.component_bundles {
-            if create_unless_taken(stores.component_bundles.as_ref(), bundle).await? {
+            let mut bundle = bundle.clone();
+            if create_unless_taken(stores.component_bundles.as_ref(), &mut bundle).await? {
                 info!("Seeded component bundle {} ({})", bundle.name, bundle.id);
             }
         }
         for seeded in &self.personalities {
-            let personality = seeded.resolved(confidentiality)?;
-            if create_unless_taken(stores.personalities.as_ref(), &personality).await? {
+            let mut personality = seeded.resolved(confidentiality)?;
+            if create_unless_taken(stores.personalities.as_ref(), &mut personality).await? {
                 info!("Seeded personality {} ({})", personality.name, personality.id);
             }
         }
         for template in &self.session_templates {
-            if create_unless_taken(stores.session_templates.as_ref(), template).await? {
+            let mut template = template.clone();
+            if create_unless_taken(stores.session_templates.as_ref(), &mut template).await? {
                 info!("Seeded session template {} ({})", template.name, template.id);
             }
         }
@@ -154,7 +156,7 @@ impl Seed {
 /// Whatever the store reports but a taken id - also a name another has (`StoreError::NameTaken`).
 pub async fn create_unless_taken<T: Stored>(
     store: &dyn EntityStore<T>,
-    value: &T,
+    value: &mut T,
 ) -> StoreResult<bool> {
     match store.create(&SecurityContext::system(), value).await {
         Ok(()) => Ok(true),

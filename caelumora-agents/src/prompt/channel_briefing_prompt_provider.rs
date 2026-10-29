@@ -236,16 +236,22 @@ mod tests {
                 .build();
         let system = SecurityContext::system();
 
-        let personality = make_personality("plain");
-        store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
-        let agent = Agent::new(
+        let mut personality = make_personality("plain");
+        store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .create(&system, &mut personality)
+            .await
+            .unwrap();
+        let mut agent = Agent::new(
             ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
         );
-        store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
-        let owner = make_user("owner");
-        store.entity_stores().unwrap().users.create(&system, &owner).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&system, &mut agent).await.unwrap();
+        let mut owner = make_user("owner");
+        store.entity_stores().unwrap().users.create(&system, &mut owner).await.unwrap();
         let as_owner =
             SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
         let session = make_session("s", owner.id);

@@ -84,24 +84,36 @@ pub async fn alice_and_an_agent(
     use caelumora_model::agent::{Agent, Personality};
     use caelumora_model::scope::Scope;
 
-    let personality = Personality { components, ..make_personality("plain") };
+    let mut personality = Personality { components, ..make_personality("plain") };
     store
         .entity_stores()
         .unwrap()
         .personalities
-        .create(&SecurityContext::system(), &personality)
+        .create(&SecurityContext::system(), &mut personality)
         .await
         .unwrap();
-    let alice = make_user("alice");
+    let mut alice = make_user("alice");
     let context =
         SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let agent = Agent::new(
+    let mut agent = Agent::new(
         ScopedName::new("helper", Scope::GlobalScope).unwrap(),
         personality.id,
         context.initiator_id,
     );
-    store.entity_stores().unwrap().users.create(&SecurityContext::system(), &alice).await.unwrap();
-    store.entity_stores().unwrap().agents.create(&SecurityContext::system(), &agent).await.unwrap();
+    store
+        .entity_stores()
+        .unwrap()
+        .users
+        .create(&SecurityContext::system(), &mut alice)
+        .await
+        .unwrap();
+    store
+        .entity_stores()
+        .unwrap()
+        .agents
+        .create(&SecurityContext::system(), &mut agent)
+        .await
+        .unwrap();
     (context, agent.id, alice.id)
 }
 
@@ -112,7 +124,7 @@ pub async fn channel_of_alice_and(
     alice: UserId,
     agent: AgentId,
 ) -> Arc<ChannelLoop> {
-    let channel = Channel {
+    let mut channel = Channel {
         participants: vec![Participant::User(alice), Participant::Agent(agent)],
         internal_actors: vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))],
         security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)),
@@ -120,7 +132,12 @@ pub async fn channel_of_alice_and(
     };
     // Stored, so that leaving it can be stored too, with its participants'
     // joins (issue 420).
-    runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
+    runtime
+        .entity_stores()
+        .channels
+        .create(&SecurityContext::system(), &mut channel)
+        .await
+        .unwrap();
     runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     let session_id = channel.session_id;
     ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, bare_session(session_id), channel))

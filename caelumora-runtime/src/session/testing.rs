@@ -56,7 +56,7 @@ pub async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Part
     let store = &manager.runtime().entity_stores().users;
     let mut participants = Vec::new();
     for user in users {
-        store.create(&SecurityContext::system(), user).await.unwrap();
+        store.create(&SecurityContext::system(), &mut (*user).clone()).await.unwrap();
         participants.push(Participant::User(user.id));
     }
     participants
@@ -118,17 +118,17 @@ pub async fn create(
 
 /// Stores `session` with `channels` on behalf of `ctx` as the runtime stores a brand-new one
 /// (`SessionManager::persist`) - with a project of its own -, without announcing or starting it:
-/// the session as stored. The channels keep the participants they name, without their joins in
-/// their histories (the model's `channel::testing::founded`).
+/// the session as stored, and `channels` then as stored, too. The channels keep the participants
+/// they name, without their joins in their histories (the model's `channel::testing::founded`).
 pub async fn persist(
     manager: &SessionManager,
     ctx: &SecurityContext,
     session: Session,
-    channels: &[Channel],
+    channels: &mut [Channel],
 ) -> Session {
-    let own = session.new_own_project().expect("a session of a user");
-    let session = Session { project: own.id, ..session };
-    manager.persist(ctx, &session, &own, channels).await.expect("the session is stored");
+    let mut own = session.new_own_project().expect("a session of a user");
+    let mut session = Session { project: own.id, ..session };
+    manager.persist(ctx, &mut session, &mut own, channels).await.expect("the session is stored");
     session
 }
 

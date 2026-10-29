@@ -407,7 +407,7 @@ mod tests {
         .unwrap();
         let mut elsewhere = UserProfile::new(user.id, None);
         elsewhere.add_approval_rule(rule.clone()).unwrap();
-        store.entity_stores().unwrap().user_profiles.create(&hers, &elsewhere).await.unwrap();
+        store.entity_stores().unwrap().user_profiles.create(&hers, &mut elsewhere).await.unwrap();
 
         let profile = controller
             .update_profile(&hers, Some("I run the budget."), None)

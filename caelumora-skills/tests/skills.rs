@@ -407,7 +407,7 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
         )
     };
     let secret = Classification::general(Confidentiality::StrictlyConfidential);
-    for made in [
+    for mut made in [
         skill("notes", Scope::GlobalScope, ActorId::System, Classification::CHANNEL_DEFAULT),
         skill(
             "notes",
@@ -440,7 +440,7 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
             Classification::CHANNEL_DEFAULT,
         ),
     ] {
-        store(&world).create(&World::system(), &made).await.unwrap();
+        store(&world).create(&World::system(), &mut made).await.unwrap();
     }
 
     let context = SecurityContext::new(ActorId::User(bob), session_id, channel)

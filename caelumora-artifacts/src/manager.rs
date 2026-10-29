@@ -322,7 +322,7 @@ impl ArtifactManager {
                 );
                 artifact.grant_reading(participants);
                 artifact.grant_reading(members);
-                self.artifacts.create(ctx, &artifact).await.map(|()| (artifact, 1))
+                self.artifacts.create(ctx, &mut artifact).await.map(|()| (artifact, 1))
             }
         };
         let (artifact, number) = match stored {

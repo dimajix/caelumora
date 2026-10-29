@@ -305,7 +305,7 @@ impl SessionLoop {
             )
             .await?;
         self.participation.require_admitted(context, &channel, &participants).await?;
-        self.stores.channels.create(context, &channel).await?;
+        self.stores.channels.create(context, &mut channel).await?;
         let added =
             match keep_participants(self.stores.groups.as_ref(), Group::of_channel(&channel)).await
             {
@@ -816,7 +816,7 @@ mod tests {
         let owner = ctx.initiator_id.as_user_id().unwrap();
         let mut profile = UserProfile::new(owner, None);
         profile.preferred_language = language("de");
-        runtime.entity_stores().user_profiles.create(&ctx, &profile).await.unwrap();
+        runtime.entity_stores().user_profiles.create(&ctx, &mut profile).await.unwrap();
         let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
         assert_eq!(
             unsaid.channel().language,
@@ -1116,8 +1116,8 @@ mod tests {
         let ctx = SecurityContext::default();
         let session = make_session("waiting", UserId::new());
         let channel_id = session.channels[0];
-        let channels = [main_channel(&session)];
-        let session = persist(&manager, &ctx, session, &channels).await;
+        let mut channels = [main_channel(&session)];
+        let session = persist(&manager, &ctx, session, &mut channels).await;
         let session_loop =
             SessionLoop::new(session.clone(), channels.to_vec(), Arc::clone(&runtime))
                 .await
@@ -1226,12 +1226,12 @@ mod tests {
             create(&manager, &ctx, make_session("restored", UserId::new())).await.unwrap();
         let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
         let scope = Scope::ChannelScope { session_id: session.id(), channel_id: side };
-        let bundle = ComponentBundle::new(
+        let mut bundle = ComponentBundle::new(
             ScopedName::new("tools", scope).unwrap(),
             Default::default(),
             SecurityAttributes::systems(),
         );
-        stores.component_bundles.create(&system, &bundle).await.unwrap();
+        stores.component_bundles.create(&system, &mut bundle).await.unwrap();
         session.delete_channel(&ctx, side).await.unwrap();
         let mark = stores.channels.get_deleted(&system, side).await.unwrap().removal;
 

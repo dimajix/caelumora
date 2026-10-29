@@ -584,12 +584,12 @@ mod tests {
         let stores = Persistence::in_memory().entity_stores().unwrap();
         let holders = ScopeHolders::new(&stores);
         let system = SecurityContext::system();
-        let session = bare_session(SessionId::new());
-        let channel = make_channel(session.id, "main");
-        let project = Project::own_of(session.id, UserId::new());
-        stores.sessions.create(&system, &session).await.unwrap();
-        stores.channels.create(&system, &channel).await.unwrap();
-        stores.projects.create(&system, &project).await.unwrap();
+        let mut session = bare_session(SessionId::new());
+        let mut channel = make_channel(session.id, "main");
+        let mut project = Project::own_of(session.id, UserId::new());
+        stores.sessions.create(&system, &mut session).await.unwrap();
+        stores.channels.create(&system, &mut channel).await.unwrap();
+        stores.projects.create(&system, &mut project).await.unwrap();
         let in_session = Scope::SessionScope { session_id: session.id };
         let in_channel = Scope::ChannelScope { session_id: session.id, channel_id: channel.id };
         let in_project = Scope::ProjectScope { project_id: project.id };
@@ -630,12 +630,12 @@ mod tests {
         let holders = ScopeHolders::new(&stores);
         let bundles = Unowned(Arc::clone(&stores.component_bundles));
         let system = SecurityContext::system();
-        let session = bare_session(SessionId::new());
-        stores.sessions.create(&system, &session).await.unwrap();
+        let mut session = bare_session(SessionId::new());
+        stores.sessions.create(&system, &mut session).await.unwrap();
         let in_session = Scope::SessionScope { session_id: session.id };
 
-        let kept = bundle("kept", &in_session);
-        stores.component_bundles.create(&system, &kept).await.unwrap();
+        let mut kept = bundle("kept", &in_session);
+        stores.component_bundles.create(&system, &mut kept).await.unwrap();
         holders.keep_made(&bundles, &kept).await.expect("its session is there");
         let alone = Removal::now(ActorId::System);
         stores.component_bundles.delete(&system, kept.id, &alone).await.unwrap();
@@ -645,8 +645,8 @@ mod tests {
         let mark = Removal::now(ActorId::System);
         stores.sessions.delete(&system, session.id, &mark).await.unwrap();
         stores.component_bundles.delete(&system, kept.id, &mark).await.unwrap();
-        let late = bundle("late", &in_session);
-        stores.component_bundles.create(&system, &late).await.unwrap();
+        let mut late = bundle("late", &in_session);
+        stores.component_bundles.create(&system, &mut late).await.unwrap();
         let refused = holders.keep_made(&bundles, &late).await;
         assert!(matches!(refused, Err(StoreError::NotFound { .. })), "made too late: {refused:?}");
         assert!(

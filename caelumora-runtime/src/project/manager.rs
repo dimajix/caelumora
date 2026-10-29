@@ -96,7 +96,7 @@ impl ProjectManager {
         }
         let mut project = Project::new(ScopedName::new(name, scope)?, owner);
         project.description = Description::optional(description)?;
-        self.stores.projects.create(ctx, &project).await?;
+        self.stores.projects.create(ctx, &mut project).await?;
         if let Err(e) =
             keep_participants(self.stores.groups.as_ref(), Group::of_project(&project)).await
         {
@@ -336,12 +336,12 @@ mod tests {
             .await
             .unwrap();
         session.update_project(&ctx, Some(project.id)).await.unwrap();
-        let bundle = ComponentBundle::new(
+        let mut bundle = ComponentBundle::new(
             ScopedName::new("tools", project.holds()).unwrap(),
             Default::default(),
             SecurityAttributes::systems(),
         );
-        stores.component_bundles.create(&system, &bundle).await.unwrap();
+        stores.component_bundles.create(&system, &mut bundle).await.unwrap();
         projects.delete(&ctx, project.id).await.unwrap();
         let mark = stores.projects.get_deleted(&system, project.id).await.unwrap().removal;
 

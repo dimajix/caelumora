@@ -1,6 +1,6 @@
 # 500 — A copy never stored carries the revision of one stored once
 
-**Status:** open
+**Status:** in progress
 **Type:** question
 **Priority:** low
 **Area:** Persistence
@@ -43,3 +43,11 @@ never stored - is written nowhere but in the one controller that keeps it.
 - **2026-10-29** — Opened from the review of the second step of issue
   [492](492-a-document-is-written-under-two-locks.md), which closed the gap for the profile
   controller and recorded the question.
+- **2026-10-29** — Decided for the first option, in two steps: `create` writes the entity as the
+  revision after the one it carries, as `update` does, and leaves the revision written in the
+  value; a copy never stored then carries the first revision, which no stored document has, and
+  its `update` is refused as outdated. Step 1 done, without a change of behaviour:
+  `EntityStore::create` and `seed::create_unless_taken` take `&mut T`, and every writer that
+  creates goes on with the value it gave the store - a manager announcing and returning it,
+  `SessionManager::persist` its session, its own project and its channels (`establish` takes
+  the project as it takes the session), the seeds a copy of each of their documents.

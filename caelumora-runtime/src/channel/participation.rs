@@ -413,7 +413,7 @@ mod tests {
             let system = system.clone();
             let ids = ids.clone();
             async move {
-                let personality = Personality {
+                let mut personality = Personality {
                     kind,
                     roles: roles.map(|roles| ids.ids_of(roles).unwrap()),
                     ..make_personality(name)
@@ -422,15 +422,15 @@ mod tests {
                     .entity_stores()
                     .unwrap()
                     .personalities
-                    .create(&system, &personality)
+                    .create(&system, &mut personality)
                     .await
                     .unwrap();
-                let agent = Agent::new(
+                let mut agent = Agent::new(
                     ScopedName::new(name, Scope::GlobalScope).unwrap(),
                     personality.id,
                     owner,
                 );
-                store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
+                store.entity_stores().unwrap().agents.create(&system, &mut agent).await.unwrap();
                 ActorId::Agent(agent.id)
             }
         };
@@ -526,11 +526,11 @@ mod tests {
         let agents = Arc::clone(&runtime.entity_stores().agents);
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
-        let personality = make_personality("plain");
-        personalities.create(&system, &personality).await.unwrap();
+        let mut personality = make_personality("plain");
+        personalities.create(&system, &mut personality).await.unwrap();
         let mut session = make_session("scoped", UserId::new());
         let id = session.id;
-        let elsewhere = [
+        let mut elsewhere = [
             Agent::new(
                 ScopedName::new(
                     "aside",
@@ -547,7 +547,7 @@ mod tests {
                 ActorId::User(UserId::new()),
             ),
         ];
-        for agent in &elsewhere {
+        for agent in &mut elsewhere {
             agents.create(&system, agent).await.unwrap();
             session.participants.push(Participant::Agent(agent.id));
         }

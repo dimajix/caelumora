@@ -538,12 +538,18 @@ mod tests {
         let system = SecurityContext::system();
         let mut ids = Vec::new();
         for n in 0..users {
-            let user = make_user(&format!("user{n}"));
-            store.entity_stores().unwrap().users.create(&system, &user).await.unwrap();
+            let mut user = make_user(&format!("user{n}"));
+            store.entity_stores().unwrap().users.create(&system, &mut user).await.unwrap();
             ids.push(user.id);
         }
-        let personality = make_personality("plain");
-        store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
+        let mut personality = make_personality("plain");
+        store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .create(&system, &mut personality)
+            .await
+            .unwrap();
         let attributes = agent(&ids);
         let mut stored = Agent::new(
             ScopedName::new("helper", Default::default()).unwrap(),
@@ -551,7 +557,7 @@ mod tests {
             attributes.owner_id,
         );
         stored.security_attributes = attributes;
-        store.entity_stores().unwrap().agents.create(&system, &stored).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&system, &mut stored).await.unwrap();
 
         let runtime = TestRuntime {
             store: store.clone(),
@@ -561,13 +567,13 @@ mod tests {
         .build();
         let approver = Approver::new(strategy);
         let participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
-        let channel = Channel {
+        let mut channel = Channel {
             participants,
             internal_actors: vec![InternalActor::Approver(approver.clone())],
             security_attributes: SecurityAttributes::owned_by(ActorId::User(ids[0])),
             ..make_channel(SessionId::new(), "test")
         };
-        store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
+        store.entity_stores().unwrap().channels.create(&system, &mut channel).await.unwrap();
         let session_id = channel.session_id;
         let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(
             Arc::clone(&runtime),

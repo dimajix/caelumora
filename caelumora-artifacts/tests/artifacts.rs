@@ -338,11 +338,16 @@ async fn kept_in(store: Persistence) -> Kept {
     let manager = Arc::clone(runtime.services().get::<ArtifactManager>().unwrap());
     let owner = UserId::new();
     let alice = SecurityContext::new(ActorId::User(owner), SessionId::new(), ChannelId::new());
-    let project = Project::new(
+    let mut project = Project::new(
         ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(),
         owner,
     );
-    runtime.entity_stores().projects.create(&SecurityContext::system(), &project).await.unwrap();
+    runtime
+        .entity_stores()
+        .projects
+        .create(&SecurityContext::system(), &mut project)
+        .await
+        .unwrap();
     let name = ScopedName::new("r.csv", project.holds()).unwrap();
     Kept { files, manager, alice, name }
 }

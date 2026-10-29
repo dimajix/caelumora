@@ -211,7 +211,7 @@ impl<T: Stored> CheckedStore<T> {
         }
     }
 
-    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+    async fn create(&self, ctx: &SecurityContext, value: &mut T) -> StoreResult<()> {
         self.access(ctx).create(value).await?;
         self.storage.insert(Document::of(value)?).await
     }
@@ -293,7 +293,7 @@ impl<T: Stored> CheckedStore<T> {
 
 #[async_trait]
 impl<T: Stored> EntityStore<T> for CheckedStore<T> {
-    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+    async fn create(&self, ctx: &SecurityContext, value: &mut T) -> StoreResult<()> {
         CheckedStore::create(self, ctx, value).await
     }
 
@@ -500,7 +500,7 @@ mod tests {
             ScopedName::new("team", Scope::UserScope { user_id: alice }).unwrap(),
             alice,
         );
-        groups.create(&system, &team).await.unwrap();
+        groups.create(&system, &mut team).await.unwrap();
 
         refusals.store(1, Ordering::SeqCst);
         let refused = groups.update(&system, &mut team).await;
@@ -540,8 +540,8 @@ mod tests {
         let mut hers = Vec::new();
         for index in 0..2 * SCAN_BATCH {
             let owner = if index % 4 == 0 { alice } else { bob };
-            let group = team(index, owner);
-            groups.create(&system, &group).await.unwrap();
+            let mut group = team(index, owner);
+            groups.create(&system, &mut group).await.unwrap();
             if owner == alice {
                 hers.push(group.id);
             }
