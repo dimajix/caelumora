@@ -365,9 +365,10 @@ mod tests {
     use super::*;
     use crate::backend::StorageGone;
     use crate::workspace::WorkspaceError;
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::approval::ApproverId;
-    use caelumora_model::confidentiality::{ConfidentialityRules, Visibility};
+    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::project::ProjectUpdateEvent;
     use caelumora_model::removal::Removal;
@@ -402,20 +403,7 @@ mod tests {
     }
 
     async fn agent_in(store: &Persistence) -> Agent {
-        let personality = Personality {
-            description: None,
-            introduction: None,
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Visibility::Channel,
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         store
             .entity_stores()
             .unwrap()

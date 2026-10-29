@@ -1,30 +1,32 @@
-//! What the tests of the model read of an agent's states: as a store
-//! holds them, and what their changes replay onto.
+//! Personalities for the tests of this crate and of others, which write beside them only what
+//! they differ in.
 
-use crate::store::Journaled;
+use super::{Personality, PersonalityId};
+use crate::scope::Scope;
+use crate::security::SecurityAttributes;
+use crate::value::name::ScopedName;
 
-/// `state` as a store holds it, and the live state marked stored.
-pub(crate) fn stored<T: Journaled>(state: &mut T) -> T {
-    let copy = serde_json::from_value(serde_json::to_value(&*state).unwrap()).unwrap();
-    state.mark_stored();
-    copy
-}
-
-/// Replays the changes of `state` onto `copy` - twice, since replaying
-/// is idempotent - and asserts that both are the same afterwards.
-pub(crate) fn replayed<T: Journaled>(state: &T, copy: &mut T) {
-    for _ in 0..2 {
-        for change in state.changes() {
-            copy.apply(change).unwrap();
-        }
+/// A personality `name` of the global scope, the system's as a seed's is, and naming nothing
+/// else: internal, without roles, description or introduction, with the default components,
+/// reasoning visibility and hearing during a turn.
+#[expect(
+    clippy::expect_used,
+    reason = "test code: a name that is none fails the test that gives it"
+)]
+pub fn make_personality(name: &str) -> Personality {
+    Personality {
+        id: PersonalityId::new(),
+        name: ScopedName::new(name, Scope::GlobalScope)
+            .expect("a test's name of a personality is one"),
+        kind: Default::default(),
+        roles: None,
+        description: None,
+        introduction: None,
+        components: Default::default(),
+        security_attributes: SecurityAttributes::systems(),
+        reasoning_visibility: Default::default(),
+        hears_during_turn: Default::default(),
+        deleted: None,
+        revision: Default::default(),
     }
-    assert_eq!(serde_json::to_value(&*copy).unwrap(), serde_json::to_value(state).unwrap());
-    // The small parts are told whole every time; the growing ones must
-    // have recorded nothing: as a copy loaded afresh.
-    let reloaded: T = serde_json::from_value(serde_json::to_value(&*copy).unwrap()).unwrap();
-    assert_eq!(
-        serde_json::to_value(copy.changes()).unwrap(),
-        serde_json::to_value(reloaded.changes()).unwrap(),
-        "replaying records nothing"
-    );
 }

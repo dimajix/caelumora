@@ -11,12 +11,13 @@
 
 use crate::actor::{ActorEvent, Envelope, EventContext};
 use crate::actor::{ActorId, ActorState};
+use crate::agent::testing::make_personality;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::chain::{Node, Position};
 use crate::channel::testing::make_channel;
 use crate::channel::{moderation_components, Channel, ChannelId, ChannelState};
 use crate::component::{ComponentBundle, ComponentBundleId, ComponentConfig, ComponentDescriptor};
-use crate::confidentiality::{Classification, Visibility};
+use crate::confidentiality::Classification;
 use crate::digest;
 use crate::external_agent::ConversationId;
 use crate::group::{Group, GroupId};
@@ -105,23 +106,6 @@ macro_rules! lifecycle {
 
 fn scoped(name: &str) -> ScopedName {
     ScopedName::new(name, Scope::GlobalScope).unwrap()
-}
-
-fn personality() -> Personality {
-    Personality {
-        introduction: None,
-        reasoning_visibility: Visibility::Channel,
-        hears_during_turn: Default::default(),
-        security_attributes: SecurityAttributes::systems(),
-        id: PersonalityId(Uuid::new_v4()),
-        name: scoped("assistant"),
-        kind: Default::default(),
-        roles: None,
-        description: None,
-        components: Default::default(),
-        deleted: None,
-        revision: Default::default(),
-    }
 }
 
 fn session_template() -> SessionTemplate {
@@ -427,7 +411,7 @@ pub async fn queries_behave(stores: &EntityStores) {
     let session_id = SessionId(Uuid::new_v4());
     let in_session = Personality {
         name: ScopedName::new("in-session", Scope::SessionScope { session_id }).unwrap(),
-        ..personality()
+        ..make_personality("assistant")
     };
     let in_channel = Personality {
         name: ScopedName::new(
@@ -435,9 +419,9 @@ pub async fn queries_behave(stores: &EntityStores) {
             Scope::ChannelScope { session_id, channel_id: ChannelId(Uuid::new_v4()) },
         )
         .unwrap(),
-        ..personality()
+        ..make_personality("assistant")
     };
-    let elsewhere = Personality { name: scoped("elsewhere"), ..personality() };
+    let elsewhere = make_personality("elsewhere");
     for personality in [&in_session, &in_channel, &elsewhere] {
         stores.personalities.create(&ctx, personality).await.unwrap();
     }
@@ -562,7 +546,7 @@ macro_rules! found_by_name {
 pub async fn entity_store_behaves(stores: &EntityStores) {
     lifecycle!(
         stores.personalities.as_ref(),
-        personality(),
+        make_personality("assistant"),
         |v: &Personality| v.id,
         name.name,
         "personality",
@@ -586,7 +570,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     );
     lifecycle!(
         stores.agents.as_ref(),
-        Agent::new(scoped("assistant-1"), personality().id, ActorId::User(UserId::new())),
+        Agent::new(scoped("assistant-1"), PersonalityId::new(), ActorId::User(UserId::new())),
         |v: &Agent| v.id,
         name.name,
         "agent",
@@ -736,7 +720,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
 
     found_by_name!(
         stores.personalities.as_ref(),
-        |name| Personality { name, id: PersonalityId::new(), ..personality() },
+        |name| Personality { name, ..make_personality("assistant") },
         "personality",
         create,
         delete,
@@ -752,7 +736,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     );
     found_by_name!(
         stores.agents.as_ref(),
-        |name| Agent::new(name, personality().id, ActorId::User(UserId::new())),
+        |name| Agent::new(name, PersonalityId::new(), ActorId::User(UserId::new())),
         "agent",
         create,
         delete,
@@ -792,10 +776,8 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     );
     // Every entity has an owner (issue 491), whatever its kind.
     let nobodys = Personality {
-        id: PersonalityId::new(),
-        name: scoped("nobodys"),
         security_attributes: SecurityAttributes::owned_by(ActorId::None),
-        ..personality()
+        ..make_personality("nobodys")
     };
     let created = stores.personalities.create(&ctx, &nobodys).await;
     assert!(
@@ -900,16 +882,16 @@ pub async fn names_are_unique(stores: &EntityStores) {
     let user_id = UserId::new();
     let in_scope = |name: &str, scope: &Scope| ScopedName::new(name, scope.clone()).unwrap();
     let (global, users) = (Scope::GlobalScope, Scope::UserScope { user_id });
-    unique_by_name!(stores.personalities.as_ref(), |name| Personality { name: in_scope(name, &global), id: PersonalityId::new(), ..personality() },
-        elsewhere: |name| Personality { name: in_scope(name, &users), id: PersonalityId::new(), ..personality() },
+    unique_by_name!(stores.personalities.as_ref(), |name| Personality { name: in_scope(name, &global), ..make_personality("assistant") },
+        elsewhere: |name| Personality { name: in_scope(name, &users), ..make_personality("assistant") },
         rename: |value: Personality, name| Personality { name: in_scope(name, &value.name.scope), ..value }, "personality",
         create, update, delete, restore);
     unique_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name: in_scope(name, &global), id: SessionTemplateId::new(), ..session_template() },
         elsewhere: |name| SessionTemplate { name: in_scope(name, &users), id: SessionTemplateId::new(), ..session_template() },
         rename: |value: SessionTemplate, name| SessionTemplate { name: in_scope(name, &value.name.scope), ..value }, "session_template",
         create, update, delete, restore);
-    unique_by_name!(stores.agents.as_ref(), |name| Agent::new(in_scope(name, &global), personality().id, ActorId::User(UserId::new())),
-        elsewhere: |name| Agent::new(in_scope(name, &users), personality().id, ActorId::User(UserId::new())),
+    unique_by_name!(stores.agents.as_ref(), |name| Agent::new(in_scope(name, &global), PersonalityId::new(), ActorId::User(UserId::new())),
+        elsewhere: |name| Agent::new(in_scope(name, &users), PersonalityId::new(), ActorId::User(UserId::new())),
         rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value }, "agent",
         create, update, delete, restore);
     let (session_id, other_session) = (SessionId::new(), SessionId::new());
@@ -940,7 +922,7 @@ pub async fn names_are_unique(stores: &EntityStores) {
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();
     let mine =
-        Agent::new(in_scope("Moving", &users), personality().id, ActorId::User(UserId::new()));
+        Agent::new(in_scope("Moving", &users), PersonalityId::new(), ActorId::User(UserId::new()));
     stores.agents.create(&ctx, &mine).await.expect("create");
     stores
         .agents
@@ -948,7 +930,7 @@ pub async fn names_are_unique(stores: &EntityStores) {
             &ctx,
             &Agent::new(
                 in_scope("moving", &global),
-                personality().id,
+                PersonalityId::new(),
                 ActorId::User(UserId::new()),
             ),
         )
@@ -976,7 +958,7 @@ pub async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
     let owned_by = |name: &str, owner: UserId| {
         Agent::new(
             ScopedName::new(name, Scope::GlobalScope).unwrap(),
-            personality().id,
+            PersonalityId::new(),
             ActorId::User(owner),
         )
     };

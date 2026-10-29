@@ -198,7 +198,8 @@ mod tests {
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
+    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::Agent;
     use caelumora_model::channel::{Channel, HistoryAccess};
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::group::GroupId;
@@ -348,20 +349,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let system = SecurityContext::system();
-        let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Scope::GlobalScope).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),

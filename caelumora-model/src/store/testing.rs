@@ -1,6 +1,9 @@
-//! A stand-in for tests of what writes again when its write was refused as outdated (issue 492):
-//! stores in memory whose documents of one kind refuse to be written in place of as many times as
-//! a test says.
+//! Stand-ins for the stores, and checks of what they keep, for tests.
+//!
+//! `ContendedStore` stands in for a storage that another writer got to first (issue 492): stores
+//! in memory whose documents of one kind refuse to be written in place of as many times as a test
+//! says. `stored` and `replayed` check a journaled state (`Journaled`): as a store holds it, and
+//! what its changes replay onto.
 #![expect(clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::confidentiality::ConfidentialityRules;
@@ -10,6 +13,8 @@ use crate::store::history::HistoryStore;
 use crate::store::memory::MemoryStore;
 use crate::store::query::{FieldPath, Filter};
 use crate::store::transcript::TranscriptStore;
+#[cfg(test)]
+use crate::store::Journaled;
 use crate::store::{
     EntityKind, Persistence, PersistenceBackend, Presence, Revision, StateStore, StoreError,
     StoreResult,
@@ -128,4 +133,32 @@ impl DocumentStorage for Contended {
         self.contend(id)?;
         self.inner.remove(id, read).await
     }
+}
+
+/// `state` as a store holds it, and the live state marked stored.
+#[cfg(test)]
+pub(crate) fn stored<T: Journaled>(state: &mut T) -> T {
+    let copy = serde_json::from_value(serde_json::to_value(&*state).unwrap()).unwrap();
+    state.mark_stored();
+    copy
+}
+
+/// Replays the changes of `state` onto `copy` - twice, since replaying
+/// is idempotent - and asserts that both are the same afterwards.
+#[cfg(test)]
+pub(crate) fn replayed<T: Journaled>(state: &T, copy: &mut T) {
+    for _ in 0..2 {
+        for change in state.changes() {
+            copy.apply(change).unwrap();
+        }
+    }
+    assert_eq!(serde_json::to_value(&*copy).unwrap(), serde_json::to_value(state).unwrap());
+    // The small parts are told whole every time; the growing ones must
+    // have recorded nothing: as a copy loaded afresh.
+    let reloaded: T = serde_json::from_value(serde_json::to_value(&*copy).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(copy.changes()).unwrap(),
+        serde_json::to_value(reloaded.changes()).unwrap(),
+        "replaying records nothing"
+    );
 }

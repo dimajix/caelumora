@@ -515,6 +515,11 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     from the type's own API and widens nothing outside `test-support`. The tests of the actors in a
     running channel live in `channel/tests/` of the runtime, those of the agents in
     `channel_tests/` of `caelumora-agents`.
+*   **Documents in tests:** a test that needs a document of the model starts from what the
+    `testing` module of its kind makes - `make_personality`, `make_template`, `make_channel`,
+    `make_message` - and writes beside it only what it differs in
+    (`Personality { kind, ..make_personality("remote") }`), so that a new field of the kind changes
+    one place and every test says what is particular about its document.
 *   **A runtime in tests:** a test builds its runtime with `testing::TestRuntime` (issue 375), whose
     parts all have defaults - a new memory store, no policy, the default rules, the default
     configuration, the runtime's component kinds and agents that answer "ok" - and names only those
@@ -527,13 +532,12 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
 *   **Sessions in tests:** a test that needs a session makes it as the runtime does - running,
     with `SessionManager::create` (`session::testing::create`, `World::session_of`); stored and
     not started, with `session::testing::persist` -: the session with the groups of its
-    participants, a project of its own and its channels (issues 471, 486).
-    `session::testing::make_session` gives its document, and the test writes beside it only what
-    it differs in. Apart from the tests of the stores, whose subject the document is, a test that
-    stores a session's document alone - a controller's, a step of `create_from_template` - starts
-    from `session::testing::bare_session` and says why where it makes or stores it. Outside
-    `caelumora-runtime`, a session is started by its manager alone: `SessionLoop::new` is the
-    crate's.
+    participants, a project of its own and its channels (issues 471, 486). Its document, by the
+    rule above, comes from `session::testing::make_session`. Apart from the tests of the stores,
+    whose subject the document is, a test that stores a session's document alone - a controller's,
+    a step of `create_from_template` - starts from `session::testing::bare_session` and says why
+    where it makes or stores it. Outside `caelumora-runtime`, a session is started by its manager
+    alone: `SessionLoop::new` is the crate's.
 *   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the

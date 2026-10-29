@@ -40,7 +40,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use caelumora_model::actor::ActorEvent;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
+use caelumora_model::agent::testing::make_personality;
+use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::channel::{moderation_components, Channel, InternalActor, Participant};
 use caelumora_model::component::ComponentConfig;
@@ -494,18 +495,10 @@ impl World {
         contributors: &[UserId],
     ) -> Personality {
         let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new(name, Scope::GlobalScope).unwrap(),
-            kind: PersonalityKind::Internal,
-            roles: None,
             description: Some(Description::new(format!("{name}, privately described")).unwrap()),
             introduction: Some(Introduction::new(format!("I am {name}.")).unwrap()),
-            components: Default::default(),
             security_attributes: attributes(owner, contributors),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
+            ..make_personality(name)
         };
         self.runtime
             .entity_stores()

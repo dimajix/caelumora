@@ -161,11 +161,12 @@ mod tests {
     use crate::testing::{self, TestAgents};
     use crate::turn::Turn;
     use caelumora_model::actor::{ActorId, EventContext};
-    use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
+    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::{Agent, AgentChannelState, AgentId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::confidentiality::{Confidentiality, Visibility};
+    use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::UserId;
@@ -225,24 +226,6 @@ mod tests {
         assert_eq!(changes.text(String::new()).unwrap(), "");
     }
 
-    /// A personality of the system's, without a description.
-    fn plain() -> Personality {
-        Personality {
-            description: None,
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Visibility::Channel,
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        }
-    }
-
     #[tokio::test]
     async fn the_descriptions_are_read_at_every_turn_and_classified_as_their_place() {
         let store = Persistence::in_memory();
@@ -251,7 +234,7 @@ mod tests {
                 .build();
         let system = SecurityContext::system();
 
-        let personality = plain();
+        let personality = make_personality("plain");
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(
             ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),

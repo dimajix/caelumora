@@ -810,7 +810,6 @@ impl Journaled for AgentChannelState {
 mod tests {
     use super::*;
     use crate::actor::{ActorState, EventContext};
-    use crate::agent::testing::{replayed, stored};
     use crate::agent::AgentId;
     use crate::confidentiality::Confidentiality;
     use crate::context::{ContextResolver, KnowledgeSource};
@@ -818,6 +817,7 @@ mod tests {
     use crate::note::NoteId;
     use crate::prompt_catalogue::core;
     use crate::security::SecurityContext;
+    use crate::store::testing::{replayed, stored};
     use crate::tool::{Tool, ToolCall, ToolCallState, ToolParameters, ToolVisibility};
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};

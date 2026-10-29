@@ -171,12 +171,12 @@ mod tests {
     use crate::testing::{self, TestAgents};
     use crate::turn::Turn;
     use caelumora_model::actor::EventContext;
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::approval::{ApprovalStrategy, Approver};
     use caelumora_model::channel::{Channel, InternalActor, Participant};
-    use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::{User, UserId, UserProfile};
@@ -278,18 +278,9 @@ mod tests {
         // Named apart: a name is unique in its scope (issue 250).
         let id = PersonalityId::new();
         let personality = Personality {
-            description: None,
             id,
-            name: ScopedName::new(format!("plain {id}"), Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
             introduction: introduction.map(|text| Introduction::new(text).unwrap()),
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Visibility::Channel,
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
+            ..make_personality(&format!("plain {id}"))
         };
         store
             .entity_stores()

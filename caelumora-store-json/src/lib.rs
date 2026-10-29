@@ -785,6 +785,7 @@ impl StateStore for JsonFileStore {
 mod tests {
     use super::*;
     use caelumora_model::actor::ActorState;
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::chain::Position;
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::history::Reader;
@@ -997,24 +998,11 @@ mod tests {
     async fn concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files() {
         // Entities may be written at the same time - by two requests that
         // change one (issue 62); a state has one writer (issue 215).
-        use caelumora_model::agent::{Personality, PersonalityId};
+        use caelumora_model::agent::Personality;
         let dir = tempdir().unwrap();
         let personalities = of_kind::<Personality>(dir.path());
         let system = SecurityContext::system();
-        let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         personalities.create(&system, &personality).await.unwrap();
 
         let mut writes = JoinSet::new();
@@ -1064,24 +1052,11 @@ mod tests {
         // Checked and written under the kind's lock (issue 250): nothing
         // writes between another's check and its write.
         use caelumora_model::actor::ActorId;
-        use caelumora_model::agent::{Agent, Personality, PersonalityId};
+        use caelumora_model::agent::Agent;
         let dir = tempdir().unwrap();
         let agents = of_kind::<Agent>(dir.path());
         let system = SecurityContext::system();
-        let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
 
         let mut writes = JoinSet::new();
         for _ in 0..16 {

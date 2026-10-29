@@ -234,9 +234,9 @@ mod tests {
     use crate::event::EventBus;
     use crate::scoped::ScopeHolders;
     use crate::session::testing::bare_session;
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Personality;
     use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{
         AccessPolicy, ActionType, AllowAllPolicy, SecurityAttributes, Verb,
@@ -277,20 +277,7 @@ mod tests {
     }
 
     async fn store_with_personality(store: Persistence) -> (Persistence, PersonalityId) {
-        let personality = Personality {
-            description: None,
-            introduction: None,
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Visibility::Channel,
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         store
             .entity_stores()
             .unwrap()

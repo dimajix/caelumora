@@ -1124,6 +1124,7 @@ mod tests {
     use anyhow::Result;
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::{ActorEvent, ActorState, Envelope};
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Agent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::approval::ApprovalStrategy;
@@ -1359,7 +1360,6 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_deleted_agent_rests_in_its_channels_keeps_its_name_and_comes_back_restored() {
-        use caelumora_model::agent::{Personality, PersonalityId};
         use caelumora_model::channel::Participant;
         /// Waits until `holds` does, at most two seconds: a running channel
         /// follows the agent as the session learns of it.
@@ -1377,20 +1377,7 @@ mod tests {
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let agents = runtime.agent_manager();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
-        let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Scope::GlobalScope).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
@@ -1497,25 +1484,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_that_missed_an_agent_being_deleted_finds_out_as_it_looks_again() {
-        use caelumora_model::agent::{Personality, PersonalityId};
         use caelumora_model::channel::Participant;
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
-        let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Scope::GlobalScope).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
@@ -2067,7 +2040,7 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn what_lies_in_a_scope_goes_with_its_session_or_channel() {
-        use caelumora_model::agent::{Personality, PersonalityId};
+        use caelumora_model::agent::Personality;
         use caelumora_model::user::UserId;
 
         let runtime = test_runtime();
@@ -2083,18 +2056,8 @@ mod tests {
         let side = running.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
 
         let personality = Personality {
-            id: PersonalityId::new(),
             name: ScopedName::new("planner", Scope::SessionScope { session_id: id }).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
+            ..make_personality("planner")
         };
         personalities.create(&system, &personality).await.unwrap();
         let bundle = ComponentBundle::new(
@@ -2315,7 +2278,6 @@ mod tests {
     async fn with_a_hanging_answer(
     ) -> (Arc<SessionManager>, SecurityContext, Arc<SessionLoop>, ActorId, Receiver<Envelope>) {
         use crate::testing::{Script, ScriptedAgents};
-        use caelumora_model::agent::{Personality, PersonalityId, PersonalityKind};
 
         let store = Persistence::in_memory();
         let runtime = TestRuntime {
@@ -2328,20 +2290,7 @@ mod tests {
         let system = SecurityContext::system();
         let alice = user("alice");
         let participants = record_users(&manager, &[&alice]).await;
-        let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("thinker", Default::default()).unwrap(),
-            kind: PersonalityKind::Internal,
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("thinker");
         store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
         let thinker = Agent::new(
             ScopedName::new("thinker", Scope::GlobalScope).unwrap(),

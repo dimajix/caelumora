@@ -347,10 +347,11 @@ mod tests {
     use caelumora_model::value::name::Name;
 
     use caelumora_model::actor::ActorId;
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::session::{ChannelId, SessionId};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
@@ -364,7 +365,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn an_agent_is_cleared_only_as_far_as_its_owner_and_its_personality_are() {
         use crate::channel::ChannelError;
-        use caelumora_model::agent::{Personality, PersonalityId, PersonalityKind};
+        use caelumora_model::agent::{Personality, PersonalityKind};
         use caelumora_model::confidentiality::{
             Clearance, Compartment, Compartments, Confidentiality, ConfidentialityRules,
         };
@@ -414,18 +415,9 @@ mod tests {
             let ids = ids.clone();
             async move {
                 let personality = Personality {
-                    id: PersonalityId::new(),
-                    name: ScopedName::new(name, Default::default()).unwrap(),
                     kind,
                     roles: roles.map(|roles| ids.ids_of(roles).unwrap()),
-                    description: None,
-                    introduction: None,
-                    components: Default::default(),
-                    security_attributes: SecurityAttributes::systems(),
-                    reasoning_visibility: Default::default(),
-                    hears_during_turn: Default::default(),
-                    deleted: None,
-                    revision: Default::default(),
+                    ..make_personality(name)
                 };
                 store
                     .entity_stores()
@@ -529,27 +521,13 @@ mod tests {
     #[tokio::test]
     async fn an_agent_takes_part_only_within_its_sessions_or_channels_scope() {
         use crate::channel::ChannelError;
-        use caelumora_model::agent::{Personality, PersonalityId};
 
         let runtime = test_runtime();
         let personalities = Arc::clone(&runtime.entity_stores().personalities);
         let agents = Arc::clone(&runtime.entity_stores().agents);
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
-        let personality = Personality {
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Scope::GlobalScope).unwrap(),
-            kind: Default::default(),
-            roles: None,
-            description: None,
-            introduction: None,
-            components: Default::default(),
-            security_attributes: SecurityAttributes::systems(),
-            reasoning_visibility: Default::default(),
-            hears_during_turn: Default::default(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let personality = make_personality("plain");
         personalities.create(&system, &personality).await.unwrap();
         let mut session = make_session("scoped", UserId::new());
         let id = session.id;
