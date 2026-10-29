@@ -150,14 +150,8 @@ impl SessionLoop {
             )
             .await?;
         if let Some(id) = workspace {
-            require_attachable(
-                self.runtime_manager.workspace_manager(),
-                self.access_policy.as_ref(),
-                context,
-                id,
-                self.id,
-            )
-            .await?;
+            require_attachable(&self.workspaces, self.access_policy.as_ref(), context, id, self.id)
+                .await?;
         }
         let held = self.attach_workspace(context, workspace).await?;
         if let (Some(controller), Some(grant)) = (held, share) {

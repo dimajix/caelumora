@@ -7,6 +7,7 @@ use super::{
 };
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
+use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
 use crate::runtime::RuntimeManager;
@@ -16,11 +17,13 @@ use crate::template::{
 };
 use crate::view::{Viewer, Views};
 use crate::workspace::reaper::CommandReaper;
+use crate::workspace::WorkspaceManager;
 use anyhow::{Error, Result};
 use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::channel::Participant;
 use caelumora_model::channel::{Channel, ChannelField};
+use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::project::{Project, ProjectId};
@@ -94,14 +97,19 @@ pub struct SessionManager {
     /// Set once the sessions are shut down (`shutdown`): none is started
     /// any more.
     shutting_down: AtomicBool,
-    /// What builds the loops of the sessions it starts.
-    pub(super) runtime_manager: Arc<RuntimeManager>,
+    /// What builds the loops of the sessions it starts and the views of them, and what is made
+    /// beside it runs in (`runtime`).
+    runtime_manager: Arc<RuntimeManager>,
     /// The services it works with, taken from `runtime_manager` once (issue
     /// 229).
     access_policy: Arc<dyn AccessPolicy>,
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     stores: EntityStores,
     state_store: Arc<dyn StateStore>,
     events: Arc<EventBus>,
+    controllers: Arc<ControllerManager>,
+    /// What the workspaces of the sessions it makes are found or made by.
+    workspaces: Arc<WorkspaceManager>,
     /// What ends the commands of a stopped session's channels (issue 254).
     command_reaper: Arc<CommandReaper>,
     /// What makes the agents a template names.
@@ -151,9 +159,12 @@ impl SessionManager {
             starts: DashMap::new(),
             shutting_down: AtomicBool::new(false),
             access_policy: Arc::clone(runtime_manager.access_policy()),
+            confidentiality: Arc::clone(runtime_manager.confidentiality()),
             stores: runtime_manager.entity_stores().clone(),
             state_store: Arc::clone(runtime_manager.state_store()),
             events: Arc::clone(runtime_manager.event_bus()),
+            controllers: Arc::clone(runtime_manager.controller_manager()),
+            workspaces: Arc::clone(runtime_manager.workspace_manager()),
             command_reaper: Arc::clone(runtime_manager.command_reaper()),
             agents: Arc::clone(runtime_manager.agent_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
@@ -275,7 +286,7 @@ impl SessionManager {
         let existing = match &spec.workspace {
             Some(WorkspaceChoice::Existing { id: chosen, .. }) => {
                 require_attachable(
-                    self.runtime_manager.workspace_manager(),
+                    &self.workspaces,
                     self.access_policy.as_ref(),
                     context,
                     *chosen,
@@ -346,11 +357,10 @@ impl SessionManager {
             }),
             Some(WorkspaceChoice::None | WorkspaceChoice::Existing { .. }) => None,
         };
-        let workspaces = self.runtime_manager.workspace_manager();
         let resolved = match &wanted {
-            Some(wanted) => {
-                Some(resolve_workspace(workspaces, context, wanted, session.id(), owner).await?)
-            }
+            Some(wanted) => Some(
+                resolve_workspace(&self.workspaces, context, wanted, session.id(), owner).await?,
+            ),
             None => None,
         };
         let made = resolved.and_then(|(workspace, made)| made.then_some(workspace));
@@ -371,8 +381,7 @@ impl SessionManager {
             .await?;
             // Shared once the session it is shared with exists (issue 23).
             if let Some(WorkspaceChoice::Existing { id, share: Some(grant) }) = &spec.workspace {
-                let controller =
-                    self.runtime_manager.controller_manager().workspace_controller(*id).await?;
+                let controller = self.controllers.workspace_controller(*id).await?;
                 let group = Subject::Group(GroupId::of_session(session.id()));
                 controller.share(context, group, *grant).await?;
             }
@@ -385,8 +394,8 @@ impl SessionManager {
         if let (Err(_), Some(made)) = (&completed, made) {
             let system = SecurityContext::system();
             if let Err(cleanup) = async {
-                workspaces.delete(&system, made).await?;
-                workspaces.purge(&system, made).await
+                self.workspaces.delete(&system, made).await?;
+                self.workspaces.purge(&system, made).await
             }
             .await
             {
@@ -503,7 +512,7 @@ impl SessionManager {
         channels: &[Channel],
     ) -> Result<()> {
         for channel in channels {
-            require_classification(&self.runtime_manager, &channel.classification)?;
+            require_classification(self.confidentiality.as_ref(), &channel.classification)?;
         }
         self.stores.sessions.create(context, session).await?;
         let made = async {

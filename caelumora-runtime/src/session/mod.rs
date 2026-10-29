@@ -2,7 +2,7 @@
 
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::{ChannelCommandProvider, CommandExecutor};
-use crate::component::ComponentError;
+use crate::component::{ComponentError, ComponentRegistry};
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
 use crate::event::{EventBus, SubscriptionTopic};
 use crate::group::{keep_participants, GroupManager};
@@ -124,10 +124,10 @@ pub enum SessionError {
 /// only configured compartments (issues 133, 304) - checked before anything
 /// is stored.
 fn require_classification(
-    runtime_manager: &RuntimeManager,
+    policy: &dyn ConfidentialityPolicy,
     classification: &Classification,
 ) -> Result<()> {
-    runtime_manager.confidentiality().require_classifiable(classification, || {
+    policy.require_classifiable(classification, || {
         SessionError::ClassificationRefused(classification.clone())
     })?;
     Ok(())
@@ -190,6 +190,10 @@ pub struct SessionLoop {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     stores: EntityStores,
     controllers: Arc<ControllerManager>,
+    /// What a workspace attached to it is reached by.
+    workspaces: Arc<WorkspaceManager>,
+    /// What judges the components of the channels made in it.
+    components: Arc<ComponentRegistry>,
     /// Who it may take in, and who may take part in its channels (issue
     /// 356).
     participation: Arc<Participation>,
@@ -354,6 +358,8 @@ impl SessionLoop {
             confidentiality: Arc::clone(runtime_manager.confidentiality()),
             stores: runtime_manager.entity_stores().clone(),
             controllers: Arc::clone(runtime_manager.controller_manager()),
+            workspaces: Arc::clone(runtime_manager.workspace_manager()),
+            components: Arc::clone(runtime_manager.component_registry()),
             participation: Arc::clone(runtime_manager.participation()),
             events: Arc::clone(runtime_manager.event_bus()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),

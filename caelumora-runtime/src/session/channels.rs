@@ -254,7 +254,7 @@ impl SessionLoop {
         let name = Name::new(&spec.name)?;
         let language = Language::optional(spec.language.as_deref())?;
         let classification = spec.classification.unwrap_or_default();
-        require_classification(&self.runtime_manager, &classification)?;
+        require_classification(self.confidentiality.as_ref(), &classification)?;
 
         // The creator first, if they take part in the session at all.
         let mut ids = vec![context.initiator_id];
@@ -279,8 +279,7 @@ impl SessionLoop {
         // (issue 337); and whoever names component bundles names only what
         // they may read themselves, though the channel builds them in
         // its owner's name (issue 321): their own request.
-        self.runtime_manager
-            .component_registry()
+        self.components
             .require_acceptable(&spec.components, ChannelLoop::COMPONENT_FACETS, context)
             .await
             .map_err(SessionError::InvalidComponents)?;

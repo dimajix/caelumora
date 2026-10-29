@@ -65,7 +65,7 @@ pub fn user(name: &str) -> User {
 /// `users` as participants, recorded in the store the session reads
 /// them from (issue 120).
 pub async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Participant> {
-    let store = &manager.runtime_manager.entity_stores().users;
+    let store = &manager.runtime().entity_stores().users;
     let mut participants = Vec::new();
     for user in users {
         store.create(&SecurityContext::system(), user).await.unwrap();
@@ -274,7 +274,7 @@ impl SessionManager {
     /// (`RuntimeManager::access_policy`): what a test builds a component with, as the runtime gives
     /// a component its policy.
     pub fn runtime_access_policy(&self) -> &Arc<dyn AccessPolicy> {
-        self.runtime_manager.access_policy()
+        self.runtime().access_policy()
     }
 }
 
