@@ -1,6 +1,6 @@
 # 470 — Personalities and component bundles are stored in a project's scope, where nothing uses them
 
-**Status:** open
+**Status:** rejected
 **Type:** bug
 **Priority:** low
 **Area:** Code structure
@@ -47,3 +47,11 @@ Recommendation: B, with this issue as its reminder; A if the trap is met before.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of step 5 of issue 467.
+- **2026-10-29** — Rejected: a personality may lie in a project's scope - it may be of use once
+  something is found from there -, and it is no trap meanwhile: an agent of it is refused with
+  `PersonalityOutOfScope`, since `Scope::admits` answers `false` for a project. A component bundle
+  there is not unused either: a `ref` finds it in exactly the scope it names
+  (`caelumora-runtime/src/component/registry.rs:607`), without asking `admits`. Nothing but a
+  seed, written before any project exists, makes either. Whether a `ref` is to ask `admits` of
+  the place it is built at - a bundle's scope a place, not a namespace - is decided with the
+  lookups from a place (PROJECTS.md, *Not done yet*).

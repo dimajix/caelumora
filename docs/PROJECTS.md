@@ -89,5 +89,9 @@ session's own project goes with its session alone.
 *   A project in a team's scope: a group's scope is not yet a place anything is found from (issue
     [340](../issues/340-teams-as-owners.md)); its members are a list meanwhile.
 *   Lookups from a place: skills and personalities lying in a project and found from its sessions,
-    which needs the chain of scopes around a place given by whoever knows the session.
+    which needs the chain of scopes around a place given by whoever knows the session. With it, it
+    is to be decided whether a component bundle's `ref` asks `Scope::admits` of the place it is
+    built at: today it finds the bundle in exactly the scope it names, wherever that is, so that a
+    bundle's scope is a namespace, not a place (issue
+    [470](../issues/470-personalities-and-bundles-in-a-project-scope.md)).
 *   Workspaces in projects, shared by all its sessions.
