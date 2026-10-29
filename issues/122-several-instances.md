@@ -64,3 +64,35 @@ with concurrent writes detected rather than lost.
   interned as they are read. The envelope that crosses the instances is `PublishedEvent` - the
   event with its attributes and classifications, which are serializable already -, so that the
   receiving bus decides who receives it. Versions, when they come, are a field of `Entity`.
+- **2026-10-29** — The bus between instances, from a review of the event bus with the maintainer
+  (issues [502](502-bus-subscribers-lose-events-silently.md),
+  [503](503-bus-asks-every-stream.md), [504](504-bus-has-two-delivery-paths.md)). Proposed, not yet
+  decided:
+  - **What crosses: everything.** A user's stream is served by one instance and must hear of
+    everything they may read, wherever it happens; agents, users, profiles, workspaces, projects
+    and groups live in several instances. So every event reaches every instance - a fan-out, not a
+    log partitioned by key.
+  - **Not Kafka, not Redis.** Kafka brings partitions, consumer groups and a cluster to run for a
+    fan-out it is not needed for. Redis pub/sub is simple but delivers at most once and is a
+    service of its own besides the store.
+  - **An outbox in Postgres, woken by `LISTEN/NOTIFY`.** Several instances need a shared store,
+    which the JSON files are not, so Postgres is there. An event is written to an outbox table in
+    the transaction that writes its entity - never announced without being written, nor the other
+    way round -; `NOTIFY` only wakes the other instances, which read the outbox from the last
+    sequence number they took. Ordered, without gaps, and read again after a lost connection; the
+    payload limit of `NOTIFY` does not apply. The outbox is pruned after a while. That is what a
+    log gives, on the store there is.
+  - **What it needs first.** Every subscriber catches up after a gap, by reading anew from the
+    store (502) - between processes loss is the rule. Events carry the revision they result in
+    (issue [492](492-a-document-is-written-under-two-locks.md)), so that an instance skips one older
+    than what it holds. The bus has one path in one order (504), where the events of other
+    instances enter. Who receives an event is decided by the receiving bus, as before.
+  - **To settle.** An event published outside a write - a session or channel started or stopped,
+    an agent's state - has no transaction of its own: written to the outbox alone, or kept local
+    where only its own instance needs it. And content in events (`channel::SAID` carries the
+    message, `Updated` the change): through the outbox it lies in the store, where it lies anyway;
+    thin events would have each receiving instance read it again.
+  - **Not done:** events as the only source of the truth (event sourcing), and the store making the
+    events of its writes itself (change data capture) - an update says what changed in the words of
+    its kind (`NameChanged`), which a store does not know, and starting, stopping and joining are no
+    writes.
