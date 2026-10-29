@@ -1,6 +1,6 @@
 use crate::confidentiality::Classification;
 use crate::intern::intern;
-use crate::security::SecurityAttributes;
+use crate::security::{SecurityAttributes, Subject};
 use crate::store::{Address, Enclosing, EntityKind, Stored};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -199,23 +199,41 @@ impl EventPublisher for () {
     }
 }
 
-/// The one way an event about an entity is published as the entity stands
-/// (issue 351): to whoever may read it, and of a classified kind is cleared
-/// for it - what an event is announced with is the entity's to say, not its
-/// caller's. What is announced otherwise says why: a reclassification to
-/// who reached the entity as it was, too (issue 312), a leave to whoever
-/// left besides (issue 23). By blanket implementation on every
-/// `EventPublisher`, like `Enforcement` on every `AccessPolicy`.
+/// The one way an event about an entity is published as the entity stands (issue 351): to whoever
+/// may read it, and of a classified kind is cleared for it - what an event is announced with is the
+/// entity's to say, not its caller's -, and a leave to whoever left besides (issue 23). What is
+/// announced otherwise says why: a reclassification to who reached the entity as it was, too (issue
+/// 312). By blanket implementation on every `EventPublisher`, like `Enforcement` on every
+/// `AccessPolicy`.
 pub trait Announcing {
-    /// Publishes `event` about `entity` with its attributes and, if its kind
-    /// is classified, its classification.
+    /// Publishes `event` about `entity` with its attributes and, if its kind is classified, its
+    /// classification.
     fn announce<T: Stored>(&self, event: GlobalEvent, entity: &T);
+
+    /// Publishes `event` about `entity` as `announce` does, and to `subjects` besides, who may
+    /// no longer read it: one who left learns so (issue 23). The grants are never stored.
+    fn announce_also_to<T: Stored>(
+        &self,
+        event: GlobalEvent,
+        entity: &T,
+        subjects: impl IntoIterator<Item = Subject>,
+    );
 }
 
 impl<P: EventPublisher + ?Sized> Announcing for P {
     fn announce<T: Stored>(&self, event: GlobalEvent, entity: &T) {
+        self.announce_also_to(event, entity, []);
+    }
+
+    fn announce_also_to<T: Stored>(
+        &self,
+        event: GlobalEvent,
+        entity: &T,
+        subjects: impl IntoIterator<Item = Subject>,
+    ) {
         let classifications = entity.classification().map(slice::from_ref).unwrap_or_default();
-        self.publish_classified(event, entity.security_attributes().clone(), classifications);
+        let attributes = entity.security_attributes().clone().granting_read(subjects);
+        self.publish_classified(event, attributes, classifications);
     }
 }
 
@@ -226,7 +244,7 @@ mod tests {
     use crate::channel::{self, Channel, ChannelId};
     use crate::confidentiality::Classification;
     use crate::scope::Scope;
-    use crate::security::{Secured, SecurityAttributes};
+    use crate::security::{Grant, Secured, SecurityAttributes, Subject};
     use crate::session::{self, Session, SessionId, SessionUpdateEvent};
     use crate::user::{UserId, UserProfile};
     use crate::value::name::{Name, ScopedName};
@@ -275,6 +293,35 @@ mod tests {
                 (profile.security_attributes().clone(), vec![]),
             ],
             "a classified kind to who is cleared for it, another to whoever may read it"
+        );
+    }
+
+    /// Issue 23: a leave is announced to whoever left besides, as the entity
+    /// is classified.
+    #[test]
+    fn one_who_left_is_told_besides() {
+        let leaving = ActorId::User(UserId::new());
+        let channel = Channel::build(
+            SessionId::new(),
+            ActorId::User(UserId::new()),
+            Name::new("main").unwrap(),
+            Default::default(),
+            Classification::PUBLIC,
+            None,
+        );
+        let left = GlobalEvent::custom::<Channel>(
+            &(channel.session_id, channel.id),
+            channel::LEFT,
+            &leaving,
+        );
+        let published = Published::default();
+        published.announce_also_to(left, &channel, [Subject::Actor(leaving)]);
+        assert_eq!(
+            *published.0.lock().unwrap(),
+            [(
+                channel.security_attributes.clone().granting(Subject::Actor(leaving), Grant::Read),
+                vec![Classification::PUBLIC]
+            )],
         );
     }
 

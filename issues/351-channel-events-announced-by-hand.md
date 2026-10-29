@@ -77,3 +77,7 @@ classifications), has to be made ten times.
   profiles. Two stay with `publish`, each saying why: a group's change, told to whoever left it as
   well (issue 23), and the change of an agent's state, whose holder keeps the agent's attributes,
   not the agent.
+- **2026-10-29** — A leave is announced by `Announcing::announce_also_to`, the attributes read
+  besides by `SecurityAttributes::granting_read`: a group's change, told to whoever left it as
+  well, is no longer assembled by hand. The controllers' `Writing::announce_also_to` stays beside
+  their `Writing::announce`, with the classification a document had as the change began.

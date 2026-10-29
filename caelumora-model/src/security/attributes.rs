@@ -45,6 +45,13 @@ impl SecurityAttributes {
         self
     }
 
+    /// These attributes, letting `subjects` read besides.
+    pub fn granting_read(self, subjects: impl IntoIterator<Item = Subject>) -> Self {
+        subjects
+            .into_iter()
+            .fold(self, |attributes, subject| attributes.granting(subject, Grant::Read))
+    }
+
     /// Nothing if the attributes may be stored as they are: the owner is
     /// someone who answers for the entity - a user, an agent or the system,
     /// never nobody or an approver (issue 491) -, and an entry names a

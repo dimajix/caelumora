@@ -4,7 +4,7 @@
 use arc_swap::{ArcSwap, Guard};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::security::{Grant, SecurityContext, Subject};
+use caelumora_model::security::{SecurityContext, Subject};
 use caelumora_model::store::{Address, EntityStore, StoreResult, Stored, Updatable};
 use chrono::Utc;
 use std::fmt::{self, Debug};
@@ -235,11 +235,7 @@ where
     /// read it and, if its kind is classified, is cleared for how it was
     /// classified as the change began or how it is now.
     pub(super) fn announce(&self, event: GlobalEvent, document: &T) {
-        self.document.event_publisher.publish_classified(
-            event,
-            document.security_attributes().clone(),
-            &self.classifications(document),
-        );
+        self.announce_also_to(event, document, []);
     }
 
     /// Announces `event` about `document` as `announce` does, and to
@@ -251,14 +247,9 @@ where
         document: &T,
         subjects: impl IntoIterator<Item = Subject>,
     ) {
-        let attributes = subjects
-            .into_iter()
-            .fold(document.security_attributes().clone(), |attributes, subject| {
-                attributes.granting(subject, Grant::Read)
-            });
         self.document.event_publisher.publish_classified(
             event,
-            attributes,
+            document.security_attributes().clone().granting_read(subjects),
             &self.classifications(document),
         );
     }

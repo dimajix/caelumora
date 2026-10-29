@@ -9,9 +9,7 @@ use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupField, GroupId, GroupUpdateEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{
-    AccessPolicy, ActionType, Enforcement, Grant, SecurityContext, Subject,
-};
+use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext, Subject};
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
     Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
@@ -133,7 +131,6 @@ impl GroupManager {
         if !group.is_team() {
             return Err(GroupError::NotATeam(id));
         }
-        let before = group.security_attributes.clone();
         let mut told: Vec<ActorId> = group.members.clone();
         match &event {
             GroupUpdateEvent::NameChanged(name) => {
@@ -165,10 +162,11 @@ impl GroupManager {
         self.groups.update(ctx, &group).await.map_err(store_error(id))?;
         // Who left is told too: they read it no longer once it is stored.
         told.retain(|actor| !group.has_member(*actor));
-        let attributes = told.into_iter().fold(before, |attributes, actor| {
-            attributes.granting(Subject::Actor(actor), Grant::Read)
-        });
-        self.events.publish(GlobalEvent::updated::<Group>(&id, &event), attributes);
+        self.events.announce_also_to(
+            GlobalEvent::updated::<Group>(&id, &event),
+            &group,
+            told.into_iter().map(Subject::Actor),
+        );
         info!(group = %id, by = %ctx.caller_id, "Group changed");
         Ok(group)
     }
