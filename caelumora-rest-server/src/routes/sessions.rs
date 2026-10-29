@@ -19,6 +19,7 @@ use caelumora_rest_api::session::{
     DescriptionRequest, JoinSessionRequest, PrivateNotesResponse, RenameSessionRequest,
     SessionPrivacyRequest, SessionResponse, SessionSnapshot,
 };
+use caelumora_runtime::session::SessionSpec;
 use caelumora_runtime::view::SessionView;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -30,26 +31,17 @@ pub(super) async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
-    let ctx = user.security_context();
+    let spec = SessionSpec {
+        name: payload.name,
+        language: payload.language,
+        time_zone: payload.time_zone,
+        workspace: payload.workspace.map(Into::into),
+        project: payload.project_id,
+    };
     let session_loop = state
         .session_manager
-        .create_from_template(
-            &ctx,
-            template_id,
-            payload.name.as_deref(),
-            payload.language.as_deref(),
-            payload.time_zone.as_deref(),
-            payload.workspace.map(Into::into),
-        )
+        .create_from_template(&user.security_context(), template_id, spec)
         .await?;
-    // Made in its own project, then put into the shared one asked for (issue 467), as any session
-    // is; if it cannot be, it is not made.
-    if let Some(project) = payload.project_id {
-        if let Err(error) = session_loop.update_project(&ctx, Some(project)).await {
-            state.session_manager.roll_back_creation(session_loop.id()).await;
-            return Err(error.into());
-        }
-    }
 
     Ok(Json(listed(&state, &user, session_loop.id()).await?))
 }

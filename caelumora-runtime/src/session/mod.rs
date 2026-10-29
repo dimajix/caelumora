@@ -47,7 +47,7 @@ pub mod testing;
 
 pub use channels::ChannelSpec;
 pub(crate) use manager::Found;
-pub use manager::SessionManager;
+pub use manager::{SessionManager, SessionSpec};
 
 /// A request for a channel that cannot be met as asked (issue 09). The
 /// messages are meant for users (see `crate::error::user_message`).

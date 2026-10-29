@@ -34,7 +34,7 @@ use caelumora_runtime::component::{ComponentError, ComponentRegistry};
 use caelumora_runtime::error::user_message;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
-use caelumora_runtime::session::SessionManager;
+use caelumora_runtime::session::{SessionManager, SessionSpec};
 use caelumora_runtime::view::Viewer;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
@@ -622,10 +622,11 @@ async fn main() -> Result<()> {
         .create_from_template(
             &security,
             template.id,
-            Some("default-session"),
-            language.as_ref().map(Language::as_str),
-            None,
-            None,
+            SessionSpec {
+                name: Some("default-session".to_string()),
+                language: language.as_ref().map(Language::to_string),
+                ..SessionSpec::default()
+            },
         )
         .await?;
     let session_id = session_loop.id();

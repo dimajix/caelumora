@@ -46,7 +46,7 @@ use caelumora_runtime::moderator::ResponderPolicy;
 use caelumora_runtime::project::ProjectError;
 use caelumora_runtime::scoped::ScopeNotEmpty;
 use caelumora_runtime::session::testing::{create, make_session};
-use caelumora_runtime::session::{ChannelSpec, SessionError};
+use caelumora_runtime::session::{ChannelSpec, SessionError, SessionSpec};
 use caelumora_runtime::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_runtime::testing::{
     attributes, checks, denied, file, not_found, quiet, read, shown, workspace, World, STAFF,
@@ -67,7 +67,7 @@ async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
 
     let refused = world
         .manager
-        .create_from_template(&World::as_user(world.alice), template, None, None, None, None)
+        .create_from_template(&World::as_user(world.alice), template, SessionSpec::default())
         .await
         .expect_err("not hers to use");
     assert!(not_found(&refused), "answered as not there, so that it cannot be probed: {refused:#}");

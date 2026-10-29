@@ -1,4 +1,5 @@
-//! `SessionManager`: starting, stopping, deleting, restoring and purging sessions.
+//! `SessionManager`: the lifecycle of sessions - creating, starting, stopping, deleting, restoring
+//! and purging them.
 
 use super::{
     load_own, make_own, purge_channel_document, require_attachable, require_classification,
@@ -22,7 +23,7 @@ use caelumora_model::channel::Participant;
 use caelumora_model::channel::{Channel, ChannelField};
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::project::Project;
+use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField};
 use caelumora_model::security::{
@@ -62,6 +63,25 @@ use tracing::{info, warn};
 /// the ten seconds Docker leaves between SIGTERM and SIGKILL, with the
 /// actors' `STOP_GRACE` and the time a command's kill waits.
 const SHUTDOWN_BOUND: Duration = Duration::from_secs(8);
+
+/// What a new session made from a template should be (issues 266, 424, 425, 467), as it was asked:
+/// its name, language and time zone are made from it by `create_from_template`. What it leaves out
+/// is the template's; without a project named, the session's results go to a project of its own.
+#[derive(Debug, Clone, Default)]
+pub struct SessionSpec {
+    /// Its name; the template's if `None`.
+    pub name: Option<String>,
+    /// The language its channels are held in where they hold none of their own, a BCP 47 tag; the
+    /// template's if `None`.
+    pub language: Option<String>,
+    /// The time zone it is held in, an IANA name such as `Europe/Berlin`; the template's if `None`,
+    /// else UTC.
+    pub time_zone: Option<String>,
+    /// Its workspace in place of the template's; the template's if `None`.
+    pub workspace: Option<WorkspaceChoice>,
+    /// The shared project its results go to; a project of its own if `None`.
+    pub project: Option<ProjectId>,
+}
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -201,34 +221,27 @@ impl SessionManager {
         }
     }
 
-    /// Creates a session from the template `template_id` on behalf of `context`, whose user owns it
-    /// and is the template's "user", names it `name` - the template's name if `None` -, holds it in
-    /// `language` and `time_zone` - the template's if `None` (issues 424, 425) - and starts it
-    /// (issue 88). Its workspace is `workspace` where one is chosen (issue 266) - none, one of the
-    /// user's own, or one made for it alone -, else the template's. One of the user's own is
-    /// attached as the session is made. Once the session is made, one made for it alone or the
-    /// template's is found by name in its scope, or made, and attached (issue 344), the template's
-    /// agents are found or made alike and taken into it and their channels, and one of the user's
-    /// own is shared with its participants as far as the choice says (issue 23), as `context`; if
-    /// any of it fails, the session's creation is rolled back, with what was made in its scope or
-    /// for it.
+    /// Creates a session from the template `template_id` as `spec` asks, on behalf of `context`,
+    /// whose user owns it and is the template's "user", and starts it (issue 88). One of the
+    /// user's own workspaces that `spec` chooses is attached as the session is made; the rest - a
+    /// workspace to be found or made, the agents, the share of the chosen workspace, the project
+    /// it goes to - is done once it is made (`complete`), as `context`; if any of it fails, the
+    /// session's creation is rolled back, with what was made in its scope or for it.
     ///
     /// # Errors
     /// `SessionError::OwnerNotAUser` if `context` acts for no user; a `StoreError` if the template,
-    /// a user or a personality it names does not exist or may not be read; a `ValueError` if `name`
-    /// is no name, `language` no language tag or `time_zone` no time zone; a `TemplateError` if the
-    /// template cannot be made into a session; what attaching an existing workspace, making one or
-    /// sharing one reports; `SessionError::ChannelUnavailable` if the components of one of its
-    /// channels cannot be read in the owner's name (issue 463); whatever creating the session
-    /// reports.
+    /// a user or a personality it names does not exist or may not be read; a `ValueError` if the
+    /// name `spec` asks for is no name, its language no language tag or its time zone no time zone;
+    /// a `TemplateError` if the template cannot be made into a session; what attaching an existing
+    /// workspace, making one or sharing one reports; `SessionError::ChannelUnavailable` if the
+    /// components of one of its channels cannot be read in the owner's name (issue 463); what
+    /// putting it into the project reports (`SessionLoop::update_project`); whatever creating the
+    /// session reports.
     pub async fn create_from_template(
         &self,
         context: &SecurityContext,
         template_id: SessionTemplateId,
-        name: Option<&str>,
-        language: Option<&str>,
-        time_zone: Option<&str>,
-        workspace: Option<WorkspaceChoice>,
+        spec: SessionSpec,
     ) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
         let owner = context
@@ -236,9 +249,9 @@ impl SessionManager {
             .as_user_id()
             .ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
         // Before anything is found or made for it.
-        let name = Name::optional(name)?;
-        let language = Language::optional(language)?;
-        let time_zone = TimeZone::optional(time_zone)?;
+        let name = Name::optional(spec.name.as_deref())?;
+        let language = Language::optional(spec.language.as_deref())?;
+        let time_zone = TimeZone::optional(spec.time_zone.as_deref())?;
         let template =
             self.stores.session_templates.get(context, template_id).await.map_err(|e| match e {
                 StoreError::NotFound { .. } => SessionError::TemplateNotFound(template_id).into(),
@@ -259,8 +272,8 @@ impl SessionManager {
             )
             .await?;
         // One of the user's chosen is asked about before anything is made.
-        let existing = match &workspace {
-            Some(WorkspaceChoice::Existing { id: chosen, share }) => {
+        let existing = match &spec.workspace {
+            Some(WorkspaceChoice::Existing { id: chosen, .. }) => {
                 require_attachable(
                     self.runtime_manager.workspace_manager(),
                     self.access_policy.as_ref(),
@@ -269,53 +282,26 @@ impl SessionManager {
                     id,
                 )
                 .await?;
-                Some((*chosen, *share))
+                Some(*chosen)
             }
             _ => None,
         };
         let (users, agents) =
             resolve_participants(&self.stores, context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
-        // What is to be found or made: the template's, unless one was chosen.
-        let wanted = match workspace {
-            None => template.workspace.clone(),
-            Some(WorkspaceChoice::New { storage, classification }) => Some(WorkspaceTemplate {
-                name: name.clone(),
-                scope: ScopeTemplate::SessionScope,
-                storage,
-                classification,
-                description: None,
-            }),
-            Some(WorkspaceChoice::None | WorkspaceChoice::Existing { .. }) => None,
-        };
         let (mut session, own, channels) =
             template.build(id, owner, name, language, time_zone, users.clone())?;
         // One chosen is attached as the session is made; one to be found or
         // made once the session is, so that one of its scope is made where
         // `context` may put it (issue 344).
-        session.workspace = existing.map(|(chosen, _)| chosen);
+        session.workspace = existing;
         let session_loop = self.establish(context, session, &own, channels).await?;
         // A channel whose components the owner cannot read is left out as a
         // session opens (issue 463), but making it is the owner's own request,
         // refused as `create_channel` refuses it.
         let completed = async {
             session_loop.require_running()?;
-            self.complete(
-                context,
-                owner,
-                &template,
-                &session_loop,
-                wanted.as_ref(),
-                (users, agents),
-            )
-            .await?;
-            // Shared once the session it is shared with exists (issue 23).
-            if let Some((chosen, Some(grant))) = existing {
-                let controller =
-                    self.runtime_manager.controller_manager().workspace_controller(chosen).await?;
-                controller.share(context, Subject::Group(GroupId::of_session(id)), grant).await?;
-            }
-            Ok(())
+            self.complete(context, owner, &template, &session_loop, &spec, (users, agents)).await
         }
         .await;
         if let Err(e) = completed {
@@ -325,30 +311,43 @@ impl SessionManager {
         Ok(session_loop)
     }
 
-    /// Completes `session` of `owner`, just made from `template` on behalf
-    /// of `context`: the workspace `wanted` found or made and attached, then
-    /// the template's agents found or made and taken in (issues 227, 344),
-    /// and its users and agents - `participants`, as `resolve_participants`
-    /// gives them - taken into the channels that name them as their
-    /// founders (issue 420).
-    /// A workspace made for it that is not in its scope - which goes with
-    /// the session as its creation is rolled back - is deleted here if that
-    /// fails.
+    /// Completes `session` of `owner`, just made from `template` as `spec` asks on behalf of
+    /// `context`: the workspace to be found or made - one `spec` chooses to be made for it alone,
+    /// else the template's - found or made and attached, then the template's agents found or made
+    /// and taken in (issues 227, 344), and its users and agents - `participants`, as
+    /// `resolve_participants` gives them - taken into the channels that name them as their
+    /// founders (issue 420); then one of the user's own workspaces that `spec` chooses shared with
+    /// its participants as far as it says (issue 23), and the session put into the shared project
+    /// `spec` names by the one way into a project (`SessionLoop::update_project`, issue 467). A
+    /// workspace made for it that is not in its scope - which goes with the session as its
+    /// creation is rolled back - is deleted here if any of that fails.
     ///
     /// # Errors
-    /// What finding or making the workspace or the agents reports, or
-    /// taking them in.
+    /// What finding or making the workspace or the agents reports, or taking them in, sharing the
+    /// workspace or putting the session into the project.
     async fn complete(
         &self,
         context: &SecurityContext,
         owner: UserId,
         template: &SessionTemplate,
         session: &SessionLoop,
-        wanted: Option<&WorkspaceTemplate>,
+        spec: &SessionSpec,
         participants: TemplateParticipants,
     ) -> Result<()> {
+        // What is to be found or made: the template's, unless one was chosen.
+        let wanted = match &spec.workspace {
+            None => template.workspace.clone(),
+            Some(WorkspaceChoice::New { storage, classification }) => Some(WorkspaceTemplate {
+                name: session.name(),
+                scope: ScopeTemplate::SessionScope,
+                storage: storage.clone(),
+                classification: classification.clone(),
+                description: None,
+            }),
+            Some(WorkspaceChoice::None | WorkspaceChoice::Existing { .. }) => None,
+        };
         let workspaces = self.runtime_manager.workspace_manager();
-        let resolved = match wanted {
+        let resolved = match &wanted {
             Some(wanted) => {
                 Some(resolve_workspace(workspaces, context, wanted, session.id(), owner).await?)
             }
@@ -369,7 +368,18 @@ impl SessionManager {
                 users,
                 agents,
             )
-            .await
+            .await?;
+            // Shared once the session it is shared with exists (issue 23).
+            if let Some(WorkspaceChoice::Existing { id, share: Some(grant) }) = &spec.workspace {
+                let controller =
+                    self.runtime_manager.controller_manager().workspace_controller(*id).await?;
+                let group = Subject::Group(GroupId::of_session(session.id()));
+                controller.share(context, group, *grant).await?;
+            }
+            if let Some(project) = spec.project {
+                session.update_project(context, Some(project)).await?;
+            }
+            Ok(())
         }
         .await;
         if let (Err(_), Some(made)) = (&completed, made) {
@@ -386,11 +396,10 @@ impl SessionManager {
         completed
     }
 
-    /// Rolls back creating the session `id`, just made and not to be kept -
-    /// not complete, or not put into the project it was made for (issue
-    /// 467) -, in the runtime's name - making it was permitted: deleted and
-    /// purged, with what was made in its scope. What cannot be is logged.
-    pub async fn roll_back_creation(&self, id: SessionId) {
+    /// Rolls back creating the session `id`, just made and not to be kept - not complete -, in the
+    /// runtime's name - making it was permitted: deleted and purged, with what was made in its
+    /// scope. What cannot be is logged.
+    async fn roll_back_creation(&self, id: SessionId) {
         let system = SecurityContext::system();
         if let Err(undo) = async {
             self.delete(&system, id).await?;
@@ -1115,7 +1124,7 @@ mod tests {
     use crate::runtime::RuntimeManager;
     use crate::session::testing::*;
     use crate::session::SessionLoop;
-    use crate::session::{SessionError, SessionManager};
+    use crate::session::{SessionError, SessionManager, SessionSpec};
     use crate::testing::TestRuntime;
     use crate::view::Viewer;
     use anyhow::Result;
@@ -1608,7 +1617,7 @@ mod tests {
         runtime.entity_stores().user_profiles.create(&hers, &profile).await.unwrap();
 
         let session = manager
-            .create_from_template(&hers, template.id, None, None, None, None)
+            .create_from_template(&hers, template.id, SessionSpec::default())
             .await
             .expect("created and started");
         assert_eq!(session.name(), "pairing", "named after the template unless named");
@@ -1632,7 +1641,7 @@ mod tests {
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
 
         let missing = manager
-            .create_from_template(&hers, SessionTemplateId::new(), None, None, None, None)
+            .create_from_template(&hers, SessionTemplateId::new(), SessionSpec::default())
             .await
             .expect_err("no such template");
         assert!(
@@ -1643,7 +1652,7 @@ mod tests {
             "{missing}"
         );
         let not_a_user = manager
-            .create_from_template(&SecurityContext::system(), template.id, None, None, None, None)
+            .create_from_template(&SecurityContext::system(), template.id, SessionSpec::default())
             .await
             .expect_err("the system owns no session");
         assert!(
@@ -1655,7 +1664,15 @@ mod tests {
         );
 
         let asked = manager
-            .create_from_template(&hers, template.id, Some("in French"), Some("fr"), None, None)
+            .create_from_template(
+                &hers,
+                template.id,
+                SessionSpec {
+                    name: Some("in French".to_string()),
+                    language: Some("fr".to_string()),
+                    ..SessionSpec::default()
+                },
+            )
             .await
             .expect("held in the language asked for");
         assert_eq!(
@@ -1673,10 +1690,11 @@ mod tests {
             .create_from_template(
                 &hers,
                 template.id,
-                Some("in no language"),
-                Some("no language"),
-                None,
-                None,
+                SessionSpec {
+                    name: Some("in no language".to_string()),
+                    language: Some("no language".to_string()),
+                    ..SessionSpec::default()
+                },
             )
             .await
             .expect_err("no language tag");
@@ -1685,10 +1703,11 @@ mod tests {
             .create_from_template(
                 &hers,
                 template.id,
-                Some("in Berlin"),
-                None,
-                Some("Europe/Berlin"),
-                None,
+                SessionSpec {
+                    name: Some("in Berlin".to_string()),
+                    time_zone: Some("Europe/Berlin".to_string()),
+                    ..SessionSpec::default()
+                },
             )
             .await
             .expect("held in the time zone asked for");
@@ -1701,10 +1720,11 @@ mod tests {
             .create_from_template(
                 &hers,
                 template.id,
-                Some("nowhere"),
-                None,
-                Some("Europe/Atlantis"),
-                None,
+                SessionSpec {
+                    name: Some("nowhere".to_string()),
+                    time_zone: Some("Europe/Atlantis".to_string()),
+                    ..SessionSpec::default()
+                },
             )
             .await
             .expect_err("no time zone");
@@ -1733,7 +1753,7 @@ mod tests {
             .await
             .unwrap();
         let refused = manager
-            .create_from_template(&hers, broken.id, None, None, None, None)
+            .create_from_template(&hers, broken.id, SessionSpec::default())
             .await
             .expect_err("a bundle she cannot read");
         let Some(&SessionError::ChannelUnavailable { session, .. }) =
@@ -1773,10 +1793,13 @@ mod tests {
             .create_from_template(
                 &hers,
                 template.id,
-                None,
-                None,
-                None,
-                Some(WorkspaceChoice::Existing { id: docs.id, share: Some(Grant::Read) }),
+                SessionSpec {
+                    workspace: Some(WorkspaceChoice::Existing {
+                        id: docs.id,
+                        share: Some(Grant::Read),
+                    }),
+                    ..SessionSpec::default()
+                },
             )
             .await
             .expect_err("the workspace cannot be stored as shared");

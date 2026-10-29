@@ -1,6 +1,6 @@
 # 476 — Making a session in a project is a sequence of the REST handler, with its roll-back
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Sessions and channels
@@ -60,3 +60,13 @@ Recommendation: C, then A.
   (`session/manager.rs`), the row "Make from a template" of PERMISSION-CHECKS.md says so. Test:
   `a_session_whose_workspace_cannot_be_shared_is_not_made`, with the template of
   `a_session_is_created_from_a_template_for_its_owner` made a test helper of its own (`pairing`).
+- **2026-10-29** — Step 2 done: `SessionSpec` (`session/manager.rs`, exported beside
+  `SessionManager`) - name, language and time zone as asked, the workspace chosen, the project -,
+  `create_from_template(context, template_id, spec)`. Decided with the maintainer before it: what
+  completes the session is `complete`'s alone - it takes the spec, finds or makes the workspace,
+  takes the agents in, shares the chosen workspace and puts the session into the project by
+  `SessionLoop::update_project` -, so that `create_from_template` rolls back one step.
+  `roll_back_creation` is private again. The REST handler `create_session` and the TUI make a
+  session in one call. Test: `a_session_is_made_in_a_project_as_it_is_put_into_one` in the agents'
+  security suite - as making a session from a template is tested there, its agents running.
+  PERMISSION-CHECKS.md (the row "Make from a template") and PROJECTS.md say so.

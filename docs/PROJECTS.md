@@ -49,7 +49,8 @@ participants. Who leaves reads the project no longer, and is told so.
     into its own again - the one in its scope, or a new one if that was lifted. The project it lies
     in is shared with the session's participants for reading, in the runtime's name, so that every
     participant publishes into it; the project it leaves is no longer. A new session can be made in
-    a shared project: it is made in its own and put there, or not made at all.
+    a shared project (`SessionSpec::project`): it is made in its own and put there the same way,
+    as the last step of making it, or not made at all.
 
 **Nothing moves.** What was published into a project stays there; only what comes next goes to the
 other. The session keeps its workspace and its agents; what it finds by name does not change, since
