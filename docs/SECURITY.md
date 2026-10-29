@@ -28,10 +28,10 @@ Security is a context that travels with every operation, and explicit checks aga
     count, whether what the system owns and an entry for everyone admit. A policy that gives one
     decides `check` on entities by it, so that what a store narrows a list by and the decision on
     one entity cannot come apart; one that gives none (`None`, the default) narrows nothing up
-    front. One question asked of many contexts at once - the event bus asks every party whether it
-    receives an event - is `check_each(contexts, action)`: context by context by default; the
-    ownership policy decides a verb on entities for all of them over memberships read once for the
-    question (issue [503](../issues/503-bus-asks-every-stream.md)).
+    front. One question asked of many contexts at once - the event bus asks every subscriber
+    whether it receives an event - is `check_each(contexts, action)`: context by context by
+    default; the ownership policy decides a verb on entities for all of them over memberships read
+    once for the question (issue [503](../issues/503-bus-asks-every-stream.md)).
 *   **`ActionType`** enumerates every securable action. An action on a stored entity carries the
     entity's `SecurityAttributes`, not the entity itself, and is asked alike for every kind (issue
     [323](../issues/323-kinds-enumerated-in-the-core.md)): `ActionType::Entity`, by the entity's

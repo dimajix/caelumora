@@ -1182,7 +1182,7 @@ mod tests {
         create(&manager, &ctx, session).await.unwrap();
 
         // The manager emits these synchronously, in order, before returning.
-        let events = drain(&mut rx);
+        let events = rx.drain().await;
         let created = events
             .iter()
             .position(|e| e.about::<Session>() == Some((session_id, &EntityChange::Created)));
@@ -1218,7 +1218,7 @@ mod tests {
         let mut rx = runtime.event_bus().subscribe_all();
         assert!(manager.delete(&ctx, session_id).await.unwrap());
 
-        let events = drain(&mut rx);
+        let events = rx.drain().await;
         let stopped = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STOPPED, .. })) if id == session_id));
         let ch_deleted = events.iter().position(|e| {
             e.about::<Channel>() == Some(((session_id, channel_id), &EntityChange::Deleted))
@@ -1251,7 +1251,7 @@ mod tests {
         let mut rx = runtime.event_bus().subscribe_all();
         manager.open(&ctx, session_id).await.unwrap();
 
-        let events = drain(&mut rx);
+        let events = rx.drain().await;
         assert!(
             events.iter().any(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id)),
             "expected SessionStarted, got {:?}", events
@@ -1289,7 +1289,7 @@ mod tests {
             "one loop for all of them"
         );
 
-        let started = drain(&mut rx).into_iter().filter(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id)).count();
+        let started = rx.drain().await.into_iter().filter(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id)).count();
         assert_eq!(started, 1, "the session started once");
         manager.stop(&SecurityContext::system(), session_id).await.unwrap();
     }
@@ -1513,13 +1513,13 @@ mod tests {
             .unwrap();
         session.follow_agents(None).await;
         assert!(!talk.participant_ids().contains(&actor), "looking again, it stops the actor");
-        let announced = drain(&mut rx);
+        let announced = rx.drain().await;
         assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some((address, change)) if address == (session.id(), talk.id()) && change.data::<ActorId>(channel::LEFT) == Some(ActorId::Agent(helper.id)))), "as a leave: {announced:?}");
 
         runtime.entity_stores().agents.restore(&system, helper.id).await.unwrap();
         session.follow_agents(None).await;
         assert!(talk.participant_ids().contains(&actor), "and starts it again");
-        let announced = drain(&mut rx);
+        let announced = rx.drain().await;
         assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, c), change)) if c == talk.id() && change.data::<ActorId>(channel::JOINED) == Some(ActorId::Agent(helper.id)))), "as a join: {announced:?}");
         manager.stop(&system, session.id()).await.unwrap();
     }
@@ -1849,7 +1849,9 @@ mod tests {
         let members = GroupId::of_project(project);
         assert!(stores.groups.get(&system, members).await.is_ok(), "with the group of its members");
         assert!(
-            drain(&mut events)
+            events
+                .drain()
+                .await
                 .iter()
                 .any(|e| e.about::<Project>() == Some((project, &EntityChange::Created))),
             "announced"
@@ -1869,7 +1871,9 @@ mod tests {
             "and what lies in its scope"
         );
         assert!(
-            drain(&mut events)
+            events
+                .drain()
+                .await
                 .iter()
                 .any(|e| e.about::<Project>() == Some((project, &EntityChange::Deleted))),
             "announced"
@@ -1883,7 +1887,9 @@ mod tests {
             "and what lies in its scope"
         );
         assert!(
-            drain(&mut events)
+            events
+                .drain()
+                .await
                 .iter()
                 .any(|e| e.about::<Project>() == Some((project, &EntityChange::Restored))),
             "announced"
@@ -2200,14 +2206,18 @@ mod tests {
 
         manager.delete(&ctx, id).await.unwrap();
         assert!(
-            drain(&mut events)
+            events
+                .drain()
+                .await
                 .iter()
                 .any(|e| e.about::<Agent>() == Some((sessions.id, &EntityChange::Deleted))),
             "the session's agent is announced as it goes"
         );
         manager.restore(&ctx, id).await.unwrap();
         assert!(
-            drain(&mut events)
+            events
+                .drain()
+                .await
                 .iter()
                 .any(|e| e.about::<Agent>() == Some((sessions.id, &EntityChange::Restored))),
             "and as it comes back"

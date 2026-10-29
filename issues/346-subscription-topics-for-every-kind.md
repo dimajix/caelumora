@@ -70,3 +70,9 @@ have now, and D is what that use case will most likely need.
 
 - **2026-10-14** — Opened after the question whether a plugin can follow a single artifact on the
   event bus. There is no use case yet; opened to be referred to.
+- **2026-10-29** — Issue [504](504-bus-has-two-delivery-paths.md) made every subscription one
+  kind: `subscribe(context, topics)`, served by one dispatcher, and `follow` works for each. Option
+  D - topics for a subscription in someone's name - is there now. The topics of an event are
+  derived in one place, `SubscriptionTopic::of`, still by a `match` over the core's kinds; the
+  shortcuts left are `subscribe_all`, `subscribe_session` and `subscribe_channel`. What remains
+  here is the shape of the topics: B and C.

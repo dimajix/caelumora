@@ -2648,7 +2648,7 @@ mod tests {
     /// or a notice of the runtime is not.
     #[tokio::test]
     async fn what_others_hear_is_announced_once_it_is_stored() {
-        use crate::session::testing::{drain, running_session_of_a_user, spec, test_runtime};
+        use crate::session::testing::{running_session_of_a_user, spec, test_runtime};
         use crate::session::SessionManager;
         use caelumora_model::channel::{Channel, SAID};
         let runtime = test_runtime();
@@ -2678,7 +2678,9 @@ mod tests {
             channel.append_history(&said(message), Audience::Everybody).await;
         }
 
-        let announced: Vec<MessageId> = drain(&mut rx)
+        let announced: Vec<MessageId> = rx
+            .drain()
+            .await
             .iter()
             .filter_map(|event| event.about::<Channel>().filter(|((_, id), _)| *id == channel.id()))
             .filter_map(|(_, change)| change.data::<Message>(SAID))
