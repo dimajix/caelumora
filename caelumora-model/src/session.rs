@@ -16,7 +16,7 @@ use crate::value::name::Name;
 use crate::value::time_zone::TimeZone;
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
-use crate::project::ProjectId;
+use crate::project::{Project, ProjectId};
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use crate::removal::Removal;
@@ -177,6 +177,14 @@ impl Session {
         SecurityAttributes { acl: attributes.acl.into_iter().chain(access.iter().copied()).collect(), ..attributes }
     }
 
+    /// A new own project of the session (issue 467): its owner's, in its scope, read by its
+    /// participants (`Project::own_of`) - `None` if its owner is no user. Each call makes another,
+    /// with an id of its own, and stores nothing: the one stored is found by its name
+    /// (`Project::own_name`).
+    pub fn new_own_project(&self) -> Option<Project> {
+        self.owner().map(|owner| Project::own_of(self.id, owner))
+    }
+
     /// Says what the session is for (issue 245): `summary` and `briefing`
     /// replace what it said - a missing or empty one removes it.
     ///
@@ -255,21 +263,29 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
 
+    /// A new session of `owner` with `participants`, granting what `access` grants besides.
+    fn session_of(owner: UserId, participants: Vec<Participant>, access: &[AclEntry]) -> Session {
+        let id = SessionId::new();
+        let now = Utc::now();
+        Session {
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants, channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
+            security_attributes: Session::attributes_of(id, owner, access), deleted: None,
+        }
+    }
+
     #[test]
     fn taking_a_user_in_uses_up_their_invitation_and_no_rule() {
-        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
-        let id = SessionId::new();
+        let alice = UserId::new();
+        let bob = UserId::new();
+        let carol = UserId::new();
         let access = [
             AclEntry { subject: Subject::Actor(ActorId::User(bob)), grant: Grant::Join },
             AclEntry { subject: Subject::Actor(ActorId::User(carol)), grant: Grant::Join },
             AclEntry { subject: Subject::Everyone, grant: Grant::Join },
         ];
-        let now = Utc::now();
-        let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
-            security_attributes: Session::attributes_of(id, alice, &access), deleted: None,
-        };
+        let mut session = session_of(alice, vec![Participant::User(alice)], &access);
+        let id = session.id;
         session.take_in(Participant::User(bob));
         session.take_in(Participant::User(bob));
         session.take_in(Participant::Agent(AgentId::new()));
@@ -283,31 +299,35 @@ mod tests {
     /// those it is a participant of.
     #[test]
     fn the_sessions_with_a_participant_are_those_it_takes_part_in() {
-        let (alice, agent) = (UserId::new(), AgentId::new());
-        let id = SessionId::new();
-        let now = Utc::now();
-        let session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None,
-            participants: vec![Participant::User(alice), Participant::Agent(agent)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
-            security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
-        };
+        let alice = UserId::new();
+        let agent = AgentId::new();
+        let session = session_of(alice, vec![Participant::User(alice), Participant::Agent(agent)], &[]);
         let document = serde_json::to_value(&session).unwrap();
         for actor in [ActorId::User(alice), ActorId::Agent(agent), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new())] {
             assert_eq!(Filter::with_participant(actor).matches(&document), session.takes_part(actor), "{actor}");
         }
     }
 
+    /// Issue 485: a session's new own project is its owner's and lies in its scope; a session of
+    /// no user has none.
+    #[test]
+    fn a_new_own_project_is_the_owner_s_in_the_session_s_scope() {
+        let alice = UserId::new();
+        let mut session = session_of(alice, Vec::new(), &[]);
+        let id = session.id;
+        let own = session.new_own_project().expect("a session of a user");
+        assert_eq!(own.name, Project::own_name(id));
+        assert_eq!(own.owner(), Some(alice));
+        assert!(own.security_attributes.acl.contains(&AclEntry { subject: Subject::Group(GroupId::of_session(id)), grant: Grant::Read }), "read by its participants");
+        session.security_attributes.owner_id = ActorId::Agent(AgentId::new());
+        assert!(session.new_own_project().is_none(), "a session of no user");
+    }
+
     /// Issue 467: the condition of the sessions of a project meets those
     /// whose results go to it, as it is changed.
     #[test]
     fn the_sessions_in_a_project_are_those_whose_results_go_to_it() {
-        let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
-        let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: Vec::new(), channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
-            security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
-        };
+        let mut session = session_of(UserId::new(), Vec::new(), &[]);
         let shared = ProjectId::new();
         assert!(!Filter::in_project(shared).matches(&serde_json::to_value(&session).unwrap()));
         session.apply(&SessionUpdateEvent::ProjectChanged(shared)).unwrap();
@@ -317,12 +337,8 @@ mod tests {
 
     #[test]
     fn a_change_is_made_into_the_session_s_values_or_leaves_it_as_it_was() {
-        let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
-        let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
-            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, project: ProjectId::new(), created_at: now, updated_at: now,
-            security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
-        };
+        let alice = UserId::new();
+        let mut session = session_of(alice, vec![Participant::User(alice)], &[]);
         session.apply(&SessionUpdateEvent::NameChanged("planning".to_string())).unwrap();
         session.apply(&SessionUpdateEvent::DescriptionChanged { summary: Some("What we plan".to_string()), briefing: None }).unwrap();
         session.apply(&SessionUpdateEvent::ParticipantJoined(Participant::User(alice))).unwrap();

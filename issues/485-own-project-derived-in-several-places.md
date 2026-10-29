@@ -1,6 +1,6 @@
 # 485 — A session's own project is derived from its owner in several places
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -57,3 +57,14 @@ Recommendation: A.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the findings of issue 471.
+- **2026-10-29** — Done as A, named `Session::new_own_project`: it makes a new project with an id
+  of its own each time, which `own_project` would hide beside `load_own`, which loads the one there
+  is. `SessionManager::create`, `SessionLoop::update_project` and `session::testing::persist` ask
+  it; `SessionTemplate::build` keeps `Project::own_of`, since the session it builds needs the
+  project's id and its owner is a user already.
+- **2026-10-29** — From the review, at the maintainer's request: which user an entity belongs to
+  is answered by `Secured::owner`, a provided method, in place of the copies of `Project`,
+  `Workspace` and `Artifact`; `Session::new_own_project`, `Project::validate`,
+  `Workspace::validate`, `SessionPrivacy::of` and `ControllerManager::agent_controller` ask it.
+  The rule that two values are two `let` lines is written down in CODING-GUIDELINES.md; the lines
+  that do not keep it yet are issue [489](489-values-bound-by-a-tuple-made-on-the-spot.md).

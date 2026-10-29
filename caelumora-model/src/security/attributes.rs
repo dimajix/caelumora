@@ -6,6 +6,7 @@ use crate::actor::ActorId;
 use crate::group::{Group, GroupId};
 use crate::role::RoleId;
 use crate::store::query::FieldValue;
+use crate::user::UserId;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -165,6 +166,12 @@ impl Memberships for NoMemberships {
 /// An entity that carries `SecurityAttributes`.
 pub trait Secured {
     fn security_attributes(&self) -> &SecurityAttributes;
+
+    /// The user it belongs to; `None` if its owner is no user - for a kind that must be a user's,
+    /// only a document that could not be stored (`Stored::validate`).
+    fn owner(&self) -> Option<UserId> {
+        self.security_attributes().owner_id.as_user_id()
+    }
 }
 
 #[cfg(test)]
@@ -173,7 +180,6 @@ mod tests {
     use crate::security::testing::*;
     use crate::agent::AgentId;
     use crate::store::query::meets_exactly_its_equals;
-    use crate::user::UserId;
     use uuid::Uuid;
 
     #[test]

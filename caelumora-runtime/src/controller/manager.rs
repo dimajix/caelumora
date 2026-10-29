@@ -12,7 +12,7 @@ use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::EntityChange;
-use caelumora_model::security::{SecurityAttributes, SecurityContext, AccessPolicy};
+use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultExt};
 use caelumora_model::store::history::HistoryStore;
@@ -115,9 +115,9 @@ impl ControllerManager {
         let agent = self.stores.agents.get(&SecurityContext::system(), id).await?;
         // Its owner's roles are what it acts with (issue 304): an owner who
         // is gone leaves it none.
-        let owner = match agent.security_attributes.owner_id {
-            ActorId::User(owner) => self.user_controller(owner).await.optional()?,
-            _ => None,
+        let owner = match agent.owner() {
+            Some(owner) => self.user_controller(owner).await.optional()?,
+            None => None,
         };
         let controller = Arc::new(AgentController::new(agent, owner, Arc::<EventBus>::clone(&self.event_bus), &self.stores));
         remember(&mut agents, id, &controller);

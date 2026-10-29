@@ -24,7 +24,7 @@ use caelumora_model::digest;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AclEntry, Grant, Refused, SecurityAttributes, SecurityContext, Subject};
+use caelumora_model::security::{AclEntry, Grant, Refused, Secured, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::config::{AppConfig, AttachmentsConfig, AuthConfig, BackendConfig, ContentConfig};
 use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError, Stored};

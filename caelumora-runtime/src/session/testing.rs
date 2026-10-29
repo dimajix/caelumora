@@ -32,7 +32,7 @@ use caelumora_model::channel::{Channel, ChannelState, moderation_components};
 use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::project::{Project, ProjectId};
+use caelumora_model::project::ProjectId;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::actor::{ActorEvent, Rejection};
 use caelumora_model::message::{MessageId, Message};
@@ -214,8 +214,7 @@ pub async fn create(manager: &SessionManager, ctx: &SecurityContext, session: Se
 /// the session as stored. The channels keep the participants they name, without their joins in
 /// their histories (`founded`).
 pub async fn persist(manager: &SessionManager, ctx: &SecurityContext, session: Session, channels: &[Channel]) -> Session {
-    let owner = session.security_attributes.owner_id.as_user_id().expect("a session of a user");
-    let own = Project::own_of(session.id, owner);
+    let own = session.new_own_project().expect("a session of a user");
     let session = Session { project: own.id, ..session };
     manager.persist(ctx, &session, &own, channels).await.expect("the session is stored");
     session

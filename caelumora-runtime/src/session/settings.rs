@@ -153,10 +153,7 @@ impl SessionLoop {
             Some(id) => (self.reached_project(context, id).await?, false),
             None => match load_own(&self.stores, self.id).await? {
                 Some(own) => (own, false),
-                None => {
-                    let owner = session.security_attributes.owner_id;
-                    (Project::own_of(self.id, owner.as_user_id().ok_or(SessionError::OwnerNotAUser(owner))?), true)
-                }
+                None => (session.new_own_project().ok_or(SessionError::OwnerNotAUser(session.security_attributes.owner_id))?, true),
             },
         };
         if target.id == session.project {
