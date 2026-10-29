@@ -448,8 +448,11 @@ mod tests {
         let mut sessions = Sessions::under(Default::default());
         let owner = sessions.user("owner").await;
         let memory = component(sessions.access_policy(), ActorId::User(owner));
-        let (session, other_session) = (sessions.create(owner, PrivacyConfig::Private).await, sessions.create(owner, PrivacyConfig::Private).await);
-        let (team, public, elsewhere) = (sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await, sessions.create_channel(session, Classification::general(Confidentiality::Public)).await, sessions.create_channel(other_session, Classification::general(Confidentiality::Internal)).await);
+        let session = sessions.create(owner, PrivacyConfig::Private).await;
+        let other_session = sessions.create(owner, PrivacyConfig::Private).await;
+        let team = sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await;
+        let public = sessions.create_channel(session, Classification::general(Confidentiality::Public)).await;
+        let elsewhere = sessions.create_channel(other_session, Classification::general(Confidentiality::Internal)).await;
 
         // A turn in an internal channel remembers something it was told
         // there ...
@@ -491,8 +494,11 @@ mod tests {
         let mut sessions = Sessions::under(Default::default());
         let owner = sessions.user("owner").await;
         let memory = component(sessions.access_policy(), ActorId::User(owner));
-        let (session, other_session) = (sessions.create(owner, PrivacyConfig::Private).await, sessions.create(owner, PrivacyConfig::Private).await);
-        let (team, confidential, elsewhere) = (sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await, sessions.create_channel(session, Classification::general(Confidentiality::Confidential)).await, sessions.create_channel(other_session, Classification::general(Confidentiality::Internal)).await);
+        let session = sessions.create(owner, PrivacyConfig::Private).await;
+        let other_session = sessions.create(owner, PrivacyConfig::Private).await;
+        let team = sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await;
+        let confidential = sessions.create_channel(session, Classification::general(Confidentiality::Confidential)).await;
+        let elsewhere = sessions.create_channel(other_session, Classification::general(Confidentiality::Internal)).await;
         remember(&memory, &sessions, &handle, agent, team.clone(), "Kaya likes tea.").await;
 
         let mut state = AgentChannelState::default();
@@ -587,7 +593,8 @@ mod tests {
         let (owner, stranger) = (ActorId::User(owner), ActorId::User(stranger));
         let policy: Arc<dyn ConfidentialityPolicy> = Arc::new(OnlyFor(Some(owner), Default::default()));
         // Public, so that the built-in rule would let every channel read it.
-        let (origin, reader) = (sessions.create_channel(session, Classification::general(Confidentiality::Public)).await, sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await);
+        let origin = sessions.create_channel(session, Classification::general(Confidentiality::Public)).await;
+        let reader = sessions.create_channel(session, Classification::general(Confidentiality::Internal)).await;
         remember(&component_under(sessions.access_policy(), Arc::clone(&policy), owner), &sessions, &handle, agent, origin.clone(), "Kaya likes tea.").await;
 
         let asked_by_owner = recall(&component_under(sessions.access_policy(), Arc::clone(&policy), owner), &sessions, &handle, agent, reader.clone()).await;
@@ -606,7 +613,8 @@ mod tests {
         let owner = sessions.user("owner").await;
         let memory = component(sessions.access_policy(), ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
-        let (confidential, public) = (sessions.create_channel(session, Classification::general(Confidentiality::Confidential)).await, sessions.create_channel(session, Classification::general(Confidentiality::Public)).await);
+        let confidential = sessions.create_channel(session, Classification::general(Confidentiality::Confidential)).await;
+        let public = sessions.create_channel(session, Classification::general(Confidentiality::Public)).await;
 
         // A turn in a confidential channel that has seen only what is
         // internal remembers it as internal (issue 168) ...
@@ -645,7 +653,8 @@ mod tests {
         let memory = component_under(sessions.access_policy(), Arc::new(rules), ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
         let in_compartment = |name: &str| Classification::new(Confidentiality::Internal, [Compartment::new(name)]).unwrap();
-        let (hr, finance) = (sessions.create_channel(session, in_compartment("hr")).await, sessions.create_channel(session, in_compartment("finance")).await);
+        let hr = sessions.create_channel(session, in_compartment("hr")).await;
+        let finance = sessions.create_channel(session, in_compartment("finance")).await;
         remember(&memory, &sessions, &handle, agent, hr.clone(), "The budget is tight.").await;
         assert!(recall(&memory, &sessions, &handle, agent, finance.clone()).await.text.is_empty(), "HR's, not finance's");
 

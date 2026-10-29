@@ -108,7 +108,9 @@ mod tests {
     fn a_command_is_listed_while_it_may_run_and_kept_a_while_after() {
         let commands = Commands::default();
         let (workspace, other) = (WorkspaceId::new(), WorkspaceId::new());
-        let (running, ended, long_ended) = (Arc::new(Fake::default()), Arc::new(Fake::default()), Arc::new(Fake::default()));
+        let running = Arc::new(Fake::default());
+        let ended = Arc::new(Fake::default());
+        let long_ended = Arc::new(Fake::default());
         commands.insert(key(workspace, "running"), Arc::clone(&running));
         commands.insert(key(workspace, "ended"), Arc::clone(&ended));
         commands.insert(key(other, "long ended"), Arc::clone(&long_ended));

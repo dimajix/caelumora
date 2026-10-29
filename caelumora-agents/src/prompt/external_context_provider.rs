@@ -88,7 +88,8 @@ mod tests {
             fixed("empty", "  ", PromptPosition::Start),
             fixed("rules", "Answer in German.", PromptPosition::Start),
         ] };
-        let (state, agent_state, work) = (AgentChannelState::default(), AgentStateHandle::detached(), Work::default());
+        let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
+        let work = Work::default();
         let (parts, knowledge) = provider.current_context(&Situation::new(AgentId::new(), &work, &state, &agent_state, &detached_actor_runtime())).await.unwrap();
 
         let given: Vec<_> = parts.iter().map(|p| (p.source.as_deref(), p.text.as_str(), p.role, p.after)).collect();

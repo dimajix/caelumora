@@ -910,7 +910,8 @@ mod tests {
         let session = stored(&manager, session, slice::from_ref(&channel)).await;
 
         let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let (question, answer) = (said("question"), Message { turn_id: Some(TurnId::new()), sender_id: ActorId::Agent(remote.id), ..said("answer") });
+        let question = said("question");
+        let answer = Message { turn_id: Some(TurnId::new()), sender_id: ActorId::Agent(remote.id), ..said("answer") };
         let mut state = AgentChannelState::default();
         // One call: the question was given, the transcript started anew,
         // and the answer came of it.
@@ -1481,7 +1482,8 @@ mod tests {
         let plan = said("the plan", &secret.classification);
         // Attached to what was released, each with its own label (issue 282) - kept nowhere.
         let attached = |name: &str, classification: &Classification| ContentRef { classification: classification.clone(), storage: "nowhere".to_string(), ..make_content_ref(name, b"") };
-        let (agenda, minutes) = (attached("agenda.txt", &public.classification), attached("minutes.txt", &secret.classification));
+        let agenda = attached("agenda.txt", &public.classification);
+        let minutes = attached("minutes.txt", &secret.classification);
         let date = Message { attachments: vec![agenda.clone(), minutes.clone()], ..said("the date", &public.classification) };
         state.history.extend(vec![plan.clone(), date.clone()]);
         let ended = HistoryEntry::TurnGivenUp { turn_id: TurnId::new(), actor: ActorId::Agent(helper.id), reason: GivenUpReason::Left, at: Utc::now() };
@@ -1700,7 +1702,10 @@ mod tests {
 
         let confidentiality = runtime.confidentiality();
         let may_read = |reader: &Arc<ChannelLoop>, source: &Arc<ChannelLoop>| {
-            let (reader, source, confidentiality, context) = (Arc::clone(reader), Arc::clone(source), Arc::clone(confidentiality), alice_ctx.clone());
+            let reader = Arc::clone(reader);
+            let source = Arc::clone(source);
+            let confidentiality = Arc::clone(confidentiality);
+            let context = alice_ctx.clone();
             async move {
                 use caelumora_model::confidentiality::{ConfidentialityQuestions, Place};
                 let place = |channel: &ChannelLoop| Place { channel: channel.id(), classification: channel.classification(), session: channel.session_loop().map(|s| s.privacy()).unwrap_or_default() };

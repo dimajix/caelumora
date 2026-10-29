@@ -429,7 +429,8 @@ mod tests {
 
     #[test]
     fn what_is_found_from_a_place_is_the_innermost_of_every_name() {
-        let (alice, session_id) = (UserId::new(), SessionId::new());
+        let alice = UserId::new();
+        let session_id = SessionId::new();
         let place = Scope::ChannelScope { session_id, channel_id: ChannelId::new() };
         let items = [
             item("notes", Scope::GlobalScope, "the global notes"),

@@ -254,7 +254,8 @@ mod tests {
         push(&mut chain, add(2, "The user lives in Berlin."), MessageId::new());
         let released = Classification::general(Confidentiality::Public);
         push(&mut chain, Change::Reclassify { id: NoteId(1), classification: released }, MessageId::new());
-        let (later, internal) = (MessageId::new(), Classification::general(Confidentiality::Internal));
+        let later = MessageId::new();
+        let internal = Classification::general(Confidentiality::Internal);
         push(&mut chain, Change::Update { id: NoteId(1), text: "The user likes coffee.".to_string(), classification: internal.clone() }, later);
         push(&mut chain, Change::Update { id: NoteId(7), text: "nothing".to_string(), classification: internal.clone() }, MessageId::new());
 

@@ -324,7 +324,9 @@ impl AgentBody {
     /// as an answer to it, in the agent's name and with its rights. One that
     /// cannot be sent is logged.
     pub(super) async fn reject_retries(&self, retries: Vec<Envelope>, reason: RetryRefused, output: &dyn EventSender) {
-        let (own, name, acting) = (self.id(), self.name(), self.security_context());
+        let own = self.id();
+        let name = self.name();
+        let acting = self.security_context();
         for retry in retries {
             let Some(target) = retry_target(&retry) else { continue };
             let rejected = ActorEvent::RetryRejected { target, reason };

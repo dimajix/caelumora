@@ -516,7 +516,8 @@ mod tests {
         let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
-        let (given, kept) = (Message { id: MessageId::new(), ..said("given") }, Message { id: MessageId::new(), ..said("kept") });
+        let given = Message { id: MessageId::new(), ..said("given") };
+        let kept = Message { id: MessageId::new(), ..said("kept") };
         state.perceive(vec![given.clone()]);
         state.transcript.start_anew();
         state.perceive(vec![kept.clone()]);
@@ -555,7 +556,8 @@ mod tests {
         let earlier = Message { id: MessageId::new(), ..said("earlier") };
         state.perceive(vec![earlier.clone()]);
         state.transcript.start_anew();
-        let (public, before) = (Classification::PUBLIC, state.transcript.all_entries().len());
+        let public = Classification::PUBLIC;
+        let before = state.transcript.all_entries().len();
         noting.take_in(&mut state, envelope(ActorEvent::MessageReclassified { message: earlier.id, classification: public.clone() }), &mut rx).await;
         assert_eq!(state.transcript.all_entries().len(), before, "off the transcript's path: nothing recorded, nothing handed over");
         let mut on_path = AgentChannelState::default();

@@ -149,7 +149,8 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
         ..world.personality("answering", None, &[]).await
     };
     world.runtime.entity_stores().personalities.update(&World::system(), &answering).await.unwrap();
-    let (helper, other) = (world.agent("helper", world.alice, &answering).await, world.agent("other", world.alice, &answering).await);
+    let helper = world.agent("helper", world.alice, &answering).await;
+    let other = world.agent("other", world.alice, &answering).await;
     let session = world.shared_session(&[helper], &[other]).await;
     let main = Arc::clone(&session.channels()[0]);
     let owners = Personality { reasoning_visibility: Visibility::Owner, ..answering };
@@ -186,7 +187,8 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
         ..world.personality("answering", None, &[]).await
     };
     world.runtime.entity_stores().personalities.update(&World::system(), &owners).await.unwrap();
-    let (helper, other) = (world.agent("helper", world.alice, &owners).await, world.agent("other", world.alice, &owners).await);
+    let helper = world.agent("helper", world.alice, &owners).await;
+    let other = world.agent("other", world.alice, &owners).await;
     let session = world.shared_session(&[helper], &[other]).await;
     let main = Arc::clone(&session.channels()[0]);
     let mut his = main.user_actor(world.bob).expect("he takes part").watch();
@@ -1962,7 +1964,8 @@ async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
     let helper = world.agent("helper", world.alice, &personality).await;
     let together = world.session_of(&[world.bob], &[helper], &[]).await;
     let alone = world.session_of(&[], &[helper], &[]).await;
-    let (alice, bob) = (Viewer::new(World::as_user(world.alice)), Viewer::new(World::as_user(world.bob)));
+    let alice = Viewer::new(World::as_user(world.alice));
+    let bob = Viewer::new(World::as_user(world.bob));
     let channels = |found: Vec<ChannelView>| found.iter().map(|channel| channel.session().id()).collect::<Vec<_>>();
 
     let hers = world.manager.views(alice.clone()).agent(helper).await.expect("hers");
@@ -1997,7 +2000,8 @@ async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
 async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality() {
     let world = agent_testing::world().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
-    let (helper, other) = (world.agent("helper", world.alice, &shared).await, world.agent("other", world.alice, &shared).await);
+    let helper = world.agent("helper", world.alice, &shared).await;
+    let other = world.agent("other", world.alice, &shared).await;
     let session = world.shared_session(&[], &[helper, other]).await;
     let main = Arc::clone(&session.channels()[0]);
     let alice = World::as_user(world.alice);
@@ -2062,7 +2066,8 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     let template = template_with_workspace(&world, ScopeTemplate::SessionScope, "main").await;
     let first = world.manager.create_from_template(&alice, template, None, None, None, None).await.expect("a session with its workspace");
     let second = world.manager.create_from_template(&alice, template, None, None, None, None).await.unwrap();
-    let (mine, others) = (first.session().workspace.expect("attached"), second.session().workspace.expect("attached"));
+    let mine = first.session().workspace.expect("attached");
+    let others = second.session().workspace.expect("attached");
     assert_ne!(mine, others, "one for every session");
     let made = world.runtime.entity_stores().workspaces.get(&alice, mine).await.expect("hers");
     assert_eq!(made.name.scope, Scope::SessionScope { session_id: first.id() });

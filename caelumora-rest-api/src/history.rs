@@ -177,7 +177,8 @@ mod tests {
     #[test]
     fn a_history_is_given_as_its_messages_and_how_turns_ended() {
         use caelumora_model::turn::GivenUpReason;
-        let (turn, actor) = (TurnId::new(), ActorId::default());
+        let turn = TurnId::new();
+        let actor = ActorId::default();
         let said = HistoryItemResponse::of(HistoryEntry::Said { message: Message::new(Classification::CHANNEL_DEFAULT) }, |m| m).unwrap();
         assert!(serde_json::to_value(said).unwrap()["said"]["id"].is_string(), "the message itself");
         let given_up = HistoryItemResponse::<Message>::of(HistoryEntry::TurnGivenUp { turn_id: turn, actor, reason: GivenUpReason::Failed { message: "boom".to_string() }, at: Utc::now() }, |m| m).unwrap();

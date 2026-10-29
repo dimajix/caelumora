@@ -329,7 +329,8 @@ mod tests {
         let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), sender_id: ActorId::Agent(agent), role, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
         state.transcript.push(Message { sender_id: ActorId::None, ..text(MessageRole::User, "do it") });
-        let (step, answer) = (text(MessageRole::Assistant, "step done"), text(MessageRole::Assistant, "all done"));
+        let step = text(MessageRole::Assistant, "step done");
+        let answer = text(MessageRole::Assistant, "all done");
         let keeps_system = ModelProfile { system_messages: SystemMessages::Anywhere, ..ModelProfile::default() };
         let answer = {
             state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::default(), Default::default()).given_as(keeps_system));

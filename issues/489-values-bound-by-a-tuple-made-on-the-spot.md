@@ -1,6 +1,6 @@
 # 489 — Values are bound by a tuple made on the spot, in 426 places, and nothing checks it
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -63,3 +63,19 @@ Recommendation: A.
 ## History
 
 - **2026-10-29** — Opened at the maintainer's request from the findings of issue 485.
+- **2026-10-29** — The rule narrowed by the maintainer, after a first sweep of all 423 lines read
+  worse than before: a tuple may bind values that belong together - of one kind in one role, the
+  parts of one thing, what is cloned into a closure together - as long as the line stays within
+  100 characters; values of different kinds that merely begin at the same place get a `let` each,
+  as does every binding that does not fit on one line. Whether values belong together is a
+  judgement no script makes - a test of "the same constructor on every side" marked
+  `(OthersWords::Wait, OthersWords::Hear)` as well -, so the check (step 2) keeps the length
+  alone, and the rest is the reviewer's, by the checklist. Step 1, the sweep: the 87 bindings
+  longer than 100 characters are written as one `let` each, a pair that belongs together kept as
+  a tuple beside them; of the shorter ones, 12 that bind values of different kinds are
+  taken apart. `view/channel.rs` named a closure `new` and bound `new` by the same tuple: it is
+  now `heard_from_others`. From the review, the maintainer had 9 more taken apart - among them a
+  search's matches, counts and flag in `workspace-tools/src/files.rs`, and the fields of an
+  `ArtifactSnapshot`, now taken apart as the struct it is; the pairs that are parts of one thing
+  (a session's id and owner), actors, loop state advanced together, and what is filled and
+  returned together stay.

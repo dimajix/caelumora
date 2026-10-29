@@ -152,7 +152,8 @@ mod tests {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
         let states = AgentStates::new(Arc::clone(&store), Arc::new(()));
         let agent = AgentId::new();
-        let (in_main, in_research) = (states.get(agent, Default::default()).await.unwrap(), states.get(agent, Default::default()).await.unwrap());
+        let in_main = states.get(agent, Default::default()).await.unwrap();
+        let in_research = states.get(agent, Default::default()).await.unwrap();
         assert!(Arc::ptr_eq(&in_main, &in_research), "one handle for both channels");
 
         // Two turns, each from a snapshot taken before the other's changes.

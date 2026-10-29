@@ -341,7 +341,9 @@ fn shown(line: &str) -> String {
 /// the matches.
 async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, most: usize) -> ToolResult<Value> {
     let mut pending = vec![start];
-    let (mut matches, mut searched, mut skipped, mut complete) = (Vec::new(), 0usize, 0usize, true);
+    let mut matches = Vec::new();
+    let (mut searched, mut skipped) = (0usize, 0usize);
+    let mut complete = true;
     'walk: while let Some(at) = pending.pop() {
         let found = terminal.stat(&at).await?;
         if found.is_dir {
@@ -385,7 +387,9 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
 /// what was read.
 #[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, turn: &mut Turn<'_>) -> ToolResult<Value> {
-    let (config, prompts, max_file_bytes) = (&tool.config, &tool.prompts, tool.workspaces.max_file_bytes());
+    let config = &tool.config;
+    let prompts = &tool.prompts;
+    let max_file_bytes = tool.workspaces.max_file_bytes();
     let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {
         channel: turn.situation().channel_id(),
         session: turn.situation().session_id(),

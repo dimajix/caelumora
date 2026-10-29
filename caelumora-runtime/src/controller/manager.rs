@@ -261,7 +261,10 @@ impl ControllerManager {
     fn start_follower(&self) {
         self.follower.get_or_init(|| {
             let mut events = self.event_bus.subscribe_all();
-            let (agents, users, workspaces, projects) = (Arc::clone(&self.agents), Arc::clone(&self.users), Arc::clone(&self.workspaces), Arc::clone(&self.projects));
+            let agents = Arc::clone(&self.agents);
+            let users = Arc::clone(&self.users);
+            let workspaces = Arc::clone(&self.workspaces);
+            let projects = Arc::clone(&self.projects);
             tokio::spawn(async move {
                 while let Some(event) = events.recv().await {
                     if let Some((id, EntityChange::Updated(_))) = event.about::<Agent>() {
@@ -435,7 +438,8 @@ mod tests {
     async fn announced_changes_reach_the_live_controllers() {
         let (store, bus, manager) = manager();
         let (agent, user) = (agent_in(&store).await, user_in(&store).await);
-        let (agents_controller, users_controller) = (manager.agent_controller(agent.id).await.unwrap(), manager.user_controller(user.id).await.unwrap());
+        let agents_controller = manager.agent_controller(agent.id).await.unwrap();
+        let users_controller = manager.user_controller(user.id).await.unwrap();
 
         // As another instance, or whoever changes users, would announce them.
         bus.publish(GlobalEvent::updated::<Agent>(&agent.id, &AgentUpdateEvent::NameChanged("from elsewhere".to_string())), Default::default());

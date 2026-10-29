@@ -150,7 +150,8 @@ mod tests {
 
     #[test]
     fn work_takes_in_the_knowledge_and_every_part_of_its_context() {
-        let (internal, confidential) = (Classification::general(Confidentiality::Internal), Classification::general(Confidentiality::Confidential));
+        let internal = Classification::general(Confidentiality::Internal);
+        let confidential = Classification::general(Confidentiality::Confidential);
         let mut work = Work::new(EventContext::default(), None, SecurityContext::default(), confidential.clone(), Default::default());
         let part = |classification: Option<Classification>| PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification, source: None };
         let read = KnowledgeRef {

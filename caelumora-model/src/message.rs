@@ -398,7 +398,8 @@ impl TokenUsage {
         if message.prompt_tokens.is_none() && message.completion_tokens.is_none() {
             return usage;
         }
-        let (prompt, completion) = (message.prompt_tokens.unwrap_or(0), message.completion_tokens.unwrap_or(0));
+        let prompt = message.prompt_tokens.unwrap_or(0);
+        let completion = message.completion_tokens.unwrap_or(0);
         let usage = usage.unwrap_or(Self { calls: 0, prompt_tokens: 0, completion_tokens: 0, context_size: None, context_tokens: 0 });
         Some(Self {
             calls: usage.calls + 1,

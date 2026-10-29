@@ -292,7 +292,8 @@ mod tests {
         let request = Answering::own(ActorId::System, "user", &SecurityContext::system()).envelope(ActorEvent::WakeupRequested);
         let turn = Answering::to(&request, ActorId::System, "agent", &SecurityContext::system());
 
-        let (first, second) = (turn.envelope(ActorEvent::WakeupRequested), turn.envelope(ActorEvent::WakeupRequested));
+        let first = turn.envelope(ActorEvent::WakeupRequested);
+        let second = turn.envelope(ActorEvent::WakeupRequested);
 
         assert_ne!(first.context.event_id, second.context.event_id, "two events, two event ids");
         assert_eq!(first.context.span_id, second.context.span_id, "in the span of the request");

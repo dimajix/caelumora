@@ -369,7 +369,9 @@ async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, chann
 #[tokio::test]
 async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let world = world().await;
-    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let alice = World::as_user(world.alice);
+    let bob = World::as_user(world.bob);
+    let carol = World::as_user(world.carol);
     let groups = world.runtime.group_manager();
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
@@ -700,7 +702,8 @@ async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_p
     let project = session.session().project;
     world.runtime.controller_manager().project_controller(project).await.unwrap().lift(&alice, "reports", Scope::UserScope { user_id: world.alice }).await.expect("kept as hers");
     let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
-    let (channel, members) = (read_by(GroupId::of_channel(main)), read_by(GroupId::of_project(project)));
+    let channel = read_by(GroupId::of_channel(main));
+    let members = read_by(GroupId::of_project(project));
     assert_eq!((artifact.security_attributes.acl.as_slice(), artifact.versions[0].acl.as_slice()), ([channel, members].as_slice(), [channel].as_slice()), "read by the channel's members, and the project's");
 
     world.manager.stop(&alice, session_id).await.unwrap();

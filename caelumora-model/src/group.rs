@@ -319,7 +319,9 @@ mod tests {
     /// member of - not one it owns alone.
     #[test]
     fn the_groups_with_a_member_are_those_it_belongs_to() {
-        let (alice, bob, carol) = (UserId::new(), ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let alice = UserId::new();
+        let bob = ActorId::User(UserId::new());
+        let carol = ActorId::User(UserId::new());
         let group = Group { members: vec![bob], ..team(Scope::GlobalScope, alice) };
         let document = serde_json::to_value(&group).unwrap();
         for actor in [bob, ActorId::User(alice), carol] {

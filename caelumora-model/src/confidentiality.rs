@@ -1040,7 +1040,8 @@ mod tests {
 
     #[test]
     fn reading_a_channel_depends_on_the_channels_not_on_the_reader() {
-        let (rules, session) = (ConfidentialityRules::default(), SessionId::new());
+        let rules = ConfidentialityRules::default();
+        let session = SessionId::new();
         let (team, secret) = (place(session, Internal, &[]), place(session, Confidential, &[]));
         for reader in [someone(), someone()] {
             assert!(rules.may_copy_information(&reader, &team, &secret));
@@ -1050,8 +1051,12 @@ mod tests {
 
     #[test]
     fn reading_a_channel_follows_the_flow_rule_with_the_configured_compartments() {
-        let (rules, session, alice) = (hr_reads_finance(), SessionId::new(), someone());
-        let (hr, finance, general) = (place(session, Internal, &["hr"]), place(session, Internal, &["finance"]), place(session, Internal, &[]));
+        let rules = hr_reads_finance();
+        let session = SessionId::new();
+        let alice = someone();
+        let hr = place(session, Internal, &["hr"]);
+        let finance = place(session, Internal, &["finance"]);
+        let general = place(session, Internal, &[]);
         assert!(rules.may_copy_information(&alice, &finance, &hr), "HR reads finance");
         assert!(!rules.may_copy_information(&alice, &hr, &finance), "not the other way round");
         assert!(!rules.may_copy_information(&alice, &hr, &general), "nor a general channel");
@@ -1081,8 +1086,11 @@ mod tests {
 
     #[test]
     fn what_is_released_below_its_channel_is_read_where_the_channel_is_not() {
-        let (rules, session, alice) = (hr_reads_finance(), SessionId::new(), someone());
-        let (hr, finance) = (place(session, Confidential, &["hr"]), place(session, Confidential, &["finance"]));
+        let rules = hr_reads_finance();
+        let session = SessionId::new();
+        let alice = someone();
+        let hr = place(session, Confidential, &["hr"]);
+        let finance = place(session, Confidential, &["finance"]);
         assert!(!rules.may_copy_information(&alice, &hr, &finance), "finance does not read HR");
         let released = Place { classification: classified(Confidential, &["hr", "finance"]), ..hr.clone() };
         assert!(rules.may_copy_information(&alice, &released, &finance), "but what HR released to it");
@@ -1092,7 +1100,8 @@ mod tests {
 
     #[test]
     fn what_is_published_into_a_channel_has_to_flow_into_it() {
-        let (rules, alice) = (hr_reads_finance(), someone());
+        let rules = hr_reads_finance();
+        let alice = someone();
         let hr = classified(Confidential, &["hr"]);
         assert!(rules.may_publish(&alice, &hr, &hr), "the channel's own");
         assert!(rules.may_publish(&alice, &classified(Internal, &["hr", "finance"]), &hr), "released to finance, at a lower level");
@@ -1124,7 +1133,8 @@ mod tests {
     #[test]
     fn what_set_a_label_is_told_by_level_by_audience_and_by_what_is_not_known() {
         let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
-        let (internal, confidential) = (Classification::general(Internal), Classification::general(Confidential));
+        let internal = Classification::general(Internal);
+        let confidential = Classification::general(Confidential);
 
         let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
         assert!(causes.set_by(Some(&confidential)), "a part at the label's level set it");

@@ -500,7 +500,8 @@ mod tests {
 
     #[test]
     fn a_turn_has_seen_its_transcript_its_prompt_parts_and_its_tool_results() {
-        let (internal, confidential) = (Classification::general(Confidentiality::Internal), Classification::general(Confidentiality::Confidential));
+        let internal = Classification::general(Confidentiality::Internal);
+        let confidential = Classification::general(Confidentiality::Confidential);
         let said = |classification: &Classification, content: &str| Message { content: Some(content.to_string()), ..message_classified(classification) };
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);

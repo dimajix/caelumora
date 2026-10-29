@@ -165,7 +165,8 @@ mod tests {
     /// 447): as names are compared, and only in one scope.
     #[test]
     fn two_scoped_names_have_one_key_exactly_if_they_are_equal() {
-        let (session, user) = (SessionId::new(), UserId::new());
+        let session = SessionId::new();
+        let user = UserId::new();
         let names = ["Zoë", "zoe", "Dr.  Who", "dr. who", "Other"];
         // A project's id equal to the session's, so that the kind of scope alone tells their
         // keys apart.

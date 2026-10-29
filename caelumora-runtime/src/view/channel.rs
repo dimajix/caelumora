@@ -514,8 +514,9 @@ impl ChannelView {
         })?;
         let read_up_to = state.read.map(|read| read.message);
         let from = state.unread_from();
-        let new = || Filter::all_of([Filter::heard(), Filter::negated(Filter::said_by(viewer))]);
-        let (new, mentioning) = (self.readable_items(Some(new())), self.readable_items(Some(Filter::all_of([new(), Filter::mentioning(viewer)]))));
+        let heard_from_others = || Filter::all_of([Filter::heard(), Filter::negated(Filter::said_by(viewer))]);
+        let new = self.readable_items(Some(heard_from_others()));
+        let mentioning = self.readable_items(Some(Filter::all_of([heard_from_others(), Filter::mentioning(viewer)])));
         let key = self.channel.id;
         let reader = Reader::Participant(viewer);
         let counted = self.views().histories().page(key, &reader, from, None, Unread::CAP, new.as_ref()).await.map_err(|e| self.failed_reading(e))?;
@@ -873,7 +874,9 @@ impl ParticipantView {
                 .ok(),
             _ => None,
         };
-        let (mut introduction, mut personality, mut owner, mut owner_name) = (None, None, None, None);
+        let mut introduction = None;
+        let mut personality = None;
+        let (mut owner, mut owner_name) = (None, None);
         if detail.contains(Detail::PROFILE) {
             introduction = self.introduction().await
                 .inspect_err(|e| warn!("Reading the introduction of {} failed: {:#}", self.id(), e))
@@ -887,7 +890,9 @@ impl ParticipantView {
             }
         }
         let (personality, personality_kind) = personality.unzip();
-        let (mut usage, mut notes, mut pending_approvals, mut pending_questions) = (None, Vec::new(), Vec::new(), Vec::new());
+        let mut usage = None;
+        let mut notes = Vec::new();
+        let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         if let Some(state) = &state {
             if wanted.contains(Detail::USAGE) {
                 usage = state.used;

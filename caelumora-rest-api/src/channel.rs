@@ -440,7 +440,8 @@ mod tests {
 
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
-        let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
+        let alice = ActorId::User(UserId::new());
+        let approver = ActorId::Approver(ApproverId(Uuid::new_v4()));
         let participant = |id, name: Option<&str>| snapshot::ChannelParticipantSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, unavailable: None,
             uses_workspace: true,

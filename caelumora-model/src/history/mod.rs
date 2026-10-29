@@ -928,7 +928,10 @@ mod tests {
         use crate::tool::{ToolCall, ToolVisibility};
         // Every participant a member all along.
         const ALL: &[Range<Position>] = &[EVERY_POSITION];
-        let (agent, other, user, approver) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()), ActorId::Approver(Default::default()));
+        let agent = ActorId::Agent(AgentId::new());
+        let other = ActorId::Agent(AgentId::new());
+        let user = ActorId::User(UserId::new());
+        let approver = ActorId::Approver(Default::default());
         let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
         let answer = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], turn_id: Some(TurnId::new()), ..make_message(id(1)) }.produced_from_context(None, digest::frame(&FrameRef::default()));
         let said = Recorded::new(HistoryEntry::Said { message: answer }, agent, Audience::Everybody);

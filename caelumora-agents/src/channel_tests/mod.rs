@@ -169,7 +169,8 @@ async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn Ac
         ComponentKind::new("test_model").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(),
         move |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            let (client, profile): (Arc<dyn LLMClient>, Arc<dyn ModelProfileProvider>) = (Arc::clone(&model) as _, Arc::clone(&model) as _);
+            let client: Arc<dyn LLMClient> = Arc::clone(&model) as _;
+            let profile: Arc<dyn ModelProfileProvider> = Arc::clone(&model) as _;
             facets.insert::<dyn LLMClient>(client);
             facets.insert::<dyn ModelProfileProvider>(profile);
             Ok(facets)

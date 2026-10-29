@@ -727,7 +727,9 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
 /// work, and with the agent's or the channel's state deleted.
 pub async fn work_under_way_is_indexed(store: &dyn StateStore) {
     let (agent, other_agent) = (AgentId::new(), AgentId::new());
-    let (channel, other_channel, waiting_channel) = (ChannelId::new(), ChannelId::new(), ChannelId::new());
+    let channel = ChannelId::new();
+    let other_channel = ChannelId::new();
+    let waiting_channel = ChannelId::new();
     let listed = async || store.channels_with_work_under_way().await.expect("listed").into_iter().collect::<HashSet<_>>();
     assert!(listed().await.is_empty(), "nothing stored, nothing under way");
 
@@ -846,7 +848,9 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     // Read for a reader (issue 417): what went to them and what they sent,
     // the latter in full; what went to every member for whoever was one
     // then, and for an outsider. Both users are given all of it as they join.
-    let (user, other, stranger) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+    let user = ActorId::User(UserId::new());
+    let other = ActorId::User(UserId::new());
+    let stranger = ActorId::User(UserId::new());
     let speaker = ActorId::Agent(agent);
     let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
     let answer = Message { sender_id: speaker, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden.clone()], ..make_message(id(602)) };

@@ -162,7 +162,8 @@ impl ChannelLoop {
                     Some(handle) => {
                         handle.inbox = None;
                         handle.leaving = Some((remover, name, until));
-                        let (abort_handle, task) = (handle.abort_handle.clone(), handle.task.clone());
+                        let abort_handle = handle.abort_handle.clone();
+                        let task = handle.task.clone();
                         let (channel, actor) = (self.id, id);
                         tokio::spawn(async move {
                             if !stopped(&[task]).await {
@@ -1242,7 +1243,8 @@ mod tests {
 
         // Her actor looks at what it can see at once, and asks nothing of the
         // policy: that is the channel's.
-        let (hers, his) = (channel.user_actor(alice.id).unwrap(), channel.user_actor(bob.id).unwrap());
+        let hers = channel.user_actor(alice.id).unwrap();
+        let his = channel.user_actor(bob.id).unwrap();
         let error = |result: Result<Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
         his.reclassify_message(MessageId::new(), Classification::PUBLIC).await.expect_err("never said");
         assert!(matches!(error(hers.revoke_message(MessageId::new()).await), ChannelError::MessageNotFound { .. }), "never said");

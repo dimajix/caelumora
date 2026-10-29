@@ -390,7 +390,8 @@ mod tests {
     fn a_version_is_read_by_whom_its_own_list_grants_it_of_the_artifacts_readers() {
         let (alice, bob) = (UserId::new(), UserId::new());
         let session_id = SessionId::new();
-        let (drafts, team) = (GroupId::of_channel(ChannelId::new()), GroupId::of_channel(ChannelId::new()));
+        let drafts = GroupId::of_channel(ChannelId::new());
+        let team = GroupId::of_channel(ChannelId::new());
         let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
         let mut shared = artifact(Scope::ProjectScope { project_id: ProjectId::new() }, alice);
         shared.versions[0].acl = vec![read_by(drafts)];

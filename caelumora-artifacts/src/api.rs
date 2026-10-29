@@ -70,9 +70,8 @@ pub struct ArtifactVersionResponse {
 
 impl From<ArtifactSnapshot> for ArtifactResponse {
     fn from(view: ArtifactSnapshot) -> Self {
-        let artifact = view.artifact;
+        let ArtifactSnapshot { artifact, can_change, can_write, access, mut version_access, mut publications } = view;
         let project_id = artifact.project();
-        let (mut version_access, mut publications) = (view.version_access, view.publications);
         let versions = artifact.versions.into_iter().map(|v| {
             let (session_name, channel_name, published_by_name) = match publications.remove(&v.number) {
                 Some(p) => (Some(p.session_name), Some(p.channel_name), p.published_by),
@@ -85,10 +84,10 @@ impl From<ArtifactSnapshot> for ArtifactResponse {
                 session_name, channel_name, published_by_name,
             }
         }).collect();
-        let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
+        let access = access.into_iter().filter_map(AccessEntry::of).collect();
         Self {
             id: artifact.id, name: artifact.name.name.to_string(), project_id, description: artifact.description, classification: artifact.classification, versions,
-            can_change: view.can_change, can_write: view.can_write, access,
+            can_change, can_write, access,
         }
     }
 }

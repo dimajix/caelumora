@@ -823,7 +823,8 @@ impl ToolExecutor {
     /// the name the work acts in) offered as unavailable, without its tools -
     /// its arguments would carry what the channel holds out of the system.
     pub async fn tool_sets(&self, situation: &Situation<'_>) -> Vec<ToolSet> {
-        let (context, channel) = (situation.security_context(), &situation.classification());
+        let context = situation.security_context();
+        let channel = &situation.classification();
         let mut offered = Vec::new();
         for set in self.providers.tool_sets(situation).await {
             let withheld = match (&set.destination, &set.unavailable) {
@@ -1081,7 +1082,8 @@ mod tests {
         let mut channel = Channel::build(session.id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
         channel.approval_rules = places.channel;
         let runtime = detached_actor_runtime_in(TestRuntime { access_policy, confidentiality, config, plugins: vec![&TestAgents], ..Default::default() }.build(), session, channel);
-        let (session, channel) = (Arc::clone(runtime.session_controller()), Arc::clone(runtime.channel_controller()));
+        let session = Arc::clone(runtime.session_controller());
+        let channel = Arc::clone(runtime.channel_controller());
         let executor = ToolExecutor::new(providers, runtime).unwrap();
         (executor, session, channel)
     }
@@ -1314,7 +1316,8 @@ mod tests {
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.content, "{\"result\":\"ok\"}");
         assert_eq!(result.classification, Classification::CHANNEL_DEFAULT, "the channel's");
-        let (started_at, finished_at) = (result.started_at.expect("a call that ran has its start"), result.finished_at.expect("and its end"));
+        let started_at = result.started_at.expect("a call that ran has its start");
+        let finished_at = result.finished_at.expect("and its end");
         assert!(finished_at >= started_at);
         assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
 
@@ -1338,7 +1341,8 @@ mod tests {
         let result = executor.execute(&call("hanging_tool"), None, &mut turn, ending).await;
         assert_eq!(result.status, ToolResultStatus::Interrupted, "not waited for once the turn ends");
         assert_eq!(result.content, interrupted_result(&testing::prompts()));
-        let (started_at, finished_at) = (result.started_at.expect("it ran"), result.finished_at.expect("until it was interrupted"));
+        let started_at = result.started_at.expect("it ran");
+        let finished_at = result.finished_at.expect("until it was interrupted");
         assert!(finished_at >= started_at);
 
         let done = executor.execute(&call("test_tool"), None, &mut turn, future::ready(Interruption::TurnEnded)).await;
