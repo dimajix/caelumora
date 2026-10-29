@@ -80,3 +80,23 @@ The first is the goal; the second is acceptable as a step towards it.
   and leaves the revision written; `delete`, `restore` and `purge` read again and write again in
   `CheckedStore`; `Writing::apply` reads again and applies again; the store suite holds every
   backend to it. A write of a user as a provider answers them starts from the record stored.
+- **2026-10-29** — Step 2 done: every writer makes its change again when it was refused as
+  outdated. A controller changes its document through `Writing::change` alone - a closure applied
+  to the document as it stands, read again as stored on a refusal -, which replaced
+  `Writing::store` and the changes made by hand on a copy; the groups gone from an access list are
+  told apart before the change (`gone_groups`, `prune_groups`). A manager reads the entity again
+  (`StoreResultExt::written`): the groups', the skills' and the artifacts' changes, the group of
+  the participants, a user's record and profile. A version published meanwhile takes the number,
+  and the publication is refused as outdated for the caller to publish again. The planned
+  `dyn EntityStore::modify` was not built: a closure fit neither the managers' own errors nor the
+  writers that write only where something differs, and the loop in each is three lines around
+  what is its own. Two questions the review of this step raised, open for the maintainer: the
+  content of a version is kept under a key made of the number read before the write
+  (`artifacts/<id>/<number>`), so two publications of one artifact at once keep their content
+  under one key and the one refused forgets the other's - held off by the artifact manager's
+  lock within one process until step 3, and across instances since issue 03; a key of the
+  publication's own, or a number reserved by a write before the content is kept, would end it.
+  And a copy never stored carries the first revision, as one stored once does, so a write of
+  such a copy passes against a document created meanwhile under its id; the one writer that
+  held such a copy, the user's profile controller, now holds none until one is stored, creates
+  rather than changes, and takes a creation meanwhile as a refusal.

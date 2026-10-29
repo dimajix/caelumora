@@ -319,9 +319,10 @@ lose theirs.
     the list did not name before.
 *   **Entries for groups that are gone.** An entry naming a group that was purged - a team for good,
     the participants of a session or channel with it - grants nobody anything, but stays in the list
-    until it is stored again: whoever stores a workspace or an artifact drops such entries from its
-    lists, its versions' included (`group::prune_gone_groups`, issue
-    [347](../issues/347-entries-naming-purged-groups.md)), looked for in the system's name. A
+    until it is stored again: whoever stores a workspace, a project or an artifact drops such
+    entries from its lists, its versions' included - told apart in the system's name before the
+    change (`group::gone_groups`, `prune_gone_groups`), dropped as it is written
+    (`prune_groups`; issue [347](../issues/347-entries-naming-purged-groups.md)). A
     deleted group keeps its entries, granting nothing meanwhile, since it comes back with what it
     belongs to, and so does one that cannot be looked up. Until then its owner sees the entry
     without a name. Sessions and channels do not prune: their lists come from their templates and do

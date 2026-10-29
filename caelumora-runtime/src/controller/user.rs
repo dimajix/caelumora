@@ -1,5 +1,5 @@
 use super::document::{log_changed, take_over};
-use arc_swap::{ArcSwap, Guard};
+use arc_swap::{ArcSwap, ArcSwapOption, Guard};
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::channel::Channel;
@@ -9,7 +9,9 @@ use caelumora_model::message::MessageId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::history::HistoryStore;
-use caelumora_model::store::{EntityStore, EntityStores, StateStore, StoreError, StoreResult};
+use caelumora_model::store::{
+    EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt,
+};
 use caelumora_model::user::{ReadMark, User, UserId, UserProfile};
 use caelumora_model::value::language::Language;
 use chrono::Utc;
@@ -35,9 +37,10 @@ use tracing::debug;
 pub struct UserController {
     id: UserId,
     user: ArcSwap<User>,
-    /// What the user says about themselves; an empty one of theirs while
-    /// they never wrote one.
-    profile: ArcSwap<UserProfile>,
+    /// What the user says about themselves, as stored; `None` while they
+    /// never wrote one - which is then not there to change, but to create
+    /// (issue 492).
+    profile: ArcSwapOption<UserProfile>,
     event_publisher: Arc<dyn EventPublisher>,
     profiles: Arc<dyn EntityStore<UserProfile>>,
     /// Where a channel the user marks read is reached, as they read it.
@@ -67,7 +70,7 @@ impl UserController {
         Self {
             id,
             user: ArcSwap::from_pointee(user),
-            profile: ArcSwap::from_pointee(profile.unwrap_or_else(|| UserProfile::new(id, None))),
+            profile: ArcSwapOption::from_pointee(profile),
             event_publisher,
             profiles: Arc::clone(&stores.user_profiles),
             channels: Arc::clone(&stores.channels),
@@ -82,10 +85,11 @@ impl UserController {
         self.user.load()
     }
 
-    /// The user's profile as it stands. Handed out as the runtime holds it:
-    /// whoever acts with it in someone's name checks that themselves.
-    pub fn profile(&self) -> Guard<Arc<UserProfile>> {
-        self.profile.load()
+    /// The user's profile as it stands - an empty one of theirs while they
+    /// never wrote one. Handed out as the runtime holds it: whoever acts
+    /// with it in someone's name checks that themselves.
+    pub fn profile(&self) -> Arc<UserProfile> {
+        self.profile.load_full().unwrap_or_else(|| Arc::new(UserProfile::new(self.id, None)))
     }
 
     pub fn id(&self) -> UserId {
@@ -144,7 +148,9 @@ impl UserController {
         rule: ApprovalRule,
     ) -> StoreResult<()> {
         self.change(ctx, |profile| {
-            profile.add_approval_rule(rule).map_err(|e| StoreError::Validation(e.to_string()))
+            profile
+                .add_approval_rule(rule.clone())
+                .map_err(|e| StoreError::Validation(e.to_string()))
         })
         .await
         .map(|_| ())
@@ -172,38 +178,58 @@ impl UserController {
     /// Changes the profile as `change` says, on behalf of `ctx`: stored
     /// first - which is where the permission is checked - and only then
     /// taken over live and announced, as it now stands. Rules that expired
-    /// are dropped with every change.
+    /// are dropped with every change. Written meanwhile elsewhere, the
+    /// profile is read again as stored and `change` applied once more
+    /// (issue 492).
     ///
     /// # Errors
     /// What `change` reports, or the store; the profile is then unchanged.
     async fn change<T>(
         &self,
         ctx: &SecurityContext,
-        change: impl FnOnce(&mut UserProfile) -> StoreResult<T>,
+        mut change: impl FnMut(&mut UserProfile) -> StoreResult<T>,
     ) -> StoreResult<(T, UserProfile)> {
         let _guard = self.write_lock.lock().await;
-        let mut profile = (**self.profile.load()).clone();
-        let changed = change(&mut profile)?;
-        profile.prune_approval_rules(Utc::now());
-        self.save(ctx, &mut profile).await?;
-        log_changed(ctx, &profile);
-        self.profile.store(Arc::new(profile.clone()));
-        self.event_publisher
-            .announce(GlobalEvent::updated::<UserProfile>(&self.id, &profile), &profile);
-        Ok((changed, profile))
+        loop {
+            let stored = self.profile.load_full();
+            let mut profile =
+                stored.as_deref().cloned().unwrap_or_else(|| UserProfile::new(self.id, None));
+            let changed = change(&mut profile)?;
+            profile.prune_approval_rules(Utc::now());
+            if self.save(ctx, &mut profile, stored.is_some()).await?.is_none() {
+                let stored = self.profiles.get(&SecurityContext::system(), self.id).await?;
+                self.profile.store(Some(Arc::new(stored)));
+                continue;
+            }
+            log_changed(ctx, &profile);
+            self.profile.store(Some(Arc::new(profile.clone())));
+            self.event_publisher
+                .announce(GlobalEvent::updated::<UserProfile>(&self.id, &profile), &profile);
+            return Ok((changed, profile));
+        }
     }
 
-    /// Stores `profile` as `ctx`, whether the user has one already or not:
-    /// changed if there is one, else created - and changed after all if one
-    /// was created meanwhile, in another instance. The store asks whether
-    /// `ctx` may.
-    async fn save(&self, ctx: &SecurityContext, profile: &mut UserProfile) -> StoreResult<()> {
-        match self.profiles.update(ctx, profile).await {
-            Err(StoreError::NotFound { .. }) => match self.profiles.create(ctx, profile).await {
-                Err(StoreError::Conflict(_)) => self.profiles.update(ctx, profile).await,
-                created => created,
-            },
-            updated => updated,
+    /// Stores `profile` as `ctx`: changed if the user has one `stored`
+    /// already - created after all if it was purged meanwhile -, else
+    /// created. `None` if it was written meanwhile - changed elsewhere, or
+    /// created in another instance while this one held none -, for the
+    /// change to be made again on the profile as stored (issue 492). The
+    /// store asks whether `ctx` may.
+    async fn save(
+        &self,
+        ctx: &SecurityContext,
+        profile: &mut UserProfile,
+        stored: bool,
+    ) -> StoreResult<Option<()>> {
+        if stored {
+            match self.profiles.update(ctx, profile).await {
+                Err(StoreError::NotFound { .. }) => {}
+                updated => return updated.written(),
+            }
+        }
+        match self.profiles.create(ctx, profile).await {
+            Err(StoreError::Conflict(_)) => Ok(None),
+            created => created.map(Some),
         }
     }
 
@@ -265,7 +291,7 @@ impl UserController {
             .filter(|(uid, _)| *uid == self.id)
             .and_then(|(_, change)| change.update::<UserProfile>())
         {
-            self.profile.store(Arc::new(profile));
+            self.profile.store(Some(Arc::new(profile)));
         }
     }
 }
@@ -273,6 +299,7 @@ impl UserController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::role::RoleId;
     use caelumora_model::security::OwnershipPolicy;
@@ -332,6 +359,38 @@ mod tests {
             store.state_store(),
             store.history_store(),
         )
+    }
+
+    /// Issue 492: a change is made again on the profile as stored when it was written meanwhile -
+    /// created in another instance, say, while this controller held an empty one -, and nothing
+    /// of what was written is overwritten.
+    #[tokio::test]
+    async fn a_change_is_made_again_on_the_profile_as_written_meanwhile() {
+        let store = Persistence::in_memory();
+        let user = alice();
+        let controller = controller_in(&store, &user, Arc::new(()));
+        let hers = as_user(user.id);
+        let rule = ApprovalRule::new(
+            ToolMatcher { tool: "shell".to_string(), arguments: Default::default() },
+            RuleDecision::Allow,
+            Reach::Everywhere,
+            None,
+        )
+        .unwrap();
+        let mut elsewhere = UserProfile::new(user.id, None);
+        elsewhere.add_approval_rule(rule.clone()).unwrap();
+        store.entity_stores().unwrap().user_profiles.create(&hers, &elsewhere).await.unwrap();
+
+        let profile = controller
+            .update_profile(&hers, Some("I run the budget."), None)
+            .await
+            .expect("made again on what was created meanwhile");
+        assert_eq!(
+            profile.introduction.as_ref().map(Introduction::as_str),
+            Some("I run the budget.")
+        );
+        assert_eq!(profile.approval_rules(), slice::from_ref(&rule), "what was created stands");
+        assert_eq!(controller.profile().approval_rules(), slice::from_ref(&rule), "live");
     }
 
     #[tokio::test]
@@ -429,7 +488,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_rule_is_added_and_taken_back_by_the_user_alone() {
-        use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
         let store = Persistence::in_memory_with(
             Arc::new(OwnershipPolicy::new()),
             Arc::new(ConfidentialityRules::default()),

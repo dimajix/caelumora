@@ -13,7 +13,8 @@ use crate::security::{ActionType, Admission, SecurityAttributes, SecurityContext
 use crate::store::access::Access;
 use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
 use crate::store::{
-    Deleted, EntityStore, Policies, Presence, Revision, StoreError, StoreResult, Stored,
+    Deleted, EntityStore, Policies, Presence, Revision, StoreError, StoreResult, StoreResultExt,
+    Stored,
 };
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
@@ -320,9 +321,8 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
             }
             let Some(mut marked) = stored else { return Ok(false) };
             marked.set_deleted(Some(removal.clone()));
-            match self.write(&mut marked).await {
-                Err(StoreError::Outdated { .. }) => continue,
-                written => return written.map(|()| true),
+            if self.write(&mut marked).await.written()?.is_some() {
+                return Ok(true);
             }
         }
     }
@@ -338,9 +338,8 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
             let stored = self.stored(&id).await?;
             let mut restored = self.access(ctx).restore(stored, id.to_string()).await?;
             restored.set_deleted(None);
-            match self.write(&mut restored).await {
-                Err(StoreError::Outdated { .. }) => continue,
-                written => return written.map(|()| restored),
+            if self.write(&mut restored).await.written()?.is_some() {
+                return Ok(restored);
             }
         }
     }
@@ -355,9 +354,10 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
                 return Ok(false);
             }
             let Some(stored) = stored else { return Ok(false) };
-            match self.storage.remove(id.clone().into(), stored.revision()).await {
-                Err(StoreError::Outdated { .. }) => continue,
-                removed => return removed,
+            if let Some(removed) =
+                self.storage.remove(id.clone().into(), stored.revision()).await.written()?
+            {
+                return Ok(removed);
             }
         }
     }
@@ -410,11 +410,10 @@ mod tests {
     use crate::group::{Group, GroupField};
     use crate::scope::Scope;
     use crate::security::AllowAllPolicy;
-    use crate::store::memory::MemoryStore;
     use crate::store::query::ordered_after;
-    use crate::store::{EntityKind, PersistenceBackend};
+    use crate::store::testing::ContendedStore;
     use crate::user::UserId;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     /// Keeps documents in a list and hands out every one a scan reaches,
@@ -468,86 +467,13 @@ mod tests {
         }
     }
 
-    /// Keeps documents in memory, and answers the next write in place of
-    /// one as outdated when told to (`refuse_once`): a storage another
-    /// writer got to between a read and the write.
-    #[derive(Debug)]
-    struct Contended {
-        inner: Arc<dyn DocumentStorage>,
-        refuse_next: AtomicBool,
-    }
-
-    impl Contended {
-        fn of(kind: EntityKind) -> Self {
-            let inner = MemoryStore::new()
-                .documents(kind, |_| Err(StoreError::Backend("not read".to_string())))
-                .unwrap();
-            Self { inner, refuse_next: AtomicBool::new(false) }
-        }
-
-        /// The next write is refused as outdated.
-        fn refuse_once(&self) {
-            self.refuse_next.store(true, Ordering::SeqCst);
-        }
-
-        /// Whether the refusal was given.
-        fn refused(&self) -> bool {
-            !self.refuse_next.load(Ordering::SeqCst)
-        }
-
-        fn contend(&self, id: Uuid) -> StoreResult<()> {
-            match self.refuse_next.swap(false, Ordering::SeqCst) {
-                true => Err(StoreError::Outdated { entity: "group", id: id.to_string() }),
-                false => Ok(()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl DocumentStorage for Contended {
-        async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
-            self.inner.get(id).await
-        }
-
-        async fn scan(
-            &self,
-            filter: Option<&Filter<FieldPath>>,
-            admission: Option<&Admission>,
-            presence: Presence,
-            after: Option<Uuid>,
-            limit: usize,
-        ) -> StoreResult<Vec<(Uuid, Value)>> {
-            self.inner.scan(filter, admission, presence, after, limit).await
-        }
-
-        async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
-            self.inner.named(name).await
-        }
-
-        async fn insert(&self, document: Document) -> StoreResult<()> {
-            self.inner.insert(document).await
-        }
-
-        async fn replace(&self, document: Document, read: Revision) -> StoreResult<()> {
-            self.contend(document.id)?;
-            self.inner.replace(document, read).await
-        }
-
-        async fn remove(&self, id: Uuid, read: Revision) -> StoreResult<bool> {
-            self.contend(id)?;
-            self.inner.remove(id, read).await
-        }
-    }
-
     /// What deletes, restores and purges reads again what was changed
     /// meanwhile and goes through (issue 492); what updates is given the
     /// refusal, since only its caller can change again.
     #[tokio::test]
     async fn what_reads_what_it_writes_writes_again_when_it_was_changed_meanwhile() {
-        let storage = Arc::new(Contended::of(Group::KIND));
-        let policies: Policies =
-            (Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
-        let groups = CheckedStore::<Group>::new(Arc::<Contended>::clone(&storage), &policies);
+        let (stores, refusals) = ContendedStore::stores(Group::KIND);
+        let groups = stores.entity_stores().unwrap().groups;
         let system = SecurityContext::system();
         let alice = UserId::new();
         let mut team = Group::team(
@@ -556,20 +482,20 @@ mod tests {
         );
         groups.create(&system, &team).await.unwrap();
 
-        storage.refuse_once();
+        refusals.store(1, Ordering::SeqCst);
         let refused = groups.update(&system, &mut team).await;
         assert!(matches!(refused, Err(StoreError::Outdated { .. })), "{refused:?}");
         let mark = Removal::now(ActorId::System);
-        storage.refuse_once();
+        refusals.store(1, Ordering::SeqCst);
         assert!(groups.delete(&system, team.id, &mark).await.expect("deleted all the same"));
-        assert!(storage.refused(), "refused once, then through");
-        storage.refuse_once();
+        assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once, then through");
+        refusals.store(1, Ordering::SeqCst);
         groups.restore(&system, team.id).await.expect("restored all the same");
-        assert!(storage.refused());
+        assert_eq!(refusals.load(Ordering::SeqCst), 0);
         assert!(groups.delete(&system, team.id, &mark).await.unwrap());
-        storage.refuse_once();
+        refusals.store(1, Ordering::SeqCst);
         assert!(groups.purge(&system, team.id).await.expect("purged all the same"));
-        assert!(storage.refused());
+        assert_eq!(refusals.load(Ordering::SeqCst), 0);
         assert!(groups.get_deleted(&system, team.id).await.is_err(), "gone");
     }
 

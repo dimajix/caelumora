@@ -107,24 +107,35 @@ impl UserManager {
 
     /// Keeps `found`, a user as a provider answers them, as their record:
     /// made if there is none, changed where it differs - its deletion
-    /// kept -, and announced. Answers the record as it now stands.
+    /// kept -, and announced. Written meanwhile elsewhere, the record is
+    /// read again and changed once more (issue 492). Answers the record as
+    /// it now stands.
     async fn record(&self, found: User) -> AuthResult<User> {
         let system = SecurityContext::system();
         let backend = |e: StoreError| AuthError::Backend(e.to_string());
-        let Some(stored) = self.store.get(&system, found.id).await.optional().map_err(backend)?
-        else {
-            self.store.create(&system, &found).await.map_err(backend)?;
-            self.events.announce(GlobalEvent::created::<User>(&found.id), &found);
-            return Ok(found);
+        let (user, renamed, roles_changed) = loop {
+            let Some(stored) =
+                self.store.get(&system, found.id).await.optional().map_err(backend)?
+            else {
+                self.store.create(&system, &found).await.map_err(backend)?;
+                self.events.announce(GlobalEvent::created::<User>(&found.id), &found);
+                return Ok(found);
+            };
+            let renamed = found.username != stored.username;
+            let roles_changed = found.roles != stored.roles;
+            if !renamed && !roles_changed && found.email == stored.email {
+                return Ok(stored);
+            }
+            let mut user = User {
+                username: found.username.clone(),
+                email: found.email.clone(),
+                roles: found.roles.clone(),
+                ..stored
+            };
+            if self.store.update(&system, &mut user).await.written().map_err(backend)?.is_some() {
+                break (user, renamed, roles_changed);
+            }
         };
-        let renamed = found.username != stored.username;
-        let roles_changed = found.roles != stored.roles;
-        if !renamed && !roles_changed && found.email == stored.email {
-            return Ok(stored);
-        }
-        let mut user =
-            User { username: found.username, email: found.email, roles: found.roles, ..stored };
-        self.store.update(&system, &mut user).await.map_err(backend)?;
         if renamed {
             self.events.announce(
                 GlobalEvent::updated::<User>(
@@ -155,11 +166,13 @@ mod tests {
     use crate::event::EntityChange;
     use crate::role::RoleId;
     use crate::security::SecurityAttributes;
-    use crate::store::Persistence;
+    use crate::store::testing::ContendedStore;
+    use crate::store::{Persistence, Stored};
     use crate::value::name::Name;
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::mem;
+    use std::sync::atomic::Ordering;
     use std::sync::Mutex;
 
     /// What was announced.
@@ -265,6 +278,33 @@ mod tests {
         ) -> AuthResult<Option<User>> {
             Err(AuthError::Backend("boom".to_string()))
         }
+    }
+
+    /// Issue 492: a record written meanwhile is read again and changed once more.
+    #[tokio::test]
+    async fn a_record_is_changed_once_more_when_it_was_written_meanwhile() {
+        let (stores, refusals) = ContendedStore::stores(User::KIND);
+        let users = stores.entity_stores().unwrap().users;
+        let announced = Arc::new(Announced::default());
+        let alice = user("alice");
+        let manager = UserManager::new(
+            vec![Arc::new(MapUserProvider::new(&[(&alice, "a")]))],
+            Arc::clone(&users),
+            Arc::<Announced>::clone(&announced),
+        );
+        manager.get_user(alice.id).await.unwrap().expect("recorded");
+        let renamed = User { username: Name::new("alicia").unwrap(), ..alice.clone() };
+        let manager = UserManager::new(
+            vec![Arc::new(MapUserProvider::new(&[(&renamed, "a")]))],
+            users,
+            Arc::<Announced>::clone(&announced),
+        );
+
+        refusals.store(1, Ordering::SeqCst);
+        let recorded = manager.get_user(alice.id).await.unwrap().expect("known");
+        assert_eq!(recorded.username, "alicia");
+        assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
+        assert_eq!(recorded.revision().number(), 1, "written once more");
     }
 
     #[tokio::test]

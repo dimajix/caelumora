@@ -146,13 +146,16 @@ impl ChannelController {
         ctx: &SecurityContext,
         participant: Participant,
     ) -> StoreResult<()> {
-        let writing = self.channel.write().await;
-        let mut channel = writing.current();
+        let mut writing = self.channel.write().await;
         let id = participant.actor_id();
-        channel.participants.push(participant);
-        // Back again: no longer a former participant (issue 164).
-        channel.former.retain(|f| f.participant.actor_id() != id);
-        let channel = writing.store(ctx, channel).await?;
+        let ((), channel) = writing
+            .change(ctx, |channel| {
+                channel.participants.push(participant.clone());
+                // Back again: no longer a former participant (issue 164).
+                channel.former.retain(|f| f.participant.actor_id() != id);
+                Ok(())
+            })
+            .await?;
         self.keep_participants(&channel).await;
         if let Some(event) = self.joined_or_left_event(id, true) {
             writing.announce(event, &channel);
@@ -175,19 +178,26 @@ impl ChannelController {
         ctx: &SecurityContext,
         participant: ActorId,
     ) -> StoreResult<Participant> {
-        let writing = self.channel.write().await;
-        let mut channel = writing.current();
-        let index =
-            channel.participants.iter().position(|p| p.actor_id() == participant).ok_or_else(
-                || StoreError::NotFound { entity: "participant", id: participant.to_string() },
-            )?;
-        let removed = channel.participants.remove(index);
-        channel.former.retain(|f| f.participant.actor_id() != participant);
-        channel.former.push(FormerParticipant {
-            participant: removed.clone(),
-            left: Removal::now(ctx.caller_id),
-        });
-        let channel = writing.store(ctx, channel).await?;
+        let mut writing = self.channel.write().await;
+        let (removed, channel) = writing
+            .change(ctx, |channel| {
+                let index = channel
+                    .participants
+                    .iter()
+                    .position(|p| p.actor_id() == participant)
+                    .ok_or_else(|| StoreError::NotFound {
+                    entity: "participant",
+                    id: participant.to_string(),
+                })?;
+                let removed = channel.participants.remove(index);
+                channel.former.retain(|f| f.participant.actor_id() != participant);
+                channel.former.push(FormerParticipant {
+                    participant: removed.clone(),
+                    left: Removal::now(ctx.caller_id),
+                });
+                Ok(removed)
+            })
+            .await?;
         self.keep_participants(&channel).await;
         if let Some(event) = self.joined_or_left_event(participant, false) {
             writing.announce_also_to(event, &channel, [Subject::Actor(participant)]);

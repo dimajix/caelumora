@@ -220,7 +220,8 @@ impl ArtifactManager {
     /// `StorageNotCleared`, `StorageGone` for an artifact whose storage is no longer configured,
     /// `Content` for a version too large, other than said, or a storage that failed, or whatever
     /// the store reports - `NotFound` for a project the caller does not read, `PermissionDenied`
-    /// and `NameTaken` among it.
+    /// and `NameTaken` among it, and `Outdated` if a version published meanwhile took the number
+    /// (issue 492): the caller publishes again.
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     pub async fn publish(
         &self,
@@ -313,14 +314,7 @@ impl ArtifactManager {
         };
         version.grant_reading(participants);
         let stored = match existing {
-            Some(mut artifact) => {
-                artifact.add_version(version);
-                artifact.grant_reading(participants);
-                // Changed in the runtime's name: whoever may add a version
-                // need not own the artifact (`WriteArtifact`, asked above),
-                // and lets the channel they publish it in read it.
-                self.update(&SecurityContext::system(), &mut artifact).await.map(|()| artifact)
-            }
+            Some(artifact) => self.add_version(artifact, version, participants).await,
             None => {
                 let mut artifact = Artifact::new(
                     id,
@@ -365,12 +359,45 @@ impl ArtifactManager {
         Ok((artifact, number))
     }
 
+    /// Adds `version` to `artifact`, read by `participants`, in the runtime's name: whoever may
+    /// add a version need not own the artifact (`WriteArtifact`, asked before), and lets the
+    /// channel they publish it in read it. Written meanwhile elsewhere, the artifact is read
+    /// again (issue 492); a version published meanwhile has taken the number, and `version` is
+    /// not added. Answers the artifact as written.
+    ///
+    /// # Errors
+    /// `StoreError::Outdated` for a number taken meanwhile - the caller publishes again -, or
+    /// whatever else the store reports.
+    async fn add_version(
+        &self,
+        mut artifact: Artifact,
+        version: ArtifactVersion,
+        participants: Subject,
+    ) -> StoreResult<Artifact> {
+        let system = SecurityContext::system();
+        loop {
+            if artifact.version(version.number).is_some() {
+                return Err(StoreError::Outdated {
+                    entity: Artifact::KIND.name(),
+                    id: artifact.id.to_string(),
+                });
+            }
+            artifact.add_version(version.clone());
+            artifact.grant_reading(participants);
+            if self.update(&system, &mut artifact).await.written()?.is_some() {
+                return Ok(artifact);
+            }
+            artifact = self.artifacts.get(&system, artifact.id).await?;
+        }
+    }
+
     /// Stores the changed `artifact` on behalf of `ctx`, which is where the
     /// permission is asked - its access list and its versions' without the
     /// entries naming a group that is gone (issue 347).
     ///
     /// # Errors
-    /// Whatever the store reports.
+    /// Whatever the store reports, `StoreError::Outdated` among it: the
+    /// caller reads the artifact again and changes it once more.
     async fn update(&self, ctx: &SecurityContext, artifact: &mut Artifact) -> StoreResult<()> {
         prune_gone_groups(self.groups.as_ref(), artifact.access_lists_mut()).await;
         self.artifacts.update(ctx, artifact).await
@@ -446,26 +473,34 @@ impl ArtifactManager {
         versions: bool,
     ) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
-        require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl)
-            .await?;
-        if versions {
-            let named: Vec<Subject> = acl
-                .iter()
-                .map(|entry| entry.subject)
-                .filter(|subject| {
-                    !artifact.security_attributes.acl.iter().any(|entry| entry.subject == *subject)
-                })
-                .collect();
-            for version in &mut artifact.versions {
-                for subject in &named {
-                    version.grant_reading(*subject);
+        let artifact = loop {
+            let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
+            require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl)
+                .await?;
+            if versions {
+                let named: Vec<Subject> = acl
+                    .iter()
+                    .map(|entry| entry.subject)
+                    .filter(|subject| {
+                        !artifact
+                            .security_attributes
+                            .acl
+                            .iter()
+                            .any(|entry| entry.subject == *subject)
+                    })
+                    .collect();
+                for version in &mut artifact.versions {
+                    for subject in &named {
+                        version.grant_reading(*subject);
+                    }
                 }
             }
-        }
-        artifact.security_attributes.acl = acl;
-        artifact.updated_at = Utc::now();
-        self.update(ctx, &mut artifact).await?;
+            artifact.security_attributes.acl = acl.clone();
+            artifact.updated_at = Utc::now();
+            if self.update(ctx, &mut artifact).await.written()?.is_some() {
+                break artifact;
+            }
+        };
         self.events.announce(
             GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged),
             &artifact,
@@ -487,10 +522,15 @@ impl ArtifactManager {
         description: Option<&str>,
     ) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
-        artifact.description = Description::optional(description)?;
-        artifact.updated_at = Utc::now();
-        self.update(ctx, &mut artifact).await?;
+        let description = Description::optional(description)?;
+        let artifact = loop {
+            let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
+            artifact.description = description.clone();
+            artifact.updated_at = Utc::now();
+            if self.update(ctx, &mut artifact).await.written()?.is_some() {
+                break artifact;
+            }
+        };
         self.events.announce(
             GlobalEvent::updated::<Artifact>(
                 &id,

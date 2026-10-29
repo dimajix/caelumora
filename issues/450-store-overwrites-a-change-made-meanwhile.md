@@ -1,6 +1,6 @@
 # 450 — A store overwrites a change made meanwhile, and checks a change against what may be outdated
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Persistence
@@ -64,3 +64,5 @@ in -; this is the store's part of that, which the rest builds on.
   refuses a write made on another than the one read (`StoreError::Outdated`), and the policy is
   so asked about exactly what is replaced. What a caller does on the refusal is 492's second
   step.
+- **2026-10-29** — Done with the second step of 492: every writer makes its change again on what
+  was written meanwhile, a controller through `Writing::change`, a manager by reading again.

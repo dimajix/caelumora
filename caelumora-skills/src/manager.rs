@@ -218,7 +218,8 @@ impl SkillManager {
     /// Applies `event` to skill `id` on behalf of `ctx`: reached by the
     /// store, stored, which is where the permission is checked
     /// (`UpdateSkill`), then announced. A new classification is validated
-    /// and its flow asked before.
+    /// and its flow asked before. Written meanwhile elsewhere, the skill is
+    /// read again and changed once more (issue 492).
     ///
     /// # Errors
     /// `NotFound` if there is none the caller may read or is cleared for,
@@ -231,27 +232,40 @@ impl SkillManager {
         event: SkillUpdateEvent,
     ) -> SkillResult<Skill> {
         let _writing = self.writing.lock().await;
-        let mut skill = self.skills.get(ctx, id).await.map_err(store_error(id))?;
-        // Announced to who reaches it as it was, too: who no longer does
-        // learns so (issue 312).
-        let had = skill.classification.clone();
-        match &event {
-            SkillUpdateEvent::NameChanged(name) => {
-                skill.name = ScopedName::new(name, skill.name.scope.clone())?
-            }
-            SkillUpdateEvent::DescriptionChanged(description) => {
-                skill.description = Description::new(description)?
-            }
-            SkillUpdateEvent::BodyChanged(body) => skill.body = SkillBody::new(body)?,
-            SkillUpdateEvent::ClassificationChanged(classification) => {
-                self.confidentiality
-                    .require_classifiable(classification, || SkillError::ClassificationRefused)?;
-                self.require_flow(ctx, classification)?;
-                skill.classification = classification.clone();
-            }
+        if let SkillUpdateEvent::ClassificationChanged(classification) = &event {
+            self.confidentiality
+                .require_classifiable(classification, || SkillError::ClassificationRefused)?;
+            self.require_flow(ctx, classification)?;
         }
-        skill.updated_at = Utc::now();
-        self.skills.update(ctx, &mut skill).await.map_err(store_error(id))?;
+        let (skill, had) = loop {
+            let mut skill = self.skills.get(ctx, id).await.map_err(store_error(id))?;
+            // Announced to who reaches it as it was, too: who no longer does
+            // learns so (issue 312).
+            let had = skill.classification.clone();
+            match &event {
+                SkillUpdateEvent::NameChanged(name) => {
+                    skill.name = ScopedName::new(name, skill.name.scope.clone())?
+                }
+                SkillUpdateEvent::DescriptionChanged(description) => {
+                    skill.description = Description::new(description)?
+                }
+                SkillUpdateEvent::BodyChanged(body) => skill.body = SkillBody::new(body)?,
+                SkillUpdateEvent::ClassificationChanged(classification) => {
+                    skill.classification = classification.clone();
+                }
+            }
+            skill.updated_at = Utc::now();
+            if self
+                .skills
+                .update(ctx, &mut skill)
+                .await
+                .written()
+                .map_err(store_error(id))?
+                .is_some()
+            {
+                break (skill, had);
+            }
+        };
         self.events.publish_classified(
             GlobalEvent::updated::<Skill>(&id, &event),
             skill.security_attributes.clone(),

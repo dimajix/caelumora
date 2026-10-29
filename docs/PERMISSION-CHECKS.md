@@ -253,7 +253,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Rename (`update`) | store `GetGroup`; a group that is no team refused (structural); store `UpdateGroup` | R1 | `NotFound`, `NotATeam`, `PermissionDenied` |
 | Delete, restore, purge | store; a group that is no team refused | R1 | `NotFound`, `NotATeam`, `PermissionDenied` |
 | Name a group in an access list (`require_nameable`) | store `GetGroup` (U,1) per newly named group | R1 | `Validation` |
-| Drop entries for groups that are gone (`prune_gone_groups`, issue 347) | per group the lists name, read in S, also among the deleted, as a workspace or an artifact is stored | - | - |
+| Drop entries for groups that are gone (`gone_groups`, `prune_gone_groups`, issue 347) | per group the lists name, read in S, also among the deleted, before a workspace, a project or an artifact is stored | - | - |
 | The participants' and members' groups (`keep_participants`, `delete_participants`, `restore_participants`, `purge_for_good`) | in S, after the change of the participants or members, or the deletion, restoring or purge of their session, channel or project, was permitted | - | - |
 
 ### Views, snapshots and events

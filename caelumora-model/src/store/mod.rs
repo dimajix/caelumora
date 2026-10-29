@@ -12,6 +12,8 @@ pub mod memory;
 pub mod query;
 #[cfg(any(test, feature = "test-support"))]
 pub mod suite;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 pub mod transcript;
 
 use async_trait::async_trait;
@@ -96,12 +98,16 @@ pub type StoreResult<T> = Result<T, StoreError>;
 /// backend asks.
 pub(crate) type Policies = (Arc<dyn AccessPolicy>, Arc<dyn ConfidentialityPolicy>);
 
-/// What a lookup answers when what it looks for may no longer exist
-/// (issue 192).
+/// What a lookup answers when what it looks for may no longer exist (issue 192), and what a write
+/// answers when it may have been refused as outdated (issue 492).
 pub trait StoreResultExt<T> {
     /// What was found, `None` if it is not there (`StoreError::NotFound`);
     /// any other error stays one.
     fn optional(self) -> StoreResult<Option<T>>;
+
+    /// What a write answered, `None` if it was refused as outdated (`StoreError::Outdated`):
+    /// whoever wrote reads again and makes the change once more. Any other error stays one.
+    fn written(self) -> StoreResult<Option<T>>;
 }
 
 impl<T> StoreResultExt<T> for StoreResult<T> {
@@ -109,6 +115,14 @@ impl<T> StoreResultExt<T> for StoreResult<T> {
         match self {
             Ok(found) => Ok(Some(found)),
             Err(StoreError::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn written(self) -> StoreResult<Option<T>> {
+        match self {
+            Ok(written) => Ok(Some(written)),
+            Err(StoreError::Outdated { .. }) => Ok(None),
             Err(e) => Err(e),
         }
     }

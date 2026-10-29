@@ -238,9 +238,12 @@ step as the write, as it keeps the names unique, so that it holds against every 
 storage, also of another process - and refuses it otherwise (`StoreError::Outdated`). Nothing is
 overwritten unseen, and the policy was asked about exactly what is replaced. `update` is given a
 document the caller read and changed, and leaves the refusal to the caller, who reads again and
-changes again; a controller does so by itself (`Writing::apply`). `delete`, `restore` and `purge`
-read what they write themselves, in the store, and do so again if it was changed meanwhile - what
-was restored while a purge was asked about is then not the caller's to purge, and stays. A new
+makes the change again, on the document as written: a controller through `Writing::change`, which
+reads the document again as stored and applies the change to that alone; a manager by reading the
+entity again (`StoreResultExt::written` tells the refusal apart). A change is so written to no
+document it was applied to before. `delete`, `restore` and `purge` read what they write themselves,
+in the store, and do so again if it was changed meanwhile - what was restored while a purge was
+asked about is then not the caller's to purge, and stays. A new
 entity carries the first revision; none is needed in a document written by hand, as seeds are. The
 store suite holds every backend to it (`writes_are_judged_on_their_revision`).
 
@@ -633,9 +636,10 @@ controller changes and what its entity's manager does is in
 *   **Live state.** A controller holds its entity for atomic, lock-free reads of the current value.
 *   **One writer.** A controller is the one writer of its document. It holds a write lock while it
     changes the document, stores the change first - which is where the permission is checked - and
-    only then takes it over live and announces it. A change refused as outdated - the document was
-    written elsewhere since the controller took it over - is read again as stored and applied once
-    more (issue 492).
+    only then takes it over live and announces it. Every change of a `LiveDocument` goes through
+    `Writing::change`, and the `UserController` changes the profile alike: one refused as
+    outdated - the document was written elsewhere since the controller took it over - is read
+    again as stored and applied once more (issue 492).
 *   **Events.** Controllers publish their changes on the `EventBus` (see [EVENTS.md](EVENTS.md)) and
     take over changes announced elsewhere.
 *   **One shape.** Every controller holds its document as a `LiveDocument` (issue 358), which does

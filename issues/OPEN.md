@@ -12,12 +12,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [492](492-a-document-is-written-under-two-locks.md) | in progress | low | bug | A controller writes a document under its own `LiveDocument::write_lock`, its manager under the `writing` lock of the kind; neither sees the other, and since the store reads and replaces in two steps, a change of the one can overwrite the other's - a deletion among them. |
 | [494](494-a-session-put-into-a-project-being-deleted.md) | open | low | bug | `SessionLoop::update_project` reads the project it puts the session into and stores the session afterwards, with nothing against the project being deleted in between: the session then lies in a deleted project, not deleted with it and not restored with it. |
 
-## Persistence
-
-| No. | Status | Priority | Type | Issue |
-|---|---|---|---|---|
-| [450](450-store-overwrites-a-change-made-meanwhile.md) | in progress | medium | feature | `CheckedStore` reads a document, asks the policy and writes in steps of their own, so a second process that changes the same entity in between is overwritten without notice, and the permission is judged on what was stored before it. |
-
 ## Sessions and channels
 
 | No. | Status | Priority | Type | Issue |
