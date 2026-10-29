@@ -14,8 +14,6 @@ mod attachments;
 mod channel_state;
 mod personality;
 mod state;
-#[cfg(test)]
-pub(crate) mod testing;
 
 use crate::actor::ActorId;
 use crate::removal::Removal;

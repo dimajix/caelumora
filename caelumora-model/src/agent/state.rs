@@ -49,9 +49,9 @@ impl Journaled for AgentState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::testing::{replayed, stored};
     use crate::confidentiality::Classification;
     use crate::message::MessageId;
+    use crate::store::testing::{replayed, stored};
 
     #[test]
     fn what_changed_in_an_agents_own_state_replays_onto_what_was_stored() {

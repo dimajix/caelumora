@@ -1,6 +1,6 @@
 # 501 — Tests build a personality field by field
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -37,3 +37,12 @@ and the copies drift: each says what a "plain" personality is a little different
 
 - **2026-10-29** — Opened from the findings of the first step of issue
   [492](492-a-document-is-written-under-two-locks.md).
+- **2026-10-29** — Decided for one helper in the model's testing, in two steps. A test gives a
+  name - several store their personality, whose name is unique -, so the helper is
+  `make_personality(name)`, as `make_template` and `make_channel` are named: a personality of the
+  global scope, the system's, internal, naming nothing else. It is to live in `agent::testing`,
+  brought back as `#[cfg(any(test, feature = "test-support"))] pub` for the tests of other crates.
+  That module held `stored` and `replayed` so far, the model's own checks of any journaled state,
+  of a channel's too, which belong to the stores. Step 1 done: `stored` and `replayed` moved to
+  `store::testing`, for the model's own tests only, and `agent::testing` went. Step 2: the helper,
+  and the tests that write every field of `Personality` use it.
