@@ -455,10 +455,8 @@ mod tests {
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::approval::ApprovalRequest;
-    use caelumora_model::channel::{
-        moderation_components, Channel, ChannelId, InternalActor, Participant,
-    };
-    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::channel::testing::make_channel;
+    use caelumora_model::channel::{Channel, InternalActor, Participant};
     use caelumora_model::security::{Grant, OwnershipPolicy, Subject};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::Persistence;
@@ -537,21 +535,10 @@ mod tests {
         let approver = Approver::new(strategy);
         let participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         let channel = Channel {
-            summary: None,
-            briefing: None,
-            approval_rules: Vec::new(),
-            uses_workspace: true,
-            id: ChannelId::new(),
-            session_id: SessionId::new(),
-            name: Name::new("test").unwrap(),
-            components: moderation_components(None, Some("broadcast_policy")),
-            classification: Classification::CHANNEL_DEFAULT,
-            language: None,
             participants,
             internal_actors: vec![InternalActor::Approver(approver.clone())],
             security_attributes: SecurityAttributes::owned_by(ActorId::User(ids[0])),
-            deleted: None,
-            former: Vec::new(),
+            ..make_channel(SessionId::new(), "test")
         };
         store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
         let session_id = channel.session_id;

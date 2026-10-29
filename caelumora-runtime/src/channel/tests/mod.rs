@@ -6,11 +6,11 @@ use crate::component::{ComponentImpl, ComponentRegistry};
 use crate::runtime::ChannelRuntime;
 use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents, StandIn, TestRuntime};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
-use caelumora_model::channel::{moderation_components, Channel, ChannelId, Participant};
-use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
+use caelumora_model::channel::testing::make_channel;
+use caelumora_model::channel::{moderation_components, Channel, Participant};
+use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
-use caelumora_model::value::name::Name;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 
@@ -20,7 +20,6 @@ use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::moderator::{Moderator, Routing};
 use caelumora_model::agent::AgentId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
-use caelumora_model::confidentiality::Classification;
 use caelumora_model::history::Audience;
 use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::Persistence;
@@ -82,23 +81,7 @@ async fn channel_built(
     let runtime =
         TestRuntime { store, access_policy, registry: Some(registry), ..Default::default() }
             .build();
-    let channel = Channel {
-        summary: None,
-        briefing: None,
-        approval_rules: Vec::new(),
-        uses_workspace: true,
-        id: ChannelId::new(),
-        session_id: SessionId::new(),
-        name: Name::new("main").unwrap(),
-        components,
-        participants,
-        internal_actors: Vec::new(),
-        security_attributes: SecurityAttributes::systems(),
-        classification: Classification::CHANNEL_DEFAULT,
-        language: None,
-        deleted: None,
-        former: Vec::new(),
-    };
+    let channel = Channel { components, participants, ..make_channel(SessionId::new(), "main") };
     let builtin = |id: &str, facet: Arc<dyn ChannelCommandProvider>| ComponentImpl {
         id: id.to_string(),
         fail_policy: ComponentFailPolicy::FailOpen,

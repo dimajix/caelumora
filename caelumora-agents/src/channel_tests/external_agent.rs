@@ -13,7 +13,8 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
 use caelumora_model::chain::Position;
-use caelumora_model::channel::{moderation_components, Channel, HistoryAccess};
+use caelumora_model::channel::testing::make_channel;
+use caelumora_model::channel::{Channel, HistoryAccess};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::context::ContextItem;
@@ -23,7 +24,6 @@ use caelumora_model::history::Heard;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, Participant, SessionId};
 use caelumora_model::store::Persistence;
-use caelumora_model::value::name::Name;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::work::Work;
 use caelumora_runtime::actor::user::ChannelWatch;
@@ -136,21 +136,9 @@ async fn external_channel(
     }
     .build();
     let channel = Channel {
-        summary: None,
-        briefing: None,
-        approval_rules: Vec::new(),
-        uses_workspace: true,
-        id: ChannelId::new(),
-        session_id: SessionId::new(),
-        name: Name::new("main").unwrap(),
-        components: moderation_components(None, Some("broadcast_policy")),
         participants: vec![Participant::User(alice.id), Participant::Agent(agent_id)],
-        internal_actors: Vec::new(),
         security_attributes: SecurityAttributes::owned_by(ActorId::User(alice.id)),
-        classification: Classification::CHANNEL_DEFAULT,
-        language: None,
-        deleted: None,
-        former: Vec::new(),
+        ..make_channel(SessionId::new(), "main")
     };
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     // Its participants' joins recorded, as if they had founded it (issue 420).

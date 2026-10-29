@@ -786,7 +786,6 @@ mod tests {
     use super::*;
     use caelumora_model::actor::ActorState;
     use caelumora_model::chain::Position;
-    use caelumora_model::channel::moderation_components;
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::history::Reader;
     use caelumora_model::message::testing::{id, make_message};
@@ -1083,7 +1082,7 @@ mod tests {
     #[tokio::test]
     async fn deleting_a_session_marks_its_file_and_purging_removes_it_leaving_its_state_to_the_state_store(
     ) {
-        use caelumora_model::channel::{Channel, ChannelId};
+        use caelumora_model::channel::testing::make_channel;
 
         let dir = tempdir().unwrap();
         let store = store(dir.path());
@@ -1091,23 +1090,7 @@ mod tests {
         let ctx = SecurityContext::default();
 
         let session_id = SessionId(Uuid::new_v4());
-        let channel = Channel {
-            summary: None,
-            briefing: None,
-            approval_rules: Vec::new(),
-            uses_workspace: true,
-            id: ChannelId(Uuid::new_v4()),
-            session_id,
-            name: Name::new("general").unwrap(),
-            components: moderation_components(None, Some("broadcast_policy")),
-            classification: Classification::CHANNEL_DEFAULT,
-            language: None,
-            former: Vec::new(),
-            participants: Vec::new(),
-            internal_actors: Vec::new(),
-            security_attributes: SecurityAttributes::systems(),
-            deleted: None,
-        };
+        let channel = make_channel(session_id, "general");
         let channel_id = channel.id;
         let session =
             Session { id: session_id, channels: vec![channel.id], ..session("to-delete") };

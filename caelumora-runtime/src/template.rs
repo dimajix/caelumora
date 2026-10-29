@@ -245,9 +245,8 @@ mod tests {
     use caelumora_model::store::query::Query;
     use caelumora_model::store::Persistence;
     use caelumora_model::store::Stored;
-    use caelumora_model::template::{
-        ParticipantTemplate, ScopeTemplate, SessionTemplateId, TemplateError,
-    };
+    use caelumora_model::template::testing::make_template;
+    use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, TemplateError};
     use caelumora_model::user::User;
     use caelumora_model::value::name::{Name, ScopedName};
     use std::sync::atomic::AtomicBool;
@@ -265,24 +264,7 @@ mod tests {
     }
 
     fn template(participants: Vec<ParticipantTemplate>) -> SessionTemplate {
-        SessionTemplate {
-            access: Vec::new(),
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            id: SessionTemplateId::new(),
-            name: ScopedName::new("pairing", Default::default()).unwrap(),
-            description: None,
-            participants,
-            channels: Vec::new(),
-            security_attributes: SecurityAttributes::systems(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            deleted: None,
-        }
+        SessionTemplate { participants, ..make_template("pairing") }
     }
 
     fn helper(personality_id: PersonalityId) -> ParticipantTemplate {

@@ -394,16 +394,12 @@ pub(crate) mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::header::{COOKIE, SET_COOKIE};
     use axum::http::Request;
-    use caelumora_model::confidentiality::Classification;
     use caelumora_model::config::{AppConfig, AuthConfig};
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
-    use caelumora_model::template::{
-        ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId,
-    };
+    use caelumora_model::security::SecurityContext;
+    use caelumora_model::template::testing::{make_channel_template, make_template};
+    use caelumora_model::template::{ChannelTemplate, SessionTemplate};
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_model::user_provider::UserManager;
-    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_runtime::event::EventBus;
     use caelumora_runtime::plugin::Plugin;
     use caelumora_runtime::project::ProjectManager;
@@ -636,34 +632,11 @@ pub(crate) mod tests {
     async fn a_session_is_made_in_the_project_asked_for_or_not_at_all() {
         let state = state();
         let template = SessionTemplate {
-            access: Vec::new(),
-            summary: None,
-            briefing: None,
-            language: None,
-            time_zone: None,
-            approval_rules: Vec::new(),
-            workspace: None,
-            id: SessionTemplateId::new(),
-            name: ScopedName::new("alone", Scope::GlobalScope).unwrap(),
-            description: None,
-            participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
             channels: vec![ChannelTemplate {
-                access: Vec::new(),
-                summary: None,
-                briefing: None,
-                language: None,
-                approval_rules: Vec::new(),
                 uses_workspace: false,
-                name: Name::new("main").unwrap(),
-                components: Default::default(),
-                classification: Classification::CHANNEL_DEFAULT,
-                participants: vec!["user".to_string()],
-                internal_actors: Vec::new(),
+                ..make_channel_template("main")
             }],
-            security_attributes: SecurityAttributes::systems(),
-            commands: Default::default(),
-            privacy: Default::default(),
-            deleted: None,
+            ..make_template("alone")
         };
         state
             .runtime_manager

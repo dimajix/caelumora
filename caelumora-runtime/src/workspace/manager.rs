@@ -1,6 +1,6 @@
-//! `WorkspaceManager`: making, deleting, restoring and purging workspaces
-//! (issues 251, 253) - stored first, then announced -, each with its place
-//! in its storage.
+//! `WorkspaceManager`: making, deleting, restoring and purging workspaces (issues 251, 253) -
+//! stored first, then announced -, each with its place in its storage, and reaching them for the
+//! runtime's other operations.
 
 use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
 use crate::backend::NamedBackends;
@@ -257,12 +257,30 @@ impl WorkspaceManager {
     /// # Errors
     /// `NotFound` if there is none they may read or are cleared for, so
     /// that nothing can be probed; or whatever else the store reports.
-    pub(crate) async fn reached(
+    async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
+        self.workspaces.get(ctx, id).await.map_err(store_error(id))
+    }
+
+    /// Workspace `id` as `ctx` reaches it to attach it to a session (issue 253): reached as
+    /// [`Self::reached`] reaches it, and theirs to attach (`UpdateWorkspace` - its owner, issue
+    /// 251, decision 12).
+    ///
+    /// # Errors
+    /// As [`Self::reached`]; `StoreError::PermissionDenied` if they may not change it.
+    pub(crate) async fn reached_to_attach(
         &self,
         ctx: &SecurityContext,
         id: WorkspaceId,
     ) -> WorkspaceResult<Workspace> {
-        self.workspaces.get(ctx, id).await.map_err(store_error(id))
+        let workspace = self.reached(ctx, id).await?;
+        self.access_policy
+            .require(
+                ctx,
+                ActionType::update(Workspace::KIND, &workspace.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
+        Ok(workspace)
     }
 }
 

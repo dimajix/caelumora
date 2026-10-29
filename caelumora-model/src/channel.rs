@@ -356,7 +356,7 @@ impl Channel {
             language,
             former: Vec::new(),
             approval_rules: Vec::new(),
-            uses_workspace: true,
+            uses_workspace: uses_workspace_by_default(),
             deleted: None,
         }
     }
@@ -495,6 +495,32 @@ impl InternalActor {
         match self {
             InternalActor::Approver(approver) => ActorId::Approver(approver.id),
         }
+    }
+}
+
+/// Channels for the tests of this crate and of others, which write beside them only what they
+/// differ in.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use super::*;
+
+    /// A channel `name` of the session `session_id` as `Channel::build` makes one - broadcast to
+    /// its participants, of the default classification, without participants - but the system's,
+    /// and read by nobody else (`SecurityAttributes::systems()`).
+    #[expect(
+        clippy::expect_used,
+        reason = "test code: a name that is none fails the test that gives it"
+    )]
+    pub fn make_channel(session_id: SessionId, name: &str) -> Channel {
+        let built = Channel::build(
+            session_id,
+            ActorId::System,
+            Name::new(name).expect("a test's name of a channel is one"),
+            moderation_components(None, Some("broadcast_policy")),
+            Classification::CHANNEL_DEFAULT,
+            None,
+        );
+        Channel { security_attributes: SecurityAttributes::systems(), ..built }
     }
 }
 

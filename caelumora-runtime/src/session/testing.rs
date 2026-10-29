@@ -18,10 +18,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Rejection};
-use caelumora_model::channel::{moderation_components, Channel, ChannelState};
-use caelumora_model::confidentiality::{
-    Classification, ConfidentialityPolicy, ConfidentialityRules,
-};
+use caelumora_model::channel::testing::make_channel;
+use caelumora_model::channel::{Channel, ChannelState};
+use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use caelumora_model::message::{Message, MessageId};
@@ -65,7 +64,7 @@ pub fn user(name: &str) -> User {
 /// `users` as participants, recorded in the store the session reads
 /// them from (issue 120).
 pub async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Participant> {
-    let store = &manager.runtime_manager.entity_stores().users;
+    let store = &manager.runtime().entity_stores().users;
     let mut participants = Vec::new();
     for user in users {
         store.create(&SecurityContext::system(), user).await.unwrap();
@@ -147,22 +146,11 @@ pub fn bare_session(session_id: SessionId) -> Session {
 /// what an actor outside a running session is in
 /// (`ChannelRuntime::outside_a_session`).
 pub fn bare_channel(session_id: SessionId) -> Channel {
+    // Neither components nor the workspace of its session: nothing but its ids.
     Channel {
-        summary: None,
-        briefing: None,
-        approval_rules: Vec::new(),
-        uses_workspace: false,
-        id: ChannelId::new(),
-        session_id,
-        name: Name::new("c").unwrap(),
         components: Default::default(),
-        classification: Default::default(),
-        language: None,
-        participants: Vec::new(),
-        internal_actors: Vec::new(),
-        security_attributes: SecurityAttributes::systems(),
-        deleted: None,
-        former: Vec::new(),
+        uses_workspace: false,
+        ..make_channel(session_id, "c")
     }
 }
 
@@ -221,22 +209,12 @@ pub fn founded(channel: &Channel) -> ChannelState {
 /// to, read by its participants - the session's participants.
 pub fn main_channel(session: &Session) -> Channel {
     let id = session.channels[0];
+    // The id the session lists, and the attributes that go with it.
     Channel {
-        summary: None,
-        briefing: None,
-        approval_rules: Vec::new(),
-        uses_workspace: true,
         id,
-        session_id: session.id,
-        name: Name::new("main").unwrap(),
-        components: moderation_components(None, Some("broadcast_policy")),
-        classification: Classification::CHANNEL_DEFAULT,
-        language: None,
-        participants: session.participants.clone(),
-        internal_actors: Vec::new(),
         security_attributes: Channel::attributes_of(id, session.security_attributes.owner_id),
-        deleted: None,
-        former: Vec::new(),
+        participants: session.participants.clone(),
+        ..make_channel(session.id, "main")
     }
 }
 
@@ -274,7 +252,7 @@ impl SessionManager {
     /// (`RuntimeManager::access_policy`): what a test builds a component with, as the runtime gives
     /// a component its policy.
     pub fn runtime_access_policy(&self) -> &Arc<dyn AccessPolicy> {
-        self.runtime_manager.access_policy()
+        self.runtime().access_policy()
     }
 }
 
