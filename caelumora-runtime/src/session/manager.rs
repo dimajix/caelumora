@@ -285,14 +285,7 @@ impl SessionManager {
         // One of the user's chosen is asked about before anything is made.
         let existing = match &spec.workspace {
             Some(WorkspaceChoice::Existing { id: chosen, .. }) => {
-                require_attachable(
-                    &self.workspaces,
-                    self.access_policy.as_ref(),
-                    context,
-                    *chosen,
-                    id,
-                )
-                .await?;
+                require_attachable(&self.workspaces, context, *chosen, id).await?;
                 Some(*chosen)
             }
             _ => None,

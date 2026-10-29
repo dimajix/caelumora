@@ -130,11 +130,11 @@ impl SessionLoop {
     /// workspace's, and its owner's to change.
     ///
     /// # Errors
-    /// `StoreError::PermissionDenied` if `context` may not change the
-    /// session or share the workspace, `WorkspaceError::NotFound` if there
-    /// is no workspace they may read or are cleared for,
-    /// `SessionError::WorkspaceOutOfScope`, or
-    /// whatever else storing reports.
+    /// `StoreError::PermissionDenied` if `context` may not change the session; what
+    /// `require_attachable` reports of the workspace - `WorkspaceError::NotFound` if there is none
+    /// they may read or are cleared for, `WorkspaceError::Store(StoreError::PermissionDenied)` if
+    /// it is not theirs to attach, `SessionError::WorkspaceOutOfScope` -; or whatever else storing
+    /// reports.
     pub async fn update_workspace(
         &self,
         context: &SecurityContext,
@@ -150,8 +150,7 @@ impl SessionLoop {
             )
             .await?;
         if let Some(id) = workspace {
-            require_attachable(&self.workspaces, self.access_policy.as_ref(), context, id, self.id)
-                .await?;
+            require_attachable(&self.workspaces, context, id, self.id).await?;
         }
         let held = self.attach_workspace(context, workspace).await?;
         if let (Some(controller), Some(grant)) = (held, share) {

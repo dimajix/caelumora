@@ -3347,6 +3347,23 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
         asked,
         checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(bob's) no"])
     );
+    let stores = world.runtime.entity_stores();
+    let mut lent = stores.workspaces.get(&World::system(), his.id).await.unwrap();
+    lent.security_attributes =
+        lent.security_attributes.granting(Subject::Actor(ActorId::User(world.alice)), Grant::Read);
+    stores.workspaces.update(&World::system(), &lent).await.unwrap();
+    let (refused, asked) = world.asked(session.update_workspace(&alice, Some(his.id), None)).await;
+    assert!(denied(&refused.unwrap_err()), "bob's, which alice reads but may not attach");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: UpdateSession(alice's) yes",
+            "alice: GetWorkspace(bob's) yes",
+            "alice: JoinChannel(alice) yes",
+            "alice: UpdateWorkspace(bob's) no"
+        ]),
+        "refused as its owner's act, before the session is stored"
+    );
 
     let (attached, asked) =
         world.asked(session.update_workspace(&alice, Some(hers.id), None)).await;

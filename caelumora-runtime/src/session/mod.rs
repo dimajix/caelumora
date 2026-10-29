@@ -25,12 +25,12 @@ use caelumora_model::group::GroupId;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
+use caelumora_model::security::{AccessPolicy, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
-use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{EntityStores, StoreResult, StoreResultExt};
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::value::name::Name;
-use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_model::workspace::WorkspaceId;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
@@ -261,35 +261,23 @@ async fn make_own(stores: &EntityStores, own: &Project) -> StoreResult<()> {
     Ok(())
 }
 
-/// Asks whether `context` may attach the workspace `id` to the session
-/// `session_id` (issue 253): reached as the views reach it (issue 312), it
-/// must lie where the session may use it, not in another session's scope,
-/// and be theirs to share (`UpdateWorkspace` - its owner, issue 251,
-/// decision 12). Whether they may change the session is the caller's to
-/// ask - or not, for a session they are making (issue 266).
+/// Asks whether `context` may attach the workspace `id` to the session `session_id` (issue 253):
+/// theirs to attach as `WorkspaceManager::reached_to_attach` reaches it, it must lie where the
+/// session may use it, not in another session's scope. Whether they may change the session is the
+/// caller's to ask - or not, for a session they are making (issue 266).
 ///
 /// # Errors
-/// `WorkspaceError::NotFound` if there is no workspace they may read or
-/// are cleared for, `SessionError::WorkspaceOutOfScope`,
-/// `StoreError::PermissionDenied` if they may not share it.
+/// What `WorkspaceManager::reached_to_attach` reports; `SessionError::WorkspaceOutOfScope`.
 async fn require_attachable(
     workspaces: &WorkspaceManager,
-    access_policy: &dyn AccessPolicy,
     context: &SecurityContext,
     id: WorkspaceId,
     session_id: SessionId,
 ) -> Result<()> {
-    let shared = workspaces.reached(context, id).await?;
+    let shared = workspaces.reached_to_attach(context, id).await?;
     if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
         return Err(SessionError::WorkspaceOutOfScope(id).into());
     }
-    access_policy
-        .require(
-            context,
-            ActionType::update(Workspace::KIND, &shared.security_attributes),
-            StoreError::PermissionDenied,
-        )
-        .await?;
     Ok(())
 }
 
