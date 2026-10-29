@@ -4,7 +4,7 @@
 
 use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
 use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_with, deleted_unless_refused, restored_unless_refused};
+use crate::scoped::{ScopeMember, deleted_unless_refused, restored_unless_refused};
 use crate::backend::NamedBackends;
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
@@ -233,7 +233,7 @@ impl ScopeMember for WorkspaceManager {
     async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in deleted_with(self.workspaces.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
+        for workspace in self.workspaces.list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
             if let Some(restored) = restored_unless_refused(self.workspaces.restore(ctx, workspace.id).await, &workspace)? {
                 self.events.announce(GlobalEvent::restored::<Workspace>(&restored.id), &restored);
             }

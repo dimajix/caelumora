@@ -5,7 +5,7 @@ use super::{store_error, ProjectError, ProjectResult};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
-use crate::scoped::{deleted_with, purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::{Announcing, GlobalEvent};
@@ -14,7 +14,7 @@ use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
-use caelumora_model::session::Session;
+use caelumora_model::session::{Session, SessionField};
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{Deleted, EntityStores, StoreError, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
@@ -165,7 +165,7 @@ impl ProjectManager {
             }
             return Err(error.into());
         }
-        for session in deleted_with(self.deleted_sessions_in(id).await?, &removal) {
+        for session in self.stores.sessions.list_deleted_with(&SecurityContext::system(), removal.id, &in_project(id)).await?.items {
             if let Err(e) = self.sessions.restore(ctx, session.id).await {
                 info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
             }
@@ -207,12 +207,12 @@ impl ProjectManager {
     /// The sessions that lie in project `id`, read in the runtime's name: all of them are found,
     /// whatever the caller may read.
     async fn sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Session>> {
-        Ok(self.stores.sessions.list(&SecurityContext::system(), &Query::filtered(Filter::in_project(id))).await?.items)
+        Ok(self.stores.sessions.list(&SecurityContext::system(), &in_project(id)).await?.items)
     }
 
     /// The deleted sessions that lie in project `id`, read in the runtime's name.
     async fn deleted_sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Deleted<Session>>> {
-        Ok(self.stores.sessions.list_deleted(&SecurityContext::system(), &Query::filtered(Filter::in_project(id))).await?.items)
+        Ok(self.stores.sessions.list_deleted(&SecurityContext::system(), &in_project(id)).await?.items)
     }
 
     /// Deletes `sessions` on behalf of `ctx` through the `SessionManager`, as a project they lie
@@ -232,6 +232,11 @@ impl ProjectManager {
         }
         Ok(kept)
     }
+}
+
+/// The sessions that lie in project `id`.
+fn in_project(id: ProjectId) -> Query<SessionField> {
+    Query::filtered(Filter::in_project(id))
 }
 
 #[cfg(test)]

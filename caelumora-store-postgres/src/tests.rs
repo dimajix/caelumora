@@ -22,6 +22,7 @@ use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_model::work::Work;
 use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::group::Group;
+use caelumora_model::removal::RemovalId;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::SecretManager;
@@ -336,8 +337,8 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     let role = RoleId::new();
     let group = |name: &str, members: Vec<ActorId>| Group { members, ..Group::team(ScopedName::new(name, Scope::GlobalScope).unwrap(), alice) };
     let (team, gone, other) = (group("team", vec![his]), group("gone", vec![his]), group("other", vec![hers]));
-    for (group, deleted) in [(&team, false), (&gone, true), (&other, false)] {
-        groups.insert(Document { id: group.id.into(), name: None, deleted, security_attributes: group.security_attributes.clone(), body: json!(group) }).await.unwrap();
+    for (group, removal_id) in [(&team, None), (&gone, Some(RemovalId::new())), (&other, None)] {
+        groups.insert(Document { id: group.id.into(), name: None, removal_id, security_attributes: group.security_attributes.clone(), body: json!(group) }).await.unwrap();
     }
     let shared = |subject, grant| SecurityAttributes::owned_by(hers).granting(subject, grant);
     let made = [
@@ -354,7 +355,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     ];
     let id_of = |at: usize| Uuid::from_u128(at as u128 + 1);
     for (at, security_attributes) in made.iter().enumerate() {
-        storage.insert(Document { id: id_of(at), name: None, deleted: false, security_attributes: security_attributes.clone(), body: json!({}) }).await.unwrap();
+        storage.insert(Document { id: id_of(at), name: None, removal_id: None, security_attributes: security_attributes.clone(), body: json!({}) }).await.unwrap();
     }
     let scanned = |admission: Admission| {
         let storage = &storage;
@@ -374,9 +375,9 @@ async fn a_scan_hands_out_what_its_admission_admits() {
     let found: Vec<Uuid> = groups.scan(Some(&teams), Some(&reading), Presence::Present, None, 100).await.unwrap().into_iter().map(|(id, _)| id).collect();
     assert_eq!(found, [Uuid::from(team.id)], "his team, by its own list - not the one he is no member of, nor the deleted one");
 
-    storage.replace(Document { id: id_of(1), name: None, deleted: false, security_attributes: SecurityAttributes::owned_by(hers), body: json!({}) }).await.unwrap();
+    storage.replace(Document { id: id_of(1), name: None, removal_id: None, security_attributes: SecurityAttributes::owned_by(hers), body: json!({}) }).await.unwrap();
     assert_eq!(scanned(reading.clone()).await, at(&[0, 3, 4, 5, 8]), "an entry taken away goes with the write");
-    storage.replace(Document { id: id_of(0), name: None, deleted: true, security_attributes: SecurityAttributes::owned_by(his), body: json!({}) }).await.unwrap();
+    storage.replace(Document { id: id_of(0), name: None, removal_id: Some(RemovalId::new()), security_attributes: SecurityAttributes::owned_by(his), body: json!({}) }).await.unwrap();
     assert!(storage.remove_deleted(id_of(0)).await.unwrap());
     let pool = database.connection.pool().await.unwrap();
     let left: i64 = sqlx::query_scalar(sql(format!("SELECT count(*) FROM {} WHERE entity_id = $1", quoted("entity_probe_access")))).bind(id_of(0)).fetch_one(pool).await.unwrap();
@@ -415,7 +416,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
     // The ids in the order of the bodies, as `Uuid` orders them.
     let id_of = |at: usize| Uuid::from_u128(at as u128);
     for (at, body) in bodies.iter().enumerate() {
-        storage.insert(Document { id: id_of(at), name: None, deleted: false, security_attributes: Default::default(), body: body.clone() }).await.unwrap();
+        storage.insert(Document { id: id_of(at), name: None, removal_id: None, security_attributes: Default::default(), body: body.clone() }).await.unwrap();
     }
     const A: FieldPath = &["a"];
     const AB: FieldPath = &["a", "b"];

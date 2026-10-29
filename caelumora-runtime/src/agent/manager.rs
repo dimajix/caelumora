@@ -16,7 +16,7 @@
 
 use super::{store_error, AgentError, AgentResult};
 use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_with, deleted_unless_refused, restored_unless_refused};
+use crate::scoped::{ScopeMember, deleted_unless_refused, restored_unless_refused};
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::Channel;
@@ -223,7 +223,7 @@ impl ScopeMember for AgentManager {
     /// restored.
     async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for agent in deleted_with(self.agents.list_deleted(&system, &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
+        for agent in self.agents.list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
             if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)? {
                 self.events.publish(GlobalEvent::restored::<Agent>(&restored.id), restored.security_attributes);
             }

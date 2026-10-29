@@ -228,8 +228,8 @@ impl MemoryDocuments {
     /// Refuses `document` if another of `documents` that is not deleted has
     /// its name (issue 250).
     fn name_free(&self, documents: &HashMap<Uuid, Document>, document: &Document) -> StoreResult<()> {
-        let Some(name) = document.name.as_ref().filter(|_| !document.deleted) else { return Ok(()) };
-        match documents.values().any(|other| other.id != document.id && !other.deleted && other.name.as_ref() == Some(name)) {
+        let Some(name) = document.name.as_ref().filter(|_| document.removal_id.is_none()) else { return Ok(()) };
+        match documents.values().any(|other| other.id != document.id && other.removal_id.is_none() && other.name.as_ref() == Some(name)) {
             false => Ok(()),
             true => Err(StoreError::NameTaken { entity: self.kind.name() }),
         }
@@ -248,7 +248,7 @@ impl DocumentStorage for MemoryDocuments {
     async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>> {
         Ok(read_lock(&self.documents, |all| {
             let meeting = all.values()
-                .filter(|document| document.deleted == presence.marked() && filter.is_none_or(|filter| filter.matches(&document.body)))
+                .filter(|document| presence.holds_mark(document.removal_id) && filter.is_none_or(|filter| filter.matches(&document.body)))
                 .filter(|document| admission.is_none_or(|admission| admission.may_admit(&document.security_attributes)))
                 .map(|document| (document.id, document))
                 .collect();
@@ -258,7 +258,7 @@ impl DocumentStorage for MemoryDocuments {
 
     async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
         Ok(read_lock(&self.documents, |all| {
-            all.values().find(|document| !document.deleted && document.name.as_ref() == Some(name)).map(|document| document.body.clone())
+            all.values().find(|document| document.removal_id.is_none() && document.name.as_ref() == Some(name)).map(|document| document.body.clone())
         }))
     }
 
@@ -283,7 +283,7 @@ impl DocumentStorage for MemoryDocuments {
 
     async fn remove_deleted(&self, id: Uuid) -> StoreResult<bool> {
         Ok(write_lock(&self.documents, |all| {
-            let marked = all.get(&id).is_some_and(|document| document.deleted);
+            let marked = all.get(&id).is_some_and(|document| document.removal_id.is_some());
             marked && all.remove(&id).is_some()
         }))
     }
@@ -503,7 +503,7 @@ mod tests {
         let mut ids = Vec::new();
         for security_attributes in kept {
             let id = Uuid::new_v4();
-            documents.insert(Document { id, name: None, deleted: false, security_attributes, body: Value::Null }).await.unwrap();
+            documents.insert(Document { id, name: None, removal_id: None, security_attributes, body: Value::Null }).await.unwrap();
             ids.push(id);
         }
         let bobs = Admission { actors: vec![bob], grant: Some(Grant::Read), ..Admission::default() };

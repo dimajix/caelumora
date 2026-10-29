@@ -221,7 +221,7 @@ where
     }
 
     async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, removal: &Removal) -> StoreResult<()> {
-        for entity in deleted_with(self.0.list_deleted(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder))).await?.items, removal) {
+        for entity in self.0.list_deleted_with(&SecurityContext::system(), removal.id, &Query::filtered(Filter::lying_within(holder))).await?.items {
             restored_unless_refused(self.0.restore(ctx, entity.id()).await, &entity)?;
         }
         Ok(())
@@ -275,10 +275,4 @@ pub(crate) async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T:
         return Ok(false);
     }
     store.purge(&system, id).await
-}
-
-/// The entities of `deleted` that were deleted with `removal` - that carry its mark (issue 469),
-/// which a query does not compare yet.
-pub fn deleted_with<T>(deleted: Vec<Deleted<T>>, removal: &Removal) -> Vec<T> {
-    deleted.into_iter().filter(|d| d.removal == *removal).map(|d| d.entity).collect()
 }

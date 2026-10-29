@@ -8,7 +8,7 @@
 //! storage is not generic, so that a backend is a trait object and opens the
 //! storage of a kind it was never told the type of - a plugin's too.
 
-use crate::removal::Removal;
+use crate::removal::{Removal, RemovalId};
 use crate::security::{ActionType, Admission, SecurityAttributes, SecurityContext};
 use crate::store::access::Access;
 use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 /// A document as it is handed to a storage: its body, and what the storage
 /// needs to know of it without reading it as its type - its id, its name
-/// unique in its scope, whether it is marked deleted, and who may reach it.
+/// unique in its scope, the deletion whose mark it carries, and who may reach it.
 #[derive(Debug, Clone)]
 pub struct Document {
     pub id: Uuid,
@@ -35,7 +35,8 @@ pub struct Document {
     /// (`ScopedName::key`, issue 447), which are equal exactly where the
     /// names are.
     pub name: Option<ScopedName>,
-    pub deleted: bool,
+    /// The deletion whose mark it carries (issue 478); `None` if it is there.
+    pub removal_id: Option<RemovalId>,
     /// Its owner and its access list, which a list is narrowed by
     /// (`Admission`, issue 332).
     pub security_attributes: SecurityAttributes,
@@ -49,7 +50,7 @@ impl Document {
     /// `StoreError::Backend` if `value` cannot be serialized.
     pub(crate) fn of<T: Stored>(value: &T) -> StoreResult<Self> {
         let body = serde_json::to_value(value).map_err(|e| StoreError::Backend(format!("a {} cannot be serialized: {e}", T::KIND)))?;
-        Ok(Self { id: value.id().into(), name: value.unique_name(), deleted: value.deleted().is_some(), security_attributes: value.security_attributes().clone(), body })
+        Ok(Self { id: value.id().into(), name: value.unique_name(), removal_id: value.deleted().map(|removal| removal.id), security_attributes: value.security_attributes().clone(), body })
     }
 
     /// The document of `body`, read as a `T`: what a storage that keeps
@@ -60,7 +61,7 @@ impl Document {
     /// `StoreError::Backend` if `body` is no `T`.
     pub(crate) fn read<T: Stored>(body: Value) -> StoreResult<Self> {
         let value: T = read_as(body.clone())?;
-        Ok(Self { id: value.id().into(), name: value.unique_name(), deleted: value.deleted().is_some(), security_attributes: value.security_attributes().clone(), body })
+        Ok(Self { id: value.id().into(), name: value.unique_name(), removal_id: value.deleted().map(|removal| removal.id), security_attributes: value.security_attributes().clone(), body })
     }
 }
 
@@ -80,9 +81,10 @@ pub trait DocumentStorage: Debug + Send + Sync {
 
     /// The documents after the id `after`, in the order of their ids - as `Uuid` orders them,
     /// bytewise -, at most `limit`, each with its id (issue 447): every one among `presence` - its
-    /// mark compared with `Presence::marked` -, meeting `filter` and admitted by `admission`, if
-    /// one is given (issue 332) - and others besides, if the storage cannot tell: a scan may hand
-    /// out more than it is asked for, never less, since the store judges every document again. It
+    /// mark compared by `Presence::holds_mark`, or in parts by `marked` and `removal_id` -, meeting
+    /// `filter` and admitted by `admission`, if one is given (issue 332) - and others besides, if
+    /// the storage cannot tell: a scan may hand out more than it is asked for, never less, since
+    /// the store judges every document again. It
     /// hands out fewer than `limit` only where none follow. A document a storage cannot read as it
     /// is kept is left out and logged; any other failure fails the scan.
     async fn scan(&self, filter: Option<&Filter<FieldPath>>, admission: Option<&Admission>, presence: Presence, after: Option<Uuid>, limit: usize) -> StoreResult<Vec<(Uuid, Value)>>;
@@ -280,6 +282,10 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
     async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<Deleted<T>>> {
         let Page { items, next } = self.page(ctx, query, Presence::Deleted).await?;
         Ok(Page { items: items.into_iter().filter_map(Deleted::of).collect(), next })
+    }
+
+    async fn list_deleted_with(&self, ctx: &SecurityContext, removal_id: RemovalId, query: &Query<T::Field>) -> StoreResult<Page<T>> {
+        self.page(ctx, query, Presence::DeletedWith(removal_id)).await
     }
 
     /// Asked as a list is (`List`), and the one found as an entity of a list

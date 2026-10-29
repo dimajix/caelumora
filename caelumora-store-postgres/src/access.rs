@@ -88,7 +88,7 @@ impl Admitted {
         let mut next = first + 3;
         // A group admits only by an entry, and only where entries do.
         if admission.grant.is_some() {
-            let present = if admission.deleted_groups { "true" } else { "NOT g.deleted" };
+            let present = if admission.deleted_groups { "true" } else { "g.removal_id IS NULL" };
             for member in &admission.actors {
                 let belonging = Condition::of(&Filter::with_member(*member).by_path(), "g.body", next);
                 next = belonging.next();

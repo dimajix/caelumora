@@ -103,10 +103,11 @@ over one pool.
 
 *   **A table per kind**, `entity_<kind>`, the prefix keeping a kind clear of the words of SQL: the
     id (`uuid`, ordered bytewise, as `Uuid` orders it), the key of the name (`name_key`,
-    `ScopedName::key`), whether it is marked deleted, and the body (`jsonb`). A partial unique index
-    on `name_key WHERE NOT deleted` keeps names unique across every process that writes, a GIN index
-    answers containment of the body. A subtype within a kind is a field of the document, not a
-    table.
+    `ScopedName::key`), the id of the deletion whose mark it carries (`removal_id`, `NULL` if it is
+    there), and the body (`jsonb`). A partial unique index on `name_key WHERE removal_id IS NULL`
+    keeps names unique across every process that writes, a partial index on `removal_id` finds what
+    went with one deletion, a GIN index answers containment of the body. A subtype within a kind is
+    a field of the document, not a table.
 *   **The access entries of a kind** (issue [332](../issues/332-policy-as-a-predicate.md)),
     `entity_<kind>_access(subject, relation, entity_id)`: a row for the owner (`owner`) and one for
     each entry of the access list (`read`, `write`, `join`), the subject by its id alone - everyone
@@ -296,8 +297,7 @@ Postgres narrows by the access entries it keeps of every kind (below). What a li
 
 Without an index - in memory and in the JSON files -, a list without a limit still goes through
 every entity of the kind. Every list that narrows what it read says so in its query; what a query
-cannot say yet - the mark of a deletion (`scoped::deleted_with`), a lookup by normalized name, a
-viewer's clearance - stays code at the caller.
+cannot say yet - a lookup by normalized name, a viewer's clearance - stays code at the caller.
 
 ### Deleted entities
 
@@ -311,23 +311,27 @@ A marked document is not there for the ordinary operations, before anything is a
 listed, found by name, changed or deleted again - also not by the system, so that no caller has to
 remember to leave it out. Its id stays taken, so seeding does not bring back deleted demo data.
 Nothing created or changed may carry the mark: only deleting sets it. Deleting sets the mark it is
-given (`EntityStore::delete`): a deletion makes its mark once - who, when - and gives it to
+given (`EntityStore::delete`): a deletion makes its mark once - its id, who, when - and gives it to
 everything that goes with what it deletes, so that what went with it is what carries its mark (issue
-469): restoring takes back what carries the mark of what is restored, and a restoring that fails
-puts the mark back as it was, so that it can be tried again. The mark names the caller; only the
-system's names another, as it deletes the groups that go with a session in the runtime's name, by
-whoever deleted the session (`Validation` otherwise). What was deleted is reached by operations of
-its own, each with a permission of its own:
+469), told by the mark's id (`RemovalId`), not by its time, which not every backend keeps exactly:
+restoring takes back what carries the mark of what is restored, and a restoring that fails puts the
+mark back as it was, so that it can be tried again. The mark names the caller; only the system's
+names another, as it deletes the groups that go with a session in the runtime's name, by whoever
+deleted the session (`Validation` otherwise). What was deleted is reached by operations of its own,
+each with a permission of its own:
 
 | Operation | asks | does |
 |---|---|---|
 | `get_deleted`, `list_deleted` | `ReadDeleted` | read the marked documents, each with its mark (`Deleted`); what is not marked is not found |
+| `list_deleted_with` | `ReadDeleted` | lists what was deleted with one deletion, by the id of its mark: what restoring takes back with what it restores |
 | `restore` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
 | `purge` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
-Which of a kind's entities an operation is about - those there or those deleted - is its
-`Presence`: it tells them by their mark and names the verb reading them asks, `Get` or
-`ReadDeleted`, so that the store reads and lists both by the same checks.
+Which of a kind's entities an operation is about - those there, those deleted, or those deleted
+with one deletion - is its `Presence`: it tells them by their mark and names the verb reading them
+asks, `Get` or `ReadDeleted`, so that the store reads and lists all of them by the same checks. The
+mark is the storage's, as the name and the access entries are (`Document::removal_id`), not a field
+of the kind's: a storage narrows a list to one deletion as it narrows it to what is there.
 
 For what is classified - a channel, a workspace, a skill, an artifact -, every operation also asks
 whether the caller is cleared for it, the deleted alike (issue 322, see

@@ -178,8 +178,9 @@ export interface ChannelParticipant {
   owner_name?: string;
 }
 
-/** That something was deleted, or someone left: by whom and when (issue 164). */
+/** That something was deleted, or someone left: which deletion, by whom and when (issue 164). */
 export interface Removal {
+  id: string;
   by: ActorId;
   at: string;
 }
