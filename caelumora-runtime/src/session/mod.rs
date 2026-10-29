@@ -416,7 +416,7 @@ impl SessionLoop {
         // is announced (issue 221).
         let mut topics = vec![SubscriptionTopic::Session(self.id())];
         topics.extend(self.agent_topics());
-        let mut subscription = self.events.subscribe(topics);
+        let mut subscription = self.events.subscribe(SecurityContext::system(), topics);
         let mut following = true;
         self.follow_agents(None).await;
 

@@ -11,7 +11,6 @@
 
 use crate::actor::user::ChannelWatch;
 use crate::channel::ChannelLoop;
-use crate::event::EventSubscription;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
 pub use crate::testing::actor_runtime_in;
@@ -23,7 +22,6 @@ use caelumora_model::actor::{ActorEvent, Rejection};
 use caelumora_model::channel::testing::{bare_channel, main_channel};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::security::{AccessPolicy, Admission, AllowAllPolicy, OwnershipPolicy};
@@ -142,15 +140,6 @@ impl SessionManager {
     pub fn runtime_access_policy(&self) -> &Arc<dyn AccessPolicy> {
         self.runtime().access_policy()
     }
-}
-
-/// Drain every event currently buffered on the receiver.
-pub fn drain(rx: &mut EventSubscription) -> Vec<GlobalEvent> {
-    let mut out = Vec::new();
-    while let Some(event) = rx.try_recv() {
-        out.push(event);
-    }
-    out
 }
 
 /// A running session owned by a user who takes part in it, with that

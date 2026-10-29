@@ -364,7 +364,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stored.privacy, PrivacyConfig::SharedAudience, "stored");
-        assert!(drain(&mut events).iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id() && matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience))))),
+        assert!(events.drain().await.iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id() && matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience))))),
                 "announced");
         let for_bob =
             manager.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();

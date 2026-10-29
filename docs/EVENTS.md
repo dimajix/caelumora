@@ -72,12 +72,23 @@ them.
 
 ### Subscriptions
 
-A subscriber names `SubscriptionTopic`s - everything, or a session, channel, agent or user - and
-receives the matching events through an `EventSubscription`. The runtime subscribes this way, and
-these subscriptions are served directly with everything on their topics. An event about a session,
-an agent or a user goes to its topic; one about a channel - and so about its participants - to the
-channel's and to the session's it lies in, which the bus reads from the event's address. Other
-kinds have no topic of their own.
+Every subscription is made the same way: `subscribe(context, topics)` names whom it receives for and
+the `SubscriptionTopic`s it follows - everything, or a session, channel, agent or user -, and
+receives the matching events that context may read through an `EventSubscription`; `follow` adds a
+topic later. An event about a session, an agent or a user goes to its topic; one about a channel -
+and so about its participants - to the channel's and to the session's it lies in, which the bus
+reads from the event's address. Other kinds have no topic of their own. The runtime's own
+subscribers - the controllers, a running session, an approver, the `CommandReaper` - subscribe as
+the system (`subscribe_all`, `subscribe_session`, …), which the bus does not ask about: they receive
+everything on their topics.
+
+All subscriptions are served by one dispatcher task, in the order the events were published, so that
+every subscriber receives what it shares with others in the same order - the place where the events
+of other instances will enter ([122](../issues/122-several-instances.md)). The policy is asked
+asynchronously, and `publish` must not wait for it; a subscriber has an event a moment after
+`publish` returns. Whoever subscribes, or follows another topic, receives what the bus has yet to
+deliver - also what was published a moment before. A test that reads what it caused waits for the
+bus to deliver it (`EventSubscription::settled`, `EventSubscription::drain`).
 
 Each subscription is a broadcast channel of its own, of bounded capacity. A subscriber that falls
 too far behind loses the oldest events, and it is the subscriber that learns so (`Lagged`), not only
@@ -116,17 +127,17 @@ caller's. A leave reaches whoever left besides (`announce_also_to`, issue 23). A
 are only the events that reach differently, and say why: a reclassification, with both
 classifications.
 
-### Subscribing as someone
+### Who receives an event
 
-`subscribe_as(context)` receives the events about the entities `context` may read. It asks the
-`AccessPolicy` the same question the `EntityStore` asks for reading them. The events of a channel -
-its creation, change, start and stop, who joins and leaves it, an agent's state in it - go by the
-channel's attributes and are asked as reading the channel. A user's record is everybody's to read,
-their profile only theirs, so an update of a `user_profile`, which carries the profile, reaches
-nobody else. A deletion is decided by the attributes it was published with, since the entity is gone
-by then, and asked as `HearDeleted`: whoever read it until then hears of it, also by a group that
-went with it - the groups of a session's participants are deleted before the session's deletion is
-announced, and the policy is asked later still. What a deleted session or channel announces as it
+A subscription in someone's name receives the events about the entities its context may read. The
+bus asks the `AccessPolicy` the same question the `EntityStore` asks for reading them. The events of
+a channel - its creation, change, start and stop, who joins and leaves it, an agent's state in it -
+go by the channel's attributes and are asked as reading the channel. A user's record is everybody's
+to read, their profile only theirs, so an update of a `user_profile`, which carries the profile,
+reaches nobody else. A deletion is decided by the attributes it was published with, since the entity
+is gone by then, and asked as `HearDeleted`: whoever read it until then hears of it, also by a group
+that went with it - the groups of a session's participants are deleted before the session's deletion
+is announced, and the policy is asked later still. What a deleted session or channel announces as it
 stops (`session::STOPPED`, `channel::STOPPED`) is asked as reading it and reaches its owner alone,
 since it is stopped only once its groups are gone (issue
 [458](../issues/458-deleted-while-it-runs.md)); its participants learn of it by the deletion.
@@ -136,16 +147,14 @@ views reach a classified entity: a reader of a channel they are not cleared for 
 it, as they do not find it. A reclassification reaches who was cleared for it before or is now, so
 that whoever no longer reaches it learns so.
 
-These subscriptions are served by one dispatcher task. The policy is asked asynchronously, and
-`publish` must not wait for it; a single task keeps every party's events in the order they were
-published. Each event is asked of all parties at once (`may_reach_each`, by
+Each event is asked of all subscriptions in someone's name at once (`may_reach_each`, by
 `AccessPolicy::check_each`, issue [503](../issues/503-bus-asks-every-stream.md)): the ownership
 policy reads a group the event's attributes name once for all of them, not once per open stream -
 for an event about a part, once for the whole and once for the part.
 
 ## Who follows the bus
 
-The REST server's global stream (`GET /events`) is a `subscribe_as` of the logged-in user, and the
-web UI's session list follows it. How the stream starts with a snapshot, resynchronises and ends
-with its token is described in [REST-SERVER.md](REST-SERVER.md#streams). A channel's stream carries
-the channel's envelopes, not global events; it is described there too.
+The REST server's global stream (`GET /events`) is a subscription of the logged-in user to
+everything, and the web UI's session list follows it. How the stream starts with a snapshot,
+resynchronises and ends with its token is described in [REST-SERVER.md](REST-SERVER.md#streams). A
+channel's stream carries the channel's envelopes, not global events; it is described there too.

@@ -6,7 +6,7 @@ use crate::channel::ChannelLoop;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, SessionController, WorkspaceController};
-use crate::event::{EventSubscription, SubscriptionTopic};
+use crate::event::EventSubscription;
 use crate::terminal::{Shell, Terminal};
 use crate::view::{SessionView, ViewResult, Viewer};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
@@ -217,10 +217,7 @@ impl ActorRuntime {
     /// or agent are the session's to take in, into the controller the actor
     /// shares (issue 120).
     pub fn subscribe_channel(&self) -> EventSubscription {
-        self.runtime
-            .runtime_manager
-            .event_bus()
-            .subscribe(vec![SubscriptionTopic::Channel(self.channel_id)])
+        self.runtime.runtime_manager.event_bus().subscribe_channel(self.channel_id)
     }
 
     /// Announces that this agent's state in its channel changed and is

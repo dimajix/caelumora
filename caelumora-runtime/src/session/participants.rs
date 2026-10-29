@@ -277,7 +277,7 @@ mod tests {
             manager.views(Viewer::new(as_user(&bob))).session(session.id()).await.is_ok(),
             "so he reads it now"
         );
-        assert!(drain(&mut events).iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id()
+        assert!(events.drain().await.iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id()
             && matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == bob_id))), "announced");
 
         let again = session
@@ -404,7 +404,7 @@ mod tests {
             events.iter().any(|e| matches!(e.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
             Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == actor))
         };
-        assert!(announced(&drain(&mut events)), "announced");
+        assert!(announced(&events.drain().await), "announced");
         time::sleep(Duration::from_millis(50)).await;
 
         deleted_stops_in(&runtime, &ctx, helper.id, &main).await;

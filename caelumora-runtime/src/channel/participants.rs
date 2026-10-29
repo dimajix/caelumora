@@ -773,7 +773,7 @@ mod tests {
             stored.participants.iter().any(|p| p.actor_id() == other),
             "stored, not only in memory"
         );
-        let events = drain(&mut rx);
+        let events = rx.drain().await;
         assert!(events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), change)) if cid == channel.id() && change.data::<ActorId>(JOINED) == Some(other))),
                 "the join is announced: {events:?}");
 
@@ -948,7 +948,7 @@ mod tests {
             .find(|f| f.participant.actor_id() == other)
             .expect("kept as a former participant (issue 164)");
         assert_eq!(former.left.by, ctx.caller_id, "with who removed it");
-        let events = drain(&mut rx);
+        let events = rx.drain().await;
         assert!(events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), change)) if cid == channel.id() && change.data::<ActorId>(LEFT).is_some())),
                 "the leave is announced: {events:?}");
 

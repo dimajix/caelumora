@@ -9,6 +9,7 @@ use axum::{
 };
 use caelumora_model::snapshot::Detail;
 use caelumora_rest_api::stream::{GlobalSnapshot, StreamOptions};
+use caelumora_runtime::event::SubscriptionTopic;
 use futures::stream::Stream;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -22,8 +23,11 @@ pub(super) async fn global_events(
     // the snapshot is assembled is lost (issue 34).
     // Only the events about what this user may read (issue 39), decided by
     // the same policy as reading it through the store.
-    let receiver =
-        state.runtime_manager.event_bus().subscribe_as(user.security_context()).into_receiver();
+    let receiver = state
+        .runtime_manager
+        .event_bus()
+        .subscribe(user.security_context(), vec![SubscriptionTopic::All])
+        .into_receiver();
     let reader = user.clone();
     let shutdown = state.shutdown.clone();
     let snapshot = move || {

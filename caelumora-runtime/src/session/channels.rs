@@ -794,7 +794,7 @@ mod tests {
 
         // `run` starts it asynchronously.
         time::sleep(Duration::from_millis(50)).await;
-        let events = drain(&mut rx);
+        let events = rx.drain().await;
         let created = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Created)) if cid == channel.id()));
         let started = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STARTED, .. })) if cid == channel.id()));
         assert!(
@@ -1051,7 +1051,7 @@ mod tests {
             "but kept, marked (issue 164)"
         );
         assert!(runtime.state_store().get_channel_state(id).await.is_ok(), "with its state");
-        let events = drain(&mut rx);
+        let events = rx.drain().await;
         let stopped = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STOPPED, .. })) if cid == id));
         let deleted = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Deleted)) if cid == id));
         assert!(
@@ -1089,7 +1089,7 @@ mod tests {
                 .contains(&id),
             "listed again"
         );
-        assert!(drain(&mut rx).iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Restored)) if cid == id)), "and announced");
+        assert!(rx.drain().await.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Restored)) if cid == id)), "and announced");
         assert!(runtime.state_store().get_channel_state(id).await.is_ok());
         let again = session.restore_channel(&ctx, id).await.expect_err("not deleted");
         assert!(
@@ -1132,7 +1132,7 @@ mod tests {
         });
         time::sleep(Duration::from_millis(50)).await;
 
-        let events = drain(&mut rx);
+        let events = rx.drain().await;
         let about = |wanted: fn(&EntityChange) -> bool| {
             events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, id), change)) if id == channel_id && wanted(change)))
         };

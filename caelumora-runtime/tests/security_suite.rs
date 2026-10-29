@@ -41,7 +41,7 @@ use caelumora_runtime::actor::Shown;
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
-use caelumora_runtime::event::EventSubscription;
+use caelumora_runtime::event::{EventSubscription, SubscriptionTopic};
 use caelumora_runtime::group::GroupError;
 use caelumora_runtime::moderator::broadcast_policy::BroadcastPolicy;
 use caelumora_runtime::moderator::ResponderPolicy;
@@ -234,7 +234,10 @@ async fn a_channel_is_read_by_its_participants_wherever_they_act_and_no_more_onc
         "a member, though she acts elsewhere"
     );
 
-    let mut events = world.runtime.event_bus().subscribe_as(World::as_user(world.carol));
+    let mut events = world
+        .runtime
+        .event_bus()
+        .subscribe(World::as_user(world.carol), vec![SubscriptionTopic::All]);
     main.remove_participant(&World::as_user(world.alice), ActorId::User(world.carol))
         .await
         .expect("alice's to remove her");
@@ -1840,7 +1843,7 @@ async fn a_project_is_its_owners_and_read_by_its_members() {
     let refused = controller.update_members(&alice, vec![UserId::new()]).await;
     assert!(matches!(refused, Err(ProjectError::UnknownMember(_))), "{refused:?}");
 
-    let mut bobs = world.runtime.event_bus().subscribe_as(bob.clone());
+    let mut bobs = world.runtime.event_bus().subscribe(bob.clone(), vec![SubscriptionTopic::All]);
     controller.update_members(&alice, Vec::new()).await.unwrap();
     assert!(
         world.runtime.entity_stores().projects.get(&bob, project.id).await.is_err(),
@@ -3973,7 +3976,7 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
         "its owner sees the team by its name"
     );
 
-    let mut bobs = world.runtime.event_bus().subscribe_as(bob.clone());
+    let mut bobs = world.runtime.event_bus().subscribe(bob.clone(), vec![SubscriptionTopic::All]);
     groups.set_members(&alice, project.id, Vec::new()).await.unwrap();
     assert!(
         matches!(views(&bob).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))),
@@ -4163,7 +4166,10 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let (of_session, of_channel) = (GroupId::of_session(session_id), GroupId::of_channel(main));
 
-    let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
+    let mut bobs = world
+        .runtime
+        .event_bus()
+        .subscribe(World::as_user(world.bob), vec![SubscriptionTopic::All]);
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
     hears(

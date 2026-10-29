@@ -58,7 +58,7 @@ use caelumora_rest_server::routes::api;
 use caelumora_rest_server::state::AppState;
 use caelumora_runtime::backend::StorageGone;
 use caelumora_runtime::content::ContentError;
-use caelumora_runtime::event::{EventBus, EventSubscription};
+use caelumora_runtime::event::{EventBus, EventSubscription, SubscriptionTopic};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::scoped::ScopeNotEmpty;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
@@ -1128,7 +1128,10 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
         "bob reads it as a member of the channel"
     );
 
-    let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
+    let mut bobs = world
+        .runtime
+        .event_bus()
+        .subscribe(World::as_user(world.bob), vec![SubscriptionTopic::All]);
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
     hears(
