@@ -20,7 +20,8 @@
 //! A workspace lies in a scope as an agent does (issue 251, decision 13):
 //! what lies in a session's scope is used within that session only
 //! (`Scope::admits`), and is deleted, restored and purged with it
-//! (`…_lying_in`, called by `scoped`) - its place removed as it is purged.
+//! (`scoped`, the `WorkspaceManager` its `ScopeMember`) - its place removed
+//! before it is purged.
 //!
 //! The commands run in workspaces are ended by the `CommandReaper`
 //! (`reaper`) once nobody may run them any longer (issue 254).

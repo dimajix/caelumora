@@ -1,6 +1,6 @@
 # 461 — Every member of a scope writes the same three loops over what lies in it
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -57,3 +57,11 @@ otherwise: all of them or none, in the runtime's name. They stay apart.
 
 - **2026-10-23** — Opened after the follow-up of [332](332-policy-as-a-predicate.md), which replaced
   `scoped::within` at the seventeen places these loops list what lies in a scope.
+- **2026-10-29** — Done by the first option: `ScopeMember` says only what a kind adds - its store
+  (`Entity`, `store`), where it announces (`events`), the lock it holds (`writing`) and what lies
+  behind an entity (`remove_behind`) -, and the three loops are written once, in the blanket
+  implementation of the runtime's own `ScopedKind`, through which `ScopedEntities` goes through the
+  members. `deleted_unless_refused` and `restored_unless_refused` are the module's own again. When
+  an agent is purged with its scope, its state is now removed before it, as a workspace's place and
+  an artifact's content are; the agents' deletions and restorings with their scope are announced by
+  `announce`, as every other kind's.

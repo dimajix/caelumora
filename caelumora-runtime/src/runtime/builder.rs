@@ -12,7 +12,7 @@ use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::plugin::Plugin;
-use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
+use crate::scoped::{ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
 use crate::workspace::reaper::CommandReaper;
@@ -68,7 +68,7 @@ pub struct RuntimeBuilder {
     attachments: Arc<AttachmentManager>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
-    scope_members: Vec<Arc<dyn ScopeMember>>,
+    scope_members: Vec<Arc<dyn ScopedKind>>,
     services: Services,
     /// The texts given to models, to which the plugins add theirs (issue
     /// 57); a service once the runtime is built.
@@ -203,7 +203,7 @@ impl RuntimeBuilder {
             Arc::clone(&event_bus),
             Arc::clone(&access_policy),
         ));
-        let scope_members: Vec<Arc<dyn ScopeMember>> = vec![
+        let scope_members: Vec<Arc<dyn ScopedKind>> = vec![
             Arc::new(Unowned(Arc::clone(&entity_stores.personalities))),
             Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
             Arc::new(Unowned(Arc::clone(&entity_stores.component_bundles))),
@@ -398,7 +398,7 @@ impl RuntimeBuilder {
 
     /// Makes `member` go with what holds the scope it lies in: deleted,
     /// restored and purged with it, after the core's kinds.
-    pub fn scope_member(&mut self, member: Arc<dyn ScopeMember>) {
+    pub fn scope_member<M: ScopeMember + 'static>(&mut self, member: Arc<M>) {
         self.scope_members.push(member);
     }
 

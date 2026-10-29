@@ -30,11 +30,13 @@ session's mark - one for all of it - and comes back with it (issue 469). If some
 mark is taken away again in the runtime's name, and what was deleted stays deleted - restored by
 hand, not with the session. Purging is done in the runtime's name. Each kind that may lie in a scope
 is a `ScopeMember` (issue 323), and `ScopedEntities` goes through them in the order they were
-registered. What has a manager of its own - agents, workspaces, skills, artifacts - is a member by
-it (`…_lying_in`), deleted, restored and purged by it and announced as it announces its own
-deletions: an artifact to whoever reads it, as when it is deleted alone (issues 319, 316).
-Personalities and session templates, which have none, are members by their store (`Unowned`), which
-marks them and announces nothing.
+registered; what is done with them is the same for every kind, and a member says only what its kind
+adds. What has a manager of its own - agents, workspaces, skills, artifacts - is a member by it,
+announced as it announces its own deletions - an artifact to whoever reads it, as when it is deleted
+alone (issues 319, 316) -, and what lies behind an entity - an agent's state, a workspace's place,
+an artifact's content - is removed before the entity is purged. Personalities, session templates
+and component bundles, which have none, are members by their store (`Unowned`), which marks them
+and announces nothing.
 
 The groups of the participants of a session and of its channels lie in its scope as well, but are
 not among what lies there: they belong to the session or channel itself, and its participants reach

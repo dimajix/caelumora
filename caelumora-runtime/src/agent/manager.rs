@@ -5,8 +5,8 @@
 //! The `AgentManager` is the owner of an agent on its own - one of a
 //! user's or a group's scope, or a global one, that outlives every session
 //! it takes part in - and of those that lie in a session's or a channel's
-//! scope, which go with it (`scoped`) and which it deletes, restores and
-//! purges with it (`…_lying_in`).
+//! scope, which go with it (`scoped`): as their `ScopeMember`, it says how
+//! they are announced and what is purged with them.
 //!
 //! A deleted agent rests in the channels it takes part in (issue 314): their
 //! documents keep it, and they follow its mark instead - a running channel
@@ -16,19 +16,17 @@
 
 use super::{store_error, AgentError, AgentResult};
 use crate::event::EventBus;
-use crate::scoped::{deleted_unless_refused, restored_unless_refused, ScopeMember};
+use crate::scoped::ScopeMember;
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::Channel;
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use caelumora_model::session::Session;
-use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
-    Deleted, EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult,
-    StoreResultExt, Stored,
+    EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_model::value::name::ScopedName;
 use std::fmt;
@@ -221,88 +219,27 @@ impl AgentManager {
     }
 }
 
+/// Agents go with what holds the scope they lie in, announced as `delete` and `restore` announce
+/// them, and purged with their state (`scoped`). They leave no channel as they go: they take part
+/// only within the scope they lie in (`Scope::admits`).
 #[async_trait]
 impl ScopeMember for AgentManager {
-    fn kind(&self) -> EntityKind {
-        Agent::KIND
+    type Entity = Agent;
+
+    fn store(&self) -> &dyn EntityStore<Agent> {
+        self.agents.as_ref()
     }
 
-    /// Deletes the agents that lie in `holder` or within it on behalf of `ctx` (`scoped`), as far
-    /// as they may, marked with `removal`, and announces them as `delete` does; answers how many
-    /// are left. They leave no channel: they take part only within `holder` (`Scope::admits`).
-    ///
-    /// # Errors
-    /// Whatever else the store reports; what was deleted before stays
-    /// deleted.
-    async fn delete_lying_in(
-        &self,
-        ctx: &SecurityContext,
-        holder: &Scope,
-        removal: &Removal,
-    ) -> StoreResult<usize> {
-        let system = SecurityContext::system();
-        let mut left = 0;
-        for agent in
-            self.agents.list(&system, &Query::filtered(Filter::lying_within(holder))).await?.items
-        {
-            if deleted_unless_refused(self.agents.delete(ctx, agent.id, removal).await)? {
-                self.events
-                    .publish(GlobalEvent::deleted::<Agent>(&agent.id), agent.security_attributes);
-            } else {
-                left += 1;
-            }
-        }
-        Ok(left)
+    fn events(&self) -> Option<&dyn EventPublisher> {
+        Some(self.events.as_ref())
     }
 
-    /// Restores the agents that lie in `holder` or within it and carry `removal`, the holder's
-    /// mark, on behalf of `ctx` (`scoped`), and announces them as `restore` does. One whose name
-    /// was taken meanwhile stays deleted, as does one `ctx` may not restore.
+    /// Removes the state of `agent`, its own and in every channel - what `purge` removes after
+    /// the agent, once the store granted it: here nothing is asked, and it goes first.
     ///
     /// # Errors
-    /// Whatever else the store reports; what was restored before stays
-    /// restored.
-    async fn restore_lying_in(
-        &self,
-        ctx: &SecurityContext,
-        holder: &Scope,
-        removal: &Removal,
-    ) -> StoreResult<()> {
-        let system = SecurityContext::system();
-        for agent in self
-            .agents
-            .list_deleted_with(&system, removal.id, &Query::filtered(Filter::lying_within(holder)))
-            .await?
-            .items
-        {
-            if let Some(restored) =
-                restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)?
-            {
-                self.events.publish(
-                    GlobalEvent::restored::<Agent>(&restored.id),
-                    restored.security_attributes,
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Purges the deleted agents that lie in `holder` or within it, with
-    /// their state, as `purge` does - in the runtime's name (`scoped`).
-    ///
-    /// # Errors
-    /// Whatever the stores report; what was purged before stays purged.
-    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
-        let system = SecurityContext::system();
-        for Deleted { entity: agent, .. } in self
-            .agents
-            .list_deleted(&system, &Query::filtered(Filter::lying_within(holder)))
-            .await?
-            .items
-        {
-            self.agents.purge(&system, agent.id).await?;
-            self.states.delete_agent_state(agent.id).await?;
-        }
-        Ok(())
+    /// Whatever the state store reports.
+    async fn remove_behind(&self, agent: &Agent) -> StoreResult<()> {
+        self.states.delete_agent_state(agent.id).await
     }
 }
