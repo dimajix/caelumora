@@ -58,7 +58,10 @@ store of the users - with `service_of`. While it registers, a plugin
 *   is handed the core's storages of content (`content_storages`, issue 282) for what it keeps
     beyond documents - the versions of artifacts -, under a key space of its own;
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`, which
-    says only what its kind adds - where it announces, its lock, what lies behind an entity);
+    says only what its kind adds - where it announces, its lock, what lies behind an entity), and
+    puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
+    before it writes (`require`) and once it has written (`keep_made`, `restore`), so that
+    nothing is left in the scope of a holder deleted meanwhile (issue 458);
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, and of the seed
     files (`seed_section`, a `SeedSection`). Both sections stand at the top level of their files;
     one that no plugin claims is an error, so that a misspelt section is found.

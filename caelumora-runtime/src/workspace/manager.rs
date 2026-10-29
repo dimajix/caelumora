@@ -5,7 +5,7 @@
 use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
 use crate::backend::NamedBackends;
 use crate::event::EventBus;
-use crate::scoped::ScopeMember;
+use crate::scoped::{purge_for_good, ScopeHolders, ScopeMember};
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -15,7 +15,6 @@ use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
-use caelumora_model::session::Session;
 use caelumora_model::store::{
     Deleted, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
 };
@@ -29,8 +28,8 @@ use tracing::{info, warn};
 
 pub struct WorkspaceManager {
     workspaces: Arc<dyn EntityStore<Workspace>>,
-    /// The sessions a workspace may be made in the scope of.
-    sessions: Arc<dyn EntityStore<Session>>,
+    /// Asked whether a workspace may be put into a scope.
+    holders: Arc<ScopeHolders>,
     events: Arc<EventBus>,
     access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where, and who is cleared for what (issue 304).
@@ -57,6 +56,7 @@ impl WorkspaceManager {
     /// as large as `config` says.
     pub(crate) fn new(
         stores: &EntityStores,
+        holders: Arc<ScopeHolders>,
         events: Arc<EventBus>,
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -65,7 +65,7 @@ impl WorkspaceManager {
     ) -> Self {
         Self {
             workspaces: Arc::clone(&stores.workspaces),
-            sessions: Arc::clone(&stores.sessions),
+            holders,
             events,
             access_policy,
             confidentiality,
@@ -104,8 +104,9 @@ impl WorkspaceManager {
     /// `OwnerNotAUser`, `UnknownStorage`, `Invalid` for a name or
     /// description that does not fit, `ClassificationRefused`, `NotCleared`,
     /// a `StoreError` - `PermissionDenied` if they may not make it,
-    /// `NotFound` if there is no such session they may read, `NameTaken`,
-    /// and `Validation` for a scope a workspace does not lie in - or a
+    /// `NotFound` if there is no such session, channel or project they may
+    /// read, `NameTaken`, and `Validation` for a scope a workspace does not
+    /// lie in - a channel's or a project's they may read - or a
     /// `TerminalError` of making the place.
     pub async fn create(
         &self,
@@ -133,7 +134,7 @@ impl WorkspaceManager {
             provider.as_ref(),
             &workspace.classification,
         )?;
-        if let Scope::SessionScope { session_id } = workspace.name.scope {
+        if let Scope::SessionScope { .. } = workspace.name.scope {
             self.access_policy
                 .require(
                     ctx,
@@ -141,26 +142,19 @@ impl WorkspaceManager {
                     StoreError::PermissionDenied,
                 )
                 .await?;
-            self.sessions.get(ctx, session_id).await?;
         }
+        self.holders.require(ctx, &workspace.name.scope).await?;
 
         let _writing = self.writing.lock().await;
         self.workspaces.create(ctx, &workspace).await?;
         if let Err(e) = provider.create(workspace.id).await {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
-            let system = SecurityContext::system();
-            if let Err(cleanup) = async {
-                self.workspaces
-                    .delete(&system, workspace.id, &Removal::now(ActorId::System))
-                    .await?;
-                self.workspaces.purge(&system, workspace.id).await
-            }
-            .await
-            {
+            if let Err(cleanup) = purge_for_good(self.workspaces.as_ref(), workspace.id).await {
                 warn!(workspace = %workspace.id, "A workspace whose place could not be made is left deleted: {cleanup}");
             }
             return Err(e.into());
         }
+        self.holders.keep_made(self, &workspace).await?;
         self.events.announce(GlobalEvent::created::<Workspace>(&workspace.id), &workspace);
         info!(workspace = %workspace.id, storage, by = %ctx.caller_id, "Workspace created");
         Ok(workspace)
@@ -188,18 +182,20 @@ impl WorkspaceManager {
     }
 
     /// Takes the deletion of workspace `id` back (`Restore`), with its
-    /// files. Returns the workspace as it is restored.
+    /// files, if what holds its scope is still there (issue 458). Returns
+    /// the workspace as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to restore, or
-    /// whatever else the store reports - `NameTaken` among it.
+    /// `NotFound` if it is not deleted or not the caller's to restore, or if
+    /// what holds its scope is gone, or whatever else the store reports -
+    /// `NameTaken` among it.
     pub async fn restore(
         &self,
         ctx: &SecurityContext,
         id: WorkspaceId,
     ) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
-        let workspace = self.workspaces.restore(ctx, id).await.map_err(store_error(id))?;
+        let workspace = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Workspace>(&id), &workspace);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
         Ok(workspace)

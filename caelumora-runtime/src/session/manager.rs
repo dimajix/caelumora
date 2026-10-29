@@ -767,11 +767,12 @@ impl SessionManager {
     }
 
     /// Stops and deletes a session. Deleting marks (issue 164): the session is kept, with its
-    /// channels and their state, hidden until it is restored (`restore`) or purged (`purge`). What
-    /// lies in its scope and in its own project's is deleted with it, in `context`'s name (issue
-    /// 320), and then the groups of its participants and its channels', and its own project with
-    /// the group of its members, in the runtime's (issues 348, 467) - all of it with the session's
-    /// mark, by `context`'s caller (issue 469).
+    /// channels and their state, hidden until it is restored (`restore`) or purged (`purge`). Its
+    /// own project is marked with it, in the runtime's name (issues 467, 458); what lies in its
+    /// scope and in its own project's is deleted with it, in `context`'s name (issue 320), and
+    /// then the groups of its participants, its channels' and its project's members, in the
+    /// runtime's (issue 348) - all of it with the session's mark, by `context`'s caller (issue
+    /// 469).
     ///
     /// Asked about before anything happens - a refused deletion must not stop the session on the
     /// way (issue 11).
@@ -819,33 +820,40 @@ impl SessionManager {
         // Marked, not removed (issue 164): its channels and their state stay as they are, hidden
         // with it - a channel is reached only through its session - until it is purged. Marked
         // before what lies in its scope, so that nothing of it goes unless the session's deletion
-        // was granted; all of it carries the session's mark and comes back with it (`restore`,
-        // issues 178, 469).
+        // was granted, and so that nothing is put into its scope afterwards (`ScopeHolders`, issue
+        // 458); all of it carries the session's mark and comes back with it (`restore`, issues
+        // 178, 469).
         if !self.stores.sessions.delete(context, id, removal).await? {
             return Ok(false);
         }
-        // What lies in its scope and in its channels' goes as far as `context` may delete it (issue
-        // 320), and what lies in its own project's, which is the session's. Its agents take part in
-        // no other session (`Scope::admits`): they leave nothing. Then the groups of its
-        // participants and its channels' go, in the runtime's name (issue 348) - last, since its
-        // participants reach it by them while it is kept: all of them or none -, and its own
-        // project with the group of its members. If something is left, or the groups or the project
-        // cannot go, the deletion is rolled back, its mark taken away again - in the runtime's
+        // Its own project, which is the session's (issue 467), is marked with it, in the runtime's
+        // name - a holder before its scope, as the session is. Then what lies in its scope and in
+        // its channels' goes as far as `context` may delete it (issue 320), and what lies in its
+        // own project's. Its agents take part in no other session (`Scope::admits`): they leave
+        // nothing. Then the groups of its participants, its channels' and its project's members go,
+        // in the runtime's name (issue 348) - last, since its participants reach it by them while
+        // it is kept: all of them or none. If something is left, or the project or the groups
+        // cannot go, the deletion is rolled back, the marks taken away again - in the runtime's
         // name: the deletion was permitted - and the session runs on if it ran, without what was
         // deleted, and `context` is told why.
         let scope = Scope::SessionScope { session_id: id };
         let holders = held_by(id, own.as_ref());
         let deleted = async {
+            if let Some(own) = &own {
+                self.stores.projects.delete(&SecurityContext::system(), own.id, removal).await?;
+            }
             let left = self.scoped.delete_lying_in(context, &holders, removal).await?;
             ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
-            self.delete_kept(&holders, own.as_ref(), removal).await
+            self.groups.delete_participants(&holders, removal).await?;
+            Ok::<_, Error>(())
         }
         .await;
         if let Err(error) = deleted {
-            if let Err(undo) = self.stores.sessions.restore(&SecurityContext::system(), id).await {
-                warn!("Session {} could not be deleted and not be unmarked again: {}", id, undo);
-            }
+            self.roll_back_deletion(id, own.as_ref()).await;
             return Err(error);
+        }
+        if let Some(own) = &own {
+            self.events.announce(GlobalEvent::deleted::<Project>(&own.id), own);
         }
 
         // Its actors leave, as those of a deleted channel do (issue 377),
@@ -935,32 +943,19 @@ impl SessionManager {
         Ok(session)
     }
 
-    /// Deletes what a session keeps with it, in the runtime's name, as it is deleted, marked with
-    /// `removal`, its mark (issue 469): the groups that lie in `holders` - the scopes it holds
-    /// (`held_by`) -, of its participants, its channels' and its own project's members, then `own`,
-    /// its own project - all of them or, if one cannot go, none (issues 348, 467). The project's
-    /// deletion is announced once all are deleted.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    async fn delete_kept(
-        &self,
-        holders: &[Scope],
-        own: Option<&Project>,
-        removal: &Removal,
-    ) -> Result<()> {
-        self.groups.delete_participants(holders, removal).await?;
-        let Some(own) = own else { return Ok(()) };
-        if let Err(error) =
-            self.stores.projects.delete(&SecurityContext::system(), own.id, removal).await
-        {
-            if let Err(undo) = self.groups.restore_participants(holders, removal).await {
-                warn!(project = %own.id, "The groups of a session whose project could not be deleted could not be restored again: {undo}");
+    /// Takes the marks of session `id` and of `own`, its own project, away again once deleting
+    /// the session failed part of the way, in the runtime's name: the deletion was permitted. What
+    /// went with it stays deleted; the groups went last, all or none. What cannot be is logged.
+    async fn roll_back_deletion(&self, id: SessionId, own: Option<&Project>) {
+        let system = SecurityContext::system();
+        if let Some(own) = own {
+            if let Err(undo) = self.stores.projects.restore(&system, own.id).await.optional() {
+                warn!(project = %own.id, "The own project of a session that could not be deleted could not be unmarked again: {undo}");
             }
-            return Err(error.into());
         }
-        self.events.announce(GlobalEvent::deleted::<Project>(&own.id), own);
-        Ok(())
+        if let Err(undo) = self.stores.sessions.restore(&system, id).await {
+            warn!("Session {} could not be deleted and not be unmarked again: {}", id, undo);
+        }
     }
 
     /// Restores what a session keeps with it, in the runtime's name, as it is restored: the groups

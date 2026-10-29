@@ -16,15 +16,13 @@
 
 use super::{store_error, AgentError, AgentResult};
 use crate::event::EventBus;
-use crate::scoped::ScopeMember;
+use crate::scoped::{ScopeHolders, ScopeMember};
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
-use caelumora_model::channel::Channel;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
-use caelumora_model::session::Session;
 use caelumora_model::store::{
     EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored,
 };
@@ -37,9 +35,8 @@ use tracing::info;
 pub struct AgentManager {
     agents: Arc<dyn EntityStore<Agent>>,
     personalities: Arc<dyn EntityStore<Personality>>,
-    /// Read to ask whether an agent may be put into their scope.
-    sessions: Arc<dyn EntityStore<Session>>,
-    channels: Arc<dyn EntityStore<Channel>>,
+    /// Asked whether an agent may be put into a scope.
+    holders: Arc<ScopeHolders>,
     states: Arc<dyn StateStore>,
     events: Arc<EventBus>,
     access_policy: Arc<dyn AccessPolicy>,
@@ -54,6 +51,7 @@ impl fmt::Debug for AgentManager {
 impl AgentManager {
     pub(crate) fn new(
         stores: &EntityStores,
+        holders: Arc<ScopeHolders>,
         states: Arc<dyn StateStore>,
         events: Arc<EventBus>,
         access_policy: Arc<dyn AccessPolicy>,
@@ -61,8 +59,7 @@ impl AgentManager {
         Self {
             agents: Arc::clone(&stores.agents),
             personalities: Arc::clone(&stores.personalities),
-            sessions: Arc::clone(&stores.sessions),
-            channels: Arc::clone(&stores.channels),
+            holders,
             states,
             events,
             access_policy,
@@ -87,10 +84,10 @@ impl AgentManager {
     /// the personality lies in a session's or a channel's scope the agent
     /// would not; a `StoreError` - `PermissionDenied` if they may not make
     /// it or not read the personality, `NotFound` if there is no such
-    /// session, channel or personality they may read, `NameTaken` if an
-    /// agent of `name` lies in its scope already (issue 250), `Validation`
-    /// for a scope no agent lies in - a project's -, or for the system as
-    /// its owner (issue 477).
+    /// session, channel, project or personality they may read, `NameTaken`
+    /// if an agent of `name` lies in its scope already (issue 250),
+    /// `Validation` for a scope no agent lies in - a project's they may
+    /// read -, or for the system as its owner (issue 477).
     pub async fn create(
         &self,
         context: &SecurityContext,
@@ -106,47 +103,16 @@ impl AgentManager {
                 StoreError::PermissionDenied,
             )
             .await?;
-        self.require_holder(context, &agent.name.scope).await?;
+        self.holders.require(context, &agent.name.scope).await?;
         let personality = self.personalities.get(context, personality_id).await?;
         if !personality.name.scope.admits(&agent.name.scope) {
             return Err(AgentError::PersonalityOutOfScope(personality.name.name));
         }
         self.agents.create(context, &agent).await?;
+        self.holders.keep_made(self, &agent).await?;
         self.events.announce(GlobalEvent::created::<Agent>(&agent.id), &agent);
         info!("Agent {} created by {}", agent.id, context.caller_id);
         Ok(agent)
-    }
-
-    /// Whether `context` may put something into `scope`: read the session
-    /// or the channel it is; any other scope asks nothing of the caller -
-    /// whether an agent may lie there is the store's to say.
-    ///
-    /// # Errors
-    /// `StoreError::NotFound` for a session or channel they may not read,
-    /// or a channel of another session than the scope names.
-    async fn require_holder(&self, context: &SecurityContext, scope: &Scope) -> AgentResult<()> {
-        match scope {
-            Scope::SessionScope { session_id } => {
-                self.sessions.get(context, *session_id).await?;
-            }
-            // The scope names both: a channel of another session than it
-            // names is none.
-            Scope::ChannelScope { session_id, channel_id } => {
-                if self.channels.get(context, *channel_id).await?.session_id != *session_id {
-                    return Err(StoreError::NotFound {
-                        entity: Channel::KIND.name(),
-                        id: channel_id.to_string(),
-                    }
-                    .into());
-                }
-            }
-            // An agent lies in no project's scope: the store refuses it (`Agent::validate`).
-            Scope::ProjectScope { .. }
-            | Scope::UserScope { .. }
-            | Scope::GroupScope { .. }
-            | Scope::GlobalScope => {}
-        }
-        Ok(())
     }
 
     /// Deletes agent `id` on behalf of `context` (issues 164, 314): marked
@@ -181,17 +147,18 @@ impl AgentManager {
     }
 
     /// Restores the deleted agent `id` on behalf of `context` (issues 164,
-    /// 314): its mark taken away, with its state. It takes part again in
-    /// every channel it rested in - a running one starts its actor as it
-    /// learns of it (`SessionLoop`). Returns the agent as it is restored.
+    /// 314): its mark taken away, with its state, if what holds its scope is
+    /// still there (issue 458). It takes part again in every channel it
+    /// rested in - a running one starts its actor as it learns of it
+    /// (`SessionLoop`). Returns the agent as it is restored.
     ///
     /// # Errors
     /// `NotFound` if there is no such deleted agent or `context` may not see
-    /// it, `StoreError::PermissionDenied` if they may but not restore it,
-    /// `StoreError::NameTaken` if another agent took its name in its scope
-    /// meanwhile (issue 250).
+    /// it, or if what holds its scope is gone, `StoreError::PermissionDenied`
+    /// if they may but not restore it, `StoreError::NameTaken` if another
+    /// agent took its name in its scope meanwhile (issue 250).
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> AgentResult<Agent> {
-        let agent = self.agents.restore(context, id).await.map_err(store_error(id))?;
+        let agent = self.holders.restore(self, context, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Agent>(&id), &agent);
         info!("Agent {} restored by {}", id, context.caller_id);
         Ok(agent)

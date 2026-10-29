@@ -1492,9 +1492,10 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
     );
 
     let in_main = Scope::ChannelScope { session_id: session.id(), channel_id: main };
-    let (made, asked) =
-        world.asked(agents.create(&World::as_user(world.bob), "minder", in_main, plain.id)).await;
-    made.expect("he is in the channel");
+    let (made, asked) = world
+        .asked(agents.create(&World::as_user(world.bob), "minder", in_main.clone(), plain.id))
+        .await;
+    let minder = made.expect("he is in the channel");
     assert_eq!(asked[1], "bob: GetChannel(alice's) yes");
     let forged = Scope::ChannelScope { session_id: other.id(), channel_id: main };
     let (refused, _) =
@@ -1512,6 +1513,52 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
         .map(|page| page.items)
         .unwrap();
     assert_eq!(made.len(), 2, "only his two");
+
+    // A channel is not marked with its session (issue 458): its session is asked too, in S,
+    // after the channel - its owner reads the channel still, and learns that the session is gone.
+    let alice = World::as_user(world.alice);
+    world.manager.delete(&World::system(), session.id()).await.expect("with his agents");
+    let (refused, asked) = world.asked(agents.create(&alice, "late", in_main, plain.id)).await;
+    assert!(
+        matches!(refused, Err(AgentError::Store(StoreError::NotFound { entity: "session", .. }))),
+        "a channel of a deleted session: {refused:?}"
+    );
+    assert_eq!(asked[1], "alice: GetChannel(alice's) yes");
+    // Nor is one restored into it: it stays deleted with the session, as it was.
+    let bob = World::as_user(world.bob);
+    let refused = agents.restore(&bob, minder.id).await;
+    assert!(matches!(refused, Err(AgentError::NotFound(_))), "its session is gone: {refused:?}");
+    let stores = world.runtime.entity_stores();
+    let session_mark = stores.sessions.get_deleted(&World::system(), session.id()).await.unwrap();
+    let minder_mark = stores.agents.get_deleted(&World::system(), minder.id).await.unwrap();
+    assert_eq!(minder_mark.removal, session_mark.removal, "with the session's mark still");
+}
+
+/// Issue 458: nothing is put into the scope of a deleted session - a workspace neither made there
+/// nor restored into it.
+#[tokio::test]
+async fn a_workspace_is_not_put_into_a_deleted_session() {
+    let world = World::new().await;
+    let alice = World::as_user(world.alice);
+    let session = world.session_of(&[], &[], &[]).await;
+    let in_session = Scope::SessionScope { session_id: session.id() };
+    let workspaces = world.runtime.workspace_manager();
+    let internal = Classification::general(Confidentiality::Internal);
+    let docs = workspaces
+        .create(&alice, "docs", in_session.clone(), "main", None, internal.clone())
+        .await
+        .expect("hers, in her session");
+    assert!(workspaces.delete(&alice, docs.id).await.unwrap(), "deleted alone first");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+    world.manager.delete(&alice, session.id()).await.unwrap();
+
+    let refused = workspaces.restore(&alice, docs.id).await;
+    assert!(matches!(refused, Err(WorkspaceError::NotFound(_))), "not restored: {refused:?}");
+    let refused = workspaces.create(&alice, "late", in_session, "main", None, internal).await;
+    assert!(
+        matches!(refused, Err(WorkspaceError::Store(StoreError::NotFound { .. }))),
+        "not made: {refused:?}"
+    );
 }
 
 /// Renaming an agent (issue 227), through the controller this instance
@@ -1632,6 +1679,11 @@ async fn deleting_a_session_needs_owning_it() {
     assert!(
         world.runtime.entity_stores().sessions.get(&alice, session.id()).await.is_ok(),
         "the session is kept"
+    );
+    let own = session.session().project;
+    assert!(
+        world.runtime.entity_stores().projects.get(&alice, own).await.is_ok(),
+        "and its own project, marked with it, is unmarked with it (issue 458)"
     );
     assert!(
         world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_ok(),

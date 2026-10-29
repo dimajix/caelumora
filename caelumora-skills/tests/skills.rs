@@ -29,7 +29,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityStore, EntityStoreFactory};
+use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError};
 use caelumora_model::tool::{ToolCall, ToolVisibility};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::value::name::ScopedName;
@@ -781,6 +781,14 @@ async fn a_skill_of_a_sessions_scope_is_deleted_and_restored_with_it() {
 
     world.manager.delete(&alice, id).await.expect("hers to delete");
     assert!(store(&world).get(&World::system(), made.id).await.is_err(), "deleted with it");
+    // Nothing is put into the scope of a deleted session (issue 458).
+    let in_session = Scope::SessionScope { session_id: id };
+    let internal = Classification::general(Confidentiality::Internal);
+    let refused =
+        manager(&world).create(&alice, "late", in_session, "Too late", "1.", internal).await;
+    assert!(matches!(refused, Err(SkillError::Store(StoreError::NotFound { .. }))), "{refused:?}");
+    let refused = manager(&world).restore(&alice, made.id).await;
+    assert!(matches!(refused, Err(SkillError::NotFound(_))), "{refused:?}");
     world.manager.restore(&alice, id).await.expect("hers to restore");
     assert!(store(&world).get(&World::system(), made.id).await.is_ok(), "restored with it");
 }

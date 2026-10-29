@@ -18,6 +18,12 @@
 //! session templates and component bundles, which have none, are members by their store
 //! (`Unowned`), which marks them alone.
 //!
+//! Nothing is put into a scope whose holder is gone (issue 458): whoever puts something there asks
+//! `ScopeHolders` first that the holder is there and not deleted, and once it is written, asks
+//! again. A holder is marked deleted before its scope is gone through, so that who asks afterwards
+//! is refused; what was put there before is deleted with it, and what was put there meanwhile -
+//! after the scope was gone through - is taken back (`keep_made`, `restore`).
+//!
 //! What lies in the scope is listed in the runtime's name, so that all of it is found, whatever the
 //! caller may read; nothing of the list reaches the caller. It is deleted and restored in the
 //! caller's name (issue 320): the store asks each as it asks of anything deleted or restored alone,
@@ -32,13 +38,17 @@
 
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
+use caelumora_model::channel::Channel;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
-use caelumora_model::scope::{Scope, ScopedField};
+use caelumora_model::scope::{Scope, Scoped, ScopedField};
 use caelumora_model::security::SecurityContext;
+use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
-    Deleted, EntityKind, EntityStore, NoEntity, StoreError, StoreResult, StoreResultExt, Stored,
+    Deleted, EntityKind, EntityStore, EntityStores, NoEntity, StoreError, StoreResult,
+    StoreResultExt, Stored,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -100,7 +110,7 @@ fn shown_left(left: &[(EntityKind, usize)]) -> String {
 #[async_trait]
 pub trait ScopeMember: Send + Sync {
     /// The kind of entity it is: one that lies in a scope, and in no other entity.
-    type Entity: Stored<Within = NoEntity, Field: ScopedField>;
+    type Entity: Stored<Within = NoEntity, Field: ScopedField> + Scoped;
 
     /// The store its entities are kept in.
     fn store(&self) -> &dyn EntityStore<Self::Entity>;
@@ -350,12 +360,144 @@ pub(crate) struct Unowned<T: Stored>(pub(crate) Arc<dyn EntityStore<T>>);
 
 impl<T> ScopeMember for Unowned<T>
 where
-    T: Stored<Within = NoEntity, Field: ScopedField>,
+    T: Stored<Within = NoEntity, Field: ScopedField> + Scoped,
 {
     type Entity = T;
 
     fn store(&self) -> &dyn EntityStore<T> {
         self.0.as_ref()
+    }
+}
+
+/// The holders of scopes - sessions, channels, projects -: whether one is there for whoever puts
+/// something into its scope (issue 458). Asked before anything is written (`require`) and once it
+/// is (`keep_made`, `restore`): a holder is marked deleted before its scope is gone through
+/// (`ScopedEntities::delete_lying_in`), so that who asks afterwards is refused, and what was
+/// written meanwhile is taken back.
+pub struct ScopeHolders {
+    sessions: Arc<dyn EntityStore<Session>>,
+    channels: Arc<dyn EntityStore<Channel>>,
+    projects: Arc<dyn EntityStore<Project>>,
+}
+
+impl ScopeHolders {
+    /// The holders as `stores` keep them.
+    pub(crate) fn new(stores: &EntityStores) -> Self {
+        Self {
+            sessions: Arc::clone(&stores.sessions),
+            channels: Arc::clone(&stores.channels),
+            projects: Arc::clone(&stores.projects),
+        }
+    }
+
+    /// Requires that `ctx` may put something into `scope`: they read its holder - a session, a
+    /// channel, a project -, and it is not deleted. A channel's session is asked after the channel,
+    /// in the runtime's name, since a channel is not marked with its session - after, so that who
+    /// may not read the channel learns nothing of the session; a scope without a holder - a user's,
+    /// a group's, the global one - asks nothing. Asked whatever the kind, also of a scope the kind
+    /// cannot lie in, which the store then refuses (`Stored::validate`).
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` for a holder `ctx` may not read or that is deleted, or a channel of
+    /// another session than the scope names.
+    pub async fn require(&self, ctx: &SecurityContext, scope: &Scope) -> StoreResult<()> {
+        match scope {
+            Scope::SessionScope { session_id } => {
+                self.sessions.get(ctx, *session_id).await?;
+            }
+            Scope::ChannelScope { session_id, channel_id } => {
+                if self.channels.get(ctx, *channel_id).await?.session_id != *session_id {
+                    return Err(StoreError::NotFound {
+                        entity: Channel::KIND.name(),
+                        id: channel_id.to_string(),
+                    });
+                }
+                self.sessions.get(&SecurityContext::system(), *session_id).await?;
+            }
+            Scope::ProjectScope { project_id } => {
+                self.projects.get(ctx, *project_id).await?;
+            }
+            Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => {}
+        }
+        Ok(())
+    }
+
+    /// Keeps `entity`, made by `member`'s store a moment ago, if the holder of its scope is still
+    /// there - asked in the runtime's name -; takes it back otherwise: made after the holder's
+    /// deletion went through the scope, it would be left behind. Taken back as a holder's purge
+    /// takes it: marked deleted, what lies behind it removed, purged - so that if removing fails,
+    /// it stays deleted and goes with the holder's purge.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` for the holder if it went, or whatever taking back reports.
+    pub async fn keep_made<M: ScopeMember>(
+        &self,
+        member: &M,
+        entity: &M::Entity,
+    ) -> StoreResult<()> {
+        let Err(gone) = self.still_there(entity).await else { return Ok(()) };
+        info!(kind = %M::Entity::KIND, id = %entity.id(), "Taken back: what holds its scope went while it was made");
+        let store = member.store();
+        let system = SecurityContext::system();
+        store.delete(&system, entity.id(), &Removal::now(ActorId::System)).await?;
+        member.remove_behind(entity).await?;
+        store.purge(&system, entity.id()).await?;
+        Err(gone)
+    }
+
+    /// Restores `id` of `member`'s store on behalf of `ctx`, as the store restores it, and keeps it
+    /// only if the holder of its scope is still there (`keep_restored`): otherwise it is marked
+    /// deleted again with the mark it carried - read in the runtime's name before, since the mark
+    /// is the runtime's to give back; the store asks `ctx` as it restores. Answers the entity as
+    /// restored.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such deleted entity, `ctx` may not see it, or the
+    /// holder of its scope is gone; whatever else the store reports - `NameTaken` among it.
+    pub async fn restore<M: ScopeMember>(
+        &self,
+        member: &M,
+        ctx: &SecurityContext,
+        id: <M::Entity as Stored>::Id,
+    ) -> StoreResult<M::Entity> {
+        let store = member.store();
+        let Deleted { removal, .. } =
+            store.get_deleted(&SecurityContext::system(), id.clone()).await?;
+        let entity = store.restore(ctx, id).await?;
+        self.keep_restored(member, &entity, &removal).await?;
+        Ok(entity)
+    }
+
+    /// Keeps `entity`, restored by `member`'s store a moment ago, if the holder of its scope is
+    /// still there - asked in the runtime's name -; marks it deleted again with `removal`, the mark
+    /// it carried, otherwise.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` for the holder if it went, or whatever marking reports.
+    async fn keep_restored<M: ScopeMember>(
+        &self,
+        member: &M,
+        entity: &M::Entity,
+        removal: &Removal,
+    ) -> StoreResult<()> {
+        let Err(gone) = self.still_there(entity).await else { return Ok(()) };
+        info!(kind = %M::Entity::KIND, id = %entity.id(), "Stays deleted: what holds its scope went while it was restored");
+        member.store().delete(&SecurityContext::system(), entity.id(), removal).await?;
+        Err(gone)
+    }
+
+    /// Whether the holder of the scope `entity` lies in is still there, asked in the runtime's
+    /// name: `Err(NotFound)` if it went. Any other failure is the store's and says nothing of the
+    /// holder: logged, and the entity kept.
+    async fn still_there<T: Scoped>(&self, entity: &T) -> StoreResult<()> {
+        match self.require(&SecurityContext::system(), &entity.scoped_name().scope).await {
+            Err(gone @ StoreError::NotFound { .. }) => Err(gone),
+            Err(e) => {
+                warn!("Whether what holds a scope is still there could not be asked: {e}");
+                Ok(())
+            }
+            Ok(()) => Ok(()),
+        }
     }
 }
 
@@ -405,4 +547,116 @@ pub(crate) async fn purge_for_good<T: Stored>(
         return Ok(false);
     }
     store.purge(&system, id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ScopeHolders, Unowned};
+    use crate::session::testing::bare_session;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::channel::testing::make_channel;
+    use caelumora_model::component::ComponentBundle;
+    use caelumora_model::project::Project;
+    use caelumora_model::removal::Removal;
+    use caelumora_model::scope::Scope;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::session::SessionId;
+    use caelumora_model::store::{Persistence, StoreError};
+    use caelumora_model::user::UserId;
+    use caelumora_model::value::name::ScopedName;
+    use std::sync::Arc;
+
+    /// Whether `holders` refuse `scope` for want of its holder.
+    async fn refused(holders: &ScopeHolders, scope: &Scope) -> bool {
+        let asked = holders.require(&SecurityContext::system(), scope).await;
+        matches!(asked, Err(StoreError::NotFound { .. }))
+    }
+
+    /// Issue 458: something is put into a scope only while its holder is there - a channel's
+    /// session among it, which is not marked with the session.
+    #[tokio::test]
+    async fn a_scope_is_entered_only_while_its_holder_is_there() {
+        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let holders = ScopeHolders::new(&stores);
+        let system = SecurityContext::system();
+        let session = bare_session(SessionId::new());
+        let channel = make_channel(session.id, "main");
+        let project = Project::own_of(session.id, UserId::new());
+        stores.sessions.create(&system, &session).await.unwrap();
+        stores.channels.create(&system, &channel).await.unwrap();
+        stores.projects.create(&system, &project).await.unwrap();
+        let in_session = Scope::SessionScope { session_id: session.id };
+        let in_channel = Scope::ChannelScope { session_id: session.id, channel_id: channel.id };
+        let in_project = Scope::ProjectScope { project_id: project.id };
+        let elsewhere =
+            Scope::ChannelScope { session_id: SessionId::new(), channel_id: channel.id };
+
+        for scope in [&in_session, &in_channel, &in_project, &Scope::GlobalScope] {
+            holders.require(&system, scope).await.expect("its holder is there");
+        }
+        assert!(refused(&holders, &elsewhere).await, "a channel of another session is none");
+
+        let mark = Removal::now(ActorId::System);
+        stores.projects.delete(&system, project.id, &mark).await.unwrap();
+        assert!(refused(&holders, &in_project).await, "a deleted project holds nothing new");
+        stores.sessions.delete(&system, session.id, &mark).await.unwrap();
+        assert!(refused(&holders, &in_session).await, "nor a deleted session");
+        assert!(refused(&holders, &in_channel).await, "nor a channel of a deleted session");
+        holders
+            .require(&system, &Scope::GlobalScope)
+            .await
+            .expect("the global scope has no holder");
+    }
+
+    /// A bundle `name` in `scope`, the system's.
+    fn bundle(name: &str, scope: &Scope) -> ComponentBundle {
+        ComponentBundle::new(
+            ScopedName::new(name, scope.clone()).unwrap(),
+            Default::default(),
+            SecurityAttributes::systems(),
+        )
+    }
+
+    /// Issue 458: what was put into a scope after its holder's deletion went through it is taken
+    /// back - made, purged; restored, marked deleted again with the mark it carried.
+    #[tokio::test]
+    async fn what_is_put_into_a_scope_whose_holder_went_is_taken_back() {
+        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let holders = ScopeHolders::new(&stores);
+        let bundles = Unowned(Arc::clone(&stores.component_bundles));
+        let system = SecurityContext::system();
+        let session = bare_session(SessionId::new());
+        stores.sessions.create(&system, &session).await.unwrap();
+        let in_session = Scope::SessionScope { session_id: session.id };
+
+        let kept = bundle("kept", &in_session);
+        stores.component_bundles.create(&system, &kept).await.unwrap();
+        holders.keep_made(&bundles, &kept).await.expect("its session is there");
+        let alone = Removal::now(ActorId::System);
+        stores.component_bundles.delete(&system, kept.id, &alone).await.unwrap();
+        holders.restore(&bundles, &system, kept.id).await.expect("still there");
+
+        // The session goes, and its scope was gone through: `kept` went with it.
+        let mark = Removal::now(ActorId::System);
+        stores.sessions.delete(&system, session.id, &mark).await.unwrap();
+        stores.component_bundles.delete(&system, kept.id, &mark).await.unwrap();
+        let late = bundle("late", &in_session);
+        stores.component_bundles.create(&system, &late).await.unwrap();
+        let refused = holders.keep_made(&bundles, &late).await;
+        assert!(matches!(refused, Err(StoreError::NotFound { .. })), "made too late: {refused:?}");
+        assert!(
+            stores.component_bundles.get_deleted(&system, late.id).await.is_err(),
+            "taken back for good"
+        );
+        let refused = holders.restore(&bundles, &system, kept.id).await;
+        assert!(
+            matches!(refused, Err(StoreError::NotFound { .. })),
+            "restored too late: {refused:?}"
+        );
+        assert_eq!(
+            stores.component_bundles.get_deleted(&system, kept.id).await.unwrap().removal,
+            mark,
+            "stays deleted with the session, as it was"
+        );
+    }
 }

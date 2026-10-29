@@ -28,15 +28,7 @@ impl Plugin for ArtifactsPlugin {
     fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         let config: ArtifactsConfig = runtime.config(ARTIFACTS)?;
         let artifacts = runtime.entity_store::<Artifact>()?;
-        let manager = ArtifactManager::new(
-            runtime.entity_stores(),
-            artifacts,
-            Arc::clone(runtime.event_bus()),
-            Arc::clone(runtime.access_policy()),
-            Arc::clone(runtime.confidentiality()),
-            Arc::clone(runtime.content_storages()),
-            &config,
-        )?;
+        let manager = ArtifactManager::new(runtime, artifacts, &config)?;
         let manager = Arc::new(manager);
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);

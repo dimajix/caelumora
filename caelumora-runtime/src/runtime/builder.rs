@@ -12,7 +12,7 @@ use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::plugin::Plugin;
-use crate::scoped::{ScopeMember, ScopedEntities, ScopedKind, Unowned};
+use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
 use crate::workspace::reaper::CommandReaper;
@@ -69,6 +69,7 @@ pub struct RuntimeBuilder {
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopedKind>>,
+    scope_holders: Arc<ScopeHolders>,
     services: Services,
     /// The texts given to models, to which the plugins add theirs (issue
     /// 57); a service once the runtime is built.
@@ -129,6 +130,7 @@ impl RuntimeBuilder {
     ) -> Result<Self> {
         let state_store = persistence.state_store();
         let entity_stores = persistence.entity_stores()?;
+        let scope_holders = Arc::new(ScopeHolders::new(&entity_stores));
         let event_bus =
             Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
         // What a backend may ask for: the policies, the secrets and, for a
@@ -164,6 +166,7 @@ impl RuntimeBuilder {
         )?;
         let workspaces = Arc::new(WorkspaceManager::new(
             &entity_stores,
+            Arc::clone(&scope_holders),
             Arc::clone(&event_bus),
             Arc::clone(&access_policy),
             Arc::clone(&confidentiality),
@@ -199,6 +202,7 @@ impl RuntimeBuilder {
         ));
         let agents = Arc::new(AgentManager::new(
             &entity_stores,
+            Arc::clone(&scope_holders),
             Arc::clone(&state_store),
             Arc::clone(&event_bus),
             Arc::clone(&access_policy),
@@ -241,6 +245,7 @@ impl RuntimeBuilder {
             groups,
             agents,
             scope_members,
+            scope_holders,
             services,
             prompts,
             prompt_variants: config.prompts.clone(),
@@ -338,6 +343,11 @@ impl RuntimeBuilder {
     /// The stores of the core's kinds.
     pub fn entity_stores(&self) -> &EntityStores {
         &self.entity_stores
+    }
+
+    /// The holders of scopes, asked by whoever puts something into one (issue 458).
+    pub fn scope_holders(&self) -> &Arc<ScopeHolders> {
+        &self.scope_holders
     }
 
     pub fn event_bus(&self) -> &Arc<EventBus> {

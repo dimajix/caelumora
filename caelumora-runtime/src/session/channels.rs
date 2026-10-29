@@ -489,7 +489,8 @@ impl SessionLoop {
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         self.session_controller.remove_channel(context, channel_id).await?;
         // Marked before what lies in its scope, so that nothing of it goes unless the channel's
-        // deletion was granted. Then what lies in its scope goes as far as `context` may delete it
+        // deletion was granted, and nothing is put into its scope afterwards (`ScopeHolders`, issue
+        // 458). Then what lies in its scope goes as far as `context` may delete it
         // (issue 320); an agent of it takes part in no other channel (`Scope::admits`). Then the
         // group of its participants, in the runtime's name (issue 348). All of it carries the
         // channel's mark and comes back with it (`restore_channel`, issues 178, 469). If any of it
