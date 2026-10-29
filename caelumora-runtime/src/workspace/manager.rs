@@ -5,7 +5,7 @@
 use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
 use crate::backend::NamedBackends;
 use crate::event::EventBus;
-use crate::scoped::{ScopeHolders, ScopeMember};
+use crate::scoped::{purge_for_good, ScopeHolders, ScopeMember};
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -149,19 +149,12 @@ impl WorkspaceManager {
         self.workspaces.create(ctx, &workspace).await?;
         if let Err(e) = provider.create(workspace.id).await {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
-            let system = SecurityContext::system();
-            if let Err(cleanup) = async {
-                self.workspaces
-                    .delete(&system, workspace.id, &Removal::now(ActorId::System))
-                    .await?;
-                self.workspaces.purge(&system, workspace.id).await
-            }
-            .await
-            {
+            if let Err(cleanup) = purge_for_good(self.workspaces.as_ref(), workspace.id).await {
                 warn!(workspace = %workspace.id, "A workspace whose place could not be made is left deleted: {cleanup}");
             }
             return Err(e.into());
         }
+        self.holders.keep_made(self, &workspace).await?;
         self.events.announce(GlobalEvent::created::<Workspace>(&workspace.id), &workspace);
         info!(workspace = %workspace.id, storage, by = %ctx.caller_id, "Workspace created");
         Ok(workspace)
@@ -189,18 +182,20 @@ impl WorkspaceManager {
     }
 
     /// Takes the deletion of workspace `id` back (`Restore`), with its
-    /// files. Returns the workspace as it is restored.
+    /// files, if what holds its scope is still there (issue 458). Returns
+    /// the workspace as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to restore, or
-    /// whatever else the store reports - `NameTaken` among it.
+    /// `NotFound` if it is not deleted or not the caller's to restore, or if
+    /// what holds its scope is gone, or whatever else the store reports -
+    /// `NameTaken` among it.
     pub async fn restore(
         &self,
         ctx: &SecurityContext,
         id: WorkspaceId,
     ) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
-        let workspace = self.workspaces.restore(ctx, id).await.map_err(store_error(id))?;
+        let workspace = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Workspace>(&id), &workspace);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
         Ok(workspace)

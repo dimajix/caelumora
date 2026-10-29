@@ -109,6 +109,7 @@ impl AgentManager {
             return Err(AgentError::PersonalityOutOfScope(personality.name.name));
         }
         self.agents.create(context, &agent).await?;
+        self.holders.keep_made(self, &agent).await?;
         self.events.announce(GlobalEvent::created::<Agent>(&agent.id), &agent);
         info!("Agent {} created by {}", agent.id, context.caller_id);
         Ok(agent)
@@ -146,17 +147,18 @@ impl AgentManager {
     }
 
     /// Restores the deleted agent `id` on behalf of `context` (issues 164,
-    /// 314): its mark taken away, with its state. It takes part again in
-    /// every channel it rested in - a running one starts its actor as it
-    /// learns of it (`SessionLoop`). Returns the agent as it is restored.
+    /// 314): its mark taken away, with its state, if what holds its scope is
+    /// still there (issue 458). It takes part again in every channel it
+    /// rested in - a running one starts its actor as it learns of it
+    /// (`SessionLoop`). Returns the agent as it is restored.
     ///
     /// # Errors
     /// `NotFound` if there is no such deleted agent or `context` may not see
-    /// it, `StoreError::PermissionDenied` if they may but not restore it,
-    /// `StoreError::NameTaken` if another agent took its name in its scope
-    /// meanwhile (issue 250).
+    /// it, or if what holds its scope is gone, `StoreError::PermissionDenied`
+    /// if they may but not restore it, `StoreError::NameTaken` if another
+    /// agent took its name in its scope meanwhile (issue 250).
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> AgentResult<Agent> {
-        let agent = self.agents.restore(context, id).await.map_err(store_error(id))?;
+        let agent = self.holders.restore(self, context, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Agent>(&id), &agent);
         info!("Agent {} restored by {}", id, context.caller_id);
         Ok(agent)

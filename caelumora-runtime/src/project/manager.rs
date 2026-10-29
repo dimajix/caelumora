@@ -122,7 +122,8 @@ impl ProjectManager {
         if project.is_own() {
             return Err(ProjectError::InvalidScope);
         }
-        // One mark for all that goes with it (issue 469).
+        // One mark for all that goes with it (issue 469); marked before its scope is gone through,
+        // so that nothing is put into it afterwards (`ScopeHolders`, issue 458).
         let removal = Removal::now(ctx.caller_id);
         if !self.stores.projects.delete(ctx, id, &removal).await? {
             return Ok(false);

@@ -342,6 +342,11 @@ impl ArtifactManager {
                 return Err(e.into());
             }
         };
+        // A new artifact is kept only if the project is still there (issue 458); one that was
+        // there before went with the project if it was deleted meanwhile, under `writing`.
+        if number == 1 {
+            self.holders.keep_made(self, &artifact).await?;
+        }
         // Heard by whoever reads the artifact and the version.
         let event = if number == 1 {
             GlobalEvent::created::<Artifact>(&id)
@@ -516,15 +521,17 @@ impl ArtifactManager {
         Ok(true)
     }
 
-    /// Takes the deletion of artifact `id` back (`Restore`). Returns the
-    /// artifact as it is restored.
+    /// Takes the deletion of artifact `id` back (`Restore`), if the project
+    /// that holds its scope is still there (issue 458). Returns the artifact
+    /// as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to restore, or
-    /// whatever else the store reports - `NameTaken` among it.
+    /// `NotFound` if it is not deleted or not the caller's to restore, or if
+    /// its project is gone, or whatever else the store reports - `NameTaken`
+    /// among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let artifact = self.artifacts.restore(ctx, id).await.map_err(store_error(id))?;
+        let artifact = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Artifact>(&id), &artifact);
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(artifact)

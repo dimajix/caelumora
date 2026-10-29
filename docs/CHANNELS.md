@@ -28,15 +28,26 @@ stays deleted, and the session comes back all the same. The session is marked be
 deleted, so that nothing of it goes unless the session's deletion was granted; all of it carries the
 session's mark - one for all of it - and comes back with it (issue 469). If something is left, the
 mark is taken away again in the runtime's name, and what was deleted stays deleted - restored by
-hand, not with the session. Purging is done in the runtime's name. Each kind that may lie in a scope
-is a `ScopeMember` (issue 323), and `ScopedEntities` goes through them in the order they were
-registered; what is done with them is the same for every kind, and a member says only what its kind
-adds. What has a manager of its own - agents, workspaces, skills, artifacts - is a member by it,
-announced as it announces its own deletions - an artifact to whoever reads it, as when it is deleted
-alone (issues 319, 316) -, and what lies behind an entity - an agent's state, a workspace's place,
-an artifact's content - is removed before the entity is purged. Personalities, session templates
-and component bundles, which have none, are members by their store (`Unowned`), which marks them
-and announces nothing.
+hand, not with the session. Purging is done in the runtime's name.
+
+A session or a channel runs on while it is deleted, and runs on if its deletion fails; nothing is
+put into its scope meanwhile (issue 458). Whoever puts something into a scope - makes it, restores
+it, publishes it - asks `ScopeHolders` (`scoped`) that the holder of the scope is there and not
+deleted, before writing and once written: the holder is marked before its scope is deleted - a
+session's own project with the session -, so what was put there before goes with it, who asks
+afterwards is refused, and what was written in between -
+after the deletion went through the scope - is taken back, purged or marked deleted again with the
+mark it carried. A channel's session is asked as well, since a channel is not marked with its
+session.
+
+Each kind that may lie in a scope is a `ScopeMember` (issue 323), and `ScopedEntities` goes through
+them in the order they were registered; what is done with them is the same for every kind, and a
+member says only what its kind adds. What has a manager of its own - agents, workspaces, skills,
+artifacts - is a member by it, announced as it announces its own deletions - an artifact to whoever
+reads it, as when it is deleted alone (issues 319, 316) -, and what lies behind an entity - an
+agent's state, a workspace's place, an artifact's content - is removed before the entity is purged.
+Personalities, session templates and component bundles, which have none, are members by their store
+(`Unowned`), which marks them and announces nothing.
 
 The groups of the participants of a session and of its channels lie in its scope as well, but are
 not among what lies there: they belong to the session or channel itself, and its participants reach

@@ -25,7 +25,7 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::event::EventBus;
-use caelumora_runtime::scoped::ScopeMember;
+use caelumora_runtime::scoped::{ScopeHolders, ScopeMember};
 use chrono::Utc;
 use std::fmt;
 use std::sync::Arc;
@@ -72,6 +72,8 @@ fn store_error(id: SkillId) -> impl FnOnce(StoreError) -> SkillError {
 
 pub struct SkillManager {
     skills: Arc<dyn EntityStore<Skill>>,
+    /// Asked whether a skill may be put into a scope (issue 458).
+    holders: Arc<ScopeHolders>,
     events: Arc<EventBus>,
     /// What may flow where, and who is cleared for what (issue 304).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -91,10 +93,11 @@ impl SkillManager {
     /// the manager asks the flow alone (issue 304).
     pub fn new(
         skills: Arc<dyn EntityStore<Skill>>,
+        holders: Arc<ScopeHolders>,
         events: Arc<EventBus>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
     ) -> Self {
-        Self { skills, events, confidentiality, writing: Mutex::new(()) }
+        Self { skills, holders, events, confidentiality, writing: Mutex::new(()) }
     }
 
     /// The store of skills, which the views read (`SkillViews`).
@@ -146,9 +149,13 @@ impl SkillManager {
         self.confidentiality
             .require_classifiable(&skill.classification, || SkillError::ClassificationRefused)?;
         self.require_flow(ctx, &skill.classification)?;
+        // Asked before the store asks `CreateSkill`, which is the first act asked here: the
+        // session is read in the caller's name, who learns nothing they could not read.
+        self.holders.require(ctx, &skill.name.scope).await?;
 
         let _writing = self.writing.lock().await;
         self.skills.create(ctx, &skill).await?;
+        self.holders.keep_made(self, &skill).await?;
         self.events.announce(GlobalEvent::created::<Skill>(&skill.id), &skill);
         info!(skill = %skill.id, by = %ctx.caller_id, "Skill created");
         Ok(skill)
@@ -270,15 +277,16 @@ impl SkillManager {
         Ok(true)
     }
 
-    /// Takes the deletion of skill `id` back (`Restore`). Returns the skill
-    /// as it is restored.
+    /// Takes the deletion of skill `id` back (`Restore`), if what holds its
+    /// scope is still there (issue 458). Returns the skill as it is restored.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to restore, or
-    /// whatever else the store reports - `NameTaken` among it.
+    /// `NotFound` if it is not deleted or not the caller's to restore, or if
+    /// what holds its scope is gone, or whatever else the store reports -
+    /// `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<Skill> {
         let _writing = self.writing.lock().await;
-        let skill = self.skills.restore(ctx, id).await.map_err(store_error(id))?;
+        let skill = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Skill>(&id), &skill);
         info!(skill = %id, by = %ctx.caller_id, "Skill restored");
         Ok(skill)

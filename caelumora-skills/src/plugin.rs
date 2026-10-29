@@ -34,6 +34,7 @@ impl Plugin for SkillsPlugin {
         let skills = runtime.entity_store::<Skill>()?;
         let manager = Arc::new(SkillManager::new(
             Arc::clone(&skills),
+            Arc::clone(runtime.scope_holders()),
             Arc::clone(runtime.event_bus()),
             Arc::clone(runtime.confidentiality()),
         ));

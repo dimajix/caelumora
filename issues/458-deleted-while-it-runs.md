@@ -1,6 +1,6 @@
 # 458 — A session or channel is deleted while it runs, and stopped only once it is gone
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** Sessions and channels
@@ -49,7 +49,7 @@ While it is deleted, it runs:
   deleted (`ScopeHolders::require`), writes, and asks again: if the holder went meanwhile, what
   was written came after the deletion went through the scope and is taken back - purged with
   what lies behind it, or marked deleted again with the mark it carried (`keep_made`,
-  `keep_restored`). What was written before the scope was gone through is deleted with the
+  `restore`). What was written before the scope was gone through is deleted with the
   holder and comes back with it. No lock, no wait; one more read per write. Where a deletion is
   rolled back, what went with it stays deleted, as it does today - a writer may then be answered
   with an entity that is deleted.
@@ -79,3 +79,11 @@ its owner alone stays, as above.
   holder of a scope is there - a channel's session among it, which is not marked with the
   session -, in place of the agents', workspaces' and artifacts' own; the managers take it as a
   service (`RuntimeBuilder::scope_holders`), `ArtifactManager::new` its services from the builder.
+- **2026-10-29** — Step 2, done: `ScopeHolders::keep_made`, the check once written, in every
+  `create` and `publish` of a kind that lies in a scope, and `ScopeHolders::restore`, which
+  restores and checks for the four managers alike; the skills ask the holder for the first time, as
+  does every restoring. The review found the order broken for a session's own project, which was
+  marked only after the scope was gone through: it is marked with the session now, and unmarked
+  with it if the deletion is rolled back. Documented in CHANNELS.md, PLUGINS.md and
+  PERMISSION-CHECKS.md. A session put into a project that is deleted meanwhile
+  (`SessionLoop::update_project`) is left to an issue of its own.

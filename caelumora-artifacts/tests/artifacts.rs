@@ -932,6 +932,9 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
 
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
+    // Not restored into its own project while the session is deleted (issue 458).
+    let refused = manager(&world).restore(&alice, draft.id).await;
+    assert!(matches!(refused, Err(ArtifactError::NotFound(_))), "{refused:?}");
     world.manager.purge(&World::system(), session_id).await.unwrap();
     for gone in [artifact.id, draft.id] {
         assert!(
