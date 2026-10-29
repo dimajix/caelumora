@@ -1,6 +1,6 @@
 # 476 — Making a session in a project is a sequence of the REST handler, with its roll-back
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Sessions and channels
@@ -41,3 +41,22 @@ Recommendation: C, then A.
 ## History
 
 - **2026-10-28** — Opened at the maintainer's request from the review of step 4a of issue 467.
+- **2026-10-29** — Decided with the maintainer: B, not A. A as written does not make it one call:
+  `SessionLoop::enter_project_or_roll_back` would have the loop make the manager roll back its
+  creation, and a `SessionManager` method taking the session made leaves the caller two calls. With
+  the project as a seventh parameter `create_from_template` would take eight and clippy's
+  `too_many_arguments` fire; so the parameters become a `SessionSpec`, as a channel is asked for by
+  a `ChannelSpec` - the bundling set aside in 467, taken now that the concept exists twice
+  (`ChannelSpec`, `CreateSessionRequest`). Its strings are made into values by
+  `create_from_template`, as `create_channel` makes those of a `ChannelSpec`; the template stays a
+  parameter of its own, so that the spec holds only what is chosen in place of the template's and
+  has a `Default`. Two steps: 1. sharing a chosen workspace of the user's (issue 23) moves into the
+  block that rolls the creation back - it stood after it, so that a share that failed left the
+  session made while its maker was told it was not; 2. `SessionSpec`,
+  `create_from_template(context, template_id, spec)`, the project step in that block, and
+  `roll_back_creation` private.
+
+  Step 1 done: the share stands after `complete` in the block that rolls the creation back
+  (`session/manager.rs`), the row "Make from a template" of PERMISSION-CHECKS.md says so. Test:
+  `a_session_whose_workspace_cannot_be_shared_is_not_made`, with the template of
+  `a_session_is_created_from_a_template_for_its_owner` made a test helper of its own (`pairing`).

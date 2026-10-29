@@ -201,31 +201,26 @@ impl SessionManager {
         }
     }
 
-    /// Creates a session from the template `template_id` on behalf of
-    /// `context`, whose user owns it and is the template's "user", names it
-    /// `name` - the template's name if `None` -, holds it in `language` and
-    /// `time_zone` - the template's if `None` (issues 424, 425) - and starts
-    /// it (issue 88).
-    /// Its workspace is `workspace` where one is chosen (issue 266) - none,
-    /// one of the user's own, or one made for it alone -, else the
-    /// template's. One of the user's own is attached as the session is
-    /// made. Once the session is made, one made for it alone or the
-    /// template's is found by name in its scope, or made, and attached
-    /// (issue 344), and the template's agents are found or made alike and
-    /// taken into it and their channels, as `context`; if that fails, the
-    /// session's creation is rolled back, with what was made in its scope
-    /// or for it.
+    /// Creates a session from the template `template_id` on behalf of `context`, whose user owns it
+    /// and is the template's "user", names it `name` - the template's name if `None` -, holds it in
+    /// `language` and `time_zone` - the template's if `None` (issues 424, 425) - and starts it
+    /// (issue 88). Its workspace is `workspace` where one is chosen (issue 266) - none, one of the
+    /// user's own, or one made for it alone -, else the template's. One of the user's own is
+    /// attached as the session is made. Once the session is made, one made for it alone or the
+    /// template's is found by name in its scope, or made, and attached (issue 344), the template's
+    /// agents are found or made alike and taken into it and their channels, and one of the user's
+    /// own is shared with its participants as far as the choice says (issue 23), as `context`; if
+    /// any of it fails, the session's creation is rolled back, with what was made in its scope or
+    /// for it.
     ///
     /// # Errors
-    /// `SessionError::OwnerNotAUser` if `context` acts for no user; a
-    /// `StoreError` if the template, a user or a personality it names does
-    /// not exist or may not be read; a `ValueError` if `name` is no name,
-    /// `language` no language tag or `time_zone` no time zone; a
-    /// `TemplateError` if the template cannot be made into a session;
-    /// what attaching an existing workspace or making one reports;
-    /// `SessionError::ChannelUnavailable` if the components of one of its
-    /// channels cannot be read in the owner's name (issue 463); whatever
-    /// creating the session reports.
+    /// `SessionError::OwnerNotAUser` if `context` acts for no user; a `StoreError` if the template,
+    /// a user or a personality it names does not exist or may not be read; a `ValueError` if `name`
+    /// is no name, `language` no language tag or `time_zone` no time zone; a `TemplateError` if the
+    /// template cannot be made into a session; what attaching an existing workspace, making one or
+    /// sharing one reports; `SessionError::ChannelUnavailable` if the components of one of its
+    /// channels cannot be read in the owner's name (issue 463); whatever creating the session
+    /// reports.
     pub async fn create_from_template(
         &self,
         context: &SecurityContext,
@@ -313,18 +308,19 @@ impl SessionManager {
                 wanted.as_ref(),
                 (users, agents),
             )
-            .await
+            .await?;
+            // Shared once the session it is shared with exists (issue 23).
+            if let Some((chosen, Some(grant))) = existing {
+                let controller =
+                    self.runtime_manager.controller_manager().workspace_controller(chosen).await?;
+                controller.share(context, Subject::Group(GroupId::of_session(id)), grant).await?;
+            }
+            Ok(())
         }
         .await;
         if let Err(e) = completed {
             self.roll_back_creation(id).await;
             return Err(e);
-        }
-        // Shared once the session it is shared with exists (issue 23).
-        if let Some((chosen, Some(grant))) = existing {
-            let controller =
-                self.runtime_manager.controller_manager().workspace_controller(chosen).await?;
-            controller.share(context, Subject::Group(GroupId::of_session(id)), grant).await?;
         }
         Ok(session_loop)
     }
@@ -1113,8 +1109,10 @@ mod tests {
     use crate::agent::AgentError;
     use crate::channel::STOP_GRACE;
     use crate::command::{ChannelCommandProvider, CommandExecutor};
+    use crate::component::BUNDLE_REF_KIND;
     use crate::error::is_forbidden;
     use crate::project::ProjectManager;
+    use crate::runtime::RuntimeManager;
     use crate::session::testing::*;
     use crate::session::SessionLoop;
     use crate::session::{SessionError, SessionManager};
@@ -1125,8 +1123,9 @@ mod tests {
     use caelumora_model::actor::{ActorEvent, ActorState, Envelope};
     use caelumora_model::agent::Agent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::channel::{self, moderation_components, Channel};
-    use caelumora_model::component::ComponentBundle;
+    use caelumora_model::approval::ApprovalStrategy;
+    use caelumora_model::channel::{self, moderation_components, Channel, InternalActor};
+    use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::event::EntityChange;
     use caelumora_model::group::GroupId;
@@ -1140,17 +1139,23 @@ mod tests {
     use caelumora_model::session::ChannelId;
     use caelumora_model::session::Session;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::query::Query;
     use caelumora_model::store::StoreError;
     use caelumora_model::store::{Deleted, Stored};
     use caelumora_model::store::{Persistence, StateStore};
+    use caelumora_model::template::{
+        ChannelTemplate, InternalActorTemplate, ParticipantTemplate, SessionTemplate,
+        SessionTemplateId,
+    };
     use caelumora_model::turn::{GivenUpReason, TurnState};
-    use caelumora_model::user::UserId;
     use caelumora_model::user::UserProfile;
+    use caelumora_model::user::{User, UserId};
     use caelumora_model::value::language::Language;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::value::ValueError;
+    use caelumora_model::workspace::{Workspace, WorkspaceChoice};
     use serde_json::Value;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -1541,37 +1546,19 @@ mod tests {
         manager.stop(&system, session.id()).await.unwrap();
     }
 
-    #[tokio::test]
-    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
-    async fn a_session_is_created_from_a_template_for_its_owner() {
-        use crate::component::BUNDLE_REF_KIND;
-        use caelumora_model::approval::ApprovalStrategy;
-        use caelumora_model::channel::InternalActor;
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        use caelumora_model::template::{
-            ChannelTemplate, InternalActorTemplate, ParticipantTemplate, SessionTemplate,
-            SessionTemplateId,
-        };
-        use caelumora_model::user::{User, UserId};
-
-        let runtime = test_runtime();
-        let manager = SessionManager::new(Arc::clone(&runtime));
+    /// The template "pairing", stored: one channel "main" for its "user", moderated by a broadcast
+    /// and with an approver deciding by all. Returned with the user it is made for, stored too.
+    async fn pairing(runtime: &RuntimeManager) -> (UserId, SessionTemplate) {
+        let system = SecurityContext::system();
         let owner = UserId::new();
-        runtime
-            .entity_stores()
-            .users
-            .create(
-                &SecurityContext::system(),
-                &User {
-                    id: owner,
-                    username: Name::new("alice").unwrap(),
-                    email: String::new(),
-                    roles: Vec::new(),
-                    deleted: None,
-                },
-            )
-            .await
-            .unwrap();
+        let alice = User {
+            id: owner,
+            username: Name::new("alice").unwrap(),
+            email: String::new(),
+            roles: Vec::new(),
+            deleted: None,
+        };
+        runtime.entity_stores().users.create(&system, &alice).await.unwrap();
         let template = SessionTemplate {
             access: Vec::new(),
             summary: None,
@@ -1604,12 +1591,16 @@ mod tests {
             privacy: Default::default(),
             deleted: None,
         };
-        runtime
-            .entity_stores()
-            .session_templates
-            .create(&SecurityContext::system(), &template)
-            .await
-            .unwrap();
+        runtime.entity_stores().session_templates.create(&system, &template).await.unwrap();
+        (owner, template)
+    }
+
+    #[tokio::test]
+    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
+    async fn a_session_is_created_from_a_template_for_its_owner() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (owner, template) = pairing(&runtime).await;
         let hers =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let mut profile = UserProfile::new(owner, None);
@@ -1756,6 +1747,42 @@ mod tests {
                 && runtime.entity_stores().sessions.get_deleted(&system, session).await.is_err(),
             "rolled back"
         );
+    }
+
+    /// Issue 476: a session given one of its owner's workspaces is not made if the workspace
+    /// cannot be shared with its participants as asked, as one that cannot be completed is not.
+    #[tokio::test]
+    async fn a_session_whose_workspace_cannot_be_shared_is_not_made() {
+        let (runtime, passing) = failing_runtime(Workspace::KIND);
+        let stores = runtime.entity_stores().clone();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (owner, template) = pairing(&runtime).await;
+        let hers =
+            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let system = SecurityContext::system();
+        let docs = Workspace::new(
+            ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
+            "dev",
+            Classification::default(),
+            owner,
+        );
+        stores.workspaces.create(&system, &docs).await.unwrap();
+
+        passing.store(0, Ordering::SeqCst);
+        manager
+            .create_from_template(
+                &hers,
+                template.id,
+                None,
+                None,
+                None,
+                Some(WorkspaceChoice::Existing { id: docs.id, share: Some(Grant::Read) }),
+            )
+            .await
+            .expect_err("the workspace cannot be stored as shared");
+        let made = stores.sessions.list(&system, &Query::all()).await.unwrap().items;
+        let deleted = stores.sessions.list_deleted(&system, &Query::all()).await.unwrap().items;
+        assert!(made.is_empty() && deleted.is_empty(), "rolled back: {made:?}, {deleted:?}");
     }
 
     #[tokio::test]
