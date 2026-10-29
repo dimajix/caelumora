@@ -943,6 +943,14 @@ pub enum ChannelReader<'a> {
     Cleared,
 }
 
+impl<'a> ChannelReader<'a> {
+    /// The reader who reads from `from`, if it reads from a place as an agent does, and by its
+    /// clearance otherwise: the one rule by which a reader is chosen.
+    pub fn of(from: Option<&'a Place>) -> Self {
+        from.map_or(Self::Cleared, Self::From)
+    }
+}
+
 /// How `context` may read the channel with `channel` attributes, which lies
 /// `at` its place (issues 133, 264, 296, 304): not at all if it may not read
 /// it (`GetChannel`, the `AccessPolicy`'s). Beyond that, as the

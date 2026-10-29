@@ -167,18 +167,15 @@ impl SessionLoop {
     ) -> Result<Listed> {
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
         let (channel, run) = self.listed_channel(channel_id).ok_or_else(not_found)?;
-        let at = Place {
-            channel: channel_id,
-            classification: channel.classification.clone(),
-            session: self.privacy(),
-        };
+        let at = Place::of(&channel, self.privacy());
         channel_reading(
             self.access_policy.as_ref(),
             self.confidentiality.as_ref(),
             context,
             &channel.security_attributes,
             &at,
-            ChannelReader::Cleared,
+            // Reached for a user alone, who reads by their clearance.
+            ChannelReader::of(None),
         )
         .await
         .ok_or_else(not_found)?;

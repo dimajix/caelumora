@@ -298,15 +298,8 @@ impl SessionView {
     /// agent's owner or the agent itself (issue 264) - reads none of it
     /// (`GetChannel`).
     pub(super) async fn reading(&self, channel: &Channel) -> Option<Reading> {
-        let at = Place {
-            channel: channel.id,
-            classification: channel.classification.clone(),
-            session: self.privacy(),
-        };
-        let reader = match self.views.viewer().place() {
-            Some(from) => ChannelReader::From(from),
-            None => ChannelReader::Cleared,
-        };
+        let at = Place::of(channel, self.privacy());
+        let reader = ChannelReader::of(self.views.viewer().place());
         channel_reading(
             self.views.access_policy().as_ref(),
             self.views.confidentiality().as_ref(),

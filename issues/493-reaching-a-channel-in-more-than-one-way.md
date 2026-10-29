@@ -1,6 +1,6 @@
 # 493 — What reaches a channel is named, held and asked in more than one way
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -107,4 +107,14 @@ are side by side.
   `ChannelView` -, and the former `channel_view` and `session_view` are `channel_response` and
   `session_response` - what a handler answers with. `Views::channel_of`, answering `Reached`, keeps
   its name, the one `channel_of` left.
+- **2026-10-29** — Step 3 done. `Place::of(&Channel, SessionPrivacy)` builds the place of a
+  channel at its own classification, in the model, for the three places; the session's privacy is
+  the caller's, so that a view keeps reading it from the running session, not from its snapshot.
+  The three ways of choosing the reader turned out to be one rule - a user reads by their
+  clearance, an agent from its place -, named `ChannelReader::of(Option<&Place>)`. They differed in
+  form, not in what they answer: the workspace's agent read "from the channel it uses", and since
+  `copyable_information` answers `Whole` within one channel, it is asked `GetChannel` alone - as
+  the views ask an agent in its own channel, which is the only channel an agent uses a workspace
+  in (`ActorRuntime`); this is now said where the workspace chooses the reader. `channel_for` is
+  reached for users alone and reads by clearance.
 

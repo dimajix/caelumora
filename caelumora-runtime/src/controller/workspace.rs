@@ -219,15 +219,11 @@ impl WorkspaceController {
         if !self.access_policy.may_read_session(ctx, &session.security_attributes).await {
             return Err(WorkspaceError::NotUsableInChannel);
         }
-        let at = Place {
-            channel: channel.id,
-            classification: channel.classification.clone(),
-            session: SessionPrivacy::of(session),
-        };
-        let reader = match ctx.caller_id {
-            ActorId::Agent(_) => ChannelReader::From(&at),
-            _ => ChannelReader::Cleared,
-        };
+        let at = Place::of(channel, SessionPrivacy::of(session));
+        // An agent uses the workspace only in the channel it acts in (`ActorRuntime`), and so reads
+        // it from there.
+        let agent = matches!(ctx.caller_id, ActorId::Agent(_));
+        let reader = ChannelReader::of(agent.then_some(&at));
         if channel_reading(
             self.access_policy.as_ref(),
             self.confidentiality.as_ref(),

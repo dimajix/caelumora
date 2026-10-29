@@ -15,6 +15,7 @@
 //! axis, `Visibility`: ownership, not sensitivity.
 
 use crate::actor::ActorId;
+use crate::channel::Channel;
 use crate::context::ModelProfile;
 use crate::message::Message;
 use crate::privacy::SessionPrivacy;
@@ -513,6 +514,14 @@ pub struct Place {
     pub channel: ChannelId,
     pub classification: Classification,
     pub session: SessionPrivacy,
+}
+
+impl Place {
+    /// Where `channel` lies, in a session that privacy sees as `session`, classified as the
+    /// channel is: what is read when the channel is read.
+    pub fn of(channel: &Channel, session: SessionPrivacy) -> Self {
+        Self { channel: channel.id, classification: channel.classification.clone(), session }
+    }
 }
 
 /// How far a reader reads what lies at a place (issues 133, 421): the whole,
