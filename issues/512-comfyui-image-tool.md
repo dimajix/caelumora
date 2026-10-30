@@ -1,6 +1,6 @@
 # 512 — No tool can generate an image
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** Tools and approvals
@@ -268,3 +268,8 @@ in a bundle, that ComfyUI can no longer open.
 - **2026-10-30** - The example's tool moved, as the maintainer asked: `jonathan-assistant` offers it
   no more; a personality of its own does, `bob-painter`, named after the TV painter Bob Ross, with
   `attachment_tool` to show what it painted.
+- **2026-10-30** - Done. Step 4 of the plan, the example and the documents, came with the steps
+  before it: the workflow `z_image_turbo` and the personality `bob-painter` in the examples,
+  TOOLS.md, COMPONENTS.md, CONFIGURATION.md, PLUGINS.md and ARCHITECTURE.md describing it, 208's
+  history recording that how a tool hands over media moved here. `edit_image` and video and audio
+  stay to be opened as issues of their own, as "What follows" says.
