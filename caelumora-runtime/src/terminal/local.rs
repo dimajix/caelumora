@@ -11,7 +11,6 @@ use super::{
     TerminalError, TerminalProvider, TerminalResult, WorkspacePath,
 };
 use crate::backend::Backends;
-use crate::component::config_of_params;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
@@ -53,8 +52,7 @@ struct LocalStorageConfig {
 
 /// Registers the storage `local` with `backends`.
 pub(super) fn register_backend(backends: &mut Backends) {
-    backends.register::<dyn TerminalProvider, _>("local", |_, params, _| {
-        let config: LocalStorageConfig = config_of_params(params)?;
+    backends.register::<dyn TerminalProvider, _, _>("local", |_, config: LocalStorageConfig, _| {
         Ok(Arc::new(LocalProvider::new(
             config.root,
             config.shell,

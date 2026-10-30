@@ -34,7 +34,7 @@ pub trait Plugin: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{config_of_params, service_of};
+    use crate::component::{service_of, NoParams};
     use crate::component::{ComponentContainer, ComponentContext, ComponentFacets, ComponentKind};
     use crate::runtime::RuntimeManager;
     use crate::seed::SeedSection;
@@ -252,8 +252,7 @@ mod tests {
         }
 
         fn backends(&self, backends: &mut Backends) {
-            backends.register::<dyn SecretProvider, _>("vault", |_, params, _| {
-                let config: VaultConfig = config_of_params(params)?;
+            backends.register::<dyn SecretProvider, _, _>("vault", |_, config: VaultConfig, _| {
                 Ok(Arc::new(VaultSecrets(config.secret)))
             });
         }
@@ -329,10 +328,13 @@ mod tests {
         }
 
         fn backends(&self, backends: &mut Backends) {
-            backends.register::<dyn PersistenceBackend, _>("probe", |_, _, services| {
-                service_of::<SecretManager>(services)?;
-                Ok(Arc::new(MemoryStore::new()))
-            });
+            backends.register::<dyn PersistenceBackend, _, _>(
+                "probe",
+                |_, _: NoParams, services| {
+                    service_of::<SecretManager>(services)?;
+                    Ok(Arc::new(MemoryStore::new()))
+                },
+            );
         }
 
         fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
@@ -390,7 +392,7 @@ mod tests {
         }
 
         fn backends(&self, backends: &mut Backends) {
-            backends.register::<dyn PersistenceBackend, _>("ledger", |_, _, _| {
+            backends.register::<dyn PersistenceBackend, _, _>("ledger", |_, _: NoParams, _| {
                 Ok(Arc::new(EntitiesAlone(MemoryStore::new())))
             });
         }

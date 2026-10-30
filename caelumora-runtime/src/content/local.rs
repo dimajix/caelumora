@@ -4,7 +4,6 @@
 
 use super::{ContentError, ContentResult, ContentStorage};
 use crate::backend::Backends;
-use crate::component::config_of_params;
 use crate::terminal::{write_whole, ByteStream, WriteFailure};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
@@ -30,8 +29,7 @@ struct LocalContentConfig {
 
 /// Registers the storage `local` of content with `backends`.
 pub(super) fn register_backend(backends: &mut Backends) {
-    backends.register::<dyn ContentStorage, _>("local", |_, params, _| {
-        let config: LocalContentConfig = config_of_params(params)?;
+    backends.register::<dyn ContentStorage, _, _>("local", |_, config: LocalContentConfig, _| {
         Ok(Arc::new(LocalContentStorage::new(config.root, config.destination)))
     });
 }

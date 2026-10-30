@@ -14,7 +14,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::backend::Backends;
-use caelumora_runtime::component::{config_of_params, service_of, ComponentError, ComponentResult};
+use caelumora_runtime::component::{service_of, ComponentError, ComponentResult};
 use caelumora_runtime::terminal::{
     default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider,
     TerminalResult, WorkspacePath,
@@ -65,19 +65,21 @@ impl SharedStorageConfig {
 /// Registers the storage `open_terminal_shared` with `backends`: its key is
 /// resolved through the `SecretManager`.
 pub(crate) fn register_backend(backends: &mut Backends) {
-    backends.register::<dyn TerminalProvider, _>("open_terminal_shared", |_, params, services| {
-        let config: SharedStorageConfig = config_of_params(params)?;
-        let secrets = Arc::clone(service_of::<SecretManager>(services)?);
-        let provider = SharedProvider::new(
-            config.endpoint.clone(),
-            config.mount()?,
-            max_run(config.max_run_secs)?,
-            config.destination.clone(),
-            secrets,
-        )
-        .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-        Ok(Arc::new(provider))
-    });
+    backends.register::<dyn TerminalProvider, _, _>(
+        "open_terminal_shared",
+        |_, config: SharedStorageConfig, services| {
+            let secrets = Arc::clone(service_of::<SecretManager>(services)?);
+            let provider = SharedProvider::new(
+                config.endpoint.clone(),
+                config.mount()?,
+                max_run(config.max_run_secs)?,
+                config.destination.clone(),
+                secrets,
+            )
+            .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+            Ok(Arc::new(provider))
+        },
+    );
 }
 
 #[derive(Debug)]
@@ -209,6 +211,7 @@ mod tests {
     use caelumora_model::secret::{SecretProvider, SecretResult};
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::workspace::CommandStatus;
+    use caelumora_runtime::component::config_of_params;
     use caelumora_runtime::terminal::{ByteStream, DEFAULT_MAX_RUN_SECS};
     use futures::stream;
     use futures::StreamExt;

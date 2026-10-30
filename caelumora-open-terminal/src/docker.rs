@@ -37,7 +37,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::backend::Backends;
-use caelumora_runtime::component::{config_of_params, ComponentError, ComponentResult};
+use caelumora_runtime::component::{ComponentError, ComponentResult};
 use caelumora_runtime::terminal::{
     default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider,
     TerminalResult,
@@ -129,21 +129,23 @@ impl DockerStorageConfig {
 /// Registers the storage `open_terminal_docker` with `backends`: its
 /// containers are labelled with the name of the storage.
 pub(crate) fn register_backend(backends: &mut Backends) {
-    backends.register::<dyn TerminalProvider, _>("open_terminal_docker", |storage, params, _| {
-        let config: DockerStorageConfig = config_of_params(params)?;
-        config.check()?;
-        let max_run = max_run(config.max_run_secs)?;
-        let provider = DockerProvider::new(
-            storage,
-            &config.image,
-            &config.network,
-            Duration::from_secs(config.idle_stop_secs),
-            max_run,
-            config.destination,
-        )
-        .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-        Ok(Arc::new(provider))
-    });
+    backends.register::<dyn TerminalProvider, _, _>(
+        "open_terminal_docker",
+        |storage, config: DockerStorageConfig, _| {
+            config.check()?;
+            let max_run = max_run(config.max_run_secs)?;
+            let provider = DockerProvider::new(
+                storage,
+                &config.image,
+                &config.network,
+                Duration::from_secs(config.idle_stop_secs),
+                max_run,
+                config.destination,
+            )
+            .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+            Ok(Arc::new(provider))
+        },
+    );
 }
 
 /// The instance of a workspace while it runs here: its client, or none.
@@ -611,6 +613,7 @@ mod tests {
     use bytes::Bytes;
     use caelumora_model::config::BackendConfig;
     use caelumora_model::workspace::CommandStatus;
+    use caelumora_runtime::component::config_of_params;
     use caelumora_runtime::runtime::Services;
     use caelumora_runtime::terminal::{ByteStream, WorkspacePath, DEFAULT_MAX_RUN_SECS};
     use futures::stream;

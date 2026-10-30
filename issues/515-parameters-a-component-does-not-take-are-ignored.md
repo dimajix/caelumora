@@ -1,6 +1,6 @@
 # 515 — Parameters a component kind does not take are ignored without a word
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** Observability and operations
@@ -97,3 +97,8 @@ personality, bundle or session that does no longer builds.
   `config_of_params`). `ComponentRegistry::plan` checks every component's params against its kind,
   `defaults_of` those of the defaults; every struct of parameters is `deny_unknown_fields`. Since a
   default's params are an object or left out once checked, `on_default` no longer looks for others.
+- **2026-10-30** — Step 3: a backend's factory is registered with the struct of its parameters
+  (`Backends::register::<T, C, _>`, `NoParams` for a type that takes none) and given them read, so
+  that no factory can leave out the check. Unlike a component's, whose factory is given its whole
+  descriptor and is registered waiting or not, a backend's needs no second way to register for it.
+  Done.

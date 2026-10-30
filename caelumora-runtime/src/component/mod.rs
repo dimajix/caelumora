@@ -159,7 +159,7 @@ pub fn config_of_params<T: DeserializeOwned>(params: &Value) -> ComponentResult<
 /// refused rather than ignored.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct NoParams {}
+pub struct NoParams {}
 
 /// Whether `T` is among the facets `declared` to be asked for.
 ///

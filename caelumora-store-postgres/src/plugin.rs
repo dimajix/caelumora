@@ -7,7 +7,7 @@ use anyhow::Result;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::store::PersistenceBackend;
 use caelumora_runtime::backend::Backends;
-use caelumora_runtime::component::{config_of_params, service_of};
+use caelumora_runtime::component::service_of;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use std::sync::Arc;
@@ -25,11 +25,13 @@ impl Plugin for PostgresStorePlugin {
 
     fn backends(&self, backends: &mut Backends) {
         let connections = Arc::new(Connections::default());
-        backends.register::<dyn PersistenceBackend, _>("postgres", move |_, params, services| {
-            let config: PostgresStoreConfig = config_of_params(params)?;
-            let secrets = service_of::<SecretManager>(services)?;
-            Ok(Arc::new(PostgresStore::new(connections.of(&config, secrets))))
-        });
+        backends.register::<dyn PersistenceBackend, _, _>(
+            "postgres",
+            move |_, config: PostgresStoreConfig, services| {
+                let secrets = service_of::<SecretManager>(services)?;
+                Ok(Arc::new(PostgresStore::new(connections.of(&config, secrets))))
+            },
+        );
     }
 
     fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {

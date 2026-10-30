@@ -31,9 +31,10 @@ A test builds the runtime with `testing::TestRuntime`, naming the plugins it nee
 test of the agents' logic names the agents' plugin; the runtime's own tests name scripted agents
 (`testing::ScriptedAgents`, issue 370) where an agent takes part, so that they test what the runtime
 does with an agent, not what an agent does. A backend's factory is registered with
-`Backends::register` for the service it serves (`dyn TerminalProvider`, say), reads its parameters
-with `config_of_params` and asks the services it is given - the policies, the `SecretManager`, the
-store of the users - with `service_of`. While it registers, a plugin
+`Backends::register` for the service it serves (`dyn TerminalProvider`, say) and the struct of its
+parameters - `NoParams` for a type that takes none -, is given them read, one it does not take
+refused before it is called, and asks the services it is given - the policies, the `SecretManager`,
+the store of the users - with `service_of`. While it registers, a plugin
 
 *   asks for the store of its kind (`entity_store::<T>()`), checked by the runtime's policies. The
     configured backend keeps any kind in one storage - whoever asks for the kind again is given a

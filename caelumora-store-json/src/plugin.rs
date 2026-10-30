@@ -5,7 +5,7 @@ use crate::JsonStoreConfig;
 use anyhow::Result;
 use caelumora_model::store::PersistenceBackend;
 use caelumora_runtime::backend::Backends;
-use caelumora_runtime::component::{config_of_params, ComponentError};
+use caelumora_runtime::component::ComponentError;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use std::sync::Arc;
@@ -20,11 +20,14 @@ impl Plugin for JsonStorePlugin {
     }
 
     fn backends(&self, backends: &mut Backends) {
-        backends.register::<dyn PersistenceBackend, _>("json", |_, params, _| {
-            let config: JsonStoreConfig = config_of_params(params)?;
-            let store = config.store().map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-            Ok(Arc::new(store))
-        });
+        backends.register::<dyn PersistenceBackend, _, _>(
+            "json",
+            |_, config: JsonStoreConfig, _| {
+                let store =
+                    config.store().map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+                Ok(Arc::new(store))
+            },
+        );
     }
 
     fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {

@@ -1,17 +1,22 @@
-//! Backends (issue 324): what serves a service - a storage of workspaces
-//! (`dyn TerminalProvider`) or of content (`dyn ContentStorage`, issue
-//! 282), a user provider (`dyn UserProvider`), a secret provider (`dyn
-//! SecretProvider`), what the stores keep their data in (`dyn
-//! PersistenceBackend`, issue 446) - named in the configuration by its type
-//! (`BackendConfig`) and made by the factory registered under that type for
-//! the service: the core's (`Backends::built_in`) or a plugin's
+//! Backends (issue 324): what serves a service - a storage of workspaces (`dyn TerminalProvider`)
+//! or of content (`dyn ContentStorage`, issue 282), a user provider (`dyn UserProvider`), a secret
+//! provider (`dyn SecretProvider`), what the stores keep their data in (`dyn PersistenceBackend`,
+//! issue 446) - named in the configuration by its type (`BackendConfig`) and made by the factory
+//! registered under that type for the service: the core's (`Backends::built_in`) or a plugin's
 //! (`Plugin::backends`).
 //!
-//! Built to look like the `ComponentRegistry` where the two do the same: a
-//! type is a name, its parameters are read by `config_of_params`, and what
-//! a backend needs of the runtime it asks the services it is given for.
-//! Unlike a component, a backend is made once for the process, from the
-//! configuration, before any container exists - which is why it is none.
+//! Built to look like the `ComponentRegistry` where the two do the same: a type is a name, its
+//! parameters are read by `config_of_params` - one it does not take refused, a type that takes none
+//! reading `NoParams` -, and what a backend needs of the runtime it asks the services it is given
+//! for. Unlike a component, a backend is made once for the process, from the configuration, before
+//! any container exists - which is why it is none.
+//!
+//! Unlike a component's, a backend's factory is given its parameters read (`register`), so that
+//! none can leave out the check. A component kind declares its parameters instead
+//! (`ComponentKind::params`) and its factory reads them itself: that factory is given its whole
+//! descriptor, and is registered waiting or not, so that one given its parameters read would double
+//! the ways of registering a component kind (issue 515). A backend's is given nothing but its name
+//! and its parameters, and there is one way to register it.
 
 use crate::component::{config_of_params, service_of, ComponentError, ComponentResult, NoParams};
 use crate::plugin::Plugin;
@@ -29,6 +34,7 @@ use caelumora_model::user::User;
 use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
 use caelumora_model::user_provider::file::FileUserConfig;
 use caelumora_model::user_provider::UserProvider;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
@@ -144,36 +150,38 @@ impl Backends {
     /// plugin's (`caelumora-store-json`, issue 446).
     pub fn built_in() -> Self {
         let mut backends = Self::new();
-        backends.register::<dyn PersistenceBackend, _>("memory", |_, params, _| {
-            config_of_params::<NoParams>(params)?;
+        backends.register::<dyn PersistenceBackend, _, _>("memory", |_, _: NoParams, _| {
             Ok(Arc::new(MemoryStore::new()))
         });
         terminal::register_backends(&mut backends);
         content::register_backends(&mut backends);
-        backends.register::<dyn SecretProvider, _>("file", |_, params, _| {
-            let config: FileSecretConfig = config_of_params(params)?;
+        backends.register::<dyn SecretProvider, _, _>("file", |_, config: FileSecretConfig, _| {
             Ok(Arc::new(FileSecretProvider::new(config.path)))
         });
-        backends.register::<dyn SecretProvider, _>("env", |_, params, _| {
-            config_of_params::<NoParams>(params)?;
+        backends.register::<dyn SecretProvider, _, _>("env", |_, _: NoParams, _| {
             Ok(Arc::new(EnvSecretProvider::new()))
         });
-        backends.register::<dyn UserProvider, _>("file", |_, params, services| {
-            let config: FileUserConfig = config_of_params(params)?;
-            let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
-            let provider =
-                config.provider(roles).map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-            Ok(Arc::new(provider))
-        });
-        backends.register::<dyn UserProvider, _>("accept_any", |_, params, services| {
-            let config: AcceptAnyConfig = config_of_params(params)?;
-            let users = service_of::<dyn EntityStore<User>>(services)?;
-            let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
-            let provider = config.provider(Arc::clone(users), roles).map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-            tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
-                Development only - never expose this server to a network.");
-            Ok(Arc::new(provider))
-        });
+        backends.register::<dyn UserProvider, _, _>(
+            "file",
+            |_, config: FileUserConfig, services| {
+                let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
+                let provider = config
+                    .provider(roles)
+                    .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+                Ok(Arc::new(provider))
+            },
+        );
+        backends.register::<dyn UserProvider, _, _>(
+            "accept_any",
+            |_, config: AcceptAnyConfig, services| {
+                let users = service_of::<dyn EntityStore<User>>(services)?;
+                let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
+                let provider = config.provider(Arc::clone(users), roles).map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+                tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
+                    Development only - never expose this server to a network.");
+                Ok(Arc::new(provider))
+            },
+        );
         backends
     }
 
@@ -186,19 +194,25 @@ impl Backends {
         backends
     }
 
-    /// Registers `factory` as what makes the backends of the type `kind`
-    /// for the service `T`, in place of one registered before.
-    pub fn register<T, F>(&mut self, kind: &str, factory: F)
+    /// Registers `factory` as what makes the backends of the type `kind` for the service `T`, from
+    /// its parameters `C` - `NoParams` for one that takes none -, in place of one registered
+    /// before. The parameters are read with `config_of_params` before `factory` is called: a
+    /// struct `#[serde(deny_unknown_fields)]`, so that one the type does not take is refused.
+    pub fn register<T, C, F>(&mut self, kind: &str, factory: F)
     where
         T: ?Sized + 'static,
-        F: Fn(&str, &Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync + 'static,
+        C: DeserializeOwned + 'static,
+        F: Fn(&str, C, &Services) -> ComponentResult<Arc<T>> + Send + Sync + 'static,
     {
+        let factory: BackendFactory<T> = Box::new(move |name, params, services| {
+            factory(name, config_of_params(params)?, services)
+        });
         let (_, factories) = self
             .factories
             .entry(TypeId::of::<T>())
             .or_insert_with(|| (TypeKey::of::<T>().name(), Box::new(Factories::<T>::new())));
         if let Some(factories) = factories.downcast_mut::<Factories<T>>() {
-            factories.insert(kind.to_string(), Box::new(factory));
+            factories.insert(kind.to_string(), factory);
         }
     }
 
@@ -331,8 +345,7 @@ mod tests {
 
     fn greeters() -> Backends {
         let mut backends = Backends::new();
-        backends.register::<dyn Greeter, _>("fixed", |name, params, _| {
-            let config: FixedConfig = config_of_params(params)?;
+        backends.register::<dyn Greeter, _, _>("fixed", |name, config: FixedConfig, _| {
             Ok(Arc::new(Fixed(format!("{} from {name}", config.greeting))))
         });
         backends
