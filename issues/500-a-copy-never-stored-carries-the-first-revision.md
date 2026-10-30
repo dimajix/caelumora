@@ -1,6 +1,6 @@
 # 500 — A copy never stored carries the revision of one stored once
 
-**Status:** done
+**Status:** in progress
 **Type:** question
 **Priority:** low
 **Area:** Persistence
@@ -60,3 +60,12 @@ never stored - is written nowhere but in the one controller that keeps it.
   holds an empty profile again while none is stored, changes the profile it holds, and creates it
   where there is none, without telling the two apart itself. STORAGE.md states the rule.
   Documents stored before at the first revision keep it until they are written again.
+- **2026-10-30** — The findings of the review taken up in three more steps: a creation refused
+  as taken is read again, the helpers the tests repeated are shared, and that revisions begin
+  anew for an id created again after a purge is recorded as a limit. Step 3 done: the group of
+  participants and the user's record, made meanwhile elsewhere, are read again instead of failing.
+  A user whose record was deleted is shut out, as one no provider knows, so that reading again
+  ends; until now the creation of their record failed. A creation refused as taken is told apart
+  by `StoreResultExt::created`, as an outdated write by `written`, wherever it was matched by
+  hand. `UserManager::find_user`, which nothing called, is gone. PERMISSION-CHECKS.md names
+  `CreateUserProfile` for the first change of a profile.

@@ -251,9 +251,11 @@ the one read, `create` too: a new entity carries the first revision and is creat
 after it, which `create` leaves in it, as `update` does. No stored document is at the first
 revision, so that a copy never stored - one a writer made to create when there was none - is
 refused as outdated when it is written in place of one created meanwhile, instead of replacing
-it (issue [500](../issues/500-a-copy-never-stored-carries-the-first-revision.md)). A document
-written by hand, as seeds are, needs no revision. The store suite holds every backend to it
-(`writes_are_judged_on_their_revision`).
+it (issue [500](../issues/500-a-copy-never-stored-carries-the-first-revision.md)). A writer
+that creates where it found nothing, and is refused because the entity was created meanwhile
+(`StoreError::Conflict`, told apart by `StoreResultExt::created`), reads again, as after an
+outdated write. A document written by hand, as seeds are, needs no revision. The store suite
+holds every backend to it (`writes_are_judged_on_their_revision`).
 
 **Values with rules.** A text whose content has rules - a `Name`, a `Language`, the free texts
 people write for others (`Text<R>`) - has a type made only through its constructor and checked again

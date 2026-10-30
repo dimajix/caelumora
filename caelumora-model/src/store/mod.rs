@@ -108,6 +108,10 @@ pub trait StoreResultExt<T> {
     /// What a write answered, `None` if it was refused as outdated (`StoreError::Outdated`):
     /// whoever wrote reads again and makes the change once more. Any other error stays one.
     fn written(self) -> StoreResult<Option<T>>;
+
+    /// What a creation answered, `None` if the id was taken (`StoreError::Conflict`) - made
+    /// meanwhile elsewhere, or there before, deleted or not. Any other error stays one.
+    fn created(self) -> StoreResult<Option<T>>;
 }
 
 impl<T> StoreResultExt<T> for StoreResult<T> {
@@ -123,6 +127,14 @@ impl<T> StoreResultExt<T> for StoreResult<T> {
         match self {
             Ok(written) => Ok(Some(written)),
             Err(StoreError::Outdated { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn created(self) -> StoreResult<Option<T>> {
+        match self {
+            Ok(created) => Ok(Some(created)),
+            Err(StoreError::Conflict(_)) => Ok(None),
             Err(e) => Err(e),
         }
     }

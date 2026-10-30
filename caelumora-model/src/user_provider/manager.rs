@@ -9,19 +9,17 @@ use crate::user::{User, UserId, UserUpdateEvent};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-/// An ordered chain of `UserProvider`s; for each question, the first provider
-/// that knows the user answers it.
+/// An ordered chain of `UserProvider`s; for each question, the first provider that knows the user
+/// answers it.
 ///
-/// Unlike `SecretManager`, lookups are not gated through the
-/// `AccessPolicy`: authentication is what produces the `SecurityContext`
-/// such a check would need.
+/// Unlike `SecretManager`, lookups are not gated through the `AccessPolicy`: authentication is what
+/// produces the `SecurityContext` such a check would need.
 ///
-/// It is the one writer of user records (issue 306), which belong to the
-/// system (issue 94): what a provider answers at a login or on a renewal is
-/// compared with the record stored, stored in the system's name where it
-/// differs, and announced - a new user as created, a changed name or changed
-/// roles as a `UserUpdateEvent` -, so that every `UserController`, in every
-/// instance, holds them as they are.
+/// It is the one writer of user records (issue 306), which belong to the system (issue 94): what a
+/// provider answers at a login or on a renewal is compared with the record stored, stored in the
+/// system's name where it differs, and announced - a new user as created, a changed name or changed
+/// roles as a `UserUpdateEvent` -, so that every `UserController`, in every instance, holds them as
+/// they are. A user whose record was deleted is shut out (issue 500).
 #[derive(Debug)]
 pub struct UserManager {
     providers: Vec<Arc<dyn UserProvider>>,
@@ -46,8 +44,8 @@ impl UserManager {
     /// Authenticates `username` with `credential` against the chain.
     ///
     /// # Errors
-    /// `AuthError::InvalidCredentials` if the credential is wrong or no
-    /// provider knows the user; `AuthError::Backend` if a provider failed.
+    /// `AuthError::InvalidCredentials` if the credential is wrong, no provider knows the user or
+    /// their record was deleted; `AuthError::Backend` if a provider or the store failed.
     pub async fn authenticate(
         &self,
         username: &str,
@@ -55,7 +53,15 @@ impl UserManager {
     ) -> AuthResult<User> {
         for provider in &self.providers {
             match provider.authenticate(username, credential).await {
-                Ok(Some(user)) => return self.record(user).await,
+                Ok(Some(user)) => {
+                    return self.record(user).await?.ok_or_else(|| {
+                        tracing::info!(
+                            "Authentication of '{}' failed: the user was deleted",
+                            username
+                        );
+                        AuthError::InvalidCredentials
+                    });
+                }
                 Ok(None) => continue,
                 Err(AuthError::InvalidCredentials) => {
                     tracing::info!(
@@ -80,51 +86,54 @@ impl UserManager {
         Err(AuthError::InvalidCredentials)
     }
 
-    /// Looks up a user by login name. `Ok(None)` if no provider knows it.
-    pub async fn find_user(&self, username: &str) -> AuthResult<Option<User>> {
-        for provider in &self.providers {
-            if let Some(user) = provider.find_user(username).await? {
-                return Ok(Some(user));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Looks up a user by id, as when a token is renewed, and keeps their
-    /// record as the provider answers it - so that roles given or taken
-    /// meanwhile take effect. `Ok(None)` if no provider knows it.
+    /// Looks up a user by id, as when a token is renewed, and keeps their record as the provider
+    /// answers it - so that roles given or taken meanwhile take effect. `Ok(None)` if no provider
+    /// knows it, or its record was deleted.
     ///
     /// # Errors
     /// `AuthError::Backend` if a provider or the store failed.
     pub async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
         for provider in &self.providers {
             if let Some(user) = provider.get_user(id).await? {
-                return self.record(user).await.map(Some);
+                return self.record(user).await;
             }
         }
         Ok(None)
     }
 
-    /// Keeps `found`, a user as a provider answers them, as their record:
-    /// made if there is none, changed where it differs - its deletion
-    /// kept -, and announced. Written meanwhile elsewhere, the record is
-    /// read again and changed once more (issue 492). Answers the record as
-    /// it now stands.
-    async fn record(&self, mut found: User) -> AuthResult<User> {
+    /// Keeps `found`, a user as a provider answers them, as their record: made if there is none,
+    /// changed where it differs, and announced. Written or made meanwhile elsewhere, the record is
+    /// read again and changed once more (issues 492, 500). Answers the record as it now stands,
+    /// `None` if it was deleted: a deleted user is shut out, and their record left as it is.
+    async fn record(&self, mut found: User) -> AuthResult<Option<User>> {
         let system = SecurityContext::system();
         let backend = |e: StoreError| AuthError::Backend(e.to_string());
         let (user, renamed, roles_changed) = loop {
             let Some(stored) =
                 self.store.get(&system, found.id).await.optional().map_err(backend)?
             else {
-                self.store.create(&system, &mut found).await.map_err(backend)?;
+                let deleted =
+                    self.store.get_deleted(&system, found.id).await.optional().map_err(backend)?;
+                if deleted.is_some() {
+                    return Ok(None);
+                }
+                if self
+                    .store
+                    .create(&system, &mut found)
+                    .await
+                    .created()
+                    .map_err(backend)?
+                    .is_none()
+                {
+                    continue;
+                }
                 self.events.announce(GlobalEvent::created::<User>(&found.id), &found);
-                return Ok(found);
+                return Ok(Some(found));
             };
             let renamed = found.username != stored.username;
             let roles_changed = found.roles != stored.roles;
             if !renamed && !roles_changed && found.email == stored.email {
-                return Ok(stored);
+                return Ok(Some(stored));
             }
             let mut user = User {
                 username: found.username.clone(),
@@ -155,15 +164,17 @@ impl UserManager {
                 &user,
             );
         }
-        Ok(user)
+        Ok(Some(user))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::ActorId;
     use crate::confidentiality::Classification;
     use crate::event::EntityChange;
+    use crate::removal::Removal;
     use crate::role::RoleId;
     use crate::security::SecurityAttributes;
     use crate::store::testing::ContendedStore;
@@ -297,6 +308,50 @@ mod tests {
         assert_eq!(recorded.revision().number(), 2, "created, and written once more");
     }
 
+    /// Issue 500: a record made meanwhile elsewhere is read again, and kept as it is found.
+    #[tokio::test]
+    async fn a_record_made_meanwhile_is_read_again() {
+        let (stores, refusals) = ContendedStore::stores(User::KIND);
+        let users = stores.entity_stores().unwrap().users;
+        let announced = Arc::new(Announced::default());
+        let alice = make_user("alice");
+        let manager = UserManager::new(
+            vec![Arc::new(MapUserProvider::new(&[(&alice, "a")]))],
+            Arc::clone(&users),
+            Arc::<Announced>::clone(&announced),
+        );
+
+        refusals.store(1, Ordering::SeqCst);
+        let recorded = manager.get_user(alice.id).await.unwrap().expect("recorded all the same");
+        assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
+        assert_eq!(recorded.username, "alice");
+        assert!(announced.taken().is_empty(), "made and announced by the other writer");
+    }
+
+    /// Issue 500: a user whose record was deleted is shut out, as one no provider knows, and their
+    /// record left as it is.
+    #[tokio::test]
+    async fn a_user_whose_record_was_deleted_is_shut_out() {
+        let users = Persistence::in_memory().entity_stores().unwrap().users;
+        let announced = Arc::new(Announced::default());
+        let alice = make_user("alice");
+        let manager = UserManager::new(
+            vec![Arc::new(MapUserProvider::new(&[(&alice, "a")]))],
+            Arc::clone(&users),
+            Arc::<Announced>::clone(&announced),
+        );
+        manager.get_user(alice.id).await.unwrap().expect("recorded");
+        let system = SecurityContext::system();
+        assert!(users.delete(&system, alice.id, &Removal::now(ActorId::System)).await.unwrap());
+        announced.taken();
+
+        let refused = manager.authenticate("alice", &Credential::Password("a")).await;
+        assert!(matches!(refused, Err(AuthError::InvalidCredentials)), "{refused:?}");
+        assert!(manager.get_user(alice.id).await.unwrap().is_none(), "nor renewed");
+        assert!(users.get_deleted(&system, alice.id).await.is_ok(), "left deleted");
+        assert!(announced.taken().is_empty(), "nothing made");
+    }
+
     #[tokio::test]
     async fn authenticate_falls_through_to_the_provider_that_knows_the_user() {
         let alice = make_user("alice");
@@ -375,7 +430,6 @@ mod tests {
             manager.authenticate("alice", &Credential::Password("a")).await,
             Err(AuthError::Backend(_))
         ));
-        assert!(matches!(manager.find_user("alice").await, Err(AuthError::Backend(_))));
         assert!(matches!(manager.get_user(alice.id).await, Err(AuthError::Backend(_))));
     }
 
@@ -387,12 +441,11 @@ mod tests {
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
         ]);
 
-        assert_eq!(manager.find_user("alice").await.unwrap().map(|u| u.id), Some(alice.id));
         assert_eq!(
             manager.get_user(alice.id).await.unwrap().map(|u| u.username),
             Some(Name::new("alice").unwrap())
         );
-        assert!(manager.find_user("bob").await.unwrap().is_none());
+        assert!(manager.get_user(UserId::new()).await.unwrap().is_none());
         assert!(chain(vec![]).get_user(alice.id).await.unwrap().is_none());
     }
 

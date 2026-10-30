@@ -228,10 +228,7 @@ impl UserController {
             Err(StoreError::NotFound { .. }) => {}
             updated => return updated.written(),
         }
-        match self.profiles.create(ctx, profile).await {
-            Err(StoreError::Conflict(_)) => Ok(None),
-            created => created.map(Some),
-        }
+        self.profiles.create(ctx, profile).await.created()
     }
 
     /// Marks channel `channel_id` of session `session_id` read by the user up to message

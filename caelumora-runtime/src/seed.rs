@@ -13,7 +13,7 @@ use caelumora_model::component::ComponentBundle;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::parse_yaml;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, Stored};
+use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt, Stored};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
 use serde_json::Value;
@@ -158,11 +158,7 @@ pub async fn create_unless_taken<T: Stored>(
     store: &dyn EntityStore<T>,
     value: &mut T,
 ) -> StoreResult<bool> {
-    match store.create(&SecurityContext::system(), value).await {
-        Ok(()) => Ok(true),
-        Err(StoreError::Conflict(_)) => Ok(false),
-        Err(e) => Err(e),
-    }
+    store.create(&SecurityContext::system(), value).await.created().map(|created| created.is_some())
 }
 
 /// Reads and applies the seed files `paths`, in order, to `stores` and

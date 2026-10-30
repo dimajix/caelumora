@@ -17,11 +17,11 @@ use std::sync::Arc;
 /// be enabled explicitly in the configuration and is never part of a default
 /// chain; the runtime warns loudly when it is made.
 ///
-/// Its source is the `EntityStore` itself and the configured roles: a name it
-/// finds there is that user, any other a new one with a random id, which the
-/// `UserManager` stores (issue 306) - later logins find it again. Ids are
-/// therefore as stable as the store — across restarts with `JsonFileStore`,
-/// only for the lifetime of the process with `MemoryStore`.
+/// Its source is the `EntityStore` itself and the configured roles: a name it finds there is that
+/// user, any other a new one with a random id, which the `UserManager` stores (issue 306) - later
+/// logins find it again. Ids are therefore as stable as the store — across restarts with
+/// `JsonFileStore`, only for the lifetime of the process with `MemoryStore`. A name whose record
+/// was deleted is free again: a login under it is a new user.
 ///
 /// Find-or-create is not atomic: of two concurrent *first* logins under the
 /// same name, the store lets one create the user and refuses the other its
