@@ -12,13 +12,13 @@ use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserId, UserProfile};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 #[cfg(any(test, feature = "test-support"))]
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 #[cfg(any(test, feature = "test-support"))]
 use tokio::sync::oneshot;
 use tokio::sync::{broadcast, mpsc};
-#[cfg(any(test, feature = "test-support"))]
-use tracing::warn;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubscriptionTopic {
@@ -61,6 +61,15 @@ const SUBSCRIPTION_CAPACITY: usize = 128;
 /// handed on in one go.
 const DISPATCHED_AT_ONCE: usize = 1024;
 
+/// How long an event may wait for the dispatcher before the bus counts as behind, and says so
+/// (issue 508).
+const BEHIND_AFTER: Duration = Duration::from_secs(1);
+
+/// How often the bus says again that it is behind - while it stays behind, with how far behind it
+/// is by then, so that a queue that keeps growing is not told once only; and when it falls behind
+/// again soon after it caught up, so that a bus at the edge does not fill the log.
+const BEHIND_TOLD_EVERY: Duration = Duration::from_secs(30);
+
 /// An event on its way through the bus, with the attributes of the entity
 /// it is about - and of the part of it, if it is about one - and, for a
 /// classified one, its classifications. Only the bus sees them: subscribers
@@ -71,6 +80,8 @@ struct PublishedEvent {
     attributes: SecurityAttributes,
     part: Option<SecurityAttributes>,
     classifications: Vec<Classification>,
+    /// When it was handed to the dispatcher, to tell how long it waited.
+    published_at: Instant,
 }
 
 impl PublishedEvent {
@@ -171,15 +182,22 @@ impl Dispatcher {
         }
     }
 
-    /// Delivers what `queue` is handed, in that order, until the bus is
-    /// gone. It takes what is queued at once, so that a burst is handed on
-    /// in one go.
+    /// Delivers what `queue` is handed, in that order, until the bus is gone. It takes what is
+    /// queued at once, so that a burst is handed on in one go, and measures how far it is behind
+    /// at every event it delivers (`Backlog`).
     async fn run(self: Arc<Self>, mut queue: mpsc::UnboundedReceiver<Dispatched>) {
         let mut queued = Vec::with_capacity(DISPATCHED_AT_ONCE);
+        let mut backlog = Backlog::default();
         while queue.recv_many(&mut queued, DISPATCHED_AT_ONCE).await > 0 {
-            for dispatched in queued.drain(..) {
+            let mut taken = queued.drain(..);
+            while let Some(dispatched) = taken.next() {
                 match dispatched {
-                    Dispatched::Event(published) => self.deliver(&published).await,
+                    Dispatched::Event(published) => {
+                        let now = Instant::now();
+                        let waited = now.duration_since(published.published_at);
+                        backlog.measure(waited, taken.len() + queue.len(), now);
+                        self.deliver(&published).await;
+                    }
                     #[cfg(any(test, feature = "test-support"))]
                     Dispatched::Settled(done) => {
                         let _ = done.send(());
@@ -223,6 +241,73 @@ impl Dispatcher {
         for (tx, receives) in asking.into_iter().zip(receiving) {
             if receives {
                 let _ = tx.send(Arc::clone(&published.event));
+            }
+        }
+    }
+}
+
+/// How far the dispatcher is behind what is published (issue 508), measured at every event it
+/// delivers. It falls behind when an event waited longer than `BEHIND_AFTER` and others wait after
+/// it, and has caught up once none waits. It says so in the log when it falls behind, again every
+/// `BEHIND_TOLD_EVERY` while it stays behind, and when it caught up; a fall behind sooner than
+/// `BEHIND_TOLD_EVERY` after it was last told is told only if it lasts that long, and its catching
+/// up only if it was told. What is measured is what is delivered: a dispatcher held up by one
+/// event is seen once it delivers the next.
+#[derive(Debug)]
+enum Backlog {
+    /// Nothing waits, or nothing has waited too long; with when it was last told behind, if ever.
+    Current { told: Option<Instant> },
+    Behind {
+        /// When it fell behind.
+        since: Instant,
+        /// When it was last told behind.
+        told: Instant,
+        /// The longest an event waited since it fell behind.
+        longest: Duration,
+    },
+}
+
+impl Default for Backlog {
+    fn default() -> Self {
+        Self::Current { told: None }
+    }
+}
+
+impl Backlog {
+    /// Takes in that an event delivered at `now` waited `waited`, with `queued` more waiting
+    /// after it, and tells the log what changed.
+    fn measure(&mut self, waited: Duration, queued: usize, now: Instant) {
+        let due = |told: Instant| now.duration_since(told) >= BEHIND_TOLD_EVERY;
+        match *self {
+            Self::Current { told } if waited > BEHIND_AFTER && queued > 0 => {
+                let told = match told {
+                    Some(told) if !due(told) => told,
+                    _ => {
+                        warn!("The event bus is behind: an event waited {waited:?}, {queued} more wait");
+                        now
+                    }
+                };
+                *self = Self::Behind { since: now, told, longest: waited };
+            }
+            Self::Current { .. } => {}
+            Self::Behind { since, told, longest } if queued == 0 => {
+                if told >= since {
+                    info!(
+                        "The event bus caught up after {:?}; the longest an event waited was {:?}",
+                        now.duration_since(since),
+                        longest.max(waited)
+                    );
+                }
+                *self = Self::Current { told: Some(told) };
+            }
+            Self::Behind { since, told, longest } => {
+                let told = if due(told) {
+                    warn!("The event bus is still behind: an event waited {waited:?}, {queued} more wait");
+                    now
+                } else {
+                    told
+                };
+                *self = Self::Behind { since, told, longest: longest.max(waited) };
             }
         }
     }
@@ -483,6 +568,7 @@ impl EventBus {
             attributes,
             part,
             classifications: classifications.to_vec(),
+            published_at: Instant::now(),
         }));
     }
 }
@@ -1067,5 +1153,81 @@ mod tests {
             (runtime.recv().await, someone.recv().await)
         });
         assert!(matches!(closed.await, Ok((None, None))), "both are closed");
+    }
+
+    /// Issue 508: a bus falls behind when an event waited too long and others wait after it, and
+    /// has caught up once none waits. While it stays behind, it tells so again only every
+    /// `BEHIND_TOLD_EVERY`, with the longest wait kept for when it caught up.
+    #[test]
+    fn a_bus_is_behind_while_events_wait_too_long_behind_each_other() {
+        let start = Instant::now();
+        let long = BEHIND_AFTER * 2;
+        let mut backlog = Backlog::default();
+        backlog.measure(BEHIND_AFTER, 3, start);
+        assert!(
+            matches!(backlog, Backlog::Current { told: None }),
+            "waiting as long as allowed is no delay"
+        );
+        backlog.measure(long, 0, start);
+        assert!(
+            matches!(backlog, Backlog::Current { told: None }),
+            "nor is a long wait with none waiting after it"
+        );
+
+        backlog.measure(long, 3, start);
+        assert!(
+            matches!(backlog, Backlog::Behind { since, told, longest }
+                if since == start && told == start && longest == long),
+            "it falls behind, and is told so: {backlog:?}"
+        );
+        let soon = start + BEHIND_TOLD_EVERY / 2;
+        backlog.measure(long * 2, 3, soon);
+        assert!(
+            matches!(backlog, Backlog::Behind { told, longest, .. }
+                if told == start && longest == long * 2),
+            "not told again so soon, the longest wait kept: {backlog:?}"
+        );
+        let later = start + BEHIND_TOLD_EVERY;
+        backlog.measure(long, 3, later);
+        assert!(
+            matches!(backlog, Backlog::Behind { since, told, longest }
+                if since == start && told == later && longest == long * 2),
+            "told again once it stayed behind long enough: {backlog:?}"
+        );
+        backlog.measure(long, 0, later);
+        assert!(
+            matches!(backlog, Backlog::Current { told: Some(told) } if told == later),
+            "caught up once none waits, however long the last one waited: {backlog:?}"
+        );
+    }
+
+    /// Issue 508: a bus that falls behind again soon after it was told is not told again until it
+    /// stays behind long enough, so that a bus at the edge does not fill the log.
+    #[test]
+    fn falling_behind_again_soon_is_told_only_if_it_lasts() {
+        let start = Instant::now();
+        let long = BEHIND_AFTER * 2;
+        let mut backlog = Backlog::default();
+        backlog.measure(long, 3, start);
+        backlog.measure(Duration::ZERO, 0, start);
+
+        let soon = start + BEHIND_AFTER;
+        backlog.measure(long, 3, soon);
+        assert!(
+            matches!(backlog, Backlog::Behind { since, told, .. } if since == soon && told == start),
+            "behind again, untold: {backlog:?}"
+        );
+        backlog.measure(Duration::ZERO, 0, soon);
+        assert!(
+            matches!(backlog, Backlog::Current { told: Some(told) } if told == start),
+            "caught up, as untold: {backlog:?}"
+        );
+
+        let later = start + BEHIND_TOLD_EVERY;
+        backlog.measure(long, 3, later);
+        assert!(
+            matches!(backlog, Backlog::Behind { told, .. } if told == later),
+            "told once it falls behind long enough after: {backlog:?}"
+        );
     }
 }

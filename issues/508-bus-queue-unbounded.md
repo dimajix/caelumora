@@ -1,6 +1,6 @@
 # 508 — The event bus queues what it has yet to deliver without a bound
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** low
 **Area:** Observability and operations
@@ -51,11 +51,17 @@ no such bound.
 - **C. Deliver faster.** What makes the dispatcher slow is the policy's reads: a cache of
   memberships ([287](287-memberships-cache.md)) or an index of the subscriptions by actor and role
   (503) shortens each event. Makes falling behind rarer, not impossible.
+- **C2. Ask for several events at once.** The policy questions of the events taken from the queue
+  together run at the same time, and the events are delivered in their order as their answers come
+  (ordered concurrency, as `buffered(n)` of a stream). Up to n times the throughput without a
+  cache, at the cost of n reads of the store at once - and of the subscribers being read when an
+  event's question starts, not when it is delivered, so that a subscription made or a topic
+  followed meanwhile misses events it is promised now.
 - **D. Deliver to the runtime's subscribers apart.** They are not asked about, so they need not wait
   for the policy questions of others; a second task for them would give them back the immediacy
   they had before 504, at the cost of the one order 504 made.
 
-Recommendation: A first; B or C once the measurements say the bus falls behind in practice.
+Recommendation: A first; B, C or C2 once the measurements say the bus falls behind in practice.
 
 ## Done when
 
@@ -67,3 +73,14 @@ Recommendation: A first; B or C once the measurements say the bus falls behind i
 - **2026-10-29** — Opened at the maintainer's request, from the review of the event bus that led to
   issues 502 to 504: the unbounded queue before the dispatcher was a finding of 503 and 504, left
   out of both.
+- **2026-10-30** — Decided for A, and C2 added to the considerations, to be weighed with B and C
+  once the measurements are in. Measuring is done: every event carries when it was published, and
+  the dispatcher measures at each it delivers how long it waited (`Backlog`). The bus falls behind
+  when an event waited longer than `BEHIND_AFTER` (a second) and others wait after it, and has
+  caught up once none waits. It warns when it falls behind, with the wait and how many more wait,
+  again every `BEHIND_TOLD_EVERY` (30 seconds) while it stays behind, so that a queue that never
+  catches up does not fall silent, and says when it caught up, with the longest wait; falling
+  behind again sooner than that after the last warning is told only if it lasts, so that a bus at
+  the edge does not fill the log. What the measurement cannot show: a dispatcher held up by one
+  event - a store that does not answer - is seen only once it delivers the next. EVENTS.md states
+  it. What follows from the measurements is still to be decided.

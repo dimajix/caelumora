@@ -90,6 +90,11 @@ asynchronously, and `publish` must not wait for it; a subscriber has an event a 
 deliver - also what was published a moment before. A test that reads what it caused waits for the
 bus to deliver it (`EventSubscription::settled`, `EventSubscription::drain`).
 
+What waits for the dispatcher waits in a queue without a bound, since `publish` cannot wait for
+room. The dispatcher measures how long each event waited, and says in the log when it falls behind
+and when it caught up (`Backlog`), so that a bus falling behind, and memory growing with its queue,
+is seen before it is felt (issue [508](../issues/508-bus-queue-unbounded.md)).
+
 Each subscription is a broadcast channel of its own, of bounded capacity. A subscriber that falls
 too far behind loses the oldest events, and it is the subscriber that learns so (`Lagged`), not only
 the log. Every subscriber makes up for what it lost by reading anew what it keeps (issue 502) - a
