@@ -64,7 +64,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [492](492-a-document-is-written-under-two-locks.md) | done | A controller writes a document under its own `LiveDocument::write_lock`, its manager under the `writing` lock of the kind; neither sees the other, and since the store reads and replaces in two steps, a change of the one can overwrite the other's - a deletion among them. |
 | [496](496-a-sessions-purge-removes-its-channels-documents-first.md) | open | `SessionManager::purge` removes the documents of a session and its channels first and their states and attachments afterwards, so that a purge that fails between leaves states and attachments that nothing finds again. |
 | [498](498-the-mark-of-a-participant-who-left-says-whether-it-is-purged.md) | open | `Removal` marks a deleted entity and a participant who left a channel alike, and since issue 492 carries `purging`, which means something for the one and nothing for the other. |
-| [500](500-a-copy-never-stored-carries-the-first-revision.md) | open | A new entity carries the first revision and `create` stores it at that revision, so that a copy never stored cannot be told from one stored once, and its `update` passes against a document created meanwhile under its id. |
+| [500](500-a-copy-never-stored-carries-the-first-revision.md) | done | A new entity carries the first revision and `create` stores it at that revision, so that a copy never stored cannot be told from one stored once, and its `update` passes against a document created meanwhile under its id. |
 
 ## Sessions and channels
 

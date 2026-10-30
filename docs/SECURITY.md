@@ -648,7 +648,11 @@ source - id, name, roles - and writes nothing. What it answers at a login, and w
 asks about the user on renewing a token, the manager compares with the record stored, stores what
 changed and announces it, in the system's name. Every `UserController` follows these
 announcements, in every instance, so that it holds the roles as they are stored - a role given or
-taken takes effect at the next login or renewal, within half a token's lifetime.
+taken takes effect at the next login or renewal, within half a token's lifetime. A user whose
+record was deleted is shut out, as one no provider knows: their login is refused as a wrong
+password is, and the next renewal ends their session. Their record is left as it is. A provider
+that finds its users by name in the store, as `accept_any` does, finds none under a name whose
+record was deleted, and answers a new user under it.
 
 ### How the chain fails
 

@@ -66,8 +66,8 @@ impl GroupManager {
         scope: Scope,
     ) -> GroupResult<Group> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(GroupError::OwnerNotAUser) };
-        let group = Group::team(ScopedName::new(name, scope)?, owner);
-        self.groups.create(ctx, &group).await?;
+        let mut group = Group::team(ScopedName::new(name, scope)?, owner);
+        self.groups.create(ctx, &mut group).await?;
         self.events.announce(GlobalEvent::created::<Group>(&group.id), &group);
         info!(group = %group.id, by = %ctx.caller_id, "Group created");
         Ok(group)

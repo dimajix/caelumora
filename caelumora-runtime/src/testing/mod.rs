@@ -68,7 +68,7 @@ use caelumora_model::template::{
     ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate,
     SessionTemplateId,
 };
-use caelumora_model::user::testing::make_user;
+use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
@@ -431,7 +431,7 @@ impl World {
 
     pub async fn user(&self, name: &str) -> UserId {
         let user = User { roles: vec![*STAFF], ..make_user(name) };
-        self.runtime.entity_stores().users.create(&Self::system(), &user).await.unwrap();
+        record_users(self.runtime.entity_stores(), &[&user]).await;
         self.access_policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id
     }
@@ -490,7 +490,7 @@ impl World {
         owner: Option<UserId>,
         contributors: &[UserId],
     ) -> Personality {
-        let personality = Personality {
+        let mut personality = Personality {
             description: Some(Description::new(format!("{name}, privately described")).unwrap()),
             introduction: Some(Introduction::new(format!("I am {name}.")).unwrap()),
             security_attributes: attributes(owner, contributors),
@@ -499,7 +499,7 @@ impl World {
         self.runtime
             .entity_stores()
             .personalities
-            .create(&Self::system(), &personality)
+            .create(&Self::system(), &mut personality)
             .await
             .unwrap();
         personality
@@ -515,7 +515,7 @@ impl World {
         agent: &str,
         personality: PersonalityId,
     ) -> SessionTemplateId {
-        let template = SessionTemplate {
+        let mut template = SessionTemplate {
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent {
@@ -538,7 +538,7 @@ impl World {
         self.runtime
             .entity_stores()
             .session_templates
-            .create(&Self::system(), &template)
+            .create(&Self::system(), &mut template)
             .await
             .unwrap();
         template.id
@@ -546,12 +546,12 @@ impl World {
 
     /// An agent of `owner` and `personality`, as made before.
     pub async fn agent(&self, name: &str, owner: UserId, personality: &Personality) -> AgentId {
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             ScopedName::new(name, Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(owner),
         );
-        self.runtime.entity_stores().agents.create(&Self::system(), &agent).await.unwrap();
+        self.runtime.entity_stores().agents.create(&Self::system(), &mut agent).await.unwrap();
         self.access_policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), name.to_string());
         agent.id
     }

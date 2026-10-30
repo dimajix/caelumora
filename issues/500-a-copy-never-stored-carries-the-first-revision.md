@@ -1,6 +1,6 @@
 # 500 — A copy never stored carries the revision of one stored once
 
-**Status:** open
+**Status:** done
 **Type:** question
 **Priority:** low
 **Area:** Persistence
@@ -43,3 +43,42 @@ never stored - is written nowhere but in the one controller that keeps it.
 - **2026-10-29** — Opened from the review of the second step of issue
   [492](492-a-document-is-written-under-two-locks.md), which closed the gap for the profile
   controller and recorded the question.
+- **2026-10-29** — Decided for the first option, in two steps: `create` writes the entity as the
+  revision after the one it carries, as `update` does, and leaves the revision written in the
+  value; a copy never stored then carries the first revision, which no stored document has, and
+  its `update` is refused as outdated. Step 1 done, without a change of behaviour:
+  `EntityStore::create` and `seed::create_unless_taken` take `&mut T`, and every writer that
+  creates goes on with the value it gave the store - a manager announcing and returning it,
+  `SessionManager::persist` its session, its own project and its channels (`establish` takes
+  the project as it takes the session), the seeds a copy of each of their documents.
+- **2026-10-29** — Step 2 done: `CheckedStore::create` writes the entity as the revision after the
+  one it carries and leaves it in the value, as `update` does - both through one step that counts
+  the revision up and takes it back if the write fails, which also takes it back when the value
+  cannot be serialized. The store suite holds every backend to it: what is created is at the
+  revision after the first, a creation refused leaves the value as it was, and a copy never
+  stored is refused as outdated in place of one created meanwhile. The user's profile controller
+  holds an empty profile again while none is stored, changes the profile it holds, and creates it
+  where there is none, without telling the two apart itself. STORAGE.md states the rule.
+  Documents stored before at the first revision keep it until they are written again.
+- **2026-10-30** — The findings of the review taken up in three more steps: a creation refused
+  as taken is read again, the helpers the tests repeated are shared, and that revisions begin
+  anew for an id created again after a purge is recorded as a limit. Step 3 done: the group of
+  participants and the user's record, made meanwhile elsewhere, are read again instead of failing.
+  A user whose record was deleted is shut out, as one no provider knows, so that reading again
+  ends; until now the creation of their record failed. A creation refused as taken is told apart
+  by `StoreResultExt::created`, as an outdated write by `written`, wherever it was matched by
+  hand. `UserManager::find_user`, which nothing called, is gone. PERMISSION-CHECKS.md names
+  `CreateUserProfile` for the first change of a profile.
+- **2026-10-30** — Step 4 done, without a change of behaviour: the tests store an agent of a
+  personality of its own through `agent::testing::stored_agent`, and their users through
+  `user::testing::record_users`, which moved from the runtime into the model so that the tests
+  of a channel without a session manager share it - issue
+  [315](315-view-and-session-test-fixtures.md) had it take the manager. `alice_and_an_agent`
+  takes the agent's name and personality, and the tests of an external agent build their channel
+  on it.
+- **2026-10-30** — Step 5 done: STORAGE.md records as a limit that revisions are counted for a
+  document, not for its id - a document created again under an id whose document was removed for
+  good, a seed after a purge or a user's record or profile removed from the store by hand, counts
+  its revisions anew, and a copy read before the removal can pass in place of the new document.
+  Nothing else creates a document again under such an id: users and their profiles are purged by
+  nothing, and the groups of a session, channel or project go with it for good. Done.

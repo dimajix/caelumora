@@ -383,6 +383,9 @@ impl Journaled for UserChannelState {
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
     use super::*;
+    use crate::channel::Participant;
+    use crate::security::SecurityContext;
+    use crate::store::EntityStores;
 
     /// A user `name`, not stored: `User::new`, the name a test gives taken as one.
     #[expect(
@@ -391,6 +394,19 @@ pub mod testing {
     )]
     pub fn make_user(name: &str) -> User {
         User::new(Name::new(name).expect("a test's name of a user is one"))
+    }
+
+    /// Stores copies of `users` in `stores` by the system, and answers them as participants of a
+    /// channel. The users given stay copies never stored, at the first revision.
+    #[expect(clippy::expect_used, reason = "test code: a store that fails fails the test")]
+    pub async fn record_users(stores: &EntityStores, users: &[&User]) -> Vec<Participant> {
+        let system = SecurityContext::system();
+        let mut participants = Vec::new();
+        for user in users {
+            stores.users.create(&system, &mut (*user).clone()).await.expect("a user stored");
+            participants.push(Participant::User(user.id));
+        }
+        participants
     }
 }
 
@@ -525,15 +541,16 @@ mod tests {
             SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default())
         };
 
-        let hers = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
+        let mut hers =
+            UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
         assert!(
             matches!(
-                store.create(&as_user(bob), &hers).await,
+                store.create(&as_user(bob), &mut hers).await,
                 Err(StoreError::PermissionDenied(_))
             ),
             "nobody writes a profile of someone else"
         );
-        store.create(&as_user(alice), &hers).await.expect("her own");
+        store.create(&as_user(alice), &mut hers).await.expect("her own");
         let mut changed =
             UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
         assert!(

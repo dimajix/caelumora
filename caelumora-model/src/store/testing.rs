@@ -1,9 +1,9 @@
 //! Stand-ins for the stores, and checks of what they keep, for tests.
 //!
 //! `ContendedStore` stands in for a storage that another writer got to first (issue 492): stores
-//! in memory whose documents of one kind refuse to be written in place of as many times as a test
-//! says. `stored` and `replayed` check a journaled state (`Journaled`): as a store holds it, and
-//! what its changes replay onto.
+//! in memory whose documents of one kind refuse to be written as many times as a test says.
+//! `stored` and `replayed` check a journaled state (`Journaled`): as a store holds it, and what its
+//! changes replay onto.
 #![expect(clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::confidentiality::ConfidentialityRules;
@@ -26,10 +26,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// A backend in memory whose documents of one kind refuse a write in place of one - a change, a
-/// mark, a restoring, a removal - as outdated (`StoreError::Outdated`) as many times as the count
-/// of refusals says, counted down with every refusal: a storage another writer got to between a
-/// read and the write. Otherwise a `MemoryStore`.
+/// A backend in memory whose documents of one kind refuse a write as many times as the count of
+/// refusals says, counted down with every refusal: a storage another writer got to between a read
+/// and the write. A write in place of one - a change, a mark, a restoring, a removal - is refused
+/// as outdated (`StoreError::Outdated`), a creation as taken (`StoreError::Conflict`), the document
+/// made as the other writer made it (issue 500). Otherwise a `MemoryStore`.
 #[derive(Debug)]
 pub struct ContendedStore {
     inner: Arc<MemoryStore>,
@@ -81,7 +82,8 @@ impl PersistenceBackend for ContendedStore {
     }
 }
 
-/// The documents of the contended kind: `replace` and `remove` refused while refusals remain.
+/// The documents of the contended kind: `insert`, `replace` and `remove` refused while refusals
+/// remain.
 #[derive(Debug)]
 struct Contended {
     inner: Arc<dyn DocumentStorage>,
@@ -90,12 +92,17 @@ struct Contended {
 }
 
 impl Contended {
-    /// Refuses the write of the document `id` if a refusal remains, and counts it down.
+    /// Whether a refusal remains, counting it down.
+    fn refused(&self) -> bool {
+        self.refusals.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
+    }
+
+    /// Refuses the write of the document `id` in place of one if a refusal remains.
     fn contend(&self, id: Uuid) -> StoreResult<()> {
-        match self.refusals.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)) {
-            Ok(_) => Err(StoreError::Outdated { entity: self.kind.name(), id: id.to_string() }),
-            Err(_) => Ok(()),
+        if self.refused() {
+            return Err(StoreError::Outdated { entity: self.kind.name(), id: id.to_string() });
         }
+        Ok(())
     }
 }
 
@@ -121,7 +128,12 @@ impl DocumentStorage for Contended {
     }
 
     async fn insert(&self, document: Document) -> StoreResult<()> {
-        self.inner.insert(document).await
+        if !self.refused() {
+            return self.inner.insert(document).await;
+        }
+        let id = document.id;
+        self.inner.insert(document).await?;
+        Err(StoreError::Conflict(format!("{} {id} already exists", self.kind)))
     }
 
     async fn replace(&self, document: Document, read: Revision) -> StoreResult<()> {

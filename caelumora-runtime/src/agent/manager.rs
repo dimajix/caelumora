@@ -95,7 +95,8 @@ impl AgentManager {
         scope: Scope,
         personality_id: PersonalityId,
     ) -> AgentResult<Agent> {
-        let agent = Agent::new(ScopedName::new(name, scope)?, personality_id, context.principal_id);
+        let mut agent =
+            Agent::new(ScopedName::new(name, scope)?, personality_id, context.principal_id);
         self.access_policy
             .require(
                 context,
@@ -108,7 +109,7 @@ impl AgentManager {
         if !personality.name.scope.admits(&agent.name.scope) {
             return Err(AgentError::PersonalityOutOfScope(personality.name.name));
         }
-        self.agents.create(context, &agent).await?;
+        self.agents.create(context, &mut agent).await?;
         self.holders.keep_made(self, &agent).await?;
         self.events.announce(GlobalEvent::created::<Agent>(&agent.id), &agent);
         info!("Agent {} created by {}", agent.id, context.caller_id);

@@ -26,7 +26,6 @@ use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::security::{AccessPolicy, Admission, AllowAllPolicy, OwnershipPolicy};
 use caelumora_model::session::testing::{bare_session, make_session};
-use caelumora_model::session::Participant;
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_model::store::history::HistoryStore;
@@ -38,8 +37,7 @@ use caelumora_model::store::Persistence;
 use caelumora_model::store::{
     EntityKind, PersistenceBackend, Presence, Revision, StateStore, StoreError, StoreResult,
 };
-use caelumora_model::user::testing::make_user;
-use caelumora_model::user::User;
+use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::value::name::ScopedName;
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,18 +45,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use uuid::Uuid;
-
-/// `users` as participants, recorded in the store the session reads
-/// them from (issue 120).
-pub async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Participant> {
-    let store = &manager.runtime().entity_stores().users;
-    let mut participants = Vec::new();
-    for user in users {
-        store.create(&SecurityContext::system(), user).await.unwrap();
-        participants.push(Participant::User(user.id));
-    }
-    participants
-}
 
 /// A runtime under the ownership policy, which learns who belongs to a
 /// group from its store (issue 23), with `rules` as the confidentiality
@@ -116,17 +102,17 @@ pub async fn create(
 
 /// Stores `session` with `channels` on behalf of `ctx` as the runtime stores a brand-new one
 /// (`SessionManager::persist`) - with a project of its own -, without announcing or starting it:
-/// the session as stored. The channels keep the participants they name, without their joins in
-/// their histories (the model's `channel::testing::founded`).
+/// the session as stored, and `channels` then as stored, too. The channels keep the participants
+/// they name, without their joins in their histories (the model's `channel::testing::founded`).
 pub async fn persist(
     manager: &SessionManager,
     ctx: &SecurityContext,
     session: Session,
-    channels: &[Channel],
+    channels: &mut [Channel],
 ) -> Session {
-    let own = session.new_own_project().expect("a session of a user");
-    let session = Session { project: own.id, ..session };
-    manager.persist(ctx, &session, &own, channels).await.expect("the session is stored");
+    let mut own = session.new_own_project().expect("a session of a user");
+    let mut session = Session { project: own.id, ..session };
+    manager.persist(ctx, &mut session, &mut own, channels).await.expect("the session is stored");
     session
 }
 
@@ -150,7 +136,7 @@ pub async fn running_session_of_a_user(
     let (owner, other) = (make_user("owner"), make_user("other"));
     let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
     let mut session = make_session("with-users", owner.id);
-    session.participants = record_users(manager, &[&owner, &other]).await;
+    session.participants = record_users(manager.runtime().entity_stores(), &[&owner, &other]).await;
     let ctx = SecurityContext::new(owner_id, session.id, Default::default());
     let session_loop = create(manager, &ctx, session).await.expect("the session starts");
     (session_loop, ctx, other_id)

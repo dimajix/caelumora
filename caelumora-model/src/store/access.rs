@@ -337,13 +337,13 @@ mod tests {
                 .with_roles(vec![staff], None);
         let uncleared =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let workspace = Workspace::new(
+        let mut workspace = Workspace::new(
             ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
             "main",
             Classification::general(Confidentiality::Internal),
             owner,
         );
-        store.create(&cleared, &workspace).await.unwrap();
+        store.create(&cleared, &mut workspace).await.unwrap();
 
         assert!(
             matches!(store.get(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })),
@@ -404,8 +404,8 @@ mod tests {
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (_, carol_ctx) = user();
-        let hers = session(alice, vec![bob]);
-        store.create(&alice_ctx, &hers).await.unwrap();
+        let mut hers = session(alice, vec![bob]);
+        store.create(&alice_ctx, &mut hers).await.unwrap();
 
         assert!(store.get(&bob_ctx, hers.id).await.is_ok(), "a contributor reads it");
         assert!(
@@ -435,8 +435,8 @@ mod tests {
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (carol, carol_ctx) = user();
-        let hers = session(alice, vec![bob]);
-        store.create(&alice_ctx, &hers).await.unwrap();
+        let mut hers = session(alice, vec![bob]);
+        store.create(&alice_ctx, &mut hers).await.unwrap();
 
         // Writing oneself in as owner does not make the change one's own.
         let mut forged = hers.clone();
@@ -481,8 +481,8 @@ mod tests {
         .sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
-        let hers = session(alice, vec![bob]);
-        store.create(&alice_ctx, &hers).await.unwrap();
+        let mut hers = session(alice, vec![bob]);
+        store.create(&alice_ctx, &mut hers).await.unwrap();
         assert!(store
             .delete(&alice_ctx, hers.id, &Removal::now(alice_ctx.caller_id))
             .await
@@ -551,9 +551,9 @@ mod tests {
         let system = SecurityContext::system();
         let (alice, alice_ctx) = user();
         let (bob, _) = user();
-        let (hers, other) = (session(alice, Vec::new()), session(alice, Vec::new()));
-        store.create(&alice_ctx, &hers).await.unwrap();
-        store.create(&alice_ctx, &other).await.unwrap();
+        let (mut hers, mut other) = (session(alice, Vec::new()), session(alice, Vec::new()));
+        store.create(&alice_ctx, &mut hers).await.unwrap();
+        store.create(&alice_ctx, &mut other).await.unwrap();
 
         let forged = store.delete(&alice_ctx, hers.id, &Removal::now(bob)).await;
         assert!(
@@ -587,7 +587,7 @@ mod tests {
         let (alice, _) = user();
         let (_, bob_ctx) = user();
         assert!(matches!(
-            store.create(&bob_ctx, &session(alice, Vec::new())).await,
+            store.create(&bob_ctx, &mut session(alice, Vec::new())).await,
             Err(StoreError::PermissionDenied(_))
         ));
     }
@@ -610,14 +610,14 @@ mod tests {
         let alice_ctx =
             SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());
         let (_, bob_ctx) = user();
-        let record = User { id: alice_id, roles: vec![RoleId::new()], ..make_user("alice") };
+        let mut record = User { id: alice_id, roles: vec![RoleId::new()], ..make_user("alice") };
 
-        let own = store.create(&alice_ctx, &record).await;
+        let own = store.create(&alice_ctx, &mut record).await;
         assert!(
             matches!(own, Err(StoreError::PermissionDenied(_))),
             "nobody records themselves, got {own:?}"
         );
-        store.create(&system, &record).await.expect("the system records users");
+        store.create(&system, &mut record).await.expect("the system records users");
 
         assert_eq!(
             store.get(&bob_ctx, alice_id).await.expect("another user reads her").username,

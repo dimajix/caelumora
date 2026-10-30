@@ -347,7 +347,7 @@ mod tests {
     use caelumora_model::value::name::Name;
 
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::Agent;
     use caelumora_model::channel::testing::main_channel;
     use caelumora_model::confidentiality::Classification;
@@ -355,7 +355,7 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, SessionId};
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;
@@ -393,10 +393,8 @@ mod tests {
         ])
         .unwrap();
         let ids = roles.clone();
-        let (store, manager) =
-            owned_runtime(ConfidentialityRules::new(compartments).with_roles(roles));
+        let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments).with_roles(roles));
         let runtime = Arc::clone(manager.runtime());
-        let system = SecurityContext::system();
         let user = |name: &str, roles: &[&str]| User {
             roles: ids.ids_of(roles).unwrap(),
             ..make_user(name)
@@ -409,8 +407,7 @@ mod tests {
                      owner: ActorId,
                      kind: PersonalityKind,
                      roles: Option<&'static [&'static str]>| {
-            let store = store.clone();
-            let system = system.clone();
+            let runtime = Arc::clone(&runtime);
             let ids = ids.clone();
             async move {
                 let personality = Personality {
@@ -418,24 +415,12 @@ mod tests {
                     roles: roles.map(|roles| ids.ids_of(roles).unwrap()),
                     ..make_personality(name)
                 };
-                store
-                    .entity_stores()
-                    .unwrap()
-                    .personalities
-                    .create(&system, &personality)
-                    .await
-                    .unwrap();
-                let agent = Agent::new(
-                    ScopedName::new(name, Scope::GlobalScope).unwrap(),
-                    personality.id,
-                    owner,
-                );
-                store.entity_stores().unwrap().agents.create(&system, &agent).await.unwrap();
+                let agent = stored_agent(runtime.entity_stores(), name, personality, owner).await;
                 ActorId::Agent(agent.id)
             }
         };
         // Stored first: their roles are read from the store.
-        let users = record_users(&manager, &[&alice, &bob]).await;
+        let users = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
         let hers = agent("hers", alice_id, PersonalityKind::Internal, None).await;
         let limited = agent("limited", alice_id, PersonalityKind::Internal, Some(&["staff"])).await;
         let bobs = agent("bobs", bob_id, PersonalityKind::Internal, None).await;
@@ -526,11 +511,11 @@ mod tests {
         let agents = Arc::clone(&runtime.entity_stores().agents);
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
-        let personality = make_personality("plain");
-        personalities.create(&system, &personality).await.unwrap();
+        let mut personality = make_personality("plain");
+        personalities.create(&system, &mut personality).await.unwrap();
         let mut session = make_session("scoped", UserId::new());
         let id = session.id;
-        let elsewhere = [
+        let mut elsewhere = [
             Agent::new(
                 ScopedName::new(
                     "aside",
@@ -547,7 +532,7 @@ mod tests {
                 ActorId::User(UserId::new()),
             ),
         ];
-        for agent in &elsewhere {
+        for agent in &mut elsewhere {
             agents.create(&system, agent).await.unwrap();
             session.participants.push(Participant::Agent(agent.id));
         }

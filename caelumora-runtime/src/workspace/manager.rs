@@ -139,7 +139,7 @@ impl WorkspaceManager {
         }
         self.holders.require(ctx, &workspace.name.scope).await?;
 
-        self.workspaces.create(ctx, &workspace).await?;
+        self.workspaces.create(ctx, &mut workspace).await?;
         if let Err(e) = provider.create(workspace.id).await {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
             if let Err(cleanup) = purge_for_good(self.workspaces.as_ref(), workspace.id).await {

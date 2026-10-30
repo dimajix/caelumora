@@ -433,7 +433,7 @@ mod tests {
     use super::*;
     use crate::backend::StorageGone;
     use crate::workspace::WorkspaceError;
-    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::approval::ApproverId;
     use caelumora_model::confidentiality::ConfidentialityRules;
@@ -473,36 +473,22 @@ mod tests {
     }
 
     async fn agent_in(store: &Persistence) -> Agent {
-        let personality = make_personality("plain");
-        store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .create(&SecurityContext::system(), &personality)
-            .await
-            .unwrap();
-        let agent = Agent::new(
-            ScopedName::new("helper", Scope::GlobalScope).unwrap(),
-            personality.id,
+        stored_agent(
+            &store.entity_stores().unwrap(),
+            "helper",
+            make_personality("plain"),
             ActorId::User(UserId::new()),
-        );
-        store
-            .entity_stores()
-            .unwrap()
-            .agents
-            .create(&SecurityContext::system(), &agent)
-            .await
-            .unwrap();
-        agent
+        )
+        .await
     }
 
     async fn user_in(store: &Persistence) -> User {
-        let user = make_user("alice");
+        let mut user = make_user("alice");
         store
             .entity_stores()
             .unwrap()
             .users
-            .create(&SecurityContext::system(), &user)
+            .create(&SecurityContext::system(), &mut user)
             .await
             .unwrap();
         user
@@ -511,7 +497,7 @@ mod tests {
     /// A workspace of a user of its own, in the storage named `storage`.
     async fn workspace_in(store: &Persistence, storage: &str) -> Workspace {
         let owner = UserId::new();
-        let workspace = Workspace::new(
+        let mut workspace = Workspace::new(
             ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(),
             storage,
             Default::default(),
@@ -521,7 +507,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .workspaces
-            .create(&SecurityContext::system(), &workspace)
+            .create(&SecurityContext::system(), &mut workspace)
             .await
             .unwrap();
         workspace
@@ -530,7 +516,7 @@ mod tests {
     /// A project of a user of its own.
     async fn project_in(store: &Persistence) -> Project {
         let owner = UserId::new();
-        let project = Project::new(
+        let mut project = Project::new(
             ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(),
             owner,
         );
@@ -538,7 +524,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .projects
-            .create(&SecurityContext::system(), &project)
+            .create(&SecurityContext::system(), &mut project)
             .await
             .unwrap();
         project
@@ -601,7 +587,7 @@ mod tests {
         stores.users.update(&system, &mut promoted).await.unwrap();
         let mut profile = UserProfile::new(user.id, None);
         profile.preferred_language = Language::optional(Some("de")).unwrap();
-        stores.user_profiles.create(&system, &profile).await.unwrap();
+        stores.user_profiles.create(&system, &mut profile).await.unwrap();
         let mut notes = workspace.clone();
         notes.name.name = Name::new("notes").unwrap();
         stores.workspaces.update(&system, &mut notes).await.unwrap();

@@ -349,7 +349,7 @@ async fn authenticate(auth: Arc<Auth>, mut request: Request, next: Next, renew: 
             },
             Ok(None) => {
                 tracing::info!(
-                    "Session of {} ended: the user is no longer known to any provider",
+                    "Session of {} ended: no provider knows the user, or their record was deleted",
                     user
                 );
                 return unauthorized(&auth, true);

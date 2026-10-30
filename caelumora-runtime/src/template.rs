@@ -278,12 +278,12 @@ mod tests {
     }
 
     async fn store_with_personality(store: Persistence) -> (Persistence, PersonalityId) {
-        let personality = make_personality("plain");
+        let mut personality = make_personality("plain");
         store
             .entity_stores()
             .unwrap()
             .personalities
-            .create(&SecurityContext::system(), &personality)
+            .create(&SecurityContext::system(), &mut personality)
             .await
             .unwrap();
         (store, personality.id)
@@ -326,11 +326,11 @@ mod tests {
         // groups, its own project and its channels (`SessionManager::persist`) - only the
         // document: making the agents reads no more of it (issue 486).
         if sessions.get(&system, session_id).await.is_err() {
-            let session = Session {
+            let mut session = Session {
                 security_attributes: SecurityAttributes::owned_by(ActorId::User(owner)),
                 ..bare_session(session_id)
             };
-            sessions.create(&system, &session).await.unwrap();
+            sessions.create(&system, &mut session).await.unwrap();
         }
         for (name, agent_name, personality_id) in named {
             let made = agent(
@@ -407,18 +407,18 @@ mod tests {
         let system = SecurityContext::system();
         let plain =
             store.entity_stores().unwrap().personalities.get(&system, personality).await.unwrap();
-        let other = Personality {
+        let mut other = Personality {
             id: PersonalityId::new(),
             name: ScopedName::new("other", Default::default()).unwrap(),
             ..plain.clone()
         };
-        store.entity_stores().unwrap().personalities.create(&system, &other).await.unwrap();
-        let own = Agent::new(
+        store.entity_stores().unwrap().personalities.create(&system, &mut other).await.unwrap();
+        let mut own = Agent::new(
             ScopedName::new("helper", Scope::UserScope { user_id: owner }).unwrap(),
             plain.id,
             ActorId::User(owner),
         );
-        store.entity_stores().unwrap().agents.create(&system, &own).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&system, &mut own).await.unwrap();
         let in_scope = |scope| {
             template(vec![ParticipantTemplate::Agent {
                 name: Name::new("Helper").unwrap(),
@@ -535,7 +535,7 @@ mod tests {
                 else {
                     return true;
                 };
-                let other = Agent::new(
+                let mut other = Agent::new(
                     ScopedName::new("helper", Scope::GlobalScope).unwrap(),
                     personality.id,
                     ActorId::User(UserId::new()),
@@ -550,7 +550,7 @@ mod tests {
                     .entity_stores()
                     .unwrap()
                     .agents
-                    .create(&SecurityContext::system(), &other)
+                    .create(&SecurityContext::system(), &mut other)
                     .await
                     .unwrap();
             }
@@ -629,7 +629,7 @@ mod tests {
             .agents
             .create(
                 &system,
-                &Agent::new(
+                &mut Agent::new(
                     ScopedName::new("helper", Scope::GlobalScope).unwrap(),
                     plain.id,
                     ActorId::User(other),
@@ -677,12 +677,12 @@ mod tests {
         let plain =
             store.entity_stores().unwrap().personalities.get(&system, personality).await.unwrap();
         let session_id = SessionId::new();
-        let sessions = Personality {
+        let mut sessions = Personality {
             id: PersonalityId::new(),
             name: ScopedName::new("planner", Scope::SessionScope { session_id }).unwrap(),
             ..plain
         };
-        store.entity_stores().unwrap().personalities.create(&system, &sessions).await.unwrap();
+        store.entity_stores().unwrap().personalities.create(&system, &mut sessions).await.unwrap();
         let in_scope = |scope| {
             template(vec![ParticipantTemplate::Agent {
                 name: Name::new("planner").unwrap(),
@@ -744,7 +744,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .users
-            .create(&SecurityContext::system(), &User { id: owner, ..make_user("alice") })
+            .create(&SecurityContext::system(), &mut User { id: owner, ..make_user("alice") })
             .await
             .unwrap();
         let participants =

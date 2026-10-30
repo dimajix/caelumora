@@ -113,14 +113,14 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
         let personality = make_personality("plain");
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
         );
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().agents.create(&ctx, &agent).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&ctx, &mut agent).await.unwrap();
         let controller = AgentController::new(
             agent.clone(),
             None,
@@ -144,13 +144,13 @@ mod tests {
     async fn an_agent_acts_with_its_owners_roles_as_they_are_now_and_its_limit() {
         use caelumora_model::event::GlobalEvent;
         use caelumora_model::role::RoleId;
-        use caelumora_model::user::{User, UserUpdateEvent};
+        use caelumora_model::user::{User, UserProfile, UserUpdateEvent};
         let (staff, hr) = (RoleId::new(), RoleId::new());
         let alice = User { roles: vec![staff], ..make_user("alice") };
         let store = Persistence::in_memory();
         let owner = Arc::new(UserController::new(
             alice.clone(),
-            None,
+            UserProfile::new(alice.id, None),
             Arc::new(()),
             &store.entity_stores().unwrap(),
             store.state_store(),

@@ -161,14 +161,14 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
 /// members of a project (issue 467) -, in the runtime's name: its members replace those stored, and
 /// the group is made if there is none yet. Called only while the session, channel or project is
 /// there, so a group found deleted is restored first (issue 347): it goes and comes back with it
-/// (issue 348), but taking back a deletion that failed may have failed, too. Written meanwhile
-/// elsewhere, the group is read again and the members set once more (issue 492).
+/// (issue 348), but taking back a deletion that failed may have failed, too. Written or made
+/// meanwhile elsewhere, the group is read again and the members set once more (issues 492, 500).
 ///
 /// # Errors
 /// Whatever the store reports.
 pub(crate) async fn keep_participants(
     store: &dyn EntityStore<Group>,
-    participants: Group,
+    mut participants: Group,
 ) -> StoreResult<()> {
     let system = SecurityContext::system();
     loop {
@@ -176,7 +176,10 @@ pub(crate) async fn keep_participants(
             Some(stored) => stored,
             None => match store.get_deleted(&system, participants.id).await.optional()? {
                 Some(_) => store.restore(&system, participants.id).await?,
-                None => return store.create(&system, &participants).await,
+                None => match store.create(&system, &mut participants).await.created()? {
+                    Some(()) => return Ok(()),
+                    None => continue,
+                },
             },
         };
         if stored.members == participants.members {
@@ -238,7 +241,7 @@ mod tests {
 
     #[async_trait]
     impl EntityStore<Group> for Failing {
-        async fn create(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
+        async fn create(&self, ctx: &SecurityContext, value: &mut Group) -> StoreResult<()> {
             self.inner.create(ctx, value).await
         }
         async fn get(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
@@ -354,6 +357,29 @@ mod tests {
         assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob]);
     }
 
+    /// Issue 500: a group made meanwhile elsewhere is read again instead of failing. The other
+    /// writer made it as it was to be made, so this does not show its members set on it.
+    #[tokio::test]
+    async fn the_participants_follow_when_their_group_was_made_meanwhile() {
+        let (stores, refusals) = ContendedStore::stores(Group::KIND);
+        let groups = stores.entity_stores().unwrap().groups;
+        let system = SecurityContext::system();
+        let bob = ActorId::User(UserId::new());
+        let session = SessionId::new();
+        let name =
+            ScopedName::new("participants", Scope::SessionScope { session_id: session }).unwrap();
+        let participants = Group {
+            id: GroupId::of_session(session),
+            members: vec![bob],
+            ..Group::team(name, UserId::new())
+        };
+
+        refusals.store(1, Ordering::SeqCst);
+        keep_participants(groups.as_ref(), participants.clone()).await.expect("read again");
+        assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
+        assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob]);
+    }
+
     /// Issue 492: a team is changed once more, as it is now, when it was written meanwhile.
     #[tokio::test]
     async fn a_team_is_changed_once_more_when_it_was_written_meanwhile() {
@@ -464,11 +490,11 @@ mod tests {
         let team = |name: &str| {
             Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner)
         };
-        let there = team("there");
-        let deleted = team("deleted");
-        let purged = team("purged");
-        let unreadable = team("unreadable");
-        for group in [&there, &deleted, &purged, &unreadable] {
+        let mut there = team("there");
+        let mut deleted = team("deleted");
+        let mut purged = team("purged");
+        let mut unreadable = team("unreadable");
+        for group in [&mut there, &mut deleted, &mut purged, &mut unreadable] {
             groups.create(&system, group).await.unwrap();
         }
         groups.delete(&system, deleted.id, &Removal::now(system.caller_id)).await.unwrap();

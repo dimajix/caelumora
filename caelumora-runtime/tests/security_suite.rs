@@ -32,7 +32,7 @@ use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::Detail;
 use caelumora_model::store::{EntityKind, StoreError, Stored};
-use caelumora_model::user::testing::make_user;
+use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::user::{UserId, UserProfile};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, Introduction};
@@ -869,7 +869,7 @@ async fn an_agent_is_taken_in_only_by_who_may_read_it_and_only_if_it_may_run() {
 async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
     let world = World::new().await;
     let dave = make_user("dave");
-    world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
+    record_users(world.runtime.entity_stores(), &[&dave]).await;
     let mut limited = Personality {
         roles: Some(vec![]),
         ..world.personality("limited", Some(world.alice), &[]).await
@@ -915,7 +915,7 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     use caelumora_model::snapshot::CandidateRefusal;
     let world = World::new().await;
     let dave = make_user("dave");
-    world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
+    record_users(world.runtime.entity_stores(), &[&dave]).await;
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
     let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
@@ -1316,13 +1316,13 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
 async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session() {
     let world = World::new().await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let profile =
+    let mut profile =
         UserProfile::new(world.alice, Some(Introduction::new("I run the team.").unwrap()));
     world
         .runtime
         .entity_stores()
         .user_profiles
-        .create(&alice, &profile)
+        .create(&alice, &mut profile)
         .await
         .expect("she writes her own");
     let mut forged = UserProfile::new(world.alice, Some(Introduction::new("I quit.").unwrap()));
@@ -1330,9 +1330,9 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
         world.runtime.entity_stores().user_profiles.update(&bob, &mut forged).await.is_err(),
         "bob does not write hers"
     );
-    let carols = UserProfile::new(world.carol, Some(Introduction::new("hello").unwrap()));
+    let mut carols = UserProfile::new(world.carol, Some(Introduction::new("hello").unwrap()));
     assert!(
-        world.runtime.entity_stores().user_profiles.create(&bob, &carols).await.is_err(),
+        world.runtime.entity_stores().user_profiles.create(&bob, &mut carols).await.is_err(),
         "nor anyone else's"
     );
 
@@ -1654,12 +1654,12 @@ async fn deleting_a_session_needs_owning_it() {
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
-    let bobs = Agent::new(
+    let mut bobs = Agent::new(
         ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(),
         personality.id,
         ActorId::User(world.bob),
     );
-    world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
+    world.runtime.entity_stores().agents.create(&World::system(), &mut bobs).await.unwrap();
     let (_, asked) =
         world.asked(world.manager.delete(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
@@ -1728,12 +1728,12 @@ async fn a_session_s_own_project_is_read_by_its_participants_and_goes_with_it() 
         );
     }
     let holder = Scope::ProjectScope { project_id: project };
-    let bobs = ComponentBundle::new(
+    let mut bobs = ComponentBundle::new(
         ScopedName::new("tools", holder).unwrap(),
         quiet(),
         attributes(Some(world.bob), &[]),
     );
-    stores.component_bundles.create(&World::system(), &bobs).await.unwrap();
+    stores.component_bundles.create(&World::system(), &mut bobs).await.unwrap();
 
     let (refused, asked) = world.asked(world.manager.delete(&alice, session.id())).await;
     let refused = refused.expect_err("bob's bundle is left");
@@ -2136,13 +2136,13 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
         .await
         .unwrap();
     session.update_project(&alice, Some(project.id)).await.unwrap();
-    let bobs = ComponentBundle::new(
+    let mut bobs = ComponentBundle::new(
         ScopedName::new("tools", project.holds()).unwrap(),
         quiet(),
         attributes(Some(world.bob), &[]),
     );
     let stores = world.runtime.entity_stores();
-    stores.component_bundles.create(&World::system(), &bobs).await.unwrap();
+    stores.component_bundles.create(&World::system(), &mut bobs).await.unwrap();
 
     let refused =
         world.projects.delete(&alice, project.id).await.expect_err("bob's bundle is left");
@@ -2254,12 +2254,12 @@ async fn a_channel_is_kept_with_what_of_its_scope_is_not_the_deleters() {
         .id();
     let holder = Scope::ChannelScope { session_id: session.id(), channel_id: side };
     let personality = world.personality("plain", None, &[]).await;
-    let bobs = Agent::new(
+    let mut bobs = Agent::new(
         ScopedName::new("helper", holder.clone()).unwrap(),
         personality.id,
         ActorId::User(world.bob),
     );
-    world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
+    world.runtime.entity_stores().agents.create(&World::system(), &mut bobs).await.unwrap();
 
     let refused = session.delete_channel(&alice, side).await.expect_err("bob's agent is left");
     let left_in = |scope: &Scope, left: &[(EntityKind, usize)]| {
@@ -2291,14 +2291,14 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
-    let bobs = Agent::new(
+    let mut bobs = Agent::new(
         ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(),
         personality.id,
         ActorId::User(world.bob),
     );
-    world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
+    world.runtime.entity_stores().agents.create(&World::system(), &mut bobs).await.unwrap();
     let project = Scope::ProjectScope { project_id: session.session().project };
-    let bundle = ComponentBundle::new(
+    let mut bundle = ComponentBundle::new(
         ScopedName::new("tools", project).unwrap(),
         quiet(),
         attributes(Some(world.bob), &[]),
@@ -2307,7 +2307,7 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
         .runtime
         .entity_stores()
         .component_bundles
-        .create(&World::system(), &bundle)
+        .create(&World::system(), &mut bundle)
         .await
         .unwrap();
     world
@@ -2397,7 +2397,7 @@ async fn creating_a_channel_needs_owning_its_session() {
 async fn a_founder_who_is_not_cleared_leaves_no_channel() {
     let world = World::new().await;
     let dave = make_user("dave");
-    world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
+    record_users(world.runtime.entity_stores(), &[&dave]).await;
     world.access_policy.names.lock().unwrap().insert(ActorId::User(dave.id), "dave".to_string());
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
@@ -2467,7 +2467,7 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
 #[tokio::test]
 async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     let world = World::new().await;
-    let policy = ComponentBundle::new(
+    let mut policy = ComponentBundle::new(
         ScopedName::new("bobs-policy", Scope::GlobalScope).unwrap(),
         ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")],
@@ -2479,7 +2479,7 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
         .entity_stores()
         .unwrap()
         .component_bundles
-        .create(&World::as_user(world.bob), &policy)
+        .create(&World::as_user(world.bob), &mut policy)
         .await
         .expect("bob keeps his policy");
     let session = world.shared_session(&[], &[]).await;
@@ -2548,7 +2548,7 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
     let world = World::new().await;
-    let shared = ComponentBundle::new(
+    let mut shared = ComponentBundle::new(
         ScopedName::new("bobs-policy", Scope::GlobalScope).unwrap(),
         ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")],
@@ -2556,7 +2556,7 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
         attributes(Some(world.bob), &[world.alice]),
     );
     let bundles = world.store.entity_stores().unwrap().component_bundles;
-    bundles.create(&World::as_user(world.bob), &shared).await.expect("bob keeps his policy");
+    bundles.create(&World::as_user(world.bob), &mut shared).await.expect("bob keeps his policy");
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let spec = ChannelSpec {
@@ -2665,7 +2665,7 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
 #[tokio::test]
 async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     let world = World::new().await;
-    let tools = ComponentBundle::new(
+    let mut tools = ComponentBundle::new(
         ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(),
         ComponentConfig { component_nodes: vec![ComponentDescriptor::new("echo", "echo_tool")] },
         attributes(Some(world.bob), &[world.alice]),
@@ -2675,7 +2675,7 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
         .entity_stores()
         .unwrap()
         .component_bundles
-        .create(&World::as_user(world.bob), &tools)
+        .create(&World::as_user(world.bob), &mut tools)
         .await
         .expect("bob keeps his tools");
     let session = world.shared_session(&[], &[]).await;
@@ -2728,7 +2728,7 @@ async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_r
         );
     })
     .await;
-    let operated = ComponentBundle::new(
+    let mut operated = ComponentBundle::new(
         ScopedName::new("operated", Scope::GlobalScope).unwrap(),
         ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("policy", "operated_policy")],
@@ -2740,7 +2740,7 @@ async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_r
         .entity_stores()
         .unwrap()
         .component_bundles
-        .create(&World::system(), &operated)
+        .create(&World::system(), &mut operated)
         .await
         .expect("the operator's");
     let session = world.shared_session(&[], &[]).await;

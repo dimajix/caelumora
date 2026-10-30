@@ -274,7 +274,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 
 | Operation | Questions | Rule | Refusal |
 |---|---|---|---|
-| A profile read or changed, approval rules (`UserController`) | store `GetUserProfile`, `UpdateUserProfile` (U,1) | R1 | `NotFound`, `PermissionDenied` |
+| A profile read or changed, approval rules (`UserController`) | store `GetUserProfile`, `UpdateUserProfile` (U,1); the first change `CreateUserProfile` (U,1) | R1 | `NotFound`, `PermissionDenied` |
 | A channel marked read (`UserController::mark_read`) | store `GetChannel` (U,1), the clearance included; the message from where the user's view begins, structural; the state is the user's own, stored without a question | R1 | `NotFound` for the channel and the message alike |
 | Users, agents, personalities, profiles read by the runtime (controllers, names in the views) | in S | - | - |
 | Templates listed | store `GetSessionTemplate` per item (U,1) | R1 | left out |

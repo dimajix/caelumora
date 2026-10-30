@@ -155,7 +155,7 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use std::sync::Arc;
 
     use crate::error::is_forbidden;
@@ -216,7 +216,8 @@ mod tests {
         let mut session = make_session("hers", alice.id);
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
@@ -304,7 +305,8 @@ mod tests {
         let (alice, bob) = (ActorId::User(users.0.id), ActorId::User(users.1.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", users.0.id);
-        session.participants = record_users(&manager, &[&users.0, &users.1]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&users.0, &users.1]).await;
         let running = create(&manager, &as_user(alice), session).await.unwrap();
         let main = running.channel_named("main").unwrap();
 

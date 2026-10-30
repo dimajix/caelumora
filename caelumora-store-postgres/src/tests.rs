@@ -205,13 +205,13 @@ async fn backends_of_one_schema_keep_one_store() {
         Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner)
     };
     let system = SecurityContext::system();
-    let ours = team("Ours");
-    here.entity_stores().unwrap().groups.create(&system, &ours).await.unwrap();
+    let mut ours = team("Ours");
+    here.entity_stores().unwrap().groups.create(&system, &mut ours).await.unwrap();
     assert!(
         there.entity_stores().unwrap().groups.get(&system, ours.id).await.is_ok(),
         "read by the other"
     );
-    let taken = there.entity_stores().unwrap().groups.create(&system, &team("ours")).await;
+    let taken = there.entity_stores().unwrap().groups.create(&system, &mut team("ours")).await;
     assert!(
         matches!(taken, Err(StoreError::NameTaken { entity: "group" })),
         "its name taken: {taken:?}"
@@ -856,9 +856,9 @@ async fn a_runtime_keeps_its_entities_and_its_states_in_postgres() {
         "the core's kinds, made at start: {kinds:?}"
     );
     let owner = UserId::new();
-    let team =
+    let mut team =
         Group::team(ScopedName::new("Ours", Scope::UserScope { user_id: owner }).unwrap(), owner);
-    runtime.entity_stores().groups.create(&SecurityContext::system(), &team).await.unwrap();
+    runtime.entity_stores().groups.create(&SecurityContext::system(), &mut team).await.unwrap();
     let kept: i64 =
         sqlx::query_scalar("SELECT count(*) FROM entity_group").fetch_one(pool).await.unwrap();
     assert_eq!(kept, 1, "in its table");

@@ -322,15 +322,13 @@ mod tests {
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::StateStore;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::store::{EntityStores, StateStore};
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
     use caelumora_runtime::runtime::ActorRuntime;
-    use caelumora_runtime::session::testing::{
-        actor_runtime_in, owned_runtime, record_users, spec,
-    };
+    use caelumora_runtime::session::testing::{actor_runtime_in, owned_runtime, spec};
     use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
     use caelumora_runtime::transport::Discard;
     use std::collections::HashMap;
@@ -417,6 +415,7 @@ mod tests {
     /// session and reads its privacy from its loop. Each is changed,
     /// deleted and restored by its owner.
     struct Sessions {
+        stores: EntityStores,
         manager: Arc<SessionManager>,
         loops: HashMap<SessionId, Arc<SessionLoop>>,
         /// How many were made, for their names.
@@ -428,15 +427,15 @@ mod tests {
         /// learns who belongs to a group from its store, with `rules` as the
         /// confidentiality policy (`owned_runtime`).
         fn under(rules: ConfidentialityRules) -> Self {
-            let (_, manager) = owned_runtime(rules);
-            Self { manager, loops: HashMap::new(), made: 0 }
+            let (store, manager) = owned_runtime(rules);
+            Self { stores: store.entity_stores().unwrap(), manager, loops: HashMap::new(), made: 0 }
         }
 
         /// A user named `name`, stored (`record_users`): to own sessions and
         /// the agent, or to take part.
         async fn user(&self, name: &str) -> UserId {
             let user = make_user(name);
-            record_users(&self.manager, &[&user]).await;
+            record_users(&self.stores, &[&user]).await;
             user.id
         }
 

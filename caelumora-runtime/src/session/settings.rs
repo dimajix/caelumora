@@ -191,7 +191,7 @@ impl SessionLoop {
                 StoreError::PermissionDenied,
             )
             .await?;
-        let (target, made) = match project {
+        let (mut target, made) = match project {
             Some(id) => (self.reached_project(context, id).await?, false),
             None => match load_own(&self.stores, self.id).await? {
                 Some(own) => (own, false),
@@ -216,7 +216,7 @@ impl SessionLoop {
             .filter(|left| !left.is_own());
         let participants = Subject::Group(GroupId::of_session(self.id));
         if made {
-            make_own(&self.stores, &target).await?;
+            make_own(&self.stores, &mut target).await?;
         } else if !target.is_own() {
             self.controllers
                 .project_controller(target.id)
@@ -313,7 +313,7 @@ mod tests {
     use crate::view::Viewer;
     use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use std::sync::Arc;
 
     use crate::session::testing::*;
@@ -338,7 +338,8 @@ mod tests {
             .security_attributes
             .clone()
             .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         let session = create(&manager, &as_user(alice.id), session).await.unwrap();
         let mut events = runtime.event_bus().subscribe_all();
 

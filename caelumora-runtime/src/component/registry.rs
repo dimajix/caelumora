@@ -728,7 +728,10 @@ mod tests {
     ) -> Arc<dyn EntityStore<ComponentBundle>> {
         let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
         for (name, nodes) in bundles {
-            store.create(&SecurityContext::default(), &bundle(name, config(nodes))).await.unwrap();
+            store
+                .create(&SecurityContext::default(), &mut bundle(name, config(nodes)))
+                .await
+                .unwrap();
         }
         store
     }
@@ -908,7 +911,7 @@ mod tests {
 
     #[async_trait]
     impl EntityStore<ComponentBundle> for Failing {
-        async fn create(&self, _: &SecurityContext, _: &ComponentBundle) -> StoreResult<()> {
+        async fn create(&self, _: &SecurityContext, _: &mut ComponentBundle) -> StoreResult<()> {
             Self::failed()
         }
         async fn get(
@@ -1013,12 +1016,12 @@ mod tests {
     async fn a_ref_names_a_bundle_in_exactly_its_scope() {
         let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
         let user_id = UserId::new();
-        let own = ComponentBundle::new(
+        let mut own = ComponentBundle::new(
             ScopedName::new("mine", Scope::UserScope { user_id }).unwrap(),
             config(&[("stop", "named")]),
             SecurityAttributes::owned_by(ActorId::User(user_id)),
         );
-        store.create(&SecurityContext::default(), &own).await.unwrap();
+        store.create(&SecurityContext::default(), &mut own).await.unwrap();
         let registry = named_registry(store);
         let built = |params: Value| {
             let config = ComponentConfig {
@@ -1059,7 +1062,7 @@ mod tests {
                 reference("inner", "b"),
             ],
         };
-        store.create(&SecurityContext::default(), &bundle("a", nested)).await.unwrap();
+        store.create(&SecurityContext::default(), &mut bundle("a", nested)).await.unwrap();
         let registry = named_registry(store);
         let config = ComponentConfig { component_nodes: vec![reference("ref-a", "a")] };
         let error = ComponentContainer::from_config(&config, ASKED, &registry, &test_context())
@@ -1361,11 +1364,11 @@ mod tests {
     #[tokio::test]
     async fn a_component_builds_on_the_containers_own_default_and_within_a_ref_as_well() {
         let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
-        let shared = bundle(
+        let mut shared = bundle(
             "shared",
             ComponentConfig { component_nodes: vec![on_default("listed", "model", json!(null))] },
         );
-        store.create(&SecurityContext::default(), &shared).await.unwrap();
+        store.create(&SecurityContext::default(), &mut shared).await.unwrap();
         let (choices, _) = choices();
         let mut registry = ComponentRegistry { bundles: store, ..choices };
         registry.set_defaults(&config(&[("model", "other")])).unwrap();

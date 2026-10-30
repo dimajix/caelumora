@@ -83,14 +83,14 @@ mod tests {
         let memberships = StoreMemberships::new();
         let alice = UserId::new();
         let bob = ActorId::User(UserId::new());
-        let team = Group {
+        let mut team = Group {
             members: vec![bob],
             ..Group::team(ScopedName::new("project", Default::default()).unwrap(), alice)
         };
         assert!(memberships.group(team.id).await.is_none(), "none before a store is bound");
         let store = Persistence::in_memory().entity_stores().unwrap().groups;
         memberships.bind(&store);
-        store.create(&SecurityContext::system(), &team).await.unwrap();
+        store.create(&SecurityContext::system(), &mut team).await.unwrap();
         let kept = memberships.group(team.id).await.expect("the group");
         assert_eq!((kept.members, kept.deleted), (vec![bob], None));
         assert!(memberships.group(GroupId::new()).await.is_none(), "none that does not exist");

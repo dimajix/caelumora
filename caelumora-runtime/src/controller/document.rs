@@ -360,18 +360,18 @@ mod tests {
         let stores = Persistence::in_memory().entity_stores().unwrap();
         let system = SecurityContext::system();
         let owner = UserId::new();
-        let team = Group::team(
+        let mut team = Group::team(
             ScopedName::new("team", Scope::UserScope { user_id: owner }).unwrap(),
             owner,
         );
-        stores.groups.create(&system, &team).await.unwrap();
+        stores.groups.create(&system, &mut team).await.unwrap();
         let mut agent = assistant();
         let there = Subject::Group(team.id);
         let gone = Subject::Group(GroupId::new());
         for subject in [there, gone] {
             agent.security_attributes.acl.push(AclEntry { subject, grant: Grant::Read });
         }
-        stores.agents.create(&system, &agent).await.unwrap();
+        stores.agents.create(&system, &mut agent).await.unwrap();
         let document = LiveDocument::new(
             agent.id,
             agent,
@@ -393,9 +393,9 @@ mod tests {
     /// way, so that what it read before the change cannot set it back.
     #[tokio::test]
     async fn taking_over_what_is_stored_waits_for_a_change_under_way() {
-        let agent = assistant();
+        let mut agent = assistant();
         let stores = Persistence::in_memory().entity_stores().unwrap();
-        stores.agents.create(&SecurityContext::system(), &agent).await.unwrap();
+        stores.agents.create(&SecurityContext::system(), &mut agent).await.unwrap();
         let document =
             LiveDocument::new(agent.id, agent, stores.agents, stores.groups, Arc::new(()));
 

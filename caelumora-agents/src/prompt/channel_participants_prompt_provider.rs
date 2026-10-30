@@ -180,7 +180,7 @@ mod tests {
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
@@ -279,7 +279,7 @@ mod tests {
     async fn personality(store: &Persistence, introduction: Option<&str>) -> Personality {
         // Named apart: a name is unique in its scope (issue 250).
         let id = PersonalityId::new();
-        let personality = Personality {
+        let mut personality = Personality {
             id,
             introduction: introduction.map(|text| Introduction::new(text).unwrap()),
             ..make_personality(&format!("plain {id}"))
@@ -288,14 +288,14 @@ mod tests {
             .entity_stores()
             .unwrap()
             .personalities
-            .create(&SecurityContext::system(), &personality)
+            .create(&SecurityContext::system(), &mut personality)
             .await
             .unwrap();
         personality
     }
 
     async fn agent(store: &Persistence, name: &str, personality: &Personality) -> Agent {
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             ScopedName::new(name, Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
@@ -304,7 +304,7 @@ mod tests {
             .entity_stores()
             .unwrap()
             .agents
-            .create(&SecurityContext::system(), &agent)
+            .create(&SecurityContext::system(), &mut agent)
             .await
             .unwrap();
         agent
@@ -320,16 +320,17 @@ mod tests {
 
         let kaya = make_user("Kaya");
         let bob = make_user("Bob");
-        for user in [&kaya, &bob] {
-            store.entity_stores().unwrap().users.create(&system, user).await.unwrap();
-        }
+        record_users(&store.entity_stores().unwrap(), &[&kaya, &bob]).await;
         store
             .entity_stores()
             .unwrap()
             .user_profiles
             .create(
                 &system,
-                &UserProfile::new(kaya.id, Some(Introduction::new("I run the budget.").unwrap())),
+                &mut UserProfile::new(
+                    kaya.id,
+                    Some(Introduction::new("I run the budget.").unwrap()),
+                ),
             )
             .await
             .unwrap();

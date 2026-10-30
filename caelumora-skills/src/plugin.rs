@@ -60,8 +60,8 @@ impl fmt::Debug for SeededSkills {
 #[async_trait]
 impl SeedSection for SeededSkills {
     async fn seed(&self, section: Value) -> Result<()> {
-        for skill in serde_json::from_value::<Vec<Skill>>(section)? {
-            if create_unless_taken(self.0.as_ref(), &skill).await? {
+        for mut skill in serde_json::from_value::<Vec<Skill>>(section)? {
+            if create_unless_taken(self.0.as_ref(), &mut skill).await? {
                 info!("Seeded skill {} ({})", skill.name, skill.id);
             }
         }

@@ -80,8 +80,8 @@ macro_rules! lifecycle {
         let ctx = SecurityContext::default();
         let mut value = $value;
 
-        store.$create(&ctx, &value).await.expect(concat!($entity, ": create"));
-        let conflict = store.$create(&ctx, &value).await;
+        store.$create(&ctx, &mut value).await.expect(concat!($entity, ": create"));
+        let conflict = store.$create(&ctx, &mut value).await;
         assert!(matches!(conflict, Err(StoreError::Conflict(_))), concat!($entity, ": creating twice is a conflict - its id before its name -, got {:?}"), conflict);
 
         value.$($field).+ = $new;
@@ -101,7 +101,7 @@ macro_rules! lifecycle {
         let gone = store.$update(&ctx, &mut value).await;
         assert!(matches!(gone, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": update after delete is NotFound, got {:?}"), gone);
         assert!(store.$list(&ctx, &Query::all()).await.map(|page| page.items).expect(concat!($entity, ": list")).is_empty(), concat!($entity, ": list is empty after delete"));
-        let taken = store.$create(&ctx, &value).await;
+        let taken = store.$create(&ctx, &mut value).await;
         assert!(matches!(taken, Err(StoreError::Conflict(_))), concat!($entity, ": its id stays taken once it is deleted, got {:?}"), taken);
     }};
 }
@@ -320,7 +320,7 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
             }
             _ => {}
         }
-        folders.create(&ctx, &folder).await.expect("a folder");
+        folders.create(&ctx, &mut folder).await.expect("a folder");
         made.push(folder.id);
     }
     let ids = |page: &[Folder]| page.iter().map(|f| f.id).collect::<Vec<_>>();
@@ -385,11 +385,11 @@ pub async fn queries_behave(stores: &EntityStores) {
     // By scope, by the session of a channel, by a participant.
     use crate::channel::{ChannelField, Participant};
     let session_id = SessionId(Uuid::new_v4());
-    let in_session = Personality {
+    let mut in_session = Personality {
         name: ScopedName::new("in-session", Scope::SessionScope { session_id }).unwrap(),
         ..make_personality("assistant")
     };
-    let in_channel = Personality {
+    let mut in_channel = Personality {
         name: ScopedName::new(
             "in-channel",
             Scope::ChannelScope { session_id, channel_id: ChannelId(Uuid::new_v4()) },
@@ -397,8 +397,8 @@ pub async fn queries_behave(stores: &EntityStores) {
         .unwrap(),
         ..make_personality("assistant")
     };
-    let elsewhere = make_personality("elsewhere");
-    for personality in [&in_session, &in_channel, &elsewhere] {
+    let mut elsewhere = make_personality("elsewhere");
+    for personality in [&mut in_session, &mut in_channel, &mut elsewhere] {
         stores.personalities.create(&ctx, personality).await.unwrap();
     }
     let holder = Scope::SessionScope { session_id };
@@ -418,9 +418,9 @@ pub async fn queries_behave(stores: &EntityStores) {
     let agent = AgentId(Uuid::new_v4());
     let mut with_agent = self::session();
     with_agent.participants.push(Participant::Agent(agent));
-    let without = self::session();
-    stores.sessions.create(&ctx, &with_agent).await.unwrap();
-    stores.sessions.create(&ctx, &without).await.unwrap();
+    let mut without = self::session();
+    stores.sessions.create(&ctx, &mut with_agent).await.unwrap();
+    stores.sessions.create(&ctx, &mut without).await.unwrap();
     let found = stores
         .sessions
         .list(&ctx, &Query::filtered(Filter::with_participant(ActorId::Agent(agent))))
@@ -432,11 +432,11 @@ pub async fn queries_behave(stores: &EntityStores) {
         "a participant, the whole element"
     );
 
-    let of_it = Channel { session_id: with_agent.id, ..self::channel() };
-    stores.channels.create(&ctx, &of_it).await.unwrap();
+    let mut of_it = Channel { session_id: with_agent.id, ..self::channel() };
+    stores.channels.create(&ctx, &mut of_it).await.unwrap();
     stores
         .channels
-        .create(&ctx, &Channel { session_id: without.id, ..self::channel() })
+        .create(&ctx, &mut Channel { session_id: without.id, ..self::channel() })
         .await
         .unwrap();
     let found = stores
@@ -453,8 +453,8 @@ pub async fn queries_behave(stores: &EntityStores) {
     // By a member (issue 308).
     let mut his = group(alice);
     his.members.push(ActorId::User(bob));
-    stores.groups.create(&ctx, &his).await.unwrap();
-    stores.groups.create(&ctx, &group(UserId::new())).await.unwrap();
+    stores.groups.create(&ctx, &mut his).await.unwrap();
+    stores.groups.create(&ctx, &mut group(UserId::new())).await.unwrap();
     let belonging = Filter::with_member(ActorId::User(bob));
     let found = stores.groups.list(&ctx, &Query::filtered(belonging)).await.unwrap();
     assert_eq!(
@@ -472,10 +472,10 @@ macro_rules! found_by_name {
         let store = $store;
         let ctx = SecurityContext::default();
         let user_id = UserId::new();
-        let global = ($make)(ScopedName::new("Helper", Scope::GlobalScope).unwrap());
-        let users = ($make)(ScopedName::new("helper", Scope::UserScope { user_id }).unwrap());
-        store.$create(&ctx, &global).await.expect(concat!($entity, ": create"));
-        store.$create(&ctx, &users).await.expect(concat!($entity, ": create"));
+        let mut global = ($make)(ScopedName::new("Helper", Scope::GlobalScope).unwrap());
+        let mut users = ($make)(ScopedName::new("helper", Scope::UserScope { user_id }).unwrap());
+        store.$create(&ctx, &mut global).await.expect(concat!($entity, ": create"));
+        store.$create(&ctx, &mut users).await.expect(concat!($entity, ": create"));
 
         let found = store
             .$find(&ctx, &ScopedName::new("helper", Scope::GlobalScope).unwrap())
@@ -654,9 +654,9 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
     );
 
     let ctx = SecurityContext::default();
-    let alice = user("alice");
-    stores.users.create(&ctx, &alice).await.expect("create user");
-    stores.users.create(&ctx, &user("bob")).await.expect("create user");
+    let mut alice = user("alice");
+    stores.users.create(&ctx, &mut alice).await.expect("create user");
+    stores.users.create(&ctx, &mut user("bob")).await.expect("create user");
     let found =
         stores.users.find_by_name(&ctx, &scoped("alice")).await.expect("alice is found by name");
     assert_eq!(found.id, alice.id);
@@ -668,18 +668,18 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
 
     // A template that would make sessions it can never lie in (issue 178).
     let ctx = SecurityContext::default();
-    let in_session = SessionTemplate {
+    let mut in_session = SessionTemplate {
         name: ScopedName::new("nested", Scope::SessionScope { session_id: SessionId::new() })
             .unwrap(),
         ..session_template()
     };
-    let refused = stores.session_templates.create(&ctx, &in_session).await;
+    let refused = stores.session_templates.create(&ctx, &mut in_session).await;
     assert!(
         matches!(refused, Err(StoreError::Validation(_))),
         "a template of a session's scope is not stored, got {refused:?}"
     );
-    let template = session_template();
-    stores.session_templates.create(&ctx, &template).await.expect("a global one is");
+    let mut template = session_template();
+    stores.session_templates.create(&ctx, &mut template).await.expect("a global one is");
     let mut moved = SessionTemplate {
         name: ScopedName::new(
             "nested",
@@ -740,7 +740,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         .workspaces
         .create(
             &ctx,
-            &Workspace {
+            &mut Workspace {
                 security_attributes: SecurityAttributes::systems(),
                 ..workspace(UserId::new())
             },
@@ -751,11 +751,11 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         "workspace: one that belongs to no user is not stored, got {systems:?}"
     );
     // Every entity has an owner (issue 491), whatever its kind.
-    let nobodys = Personality {
+    let mut nobodys = Personality {
         security_attributes: SecurityAttributes::owned_by(ActorId::None),
         ..make_personality("nobodys")
     };
-    let created = stores.personalities.create(&ctx, &nobodys).await;
+    let created = stores.personalities.create(&ctx, &mut nobodys).await;
     assert!(
         matches!(created, Err(StoreError::Validation(_))),
         "personality: one of nobody is not stored, got {created:?}"
@@ -766,7 +766,7 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         .groups
         .create(
             &ctx,
-            &Group {
+            &mut Group {
                 name: ScopedName::new(
                     "participants",
                     Scope::SessionScope { session_id: SessionId::new() },
@@ -790,8 +790,8 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         find_by_name
     );
     let session_id = SessionId::new();
-    let own = Project::own_of(session_id, UserId::new());
-    stores.projects.create(&ctx, &own).await.expect("project: a session's own");
+    let mut own = Project::own_of(session_id, UserId::new());
+    stores.projects.create(&ctx, &mut own).await.expect("project: a session's own");
     let found = stores
         .projects
         .find_by_name(&ctx, &own.scoped_name())
@@ -809,8 +809,8 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
         },
         Project { security_attributes: SecurityAttributes::systems(), ..project(UserId::new()) },
     ];
-    for project in refused {
-        let stored = stores.projects.create(&ctx, &project).await;
+    for mut project in refused {
+        let stored = stores.projects.create(&ctx, &mut project).await;
         assert!(
             matches!(stored, Err(StoreError::Validation(_))),
             "project: not stored - {:?}, got {stored:?}",
@@ -830,14 +830,14 @@ macro_rules! unique_by_name {
         let ctx = SecurityContext::default();
         let taken = |result| matches!(result, Err(StoreError::NameTaken { entity: $entity }));
 
-        let first = ($make)("Helper");
-        store.$create(&ctx, &first).await.expect(concat!($entity, ": create"));
-        let second = ($make)("helper");
-        assert!(taken(store.$create(&ctx, &second).await), concat!($entity, ": a name taken in its name space, compared as names are"));
-        $(store.$create(&ctx, &($elsewhere)("helper")).await.expect(concat!($entity, ": the name is free in another name space"));)?
+        let mut first = ($make)("Helper");
+        store.$create(&ctx, &mut first).await.expect(concat!($entity, ": create"));
+        let mut second = ($make)("helper");
+        assert!(taken(store.$create(&ctx, &mut second).await), concat!($entity, ": a name taken in its name space, compared as names are"));
+        $(store.$create(&ctx, &mut ($elsewhere)("helper")).await.expect(concat!($entity, ": the name is free in another name space"));)?
 
         let mut other = ($make)("Other");
-        store.$create(&ctx, &other).await.expect(concat!($entity, ": create"));
+        store.$create(&ctx, &mut other).await.expect(concat!($entity, ": create"));
         assert!(taken(store.$update(&ctx, &mut ($rename)(other.clone(), "HELPER")).await), concat!($entity, ": nor renamed to it"));
         other = ($rename)(other, "other");
         store.$update(&ctx, &mut other).await.expect(concat!($entity, ": renamed to what is still its own name"));
@@ -845,7 +845,7 @@ macro_rules! unique_by_name {
         store.$update(&ctx, &mut other).await.expect(concat!($entity, ": renamed to a free one"));
 
         store.$delete(&ctx, first.id, &Removal::now(ctx.caller_id)).await.expect(concat!($entity, ": delete"));
-        store.$create(&ctx, &second).await.expect(concat!($entity, ": what is deleted holds no name"));
+        store.$create(&ctx, &mut second).await.expect(concat!($entity, ": what is deleted holds no name"));
         assert!(taken(store.$restore(&ctx, first.id).await.map(drop)), concat!($entity, ": and is not restored under one taken meanwhile"));
         store.$update(&ctx, &mut ($rename)(second, "Helper 2")).await.expect(concat!($entity, ": rename"));
         store.$restore(&ctx, first.id).await.expect(concat!($entity, ": once it is free again, it is"));
@@ -897,14 +897,14 @@ pub async fn names_are_unique(stores: &EntityStores) {
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();
-    let mine =
+    let mut mine =
         Agent::new(in_scope("Moving", &users), PersonalityId::new(), ActorId::User(UserId::new()));
-    stores.agents.create(&ctx, &mine).await.expect("create");
+    stores.agents.create(&ctx, &mut mine).await.expect("create");
     stores
         .agents
         .create(
             &ctx,
-            &Agent::new(
+            &mut Agent::new(
                 in_scope("moving", &global),
                 PersonalityId::new(),
                 ActorId::User(UserId::new()),
@@ -920,8 +920,8 @@ pub async fn names_are_unique(stores: &EntityStores) {
     );
 
     // Sessions have names, but no unique ones.
-    stores.sessions.create(&ctx, &session()).await.expect("create");
-    stores.sessions.create(&ctx, &session()).await.expect("a second session of the same name");
+    stores.sessions.create(&ctx, &mut session()).await.expect("create");
+    stores.sessions.create(&ctx, &mut session()).await.expect("a second session of the same name");
 }
 
 /// A name is taken also by what the caller may not read (issue 250): the
@@ -940,7 +940,7 @@ pub async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
     };
     stores
         .agents
-        .create(&as_user(alice), &owned_by("Helper", alice))
+        .create(&as_user(alice), &mut owned_by("Helper", alice))
         .await
         .expect("alice makes hers");
     let hidden = stores
@@ -951,7 +951,7 @@ pub async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
         matches!(hidden, Err(StoreError::NotFound { .. })),
         "bob does not see hers: {hidden:?}"
     );
-    let refused = stores.agents.create(&as_user(bob), &owned_by("helper", bob)).await;
+    let refused = stores.agents.create(&as_user(bob), &mut owned_by("helper", bob)).await;
     assert!(
         matches!(refused, Err(StoreError::NameTaken { entity: "agent" })),
         "but cannot take its name: {refused:?}"
@@ -1867,19 +1867,39 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     );
 }
 
-/// Every write is judged on the revision it was read at (issue 492), in every storage: a write
-/// made on an outdated one is refused and leaves what was written since; what deletes, restores
-/// and purges reads what it writes and goes through, each a write that counts the revision up.
+/// Every write is judged on the revision it was read at (issue 492), in every storage, and writes
+/// the one after it: a copy never stored carries the first, and what is created is written as the
+/// one after it, so that such a copy is not written in place of one created meanwhile (issue 500);
+/// a write made on an outdated one is refused and leaves what was written since; what deletes,
+/// restores and purges reads what it writes and goes through, each a write that counts the
+/// revision up.
 pub async fn writes_are_judged_on_their_revision(stores: &EntityStores) {
     let system = SecurityContext::system();
     let mut first = session();
+    let never_stored = first.clone();
     assert_eq!(first.revision(), Revision::default(), "a new one carries the first revision");
-    stores.sessions.create(&system, &first).await.expect("create");
+    stores.sessions.create(&system, &mut first).await.expect("create");
+    let created = Revision::default().next();
+    assert_eq!(first.revision(), created, "created as the one after the first");
+    let stored = stores.sessions.get(&system, first.id).await.expect("get");
+    assert_eq!(stored.revision(), created, "as it is stored");
+
+    let mut taken = never_stored.clone();
+    let conflict = stores.sessions.create(&system, &mut taken).await;
+    assert!(matches!(conflict, Err(StoreError::Conflict(_))), "created once: {conflict:?}");
+    assert_eq!(taken.revision(), Revision::default(), "a creation refused leaves it as it was");
+    let mut copy = never_stored;
+    copy.name = Name::new("copy").unwrap();
+    let refused = stores.sessions.update(&system, &mut copy).await;
+    assert!(
+        matches!(refused, Err(StoreError::Outdated { entity: "session", .. })),
+        "a copy never stored is not written in place of one created meanwhile: {refused:?}"
+    );
     let mut second = first.clone();
 
     first.name = Name::new("first").unwrap();
     stores.sessions.update(&system, &mut first).await.expect("the first write");
-    assert_eq!(first.revision(), Revision::default().next(), "counted up by the write");
+    assert_eq!(first.revision(), created.next(), "counted up by the write");
     let stored = stores.sessions.get(&system, first.id).await.expect("get");
     assert_eq!(stored.revision(), first.revision(), "as it is stored");
 
@@ -1889,7 +1909,7 @@ pub async fn writes_are_judged_on_their_revision(stores: &EntityStores) {
         matches!(refused, Err(StoreError::Outdated { entity: "session", .. })),
         "a write on what was read before the first: {refused:?}"
     );
-    assert_eq!(second.revision(), Revision::default(), "left as it was");
+    assert_eq!(second.revision(), created, "left as it was");
     let stored = stores.sessions.get(&system, first.id).await.expect("get");
     assert_eq!(stored.name, first.name, "the first stands");
 
@@ -1939,8 +1959,8 @@ pub async fn storage_judges_writes_on_their_revision(backend: &dyn PersistenceBa
 /// was deleted is begun, once.
 pub async fn purges_are_begun(stores: &EntityStores) {
     let system = SecurityContext::system();
-    let kept = session();
-    stores.sessions.create(&system, &kept).await.expect("create");
+    let mut kept = session();
+    stores.sessions.create(&system, &mut kept).await.expect("create");
     let begun = stores.sessions.begin_purge(&system, kept.id).await.expect("begin");
     assert!(begun.is_none(), "nothing begun of what is there");
     assert!(
@@ -1980,10 +2000,10 @@ fn marked<T: Stored>(mut value: T) -> T {
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 pub async fn deleting_marks(stores: &EntityStores) {
     let system = SecurityContext::system();
-    let kept = session();
-    stores.sessions.create(&system, &kept).await.expect("create");
-    let gone = session();
-    stores.sessions.create(&system, &gone).await.expect("create");
+    let mut kept = session();
+    stores.sessions.create(&system, &mut kept).await.expect("create");
+    let mut gone = session();
+    stores.sessions.create(&system, &mut gone).await.expect("create");
     assert!(stores
         .sessions
         .delete(&system, gone.id, &Removal::now(system.caller_id))
@@ -2008,10 +2028,10 @@ pub async fn deleting_marks(stores: &EntityStores) {
             .expect("delete"),
         "not deleted again"
     );
-    let again = stores.sessions.create(&system, &gone).await;
+    let again = stores.sessions.create(&system, &mut gone).await;
     assert!(matches!(again, Err(StoreError::Conflict(_))), "its id stays taken: {again:?}");
 
-    let created = stores.sessions.create(&system, &marked(session())).await;
+    let created = stores.sessions.create(&system, &mut marked(session())).await;
     assert!(
         matches!(created, Err(StoreError::Validation(_))),
         "nothing is created marked: {created:?}"
@@ -2071,14 +2091,14 @@ pub async fn deleting_marks(stores: &EntityStores) {
         .map(|page| page.items)
         .expect("list deleted")
         .is_empty());
-    stores.sessions.create(&system, &gone).await.expect("its id is free again");
+    stores.sessions.create(&system, &mut gone).await.expect("its id is free again");
 
     // What went with one deletion (issue 478): told by its id, also from what went with another by
     // the same caller at the same instant.
     let one = Removal::now(system.caller_id);
     let same_instant = Removal { id: RemovalId::new(), ..one.clone() };
-    let (with_one, beside) = (session(), session());
-    for (session, removal) in [(&with_one, &one), (&beside, &same_instant)] {
+    let (mut with_one, mut beside) = (session(), session());
+    for (session, removal) in [(&mut with_one, &one), (&mut beside, &same_instant)] {
         stores.sessions.create(&system, session).await.expect("create");
         assert!(stores.sessions.delete(&system, session.id, removal).await.expect("delete"));
     }
@@ -2094,8 +2114,8 @@ pub async fn deleting_marks(stores: &EntityStores) {
         "what went with it alone"
     );
 
-    let carol = user("carol");
-    stores.users.create(&system, &carol).await.expect("create user");
+    let mut carol = user("carol");
+    stores.users.create(&system, &mut carol).await.expect("create user");
     assert!(stores
         .users
         .delete(&system, carol.id, &Removal::now(system.caller_id))
@@ -2139,7 +2159,7 @@ pub async fn lists_admit_what_check_decides(
         members: vec![member],
         ..Group::team(scoped(name), alice)
     };
-    let (team, gone) = (group("team", his), group("gone", his));
+    let (mut team, mut gone) = (group("team", his), group("gone", his));
     // The participants of a channel, among them an agent.
     let channel_id = ChannelId::new();
     let participants = ScopedName::new(
@@ -2147,9 +2167,9 @@ pub async fn lists_admit_what_check_decides(
         Scope::ChannelScope { session_id: SessionId::new(), channel_id },
     )
     .unwrap();
-    let place =
+    let mut place =
         Group { id: GroupId::of_channel(channel_id), name: participants, ..group("place", agent) };
-    for group in [&team, &gone, &place] {
+    for group in [&mut team, &mut gone, &mut place] {
         stores.groups.create(&system, group).await.expect("create group");
     }
     assert!(stores
@@ -2178,8 +2198,8 @@ pub async fn lists_admit_what_check_decides(
     // Deleted by two deletions, every other one by each.
     let (one, other) = (Removal::now(system.caller_id), Removal::now(system.caller_id));
     for (index, security_attributes) in made.into_iter().enumerate() {
-        let folder = Folder { security_attributes, ..Folder::of(alice) };
-        folders.create(&system, &folder).await.expect("create folder");
+        let mut folder = Folder { security_attributes, ..Folder::of(alice) };
+        folders.create(&system, &mut folder).await.expect("create folder");
         if index % 3 == 0 {
             let removal = if index % 2 == 0 { &one } else { &other };
             assert!(folders.delete(&system, folder.id, removal).await.expect("delete folder"));

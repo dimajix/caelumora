@@ -2,7 +2,7 @@
 //! channels (issues 121, 404).
 
 use super::document::{log_changed, take_over};
-use arc_swap::{ArcSwap, ArcSwapOption, Guard};
+use arc_swap::{ArcSwap, Guard};
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::channel::Channel;
@@ -41,10 +41,9 @@ use tracing::debug;
 pub struct UserController {
     id: UserId,
     user: ArcSwap<User>,
-    /// What the user says about themselves, as stored; `None` while they
-    /// never wrote one - which is then not there to change, but to create
-    /// (issue 492).
-    profile: ArcSwapOption<UserProfile>,
+    /// What the user says about themselves, as stored - an empty one of theirs, never stored,
+    /// while they never wrote one (issue 500).
+    profile: ArcSwap<UserProfile>,
     event_publisher: Arc<dyn EventPublisher>,
     /// Where the user is read again, for changes whose announcements were
     /// lost (issue 502).
@@ -63,11 +62,11 @@ pub struct UserController {
 }
 
 impl UserController {
-    /// The live `user` with their `profile`, `None` if they have none yet.
-    /// Made by the `ControllerManager`, which keeps one per user.
+    /// The live `user` with their `profile`, an empty one if they have none yet. Made by the
+    /// `ControllerManager`, which keeps one per user.
     pub(crate) fn new(
         user: User,
-        profile: Option<UserProfile>,
+        profile: UserProfile,
         event_publisher: Arc<dyn EventPublisher>,
         stores: &EntityStores,
         states: Arc<dyn StateStore>,
@@ -77,7 +76,7 @@ impl UserController {
         Self {
             id,
             user: ArcSwap::from_pointee(user),
-            profile: ArcSwapOption::from_pointee(profile),
+            profile: ArcSwap::from_pointee(profile),
             event_publisher,
             users: Arc::clone(&stores.users),
             profiles: Arc::clone(&stores.user_profiles),
@@ -97,7 +96,7 @@ impl UserController {
     /// never wrote one. Handed out as the runtime holds it: whoever acts
     /// with it in someone's name checks that themselves.
     pub fn profile(&self) -> Arc<UserProfile> {
-        self.profile.load_full().unwrap_or_else(|| Arc::new(UserProfile::new(self.id, None)))
+        self.profile.load_full()
     }
 
     pub fn id(&self) -> UserId {
@@ -199,46 +198,37 @@ impl UserController {
     ) -> StoreResult<(T, UserProfile)> {
         let _guard = self.write_lock.lock().await;
         loop {
-            let stored = self.profile.load_full();
-            let mut profile =
-                stored.as_deref().cloned().unwrap_or_else(|| UserProfile::new(self.id, None));
+            let mut profile = UserProfile::clone(&self.profile());
             let changed = change(&mut profile)?;
             profile.prune_approval_rules(Utc::now());
-            if self.save(ctx, &mut profile, stored.is_some()).await?.is_none() {
+            if self.save(ctx, &mut profile).await?.is_none() {
                 let stored = self.profiles.get(&SecurityContext::system(), self.id).await?;
-                self.profile.store(Some(Arc::new(stored)));
+                self.profile.store(Arc::new(stored));
                 continue;
             }
             log_changed(ctx, &profile);
-            self.profile.store(Some(Arc::new(profile.clone())));
+            self.profile.store(Arc::new(profile.clone()));
             self.event_publisher
                 .announce(GlobalEvent::updated::<UserProfile>(&self.id, &profile), &profile);
             return Ok((changed, profile));
         }
     }
 
-    /// Stores `profile` as `ctx`: changed if the user has one `stored`
-    /// already - created after all if it was purged meanwhile -, else
-    /// created. `None` if it was written meanwhile - changed elsewhere, or
-    /// created in another instance while this one held none -, for the
-    /// change to be made again on the profile as stored (issue 492). The
-    /// store asks whether `ctx` may.
+    /// Stores `profile` as `ctx`: changed if the user has one, else created. `None` if it was
+    /// written meanwhile - changed elsewhere, or created in another instance while this one held
+    /// an empty one, which a profile never stored is not written in place of (issue 500) -, for
+    /// the change to be made again on the profile as stored (issue 492). The store asks whether
+    /// `ctx` may.
     async fn save(
         &self,
         ctx: &SecurityContext,
         profile: &mut UserProfile,
-        stored: bool,
     ) -> StoreResult<Option<()>> {
-        if stored {
-            match self.profiles.update(ctx, profile).await {
-                Err(StoreError::NotFound { .. }) => {}
-                updated => return updated.written(),
-            }
+        match self.profiles.update(ctx, profile).await {
+            Err(StoreError::NotFound { .. }) => {}
+            updated => return updated.written(),
         }
-        match self.profiles.create(ctx, profile).await {
-            Err(StoreError::Conflict(_)) => Ok(None),
-            created => created.map(Some),
-        }
+        self.profiles.create(ctx, profile).await.created()
     }
 
     /// Marks channel `channel_id` of session `session_id` read by the user up to message
@@ -299,12 +289,13 @@ impl UserController {
             .filter(|(uid, _)| *uid == self.id)
             .and_then(|(_, change)| change.update::<UserProfile>())
         {
-            self.profile.store(Some(Arc::new(profile)));
+            self.profile.store(Arc::new(profile));
         }
     }
 
-    /// The user `id` and their profile as stored, read in the runtime's name - the profile `None`
-    /// while they never wrote one: what a controller of them is made from and read again from.
+    /// The user `id` and their profile as stored, read in the runtime's name - an empty one of
+    /// theirs while they never wrote one: what a controller of them is made from and read again
+    /// from.
     ///
     /// # Errors
     /// `StoreError::NotFound` if the user no longer exists, or whatever else the store reports.
@@ -312,10 +303,14 @@ impl UserController {
         users: &dyn EntityStore<User>,
         profiles: &dyn EntityStore<UserProfile>,
         id: UserId,
-    ) -> StoreResult<(User, Option<UserProfile>)> {
+    ) -> StoreResult<(User, UserProfile)> {
         let system = SecurityContext::system();
         let user = users.get(&system, id).await?;
-        let profile = profiles.get(&system, id).await.optional()?;
+        let profile = profiles
+            .get(&system, id)
+            .await
+            .optional()?
+            .unwrap_or_else(|| UserProfile::new(id, None));
         Ok((user, profile))
     }
 
@@ -330,7 +325,7 @@ impl UserController {
         let (user, profile) =
             Self::load_stored(self.users.as_ref(), self.profiles.as_ref(), self.id).await?;
         self.user.store(Arc::new(user));
-        self.profile.store(profile.map(Arc::new));
+        self.profile.store(Arc::new(profile));
         Ok(())
     }
 }
@@ -381,7 +376,7 @@ mod tests {
     ) -> UserController {
         UserController::new(
             user.clone(),
-            None,
+            UserProfile::new(user.id, None),
             event_publisher,
             &store.entity_stores().unwrap(),
             store.state_store(),
@@ -407,7 +402,7 @@ mod tests {
         .unwrap();
         let mut elsewhere = UserProfile::new(user.id, None);
         elsewhere.add_approval_rule(rule.clone()).unwrap();
-        store.entity_stores().unwrap().user_profiles.create(&hers, &elsewhere).await.unwrap();
+        store.entity_stores().unwrap().user_profiles.create(&hers, &mut elsewhere).await.unwrap();
 
         let profile = controller
             .update_profile(&hers, Some("I run the budget."), None)

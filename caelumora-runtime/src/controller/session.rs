@@ -307,10 +307,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_renamed_session_is_stored_first() {
-        let session = session();
+        let mut session = session();
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
+        store.entity_stores().unwrap().sessions.create(&ctx, &mut session).await.unwrap();
         let controller =
             SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
 
@@ -327,11 +327,11 @@ mod tests {
     /// controller meanwhile, on the session as written.
     #[tokio::test]
     async fn a_change_is_made_again_when_the_session_was_written_meanwhile() {
-        let session = session();
+        let mut session = session();
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
         let stores = store.entity_stores().unwrap();
-        stores.sessions.create(&ctx, &session).await.unwrap();
+        stores.sessions.create(&ctx, &mut session).await.unwrap();
         let controller = SessionController::new(session.clone(), Arc::new(()), &stores);
         let mut renamed = session.clone();
         renamed.name = Name::new("renamed").unwrap();
@@ -351,10 +351,10 @@ mod tests {
     #[tokio::test]
     async fn every_change_moves_updated_at() {
         let long_ago = Utc::now() - Duration::days(1);
-        let session = Session { updated_at: long_ago, ..session() };
+        let mut session = Session { updated_at: long_ago, ..session() };
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
+        store.entity_stores().unwrap().sessions.create(&ctx, &mut session).await.unwrap();
         let controller =
             SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
         let stored = || async {
@@ -371,10 +371,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_description_is_checked_as_it_is_applied() {
-        let session = session();
+        let mut session = session();
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().sessions.create(&ctx, &session).await.unwrap();
+        store.entity_stores().unwrap().sessions.create(&ctx, &mut session).await.unwrap();
         let announced = Arc::new(Announced::default());
         let controller = SessionController::new(
             session.clone(),

@@ -499,14 +499,14 @@ mod tests {
     use caelumora_model::agent::Agent;
     use caelumora_model::approval::ApprovalRequest;
     use caelumora_model::channel::testing::make_channel;
-    use caelumora_model::channel::{Channel, InternalActor, Participant};
+    use caelumora_model::channel::{Channel, InternalActor};
     use caelumora_model::security::{Grant, OwnershipPolicy, Subject};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::Persistence;
     use caelumora_model::tool::ToolCall;
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserId;
+    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::{User, UserId};
     use caelumora_model::value::name::ScopedName;
     use serde_json::json;
     use std::any::Any;
@@ -536,14 +536,18 @@ mod tests {
     ) -> Approving {
         let store = Persistence::in_memory();
         let system = SecurityContext::system();
-        let mut ids = Vec::new();
-        for n in 0..users {
-            let user = make_user(&format!("user{n}"));
-            store.entity_stores().unwrap().users.create(&system, &user).await.unwrap();
-            ids.push(user.id);
-        }
-        let personality = make_personality("plain");
-        store.entity_stores().unwrap().personalities.create(&system, &personality).await.unwrap();
+        let users: Vec<User> = (0..users).map(|n| make_user(&format!("user{n}"))).collect();
+        let participants =
+            record_users(&store.entity_stores().unwrap(), &users.iter().collect::<Vec<_>>()).await;
+        let ids: Vec<UserId> = users.iter().map(|user| user.id).collect();
+        let mut personality = make_personality("plain");
+        store
+            .entity_stores()
+            .unwrap()
+            .personalities
+            .create(&system, &mut personality)
+            .await
+            .unwrap();
         let attributes = agent(&ids);
         let mut stored = Agent::new(
             ScopedName::new("helper", Default::default()).unwrap(),
@@ -551,7 +555,7 @@ mod tests {
             attributes.owner_id,
         );
         stored.security_attributes = attributes;
-        store.entity_stores().unwrap().agents.create(&system, &stored).await.unwrap();
+        store.entity_stores().unwrap().agents.create(&system, &mut stored).await.unwrap();
 
         let runtime = TestRuntime {
             store: store.clone(),
@@ -560,14 +564,13 @@ mod tests {
         }
         .build();
         let approver = Approver::new(strategy);
-        let participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
-        let channel = Channel {
+        let mut channel = Channel {
             participants,
             internal_actors: vec![InternalActor::Approver(approver.clone())],
             security_attributes: SecurityAttributes::owned_by(ActorId::User(ids[0])),
             ..make_channel(SessionId::new(), "test")
         };
-        store.entity_stores().unwrap().channels.create(&system, &channel).await.unwrap();
+        store.entity_stores().unwrap().channels.create(&system, &mut channel).await.unwrap();
         let session_id = channel.session_id;
         let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(
             Arc::clone(&runtime),

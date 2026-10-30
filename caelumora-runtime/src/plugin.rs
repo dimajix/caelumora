@@ -123,8 +123,8 @@ mod tests {
     #[async_trait]
     impl SeedSection for Notebook {
         async fn seed(&self, section: Value) -> Result<()> {
-            for note in serde_json::from_value::<Vec<Note>>(section)? {
-                self.notes.create(&SecurityContext::system(), &note).await?;
+            for mut note in serde_json::from_value::<Vec<Note>>(section)? {
+                self.notes.create(&SecurityContext::system(), &mut note).await?;
             }
             Ok(())
         }

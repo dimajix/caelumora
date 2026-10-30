@@ -108,6 +108,10 @@ pub trait StoreResultExt<T> {
     /// What a write answered, `None` if it was refused as outdated (`StoreError::Outdated`):
     /// whoever wrote reads again and makes the change once more. Any other error stays one.
     fn written(self) -> StoreResult<Option<T>>;
+
+    /// What a creation answered, `None` if the id was taken (`StoreError::Conflict`) - made
+    /// meanwhile elsewhere, or there before, deleted or not. Any other error stays one.
+    fn created(self) -> StoreResult<Option<T>>;
 }
 
 impl<T> StoreResultExt<T> for StoreResult<T> {
@@ -123,6 +127,14 @@ impl<T> StoreResultExt<T> for StoreResult<T> {
         match self {
             Ok(written) => Ok(Some(written)),
             Err(StoreError::Outdated { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn created(self) -> StoreResult<Option<T>> {
+        match self {
+            Ok(created) => Ok(Some(created)),
+            Err(StoreError::Conflict(_)) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -210,7 +222,9 @@ impl Display for EntityKind {
 /// The revision of a stored entity (issue 492): counted up by every write of it, so that a write
 /// made on an outdated one is refused (`StoreError::Outdated`) instead of overwriting what came
 /// between - by every storage, in the step that writes, so that it holds against every writer of
-/// the storage, also of another process. A new entity carries the first.
+/// the storage, also of another process. A new entity carries the first, which no stored one has:
+/// it is created as the one after it (issue 500), so that a copy never stored is never taken for
+/// one read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revision(u64);
 
@@ -220,7 +234,7 @@ impl Revision {
         Self(self.0 + 1)
     }
 
-    /// Its number: the first is 0.
+    /// Its number: the first, that of an entity never stored, is 0.
     pub fn number(self) -> u64 {
         self.0
     }
@@ -274,8 +288,8 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
     /// Marks it deleted, or with `None` takes the mark away.
     fn set_deleted(&mut self, deleted: Option<Removal>);
 
-    /// Its revision (issue 492): as it was read, what a write of it is judged against; once the
-    /// store wrote it, the one it was written as.
+    /// Its revision (issue 492): as it was read, what a write of it is judged against - the first
+    /// if it was never stored -; once the store wrote it, the one it was written as.
     fn revision(&self) -> Revision;
 
     /// Sets its revision: the store's, as it writes it.
@@ -465,13 +479,17 @@ impl<T: Stored> Deleted<T> {
 /// (`begin_purge`): from then on no restoring takes it back, while what lies behind it is removed
 /// before `purge` (issue 492).
 ///
-/// Every write is judged on the revision that was read (issue 492): `update` writes `value` in
-/// place of the revision it carries, and `Outdated` says that it is no longer the stored one -
-/// the caller reads again and changes again. `delete`, `restore` and `purge` read what they
+/// Every write is judged on the revision that was read (issue 492), and writes the one after it:
+/// `create` a new entity, which carries the first, as the one after it (issue 500); `update`
+/// writes `value` in place of the revision it carries, and `Outdated` says that it is no longer
+/// the stored one - the caller reads again and changes again. A copy never stored is so never
+/// written in place of one created meanwhile. `delete`, `restore` and `purge` read what they
 /// write themselves, and do so again if it was changed meanwhile; no caller sees that.
 #[async_trait]
 pub trait EntityStore<T: Stored>: Debug + Send + Sync {
-    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
+    /// Stores the new entity `value` as the revision after the one it carries; `value` then
+    /// carries the one it was written as.
+    async fn create(&self, ctx: &SecurityContext, value: &mut T) -> StoreResult<()>;
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     /// Changes the entity into `value`, which carries the revision it was read at; `value` then
     /// carries the one it was written as. `Outdated` if it is no longer the stored one.
@@ -890,15 +908,15 @@ mod tests {
 
     #[tokio::test]
     async fn list_sessions_works() {
-        let session1 =
+        let mut session1 =
             Session { name: Name::new("session1").unwrap(), ..bare_session(SessionId::new()) };
-        let session2 =
+        let mut session2 =
             Session { name: Name::new("session2").unwrap(), ..bare_session(SessionId::new()) };
         let store = Persistence::in_memory().entity_stores().unwrap().sessions;
         let ctx = SecurityContext::default();
 
-        store.create(&ctx, &session1).await.unwrap();
-        store.create(&ctx, &session2).await.unwrap();
+        store.create(&ctx, &mut session1).await.unwrap();
+        store.create(&ctx, &mut session2).await.unwrap();
 
         let sessions = store.list(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(sessions.len(), 2);
@@ -998,13 +1016,13 @@ mod tests {
         )
         .unwrap();
         let notes = backend.entity_store::<Note>().unwrap();
-        let note = Note {
+        let mut note = Note {
             id: NoteId::new(),
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
             revision: Default::default(),
         };
-        notes.create(&SecurityContext::system(), &note).await.unwrap();
+        notes.create(&SecurityContext::system(), &mut note).await.unwrap();
         let again = backend.entity_store::<Note>().unwrap();
         assert!(
             again.get(&SecurityContext::system(), note.id).await.is_ok(),

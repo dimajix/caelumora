@@ -468,7 +468,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
 #[tokio::test]
 async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let world = agent_testing::world().await;
-    let tools = ComponentBundle::new(
+    let mut tools = ComponentBundle::new(
         ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(),
         ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")],
@@ -480,7 +480,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
         .entity_stores()
         .unwrap()
         .component_bundles
-        .create(&World::as_user(world.bob), &tools)
+        .create(&World::as_user(world.bob), &mut tools)
         .await
         .expect("bob keeps his tools");
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
@@ -1029,7 +1029,7 @@ async fn which_tools_an_agent_has_is_read_by_the_participants_of_its_channel() {
 #[tokio::test]
 async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
     let world = agent_testing::world().await;
-    let tools = ComponentBundle::new(
+    let mut tools = ComponentBundle::new(
         ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(),
         ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")],
@@ -1041,7 +1041,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
         .entity_stores()
         .unwrap()
         .component_bundles
-        .create(&World::as_user(world.bob), &tools)
+        .create(&World::as_user(world.bob), &mut tools)
         .await
         .unwrap();
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
