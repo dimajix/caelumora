@@ -43,3 +43,8 @@ is asked once.
 - **2026-10-30** — Opened from the findings of issue
   [496](496-a-sessions-purge-removes-its-channels-documents-first.md), whose review found the two
   readings side by side.
+- **2026-10-30** — A second inconsistency of the same table, found in the review of issue
+  [510](510-a-sessions-purge-fails-where-the-others-answer-false.md): the column *Refusal* names
+  `NotFound` for the deletion of an agent and of a project, though both answer `false` where there
+  is nothing the caller could see, and refuse with no `NotFound`; the rows of a session's deletion
+  and of every purge name it no longer. To be put right with the column *Again*.
