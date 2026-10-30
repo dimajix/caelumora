@@ -257,6 +257,14 @@ that creates where it found nothing, and is refused because the entity was creat
 outdated write. A document written by hand, as seeds are, needs no revision. The store suite
 holds every backend to it (`writes_are_judged_on_their_revision`).
 
+Revisions are counted for a document, not for its id. A document created again under an id whose
+document was removed for good - a seed at the next start after a purge, a user's record or
+profile after it was removed from the store by hand - counts its revisions anew, so that a copy
+read before the removal passes in place of the new document once that reaches the copy's
+revision. It takes a removal and a new creation between the reading of a copy and its write; that
+is accepted as a limit (issue
+[500](../issues/500-a-copy-never-stored-carries-the-first-revision.md)).
+
 **Values with rules.** A text whose content has rules - a `Name`, a `Language`, the free texts
 people write for others (`Text<R>`) - has a type made only through its constructor and checked again
 when a document is read, so that a stored document that does not fit fails to load (`ValueError`,

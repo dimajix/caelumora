@@ -1,6 +1,6 @@
 # 500 — A copy never stored carries the revision of one stored once
 
-**Status:** in progress
+**Status:** done
 **Type:** question
 **Priority:** low
 **Area:** Persistence
@@ -76,3 +76,9 @@ never stored - is written nowhere but in the one controller that keeps it.
   [315](315-view-and-session-test-fixtures.md) had it take the manager. `alice_and_an_agent`
   takes the agent's name and personality, and the tests of an external agent build their channel
   on it.
+- **2026-10-30** — Step 5 done: STORAGE.md records as a limit that revisions are counted for a
+  document, not for its id - a document created again under an id whose document was removed for
+  good, a seed after a purge or a user's record or profile removed from the store by hand, counts
+  its revisions anew, and a copy read before the removal can pass in place of the new document.
+  Nothing else creates a document again under such an id: users and their profiles are purged by
+  nothing, and the groups of a session, channel or project go with it for good. Done.
