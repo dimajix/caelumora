@@ -25,6 +25,7 @@ use crate::value::text::{Briefing, Description, Summary};
 use crate::value::time_zone::TimeZone;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 
 /// A template that cannot be made into a session. The messages are meant
 /// for users (see `caelumora_runtime::error::user_message`).
@@ -268,6 +269,9 @@ pub struct SessionTemplate {
     /// Its revision (issue 492), counted up by every write of it.
     #[serde(default)]
     pub revision: Revision,
+    /// Whether its purge has begun (issue 492): set by the store alone.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 /// The workspace of a template's sessions (issue 251, decision 13): found
@@ -333,6 +337,14 @@ impl Stored for SessionTemplate {
 
     fn set_revision(&mut self, revision: Revision) {
         self.revision = revision;
+    }
+
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -419,6 +431,7 @@ impl SessionTemplate {
             security_attributes,
             deleted: None,
             revision: Default::default(),
+            purging: false,
         };
         Ok((session, own, channels))
     }
@@ -527,6 +540,7 @@ pub mod testing {
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
             revision: Default::default(),
+            purging: false,
         }
     }
 

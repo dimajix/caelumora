@@ -34,6 +34,7 @@ use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 
 define_id!(GroupId);
 
@@ -146,6 +147,9 @@ pub struct Group {
     /// Its revision (issue 492), counted up by every write of it.
     #[serde(default)]
     pub revision: Revision,
+    /// Whether its purge has begun (issue 492): set by the store alone.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 impl Group {
@@ -219,6 +223,7 @@ impl Group {
             updated_at: now,
             deleted: None,
             revision: Default::default(),
+            purging: false,
         }
     }
 
@@ -272,6 +277,14 @@ impl Stored for Group {
 
     fn set_revision(&mut self, revision: Revision) {
         self.revision = revision;
+    }
+
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
     }
 
     /// The participants of a session or channel lie in its scope, with its

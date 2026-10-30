@@ -832,7 +832,7 @@ impl Views {
                 id: entity.id(),
                 name: name(&entity),
                 // One whose purge is begun is restored by nobody (issue 492).
-                can_restore: !removal.purging
+                can_restore: !entity.purging()
                     && self.access_policy.may_restore(context, T::KIND, attributes).await,
                 deleted: removal,
                 can_purge: self.access_policy.may_purge(context, T::KIND, attributes).await,
@@ -2726,6 +2726,13 @@ mod tests {
         assert_eq!(sessions.iter().map(|s| s.id).collect::<Vec<_>>(), [session.id]);
         assert!(sessions[0].can_restore && !sessions[0].can_purge, "purging is not the owner's");
         assert!(his.deleted_sessions().await.unwrap().is_empty());
+
+        // Once its purge is begun, nobody restores it (issue 492).
+        let system = SecurityContext::system();
+        let sessions = &store.entity_stores().unwrap().sessions;
+        sessions.begin_purge(&system, session.id).await.unwrap().expect("deleted");
+        let sessions = hers.deleted_sessions().await.unwrap();
+        assert!(!sessions[0].can_restore && !sessions[0].can_purge, "listed, restored by nobody");
     }
 
     #[tokio::test]

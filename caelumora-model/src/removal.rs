@@ -1,12 +1,12 @@
 //! Deleting marks (issue 164): what a user deletes stays stored with a `Removal` - which deletion,
 //! who and when - and is hidden from every read of the stores except those that ask for what was
 //! deleted. Removing it for good is a purge, an administrator's act or a retention policy's (issue
-//! 07). A participant that leaves a channel is marked the same way.
+//! 07): an act of its own, which the entity records apart from the mark (`Stored::purging`). A
+//! participant that leaves a channel is marked the same way.
 
 use crate::actor::ActorId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::ops::Not;
 
 define_id!(RemovalId);
 
@@ -21,15 +21,11 @@ pub struct Removal {
     pub id: RemovalId,
     pub by: ActorId,
     pub at: DateTime<Utc>,
-    /// Whether its purge has begun (`EntityStore::begin_purge`, issue 492): what lies behind it
-    /// is being removed, and no restoring takes it back any more.
-    #[serde(default, skip_serializing_if = "Not::not")]
-    pub purging: bool,
 }
 
 impl Removal {
     /// A new deletion, by `by`, now.
     pub fn now(by: ActorId) -> Self {
-        Self { id: RemovalId::new(), by, at: Utc::now(), purging: false }
+        Self { id: RemovalId::new(), by, at: Utc::now() }
     }
 }

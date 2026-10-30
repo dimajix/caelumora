@@ -9,6 +9,7 @@ use crate::store::{EntityKind, NoEntity, Revision, Stored};
 use crate::value::name::ScopedName;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::ops::Not;
 
 /// The components of a personality, a template or the configuration -
 /// written by hand (configuration, seed files), so the fields with a
@@ -75,6 +76,9 @@ pub struct ComponentBundle {
     /// Its revision (issue 492), counted up by every write of it.
     #[serde(default)]
     pub revision: Revision,
+    /// Whether its purge has begun (issue 492): set by the store alone.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 impl ComponentBundle {
@@ -91,6 +95,7 @@ impl ComponentBundle {
             security_attributes,
             deleted: None,
             revision: Default::default(),
+            purging: false,
         }
     }
 }
@@ -119,6 +124,14 @@ impl Stored for ComponentBundle {
 
     fn set_revision(&mut self, revision: Revision) {
         self.revision = revision;
+    }
+
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
     }
 
     fn unique_name(&self) -> Option<ScopedName> {

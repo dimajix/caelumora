@@ -295,6 +295,14 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
     /// Sets its revision: the store's, as it writes it.
     fn set_revision(&mut self, revision: Revision);
 
+    /// Whether its purge has begun (issue 492): what lies behind it is being removed, and no
+    /// restoring takes it back any more. Begun today only for what was deleted, which then stays
+    /// deleted until it is purged.
+    fn purging(&self) -> bool;
+
+    /// Marks its purge begun: the store's, as it begins it (`EntityStore::begin_purge`).
+    fn set_purging(&mut self);
+
     /// Nothing if it may be stored as it is; why not otherwise, which the
     /// store answers as `StoreError::Validation` when it is created or
     /// changed.
@@ -502,10 +510,11 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     ) -> StoreResult<bool>;
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
-    /// Begins the purge of the deleted entity `id`, asked as `purge` asks: its mark says so from
-    /// then on (`Removal::purging`), and `restore` refuses it, so that what lies behind it can be
+    /// Begins the purge of the deleted entity `id`, asked as `purge` asks: it says so from then
+    /// on (`Stored::purging`), and `restore` refuses it, so that what lies behind it can be
     /// removed before `purge` removes it - and again, if that failed, by a purge begun once more.
-    /// Answers the entity as marked; `None` if there is nothing deleted the caller could see.
+    /// Answers the entity with its purge begun; `None` if there is nothing deleted the caller could
+    /// see.
     async fn begin_purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Option<T>>;
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>>;
@@ -893,6 +902,7 @@ mod tests {
     use crate::store::memory::MemoryStore;
     use crate::store::query::NoField;
     use crate::value::name::Name;
+    use std::ops::Not;
     use std::sync::Arc;
 
     #[test]
@@ -934,6 +944,8 @@ mod tests {
         deleted: Option<Removal>,
         #[serde(default)]
         revision: Revision,
+        #[serde(default, skip_serializing_if = "Not::not")]
+        purging: bool,
     }
 
     impl Secured for Note {
@@ -966,6 +978,14 @@ mod tests {
 
         fn set_revision(&mut self, revision: Revision) {
             self.revision = revision;
+        }
+
+        fn purging(&self) -> bool {
+            self.purging
+        }
+
+        fn set_purging(&mut self) {
+            self.purging = true;
         }
     }
 
@@ -1004,6 +1024,14 @@ mod tests {
         fn set_revision(&mut self, revision: Revision) {
             self.0.set_revision(revision);
         }
+
+        fn purging(&self) -> bool {
+            self.0.purging()
+        }
+
+        fn set_purging(&mut self) {
+            self.0.set_purging();
+        }
     }
 
     #[tokio::test]
@@ -1021,6 +1049,7 @@ mod tests {
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
             revision: Default::default(),
+            purging: false,
         };
         notes.create(&SecurityContext::system(), &mut note).await.unwrap();
         let again = backend.entity_store::<Note>().unwrap();

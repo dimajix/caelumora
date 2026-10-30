@@ -60,6 +60,7 @@ use crate::workspace::{Workspace, WorkspaceId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
+use std::ops::Not;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -191,6 +192,8 @@ pub struct Folder {
     deleted: Option<Removal>,
     #[serde(default)]
     revision: Revision,
+    #[serde(default, skip_serializing_if = "Not::not")]
+    purging: bool,
 }
 
 /// A part of a `Folder`.
@@ -244,6 +247,7 @@ impl Folder {
             security_attributes: SecurityAttributes::owned_by(ActorId::User(owner)),
             deleted: None,
             revision: Default::default(),
+            purging: false,
         }
     }
 }
@@ -278,6 +282,14 @@ impl Stored for Folder {
 
     fn set_revision(&mut self, revision: Revision) {
         self.revision = revision;
+    }
+
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
     }
 }
 
@@ -1954,13 +1966,25 @@ pub async fn storage_judges_writes_on_their_revision(backend: &dyn PersistenceBa
     assert!(outdated(storage.replace(next, read.next()).await), "what is gone is not replaced");
 }
 
-/// A purge is begun before what lies behind an entity goes (issue 492): its mark says so, no
-/// restoring takes it back from then on, and it is purged as any deleted entity is. Only what
-/// was deleted is begun, once.
+/// A purge is begun before what lies behind an entity goes (issue 492): the entity says so, apart
+/// from the mark of its deletion, no restoring takes it back from then on, and it is purged as any
+/// deleted entity is. Only what was deleted is begun, once, and only by beginning it: nothing is
+/// created or changed with its purge begun.
 pub async fn purges_are_begun(stores: &EntityStores) {
     let system = SecurityContext::system();
+    let mut begun_before = session();
+    begun_before.set_purging();
+    let created = stores.sessions.create(&system, &mut begun_before).await;
+    assert!(
+        matches!(created, Err(StoreError::Validation(_))),
+        "nothing is created with its purge begun: {created:?}"
+    );
     let mut kept = session();
     stores.sessions.create(&system, &mut kept).await.expect("create");
+    let mut changed = kept.clone();
+    changed.set_purging();
+    let changed = stores.sessions.update(&system, &mut changed).await;
+    assert!(matches!(changed, Err(StoreError::Validation(_))), "nor changed to be: {changed:?}");
     let begun = stores.sessions.begin_purge(&system, kept.id).await.expect("begin");
     assert!(begun.is_none(), "nothing begun of what is there");
     assert!(
@@ -1972,10 +1996,10 @@ pub async fn purges_are_begun(stores: &EntityStores) {
     assert!(stores.sessions.delete(&system, kept.id, &mark).await.expect("delete"));
     let begun =
         stores.sessions.begin_purge(&system, kept.id).await.expect("begin").expect("deleted");
-    assert!(begun.deleted().is_some_and(|mark| mark.purging), "its mark says so");
+    assert!(begun.purging(), "it says so");
     let read = stores.sessions.get_deleted(&system, kept.id).await.expect("still deleted");
-    assert!(read.removal.purging, "as stored");
-    assert_eq!(read.removal.id, mark.id, "still the mark of its deletion");
+    assert!(read.entity.purging(), "as stored");
+    assert_eq!(read.removal, mark, "with the mark of its deletion as it was");
     let again = stores.sessions.begin_purge(&system, kept.id).await.expect("again").expect("there");
     assert_eq!(again.revision(), begun.revision(), "begun once, answered as it is");
     let restored = stores.sessions.restore(&system, kept.id).await;

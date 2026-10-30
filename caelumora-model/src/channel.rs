@@ -20,6 +20,7 @@ use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
@@ -143,6 +144,9 @@ pub struct Channel {
     /// Its revision (issue 492), counted up by every write of it.
     #[serde(default)]
     pub revision: Revision,
+    /// Whether its purge has begun (issue 492): set by the store alone.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 /// How much of a channel's history a new participant may see, as asked for
@@ -265,6 +269,14 @@ impl Stored for Channel {
         self.revision = revision;
     }
 
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
+    }
+
     fn classification(&self) -> Option<&Classification> {
         Some(&self.classification)
     }
@@ -381,6 +393,7 @@ impl Channel {
             uses_workspace: uses_workspace_by_default(),
             deleted: None,
             revision: Default::default(),
+            purging: false,
         }
     }
 
