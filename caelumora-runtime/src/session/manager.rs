@@ -10,6 +10,7 @@ use crate::attachment::AttachmentManager;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
+use crate::lock::LocksById;
 use crate::runtime::RuntimeManager;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::template::{
@@ -57,7 +58,6 @@ use std::ops::AsyncFnOnce;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time;
 use tracing::{info, warn};
@@ -89,11 +89,11 @@ pub struct SessionSpec {
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
     handles: DashMap<SessionId, JoinHandle<()>>,
-    /// One lock per session id, held while that session is being started,
-    /// so that a session starts only once however many requests ask for it
-    /// at the same time (issue 62): two loops of one session would run two
-    /// actors per agent and channel, which overwrite each other's state.
-    starts: DashMap<SessionId, Arc<Mutex<()>>>,
+    /// One lock per session id, held while that session is started, stopped, deleted, restored or
+    /// purged, so that a session starts only once however many requests ask for it at the same
+    /// time (issue 62): two loops of one session would run two actors per agent and channel, which
+    /// overwrite each other's state.
+    lifecycles: LocksById<SessionId>,
     /// Set once the sessions are shut down (`shutdown`): none is started
     /// any more.
     shutting_down: AtomicBool,
@@ -156,7 +156,7 @@ impl SessionManager {
         Self {
             sessions: DashMap::new(),
             handles: DashMap::new(),
-            starts: DashMap::new(),
+            lifecycles: LocksById::new(),
             shutting_down: AtomicBool::new(false),
             access_policy: Arc::clone(runtime_manager.access_policy()),
             confidentiality: Arc::clone(runtime_manager.confidentiality()),
@@ -174,14 +174,9 @@ impl SessionManager {
         }
     }
 
-    /// The lock held while session `id` is started.
-    fn start_lock(&self, id: SessionId) -> Arc<Mutex<()>> {
-        self.starts.entry(id).or_default().clone()
-    }
-
     /// Build the runtime loop for an (already-persisted) session, register it, spawn its
     /// run task, and announce that the session has started running. Called
-    /// with the session's start lock held.
+    /// with the session's lifecycle lock held.
     async fn spawn_session(
         &self,
         session: Session,
@@ -473,8 +468,7 @@ impl SessionManager {
         mut channels: Vec<Channel>,
     ) -> Result<Arc<SessionLoop>> {
         let id = session.id;
-        let start = self.start_lock(id);
-        let _starting = start.lock().await;
+        let _starting = self.lifecycles.lock(id).await;
         self.persist(context, &mut session, &mut own, &mut channels).await?;
 
         let event_bus = &self.events;
@@ -561,8 +555,7 @@ impl SessionManager {
     /// `StoreError::NotFound` if there is no such session or `context` may
     /// not read it; whatever loading or starting it reports otherwise.
     pub async fn open(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
-        let start = self.start_lock(id);
-        let starting = start.lock().await;
+        let starting = self.lifecycles.lock(id).await;
         let session_loop = match self.find(context, id).await? {
             Found::Running(session_loop) => session_loop,
             Found::Stored(session) => {
@@ -674,8 +667,7 @@ impl SessionManager {
     /// not read it, `StoreError::PermissionDenied` if they may read but not
     /// stop it - whether it runs or not.
     pub async fn stop(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        let start = self.start_lock(id);
-        let _starting = start.lock().await;
+        let _lifecycle = self.lifecycles.lock(id).await;
         let found = self.find(context, id).await?;
         let attributes = found.attributes();
         self.access_policy
@@ -705,14 +697,13 @@ impl SessionManager {
             // Those being started too: their start is waited for, as `stop`
             // waits for it, and what started is stopped.
             let ids: HashSet<SessionId> = self
-                .starts
-                .iter()
-                .map(|entry| *entry.key())
+                .lifecycles
+                .ids()
+                .into_iter()
                 .chain(self.sessions.iter().map(|entry| *entry.key()))
                 .collect();
             join_all(ids.into_iter().map(|id| async move {
-                let start = self.start_lock(id);
-                let _starting = start.lock().await;
+                let _lifecycle = self.lifecycles.lock(id).await;
                 self.stop_running(id, SessionLoop::stop_actors).await;
             }))
             .await;
@@ -739,7 +730,7 @@ impl SessionManager {
         self.command_reaper.end_commands_in(&stopped.session().channels).await;
     }
 
-    /// Stops session `id` if it runs. Called with its start lock held. Its
+    /// Stops session `id` if it runs. Called with its lifecycle lock held. Its
     /// actors are ended first by `end_actors`, told to stop
     /// (`SessionLoop::stop_actors`) or to leave (`SessionLoop::leave_actors`),
     /// and given `STOP_GRACE` to end by themselves before the session's
@@ -801,8 +792,7 @@ impl SessionManager {
     ) -> Result<bool> {
         // Held until the session is gone from the store, so that no request
         // starts it again from there in the meantime (issue 62).
-        let start = self.start_lock(id);
-        let _starting = start.lock().await;
+        let _lifecycle = self.lifecycles.lock(id).await;
         let session = self.find(context, id).await?.session();
         self.access_policy
             .require(
@@ -867,7 +857,6 @@ impl SessionManager {
             event_bus.announce(GlobalEvent::deleted::<Channel>(&(id, channel.id)), channel);
         }
         event_bus.announce(GlobalEvent::deleted::<Session>(&id), &session);
-        self.starts.remove(&id);
         Ok(true)
     }
 
@@ -885,10 +874,9 @@ impl SessionManager {
     /// it, or whatever the store reports as the groups of its participants or its own project are
     /// restored - the session stays deleted then.
     pub async fn restore(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
-        // The lock of deleting and purging it: a purge never meets it half
-        // restored.
-        let start = self.start_lock(id);
-        let _starting = start.lock().await;
+        // Its lifecycle lock, which deleting and purging it hold as well: a purge never meets it
+        // half restored.
+        let _lifecycle = self.lifecycles.lock(id).await;
         // Its mark, read before it goes - as `context`, so that whoever may not see it learns
         // nothing more: what was deleted with it carries it and comes back with it (issues 178,
         // 469), its own project among it.
@@ -1018,15 +1006,14 @@ impl SessionManager {
     /// and - in the runtime's name, since the purge was permitted - the documents and the state of
     /// its channels, those it listed and those deleted from it before, the content of their
     /// attachments (issue 282), and its own project with what lies in its scope (issue 467). Only
-    /// what was deleted is purged; the store asks `Purge`. Under the lock of deleting and restoring
-    /// it, so that what is restored meanwhile is not purged.
+    /// what was deleted is purged; the store asks `Purge`. Under its lifecycle lock, which deleting
+    /// and restoring it hold as well, so that what is restored meanwhile is not purged.
     ///
     /// # Errors
     /// `SessionError::NotFound` if there is no such deleted session or `context` may not see it,
     /// `StoreError::PermissionDenied` if they may but not purge it.
     pub async fn purge(&self, context: &SecurityContext, id: SessionId) -> Result<()> {
-        let start = self.start_lock(id);
-        let _starting = start.lock().await;
+        let _lifecycle = self.lifecycles.lock(id).await;
         let Deleted { entity: session, .. } =
             self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
         if !self.stores.sessions.purge(context, id).await? {
@@ -1060,7 +1047,6 @@ impl SessionManager {
         for own in &owns {
             self.purge_own(own).await?;
         }
-        self.starts.remove(&id);
         info!("Session {} purged by {}", id, context.caller_id);
         Ok(())
     }
@@ -1307,8 +1293,7 @@ mod tests {
         let session = persist(&manager, &ctx, session, &mut channels).await;
 
         // A start under way holds the lock ...
-        let start = manager.start_lock(session_id);
-        let starting = start.lock().await;
+        let starting = manager.lifecycles.lock(session_id).await;
         let stopping = tokio::spawn({
             let manager = Arc::clone(&manager);
             async move { manager.stop(&SecurityContext::system(), session_id).await.unwrap() }

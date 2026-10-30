@@ -386,9 +386,10 @@ are the exception: restoring and purging a session are serialised by the `Sessio
 the lock it also deletes and starts a session with, and its purge removes the documents of its
 channels before their states and attachments. Deleting, restoring and purging a project are
 serialised by the `ProjectManager`, under one lock per project id, since each goes through the
-project's sessions, its scope and its group. What the
-runtime removes for good that is not marked - the channels of a session being purged, a document
-whose creation failed - it marks first, in its own name. The state of what was deleted stays in the
+project's sessions, its scope and its group. Both tables of locks by id are a `LocksById`, which
+keeps an id's lock only while somebody holds it or waits for it. What the runtime removes for good
+that is not marked - the channels of a session being purged, a document whose creation failed - it
+marks first, in its own name. The state of what was deleted stays in the
 `StateStore` until it is purged (see [Deleting
 state](#deleting-state)).
 
@@ -623,8 +624,8 @@ not help; the rule is the runtime's to keep:
 each holding the state under a lock of its own while it changes and stores it.
 
 This holds because a session starts only once, however many requests ask for it at the same time:
-starting, stopping and deleting a session take one lock per session id, so a stop cannot miss a
-start under way, and a deleted session cannot be started again meanwhile.
+starting, stopping, deleting, restoring and purging a session take one lock per session id, so a
+stop cannot miss a start under way, and a deleted session cannot be started again meanwhile.
 
 Entities have no such rule: two requests may change one at the same time, and the second is refused
 as outdated, for its writer to make again (see [The entity store](#the-entity-store)). The JSON

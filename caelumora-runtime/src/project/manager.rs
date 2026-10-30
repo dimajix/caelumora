@@ -5,6 +5,7 @@ use super::{store_error, ProjectError, ProjectResult};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
+use crate::lock::LocksById;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_model::actor::ActorId;
@@ -19,11 +20,9 @@ use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{Deleted, EntityStores, StoreError, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
-use dashmap::DashMap;
 use std::fmt;
 use std::slice;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 /// The one that makes, deletes, restores and purges shared projects, each with the group of its
@@ -44,7 +43,7 @@ pub struct ProjectManager {
     /// none of them meets another half done: each goes through the project, its sessions, its
     /// scope and its group, more than one store write (issue 492) - as the `SessionManager` holds
     /// one per session.
-    lifecycles: DashMap<ProjectId, Arc<Mutex<()>>>,
+    lifecycles: LocksById<ProjectId>,
 }
 
 impl fmt::Debug for ProjectManager {
@@ -64,13 +63,8 @@ impl ProjectManager {
             access_policy: Arc::clone(runtime.access_policy()),
             scoped: Arc::clone(runtime.scoped_entities()),
             sessions,
-            lifecycles: DashMap::new(),
+            lifecycles: LocksById::new(),
         }
-    }
-
-    /// The lock held while project `id` is deleted, restored or purged.
-    fn lifecycle_lock(&self, id: ProjectId) -> Arc<Mutex<()>> {
-        Arc::clone(&self.lifecycles.entry(id).or_default())
     }
 
     /// Makes a shared project of the user `ctx` acts for, of `name` in `scope` - the global one or
@@ -123,8 +117,7 @@ impl ProjectManager {
     /// many sessions and what else are left; `Session` if deleting a session failed otherwise; or
     /// whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
-        let lifecycle = self.lifecycle_lock(id);
-        let _lifecycle = lifecycle.lock().await;
+        let _lifecycle = self.lifecycles.lock(id).await;
         let Some(project) = self.stores.projects.get(ctx, id).await.optional()? else {
             return Ok(false);
         };
@@ -174,8 +167,7 @@ impl ProjectManager {
     /// `NotFound` if it is not deleted or not the caller's to see, `InvalidScope` for a session's
     /// own, or whatever else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<Project> {
-        let lifecycle = self.lifecycle_lock(id);
-        let _lifecycle = lifecycle.lock().await;
+        let _lifecycle = self.lifecycles.lock(id).await;
         // What went with it carries its mark (issue 469).
         let Deleted { entity: deleted, removal } =
             self.stores.projects.get_deleted(ctx, id).await.map_err(store_error(id))?;
@@ -225,8 +217,7 @@ impl ProjectManager {
     /// `InvalidScope` for a session's own, `PermissionDenied`, `Session` if purging a session
     /// failed, or whatever the store reports; what was purged before stays purged.
     pub async fn purge(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
-        let lifecycle = self.lifecycle_lock(id);
-        let _lifecycle = lifecycle.lock().await;
+        let _lifecycle = self.lifecycles.lock(id).await;
         let Some(Deleted { entity: deleted, .. }) =
             self.stores.projects.get_deleted(ctx, id).await.optional()?
         else {
@@ -249,8 +240,6 @@ impl ProjectManager {
         self.scoped.purge_lying_in(slice::from_ref(&deleted.holds())).await?;
         purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(id)).await?;
         let purged = self.stores.projects.purge(ctx, id).await?;
-        // Gone for good: nothing of it is deleted, restored or purged again.
-        self.lifecycles.remove(&id);
         info!(project = %id, by = %ctx.caller_id, "Project purged");
         Ok(purged)
     }

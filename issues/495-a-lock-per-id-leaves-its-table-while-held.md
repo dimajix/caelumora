@@ -1,6 +1,6 @@
 # 495 — A lock per id is taken out of its table while it is held, and kept for ids never purged
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -55,3 +55,11 @@ The second is a slow growth of memory, by every id ever asked.
   [492](492-a-document-is-written-under-two-locks.md), whose third step gave the `ProjectManager`
   a lock per project id after the `SessionManager`'s and kept the entry until a purge for this
   reason.
+- **2026-10-30** — Resolved by the second option: `LocksById` (`caelumora-runtime/src/lock.rs`)
+  hands out a guard for the lock of an id, and the entry leaves the table when the last holder or
+  waiter lets go - a waiter given up as well, by a claim made before it waits. The
+  `SessionManager` and the `ProjectManager` each keep one, and remove no entry themselves any more.
+  Striped locks were not taken: besides the wait without reason, two locks of one table taken one
+  inside the other would block each other wherever their ids share a stripe. Not in the
+  description: `SessionManager::shutdown` read the table as the ids of the starts under way; it
+  asks `LocksById::ids` for them now, which are no longer every id ever asked.
