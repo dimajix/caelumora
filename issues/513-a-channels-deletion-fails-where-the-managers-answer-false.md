@@ -1,6 +1,6 @@
 # 513 — A channel's deletion fails where every manager's deletion answers `false`
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -43,3 +43,13 @@ answer and the other as an error.
 - **2026-10-30** — Opened from the findings of issue
   [510](510-a-sessions-purge-fails-where-the-others-answer-false.md), whose review noticed the
   channel's deletion as the one left that fails.
+- **2026-10-30** — Decided for the first option and done, with the rule written down, as it was
+  missed twice: `docs/CODING-GUIDELINES.md` says under *A module's manager* how the verbs of the
+  lifecycle answer what is not there - `delete` and `purge` with `false`, `restore` with the
+  `NotFound` of its kind -, for the running session's channels too. `SessionLoop::delete_channel`
+  answers `Result<bool>`, its REST handler a 404 of its own for `false`; `listed_channel_for`
+  answers an `Option`, which `channel_for` turns into `ChannelNotFound`. Where the store finds
+  nothing the caller could delete as it marks the channel - gone meanwhile -, the channel is listed
+  again and the answer is `false`, as the managers pass the store's answer on; before, it dropped
+  the answer and went on deleting what lay in the channel's scope. No tool checks the rule: a `bool`
+  in a signature does not say when it is `false`.

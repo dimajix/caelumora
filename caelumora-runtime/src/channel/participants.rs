@@ -909,7 +909,7 @@ mod tests {
         assert!(!ended(&mut mine, Duration::from_millis(50)).await, "everybody else's goes on");
 
         // So does deleting the channel, for everybody.
-        session.delete_channel(&ctx, channel.id()).await.expect("deleted");
+        assert!(session.delete_channel(&ctx, channel.id()).await.expect("deleted"));
         assert!(ended(&mut mine, Duration::from_secs(5)).await, "a deleted channel runs no actor");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }

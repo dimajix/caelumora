@@ -122,8 +122,14 @@ pub(super) async fn delete_channel(
     let session_id = SessionId(id);
     let session = ensure_session(&state, &user, session_id).await?;
 
-    session.delete_channel(&user.security_context(), ChannelId(cid)).await?;
-    Ok(StatusCode::NO_CONTENT)
+    let channel_id = ChannelId(cid);
+    match session.delete_channel(&user.security_context(), channel_id).await? {
+        true => Ok(StatusCode::NO_CONTENT),
+        false => Err(ApiError::not_found(
+            "channel_not_found",
+            format!("Session {session_id} has no channel {channel_id}"),
+        )),
+    }
 }
 
 pub(super) async fn get_channel(

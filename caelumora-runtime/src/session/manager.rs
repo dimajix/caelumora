@@ -1803,7 +1803,10 @@ mod tests {
             .await
             .unwrap()
             .id();
-        manager.open(&ctx, id).await.unwrap().delete_channel(&ctx, side).await.unwrap();
+        assert!(
+            manager.open(&ctx, id).await.unwrap().delete_channel(&ctx, side).await.unwrap(),
+            "deleted"
+        );
         assert!(states.get_channel_state(side).await.is_ok(), "kept with the deleted channel");
         assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(manager.purge(&ctx, id).await.expect("purged"));
@@ -2127,7 +2130,7 @@ mod tests {
             async move { agents.get(&SecurityContext::system(), id).await.is_ok() }
         };
 
-        running.delete_channel(&ctx, side).await.unwrap();
+        assert!(running.delete_channel(&ctx, side).await.unwrap(), "deleted");
         assert!(!present(&sides).await, "the channel's agent goes with it");
         let mark = stores.channels.get_deleted(&system, side).await.unwrap().removal;
         let group =
