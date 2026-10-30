@@ -1,6 +1,6 @@
 # 494 — A session put into a project while the project is deleted stays there
 
-**Status:** open
+**Status:** rejected
 **Type:** bug
 **Priority:** low
 **Area:** Sessions and channels
@@ -55,3 +55,21 @@ decided 458 applies, and the fix is the same shape, so it should look the same.
 
 - **2026-10-29** — Opened while deciding issue [458](458-deleted-while-it-runs.md), which left it
   out as the one writer into a scope that is no `ScopeMember`.
+- **2026-10-30** — Assessed; the priority stays low. The window is narrower than described above:
+  `ProjectController::share` reads the project from the store (`reached`), so a project already
+  marked refuses the sharing, and the session is left behind only if the mark falls between the
+  sharing and storing the session, and the listing in `ProjectManager::delete` before the storing.
+  Nor do its results go silently to a project nobody reaches: since 458, what the session puts
+  into the project's scope is refused by `ScopeHolders::require` (`NotFound`). Restoring the
+  project leaves things consistent again - the session was never deleted, and lies in it once
+  more -; purging it leaves the session pointing to a project that no longer exists, from which
+  it can still be moved away. One thing more is left behind, also by `take_back_entering` today:
+  the entry of the session's participants on the project's access list, which `unshare` cannot
+  take away from a deleted project and which comes back with it on restoring.
+- **2026-10-30** — Rejected: accepted as it is. Every way of taking the move back writes again
+  into a project that may be deleted meanwhile - back into the one it came from, or the sharing
+  with the participants, which cannot be taken away from a deleted project -, and whichever comes
+  first, storing the session or sharing, leaves its own gap; closing them would take holding the
+  projects' lifecycle locks across both managers. Without transactions over several entities this
+  is working around them, at a cost out of proportion to a case that is rare, shows itself - what
+  the session puts into the project is refused - and is mended by moving the session away.
