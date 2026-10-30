@@ -1,6 +1,6 @@
 # 499 — Two controllers write the same change of an access list
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -41,3 +41,16 @@ gone groups are pruned is made twice already.
 
 - **2026-10-29** — Opened from the review of the second step of issue
   [492](492-a-document-is-written-under-two-locks.md), which rewrote both pairs and kept the copy.
+- **2026-10-29** — Done. The model lends the lists to change through `SecuredMut`, beside
+  `Secured`: `security_attributes_mut`, and `access_lists_mut`, which an artifact widens by its
+  versions' lists. The user is left out, whose attributes are fixed (`SYSTEM_OWNED`), so that
+  `Secured` could not lend them mutably. `Writing::change` drops the entries naming a group that is
+  gone itself, after the change and in every try, by `prune_gone_groups` again - the split into
+  `gone_groups` and `prune_groups`, made only for a synchronous closure, is gone -, and
+  `Writing::change_access` changes the access list and announces the kind's `AccessChanged`. Both
+  controllers lost their pair. Every `LiveDocument` prunes now, the session's, the channel's and the
+  agent's included, which issue 347 had left out; the maintainer decided so for every kind alike.
+  An entry naming a session's, channel's or project's own group goes, too, if that group is
+  missing as its participants change - before `keep_participants` makes it again -; no ordinary
+  path leads there, and the maintainer accepted it rather than an exception for the own group.
+  Stored data need not be deleted.

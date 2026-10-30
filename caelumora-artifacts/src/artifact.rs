@@ -13,7 +13,9 @@ use caelumora_model::digest::Digest;
 use caelumora_model::project::ProjectId;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, Scoped, ScopedField};
-use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
+use caelumora_model::security::{
+    AclEntry, Grant, Secured, SecuredMut, SecurityAttributes, Subject,
+};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::AccessSnapshot;
 use caelumora_model::store::query::Field;
@@ -210,13 +212,6 @@ impl Artifact {
         SecurityAttributes { owner_id: self.security_attributes.owner_id, acl: version.acl.clone() }
     }
 
-    /// Its access list and those of its versions, to be changed alike - as
-    /// entries naming a group that is gone are dropped (issue 347).
-    pub fn access_lists_mut(&mut self) -> impl Iterator<Item = &mut Vec<AclEntry>> {
-        iter::once(&mut self.security_attributes.acl)
-            .chain(self.versions.iter_mut().map(|version| &mut version.acl))
-    }
-
     /// Lets `subject` read the artifact, unless its list grants it already
     /// (issue 316): whoever is to read a version has to read the artifact.
     pub fn grant_reading(&mut self, subject: Subject) {
@@ -314,6 +309,18 @@ fn grant_reading(acl: &mut Vec<AclEntry>, subject: Subject) {
 impl Secured for Artifact {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
+    }
+}
+
+impl SecuredMut for Artifact {
+    fn security_attributes_mut(&mut self) -> &mut SecurityAttributes {
+        &mut self.security_attributes
+    }
+
+    /// Its access list and those of its versions (issue 316).
+    fn access_lists_mut(&mut self) -> impl Iterator<Item = &mut Vec<AclEntry>> {
+        iter::once(&mut self.security_attributes.acl)
+            .chain(self.versions.iter_mut().map(|version| &mut version.acl))
     }
 }
 

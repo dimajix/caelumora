@@ -9,7 +9,7 @@ use crate::history::{History, WINDOW};
 use crate::message::{Message, MessageId};
 use crate::removal::Removal;
 use crate::scope::{Scope, Scoped};
-use crate::security::{Grant, Secured, SecurityAttributes, Subject};
+use crate::security::{Grant, Secured, SecuredMut, SecurityAttributes, Subject};
 use crate::session::{Session, SessionId};
 use crate::store::query::Field;
 use crate::store::{EntityKind, Journaled, Revision, Stored, Updatable};
@@ -322,6 +322,12 @@ impl Field for ChannelField {
 impl Secured for Channel {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
+    }
+}
+
+impl SecuredMut for Channel {
+    fn security_attributes_mut(&mut self) -> &mut SecurityAttributes {
+        &mut self.security_attributes
     }
 }
 

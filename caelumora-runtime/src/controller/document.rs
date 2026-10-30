@@ -1,10 +1,12 @@
 //! `LiveDocument`: the document a controller is the one writer of, as it stands (issue 358), and
 //! the `Writing` of a change of it.
 
+use crate::group::prune_gone_groups;
 use arc_swap::{ArcSwap, Guard};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::security::{SecurityContext, Subject};
+use caelumora_model::group::Group;
+use caelumora_model::security::{AclEntry, SecuredMut, SecurityContext, Subject};
 use caelumora_model::store::{
     Address, EntityStore, StoreResult, StoreResultExt, Stored, Updatable,
 };
@@ -14,18 +16,18 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{info, warn};
 
-/// The document a controller is the one writer of in this instance, as it
-/// stands (issue 358): every change of it is stored first - which is where
-/// the permission is checked (issue 11) -, then taken over live and
-/// announced. The revision keeps a change from overwriting another (issue
-/// 492); the lock held meanwhile keeps the live copy and the announcements
-/// in the order the changes were stored. What a controller does besides - a
-/// group that follows the participants, an event of its own - it does
-/// between the steps of a `Writing`.
+/// The document a controller is the one writer of in this instance, as it stands (issue 358):
+/// every change of it is stored first - which is where the permission is checked (issue 11) -,
+/// then taken over live and announced. The revision keeps a change from overwriting another (issue
+/// 492); the lock held meanwhile keeps the live copy and the announcements in the order the changes
+/// were stored. Every change drops from its access lists the entries naming a group that is gone
+/// (issue 347). What a controller does besides - a group that follows the participants, an event
+/// of its own - it does between the steps of a `Writing`.
 pub(super) struct LiveDocument<T: Updatable> {
     address: Address<T>,
     current: ArcSwap<T>,
     store: Arc<dyn EntityStore<T>>,
+    groups: Arc<dyn EntityStore<Group>>,
     event_publisher: Arc<dyn EventPublisher>,
     write_lock: Mutex<()>,
 }
@@ -36,22 +38,24 @@ impl<T: Updatable + Debug> Debug for LiveDocument<T> {
     }
 }
 
-impl<T: Updatable> LiveDocument<T>
+impl<T: Updatable + SecuredMut> LiveDocument<T>
 where
     Address<T>: PartialEq,
 {
-    /// `document`, which lies at `address`, written to `store` and
-    /// announced through `event_publisher`.
+    /// `document`, which lies at `address`, written to `store` and announced through
+    /// `event_publisher`; whether a group its access lists name is gone is looked up in `groups`.
     pub(super) fn new(
         address: Address<T>,
         document: T,
         store: Arc<dyn EntityStore<T>>,
+        groups: Arc<dyn EntityStore<Group>>,
         event_publisher: Arc<dyn EventPublisher>,
     ) -> Self {
         Self {
             address,
             current: ArcSwap::from_pointee(document),
             store,
+            groups,
             event_publisher,
             write_lock: Mutex::new(()),
         }
@@ -182,9 +186,9 @@ pub(super) fn log_changed<T: Stored>(ctx: &SecurityContext, document: &T) {
     info!(kind = %T::KIND, id = %document.id(), by = %ctx.caller_id, "Document changed");
 }
 
-/// A change of a `LiveDocument` under way, holding its lock: the document
-/// to change (`current`, or `reached` as stored), changed, stored and taken
-/// over (`change`, `apply`), then announced (`announce`, `announce_update`).
+/// A change of a `LiveDocument` under way, holding its lock: the document to change (`current`, or
+/// `reached` as stored), changed, stored and taken over (`change`, `apply`), then announced
+/// (`announce`, `announce_update`) - or both at once for its access list (`change_access`).
 pub(super) struct Writing<'a, T: Updatable> {
     document: &'a LiveDocument<T>,
     /// How the document was classified as the change began: announced to
@@ -194,7 +198,7 @@ pub(super) struct Writing<'a, T: Updatable> {
     _lock: MutexGuard<'a, ()>,
 }
 
-impl<T: Updatable> Writing<'_, T>
+impl<T: Updatable + SecuredMut> Writing<'_, T>
 where
     Address<T>: PartialEq,
 {
@@ -217,14 +221,13 @@ where
         Ok(document)
     }
 
-    /// Changes the document as `change` says, on behalf of `ctx`: applied
-    /// to a copy of the document as it stands, stored as changed now
-    /// (`Updatable::touch`) - which is where the permission is checked -
-    /// and taken over live; not yet announced. Changed elsewhere meanwhile
-    /// (`StoreError::Outdated`, issue 492), the document is read again as
-    /// stored - which the change then begins from, as `reached` begins it -
-    /// and `change` applied once more, to that alone. Answers what `change`
-    /// answered, and the document as it now stands.
+    /// Changes the document as `change` says, on behalf of `ctx`: applied to a copy of the document
+    /// as it stands, its access lists without the entries naming a group that is gone
+    /// (`prune_gone_groups`, issue 347), stored as changed now (`Updatable::touch`) - which is
+    /// where the permission is checked - and taken over live; not yet announced. Changed elsewhere
+    /// meanwhile (`StoreError::Outdated`, issue 492), the document is read again as stored - which
+    /// the change then begins from, as `reached` begins it - and `change` applied once more, to
+    /// that alone. Answers what `change` answered, and the document as it now stands.
     ///
     /// # Errors
     /// What `change` reports, or whatever the store reports,
@@ -238,6 +241,7 @@ where
         loop {
             let mut document = self.current();
             let answer = change(&mut document)?;
+            prune_gone_groups(self.document.groups.as_ref(), document.access_lists_mut()).await;
             document.touch(Utc::now());
             if self.document.store.update(ctx, &mut document).await.written()?.is_none() {
                 self.document.reload().await?;
@@ -265,6 +269,27 @@ where
         self.change(ctx, |document| Ok(document.apply(update)?))
             .await
             .map(|((), document)| document)
+    }
+
+    /// Changes the document's access list as `change` says, as `change` changes the document, and
+    /// announces `update`, which says so without the list (`…UpdateEvent::AccessChanged`).
+    ///
+    /// # Errors
+    /// As `change`.
+    pub(super) async fn change_access(
+        &mut self,
+        ctx: &SecurityContext,
+        update: &T::Update,
+        mut change: impl FnMut(&mut Vec<AclEntry>),
+    ) -> StoreResult<()> {
+        let ((), document) = self
+            .change(ctx, |document| {
+                change(&mut document.security_attributes_mut().acl);
+                Ok(())
+            })
+            .await?;
+        self.announce_update(update, &document);
+        Ok(())
     }
 
     /// Announces `event` about `document`, as it was stored: to whoever may
@@ -311,25 +336,68 @@ mod tests {
     use super::*;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{Agent, PersonalityId};
+    use caelumora_model::group::GroupId;
     use caelumora_model::scope::Scope;
+    use caelumora_model::security::Grant;
     use caelumora_model::store::Persistence;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
     use std::time::Duration;
     use tokio::time;
 
+    fn assistant() -> Agent {
+        Agent::new(
+            ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
+            PersonalityId::new(),
+            ActorId::User(UserId::new()),
+        )
+    }
+
+    /// Issue 499: every change of a document - of any kind a controller writes - drops from its
+    /// access list the entries naming a group that is gone (issue 347), and keeps the others.
+    #[tokio::test]
+    async fn a_change_drops_the_entries_naming_a_group_that_is_gone() {
+        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let system = SecurityContext::system();
+        let owner = UserId::new();
+        let team = Group::team(
+            ScopedName::new("team", Scope::UserScope { user_id: owner }).unwrap(),
+            owner,
+        );
+        stores.groups.create(&system, &team).await.unwrap();
+        let mut agent = assistant();
+        let there = Subject::Group(team.id);
+        let gone = Subject::Group(GroupId::new());
+        for subject in [there, gone] {
+            agent.security_attributes.acl.push(AclEntry { subject, grant: Grant::Read });
+        }
+        stores.agents.create(&system, &agent).await.unwrap();
+        let document = LiveDocument::new(
+            agent.id,
+            agent,
+            Arc::clone(&stores.agents),
+            stores.groups,
+            Arc::new(()),
+        );
+
+        let ((), changed) = document.write().await.change(&system, |_| Ok(())).await.unwrap();
+
+        let named: Vec<Subject> =
+            changed.security_attributes.acl.iter().map(|entry| entry.subject).collect();
+        assert_eq!(named, [there], "only the entry naming a group never there is dropped");
+        let stored = stores.agents.get(&system, changed.id).await.unwrap();
+        assert_eq!(stored.security_attributes.acl, changed.security_attributes.acl, "as stored");
+    }
+
     /// Issue 502: taking a document over as stored waits for a change under
     /// way, so that what it read before the change cannot set it back.
     #[tokio::test]
     async fn taking_over_what_is_stored_waits_for_a_change_under_way() {
-        let agent = Agent::new(
-            ScopedName::new("assistant", Scope::GlobalScope).unwrap(),
-            PersonalityId::new(),
-            ActorId::User(UserId::new()),
-        );
-        let agents = Persistence::in_memory().entity_stores().unwrap().agents;
-        agents.create(&SecurityContext::system(), &agent).await.unwrap();
-        let document = LiveDocument::new(agent.id, agent, agents, Arc::new(()));
+        let agent = assistant();
+        let stores = Persistence::in_memory().entity_stores().unwrap();
+        stores.agents.create(&SecurityContext::system(), &agent).await.unwrap();
+        let document =
+            LiveDocument::new(agent.id, agent, stores.agents, stores.groups, Arc::new(()));
 
         let writing = document.write().await;
         let taking = document.take_stored();

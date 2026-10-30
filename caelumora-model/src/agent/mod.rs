@@ -20,7 +20,7 @@ pub mod testing;
 use crate::actor::ActorId;
 use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
-use crate::security::{Secured, SecurityAttributes, SecurityContext};
+use crate::security::{Secured, SecuredMut, SecurityAttributes, SecurityContext};
 use crate::session::{ChannelId, SessionId};
 use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
 use crate::value::name::{Name, ScopedName};
@@ -169,6 +169,12 @@ impl Updatable for Agent {
 impl Secured for Agent {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
+    }
+}
+
+impl SecuredMut for Agent {
+    fn security_attributes_mut(&mut self) -> &mut SecurityAttributes {
+        &mut self.security_attributes
     }
 }
 
