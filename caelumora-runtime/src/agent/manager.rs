@@ -113,7 +113,7 @@ impl AgentManager {
         self.agents.create(context, &mut agent).await?;
         self.holders.keep_made(self, &agent).await?;
         self.events.announce(GlobalEvent::created::<Agent>(&agent.id), &agent);
-        info!("Agent {} created by {}", agent.id, context.caller_id);
+        info!(agent = %agent.id, by = %context.caller_id, "Agent created");
         Ok(agent)
     }
 
@@ -144,7 +144,7 @@ impl AgentManager {
             return Ok(false);
         }
         self.events.announce(GlobalEvent::deleted::<Agent>(&id), &agent);
-        info!("Agent {} deleted by {}", id, context.caller_id);
+        info!(agent = %id, by = %context.caller_id, "Agent deleted");
         Ok(true)
     }
 
@@ -163,7 +163,7 @@ impl AgentManager {
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> AgentResult<Agent> {
         let agent = self.holders.restore(self, context, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Agent>(&id), &agent);
-        info!("Agent {} restored by {}", id, context.caller_id);
+        info!(agent = %id, by = %context.caller_id, "Agent restored");
         Ok(agent)
     }
 
@@ -185,7 +185,7 @@ impl AgentManager {
         })
         .await?;
         if purged {
-            info!("Agent {} purged by {}", id, context.caller_id);
+            info!(agent = %id, by = %context.caller_id, "Agent purged");
         }
         Ok(purged)
     }
