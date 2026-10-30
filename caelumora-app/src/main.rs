@@ -263,9 +263,9 @@ mod tests {
     use caelumora_model::config::BackendConfig;
     use caelumora_model::removal::Removal;
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
+    use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::{Persistence, Policies};
+    use caelumora_model::store::Persistence;
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;

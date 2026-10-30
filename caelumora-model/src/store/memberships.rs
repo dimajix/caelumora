@@ -74,7 +74,8 @@ mod tests {
     use super::*;
     use crate::actor::ActorId;
     use crate::removal::Removal;
-    use crate::store::{EntityStores, Persistence, Policies};
+    use crate::security::Policies;
+    use crate::store::{EntityStores, Persistence};
     use crate::user::UserId;
     use crate::value::name::ScopedName;
 

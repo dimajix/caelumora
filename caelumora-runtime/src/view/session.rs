@@ -301,8 +301,7 @@ impl SessionView {
         let at = Place::of(channel, self.privacy());
         let reader = ChannelReader::of(self.views.viewer().place());
         channel_reading(
-            self.views.access_policy().as_ref(),
-            self.views.confidentiality().as_ref(),
+            self.views.policies(),
             self.views.context(),
             &channel.security_attributes,
             &at,

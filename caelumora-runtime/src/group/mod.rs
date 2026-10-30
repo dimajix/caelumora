@@ -200,21 +200,17 @@ mod tests {
     use async_trait::async_trait;
     use caelumora_model::actor::ActorId;
     use caelumora_model::channel::ChannelId;
-    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::group::GroupField;
     use caelumora_model::project::Project;
     use caelumora_model::removal::{Removal, RemovalId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::Grant;
-    use caelumora_model::security::{AllowAllPolicy, SecurityAttributes};
+    use caelumora_model::security::{AllowAllPolicy, Grant, Policies, SecurityAttributes};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::documents::Document;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::store::testing::ContendedStore;
-    use caelumora_model::store::{
-        Deleted, EntityStores, Persistence, PersistenceBackend, Policies, Stored,
-    };
+    use caelumora_model::store::{Deleted, EntityStores, Persistence, PersistenceBackend, Stored};
     use caelumora_model::value::name::ScopedName;
     use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -387,10 +383,7 @@ mod tests {
     async fn a_team_is_changed_once_more_when_it_was_written_meanwhile() {
         let (stores, refusals) = ContendedStore::stores(Group::KIND);
         let stores = EntityStores::open(&stores, &Policies::permitting_all()).unwrap();
-        let events = Arc::new(EventBus::new(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        ));
+        let events = Arc::new(EventBus::new(&Policies::permitting_all()));
         let manager = GroupManager::new(&stores, events, Arc::new(AllowAllPolicy::new()));
         let alice = UserId::new();
         let hers =
@@ -417,10 +410,7 @@ mod tests {
             inner: Arc::clone(&stores.groups),
             passing: AtomicUsize::new(usize::MAX),
         });
-        let events = Arc::new(EventBus::new(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        ));
+        let events = Arc::new(EventBus::new(&Policies::permitting_all()));
         let manager = GroupManager::new(
             &EntityStores { groups: Arc::<Failing>::clone(&failing), ..stores.clone() },
             events,

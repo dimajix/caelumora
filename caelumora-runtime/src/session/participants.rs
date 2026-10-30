@@ -36,7 +36,8 @@ impl SessionLoop {
     ) -> Result<()> {
         let session = self.session();
         if into.is_none() || !session.participants.iter().any(|p| p.actor_id() == participant) {
-            self.access_policy
+            self.policies
+                .access_policy()
                 .require(
                     context,
                     ActionType::update(Session::KIND, &session.security_attributes),
@@ -47,7 +48,8 @@ impl SessionLoop {
         let channel = match into {
             Some((id, history)) => {
                 let channel = self.channel_for(context, id).await?;
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(
                         context,
                         ActionType::update(Channel::KIND, &channel.security_attributes()),

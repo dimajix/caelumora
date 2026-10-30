@@ -500,10 +500,10 @@ mod tests {
     use caelumora_model::approval::ApprovalRequest;
     use caelumora_model::channel::testing::make_channel;
     use caelumora_model::channel::{Channel, InternalActor};
-    use caelumora_model::security::{Grant, OwnershipPolicy, Subject};
+    use caelumora_model::security::{Grant, OwnershipPolicy, Policies, Subject};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::{User, UserId};

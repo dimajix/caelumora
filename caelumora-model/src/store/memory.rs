@@ -687,10 +687,12 @@ impl TranscriptStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::group::GroupId;
-    use crate::security::{Grant, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject};
+    use crate::security::{
+        Grant, OwnershipPolicy, Policies, SecurityAttributes, SecurityContext, Subject,
+    };
     use crate::store::query::Query;
     use crate::store::suite;
-    use crate::store::{EntityStores, Persistence, Policies};
+    use crate::store::{EntityStores, Persistence};
     use crate::user::UserId;
 
     /// The stores of a memory store, permitting everything.

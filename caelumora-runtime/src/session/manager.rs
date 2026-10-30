@@ -24,14 +24,13 @@ use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::channel::Participant;
 use caelumora_model::channel::{Channel, ChannelField};
-use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField};
 use caelumora_model::security::{
-    AccessPolicy, AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext,
+    AccessQuestions, ActionType, Enforcement, Policies, SecurityAttributes, SecurityContext,
     Subject, JOIN,
 };
 use caelumora_model::session;
@@ -102,8 +101,7 @@ pub struct SessionManager {
     runtime_manager: Arc<RuntimeManager>,
     /// The services it works with, taken from `runtime_manager` once (issue
     /// 229).
-    access_policy: Arc<dyn AccessPolicy>,
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    policies: Policies,
     stores: EntityStores,
     state_store: Arc<dyn StateStore>,
     events: Arc<EventBus>,
@@ -158,8 +156,7 @@ impl SessionManager {
             handles: DashMap::new(),
             lifecycles: LocksById::new(),
             shutting_down: AtomicBool::new(false),
-            access_policy: Arc::clone(runtime_manager.access_policy()),
-            confidentiality: Arc::clone(runtime_manager.confidentiality()),
+            policies: runtime_manager.policies().clone(),
             stores: runtime_manager.entity_stores().clone(),
             state_store: Arc::clone(runtime_manager.state_store()),
             events: Arc::clone(runtime_manager.event_bus()),
@@ -216,7 +213,8 @@ impl SessionManager {
         match running {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(context, ActionType::get(Session::KIND, &attributes), |_| {
                         SessionError::NotFound(id)
                     })
@@ -269,7 +267,8 @@ impl SessionManager {
         // Its own verb before anything of others is asked or anything is
         // found or made for it (issue 312): who may not create the session
         // learns nothing of the agents, the workspace or anyone's clearance.
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 context,
                 ActionType::create(
@@ -425,7 +424,8 @@ impl SessionManager {
         mut channels: Vec<Channel>,
     ) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 context,
                 ActionType::create(Session::KIND, &session.security_attributes),
@@ -500,7 +500,10 @@ impl SessionManager {
         channels: &mut [Channel],
     ) -> Result<()> {
         for channel in channels.iter() {
-            require_classification(self.confidentiality.as_ref(), &channel.classification)?;
+            require_classification(
+                self.policies.confidentiality().as_ref(),
+                &channel.classification,
+            )?;
         }
         self.stores.sessions.create(context, session).await?;
         let made = async {
@@ -592,10 +595,11 @@ impl SessionManager {
         let system = SecurityContext::system();
         let attributes = self.find(&system, id).await.map_err(|_| not_found())?.attributes();
         let reachable = self
-            .access_policy
+            .policies
+            .access_policy()
             .check(context, ActionType::custom(Session::KIND, &JOIN, &attributes))
             .await
-            || self.access_policy.may_read_session(context, &attributes).await;
+            || self.policies.access_policy().may_read_session(context, &attributes).await;
         if !reachable {
             return Err(not_found().into());
         }
@@ -670,7 +674,8 @@ impl SessionManager {
         let _lifecycle = self.lifecycles.lock(id).await;
         let found = self.find(context, id).await?;
         let attributes = found.attributes();
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied)
             .await?;
         if !matches!(found, Found::Running(_)) {
@@ -794,7 +799,8 @@ impl SessionManager {
         // starts it again from there in the meantime (issue 62).
         let _lifecycle = self.lifecycles.lock(id).await;
         let session = self.find(context, id).await?.session();
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 context,
                 ActionType::delete(Session::KIND, &session.security_attributes),

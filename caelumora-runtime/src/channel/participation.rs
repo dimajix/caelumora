@@ -10,13 +10,11 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::approval::Approver;
 use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant};
-use caelumora_model::confidentiality::{
-    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
-};
+use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
 use caelumora_model::role::RoleId;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{
-    AccessPolicy, ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, JOIN,
+    ActionType, Enforcement, Policies, Refused, SecurityAttributes, SecurityContext, JOIN,
 };
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{
@@ -64,18 +62,16 @@ pub(crate) enum ResolvedKind {
 pub(crate) struct Participation {
     agents: Arc<dyn EntityStore<Agent>>,
     controllers: Arc<ControllerManager>,
-    access_policy: Arc<dyn AccessPolicy>,
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    policies: Policies,
 }
 
 impl Participation {
     pub(crate) fn new(
         agents: Arc<dyn EntityStore<Agent>>,
         controllers: Arc<ControllerManager>,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        policies: &Policies,
     ) -> Self {
-        Self { agents, controllers, access_policy, confidentiality }
+        Self { agents, controllers, policies: policies.clone() }
     }
 
     /// `participant` of channel `channel_id` of session `session_id` - of
@@ -143,7 +139,8 @@ impl Participation {
     async fn require_runnable(&self, resolved: &ResolvedParticipant) -> StoreResult<()> {
         match (&resolved.kind, resolved.context()) {
             (ResolvedKind::Agent(_, personality), Some(context)) => {
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(
                         &context,
                         ActionType::get(Personality::KIND, &personality.load().security_attributes),
@@ -175,7 +172,7 @@ impl Participation {
         let join = ActionType::custom(kind, &JOIN, attributes);
         match resolved.context() {
             Some(own) if own.owner_id == context.principal_id => {
-                self.access_policy.require(&own, join, refusal).await
+                self.policies.access_policy().require(&own, join, refusal).await
             }
             _ => Err(refusal(join.refused())),
         }
@@ -199,7 +196,7 @@ impl Participation {
         let Some(channel) = resolved.channel_id else { return Ok(()) };
         let participant = resolved.actor_id();
         for roles in resolved.clearances() {
-            self.confidentiality.require_cleared(
+            self.policies.confidentiality().require_cleared(
                 context,
                 participant,
                 &roles,

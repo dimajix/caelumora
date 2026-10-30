@@ -441,8 +441,9 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::Policies;
     use crate::store::testing::{replayed, stored};
-    use crate::store::{EntityStores, Policies};
+    use crate::store::EntityStores;
     use std::slice;
 
     /// Issue 404: two frontends of one user cannot move the mark back.

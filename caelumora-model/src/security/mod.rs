@@ -17,6 +17,10 @@
 //!   enforces is `Enforcement`. The policy of a process is the
 //!   `OwnershipPolicy` (`ownership`), or the `AllowAllPolicy` for tests.
 //!
+//! - `Policies` (`policies`) are the `AccessPolicy` and the
+//!   `ConfidentialityPolicy` of a process as one pair, which whatever asks
+//!   both holds (issue 449).
+//!
 //! What may flow where is not decided here, but by the
 //! `ConfidentialityPolicy` (`crate::confidentiality`), asked beside it.
 
@@ -26,6 +30,7 @@ mod admission;
 mod attributes;
 mod context;
 mod ownership;
+mod policies;
 #[cfg(test)]
 mod testing;
 
@@ -37,3 +42,4 @@ pub use attributes::{
 };
 pub use context::SecurityContext;
 pub use ownership::OwnershipPolicy;
+pub use policies::Policies;

@@ -20,7 +20,7 @@ use crate::context::ModelProfile;
 use crate::message::Message;
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
-use crate::security::{AccessPolicy, ActionType, SecurityContext};
+use crate::security::{ActionType, Policies, SecurityContext};
 use crate::session::ChannelId;
 use crate::store::query::FieldValue;
 use serde::{Deserialize, Serialize};
@@ -802,23 +802,21 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
     }
 }
 
-/// Whether `context` reaches what `read` is asked of and is classified as
-/// `classifications` says (concept 4 of the permission checks, issue 322):
-/// it may read it (`access_policy`), and, where it is classified, is cleared
-/// for one of them (`confidentiality`) - one, the entity's; two as it is
-/// reclassified, the one it had and the one it has. The question the store
-/// asks of what it lists, and - as `may_reach_each`, which answers alike -
-/// the event bus of whom an event reaches, so that both reach alike. A
-/// question, for filtering: an operation reads through the store, which
-/// enforces it.
+/// Whether `context` reaches what `read` is asked of and is classified as `classifications` says
+/// (concept 4 of the permission checks, issue 322): it may read it (the access policy of
+/// `policies`), and, where it is classified, is cleared for one of them (its confidentiality
+/// policy) - one, the entity's; two as it is reclassified, the one it had and the one it has. The
+/// question the store asks of what it lists, and - as `may_reach_each`, which answers alike - the
+/// event bus of whom an event reaches, so that both reach alike. A question, for filtering: an
+/// operation reads through the store, which enforces it.
 pub async fn may_reach(
-    access_policy: &dyn AccessPolicy,
-    confidentiality: &dyn ConfidentialityPolicy,
+    policies: &Policies,
     context: &SecurityContext,
     read: ActionType<'_>,
     classifications: &[Classification],
 ) -> bool {
-    access_policy.check(context, read).await && cleared(confidentiality, context, classifications)
+    policies.access_policy().check(context, read).await
+        && cleared(policies.confidentiality().as_ref(), context, classifications)
 }
 
 /// `may_reach` for each of `contexts` at once, in their order, each
@@ -826,13 +824,13 @@ pub async fn may_reach(
 /// them together (`AccessPolicy::check_each`), as the event bus asks it of
 /// every party whom an event reaches (issue 503).
 pub async fn may_reach_each(
-    access_policy: &dyn AccessPolicy,
-    confidentiality: &dyn ConfidentialityPolicy,
+    policies: &Policies,
     contexts: &[SecurityContext],
     read: ActionType<'_>,
     classifications: &[Classification],
 ) -> Vec<bool> {
-    let readable = access_policy.check_each(contexts, read).await;
+    let readable = policies.access_policy().check_each(contexts, read).await;
+    let confidentiality = policies.confidentiality().as_ref();
     contexts
         .iter()
         .zip(readable)
@@ -983,6 +981,7 @@ mod tests {
     use crate::store::Stored;
     use crate::tool::{ToolCall, ToolCallResult};
     use crate::user::UserId;
+    use std::sync::Arc;
     use Confidentiality::*;
 
     #[test]
@@ -1435,13 +1434,13 @@ mod tests {
             as_owner,
             someone().with_roles(vec![hr], None),
         ];
-        let access_policy = OwnershipPolicy::new();
+        let policies = Policies::new(Arc::new(OwnershipPolicy::new()), Arc::new(rules));
         let read = ActionType::get(Session::KIND, &attributes);
 
-        let at_once = may_reach_each(&access_policy, &rules, &contexts, read, &secret).await;
+        let at_once = may_reach_each(&policies, &contexts, read, &secret).await;
         let mut alone = Vec::new();
         for context in &contexts {
-            alone.push(may_reach(&access_policy, &rules, context, read, &secret).await);
+            alone.push(may_reach(&policies, context, read, &secret).await);
         }
         assert_eq!(at_once, alone);
         assert_eq!(at_once, [true, false, false], "read and cleared; not cleared; not read");

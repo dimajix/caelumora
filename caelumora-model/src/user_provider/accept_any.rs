@@ -157,7 +157,8 @@ impl UserProvider for AcceptAnyUserProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{EntityStores, Persistence, Policies};
+    use crate::security::Policies;
+    use crate::store::{EntityStores, Persistence};
     use crate::user::testing::make_user;
     use crate::user_provider::UserManager;
 

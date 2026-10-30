@@ -176,10 +176,10 @@ mod tests {
     use caelumora_model::approval::{ApprovalStrategy, Approver};
     use caelumora_model::channel::{Channel, InternalActor, Participant};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{Policies, SecurityContext};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};

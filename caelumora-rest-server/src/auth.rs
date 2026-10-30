@@ -483,9 +483,8 @@ mod tests {
     use super::*;
     use axum::body;
     use axum::body::Body;
-    use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::security::Policies;
+    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_model::user_provider::UserProvider;
     use caelumora_runtime::event::EventBus;
@@ -503,16 +502,13 @@ mod tests {
 
     /// Auth asking `providers`, the users recorded in `store` (issue 306).
     fn auth(store: Persistence, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
-        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
-        let events = Arc::new(EventBus::new(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        ));
+        let policies = Policies::permitting_all();
+        let stores = EntityStores::open(&store, &policies).unwrap();
+        let events = Arc::new(EventBus::new(&policies));
         let controllers = Arc::new(ControllerManager::new(
             stores.clone(),
             Arc::<EventBus>::clone(&events),
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
+            &policies,
             Default::default(),
             store.state_store(),
             store.history_store(),

@@ -473,7 +473,8 @@ impl ChannelLoop {
             ActorEvent::MessageModified(modified) => {
                 let mut message =
                     self.message(modified.id).await.ok_or(Rejection::MessageNotFound)?;
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(
                         context,
                         ActionType::ModifyMessage { author: message.sender_id, channel: &channel },
@@ -487,7 +488,8 @@ impl ChannelLoop {
             }
             ActorEvent::MessageRevoked { message, at } => {
                 let mut message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(
                         context,
                         ActionType::RevokeMessage { author: message.sender_id, channel: &channel },
@@ -499,17 +501,22 @@ impl ChannelLoop {
             ActorEvent::MessageReclassified { message, classification: new } => {
                 let mut said = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
                 let target = Reclassified::Message { author: said.sender_id, attributes: &channel };
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(context, ActionType::Reclassify(target), forbidden)
                     .await?;
-                self.confidentiality.require_publish(context, new, &classification, || {
-                    Rejection::ClassificationRefused
-                })?;
+                self.policies.confidentiality().require_publish(
+                    context,
+                    new,
+                    &classification,
+                    || Rejection::ClassificationRefused,
+                )?;
                 said.reclassify(new).then_some(()).ok_or(Rejection::MessageUnchangeable)
             }
             ActorEvent::RetryRequested { target: RetryTarget::Message(message), author } => {
                 let message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(context, ActionType::RetryMessage(&channel), forbidden)
                     .await?;
                 if message.revoked.is_some() {
@@ -522,13 +529,15 @@ impl ChannelLoop {
             // Whether the turn is still under way is decided as the request
             // is delivered, where the turn is ended (`route_event_impl`).
             ActorEvent::RetryRequested { target: RetryTarget::Turn(_), author } => {
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(context, ActionType::RetryMessage(&channel), forbidden)
                     .await?;
                 self.agent_actor(*author).is_some().then_some(()).ok_or(Rejection::Invalid)
             }
             ActorEvent::QuestionAnswered { .. } | ActorEvent::QuestionDeclined { .. } => {
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(context, ActionType::AnswerQuestion(&channel), forbidden)
                     .await
             }
@@ -546,7 +555,8 @@ impl ChannelLoop {
                     .agent_attributes(response.agent_id)
                     .await
                     .map_err(|_| Rejection::Invalid)?;
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(context, ActionType::ApproveToolCall(&agent), forbidden)
                     .await
             }
@@ -577,7 +587,7 @@ impl ChannelLoop {
                 (sender.as_agent_id().is_some() && context.caller_id == sender)
                     .then_some(())
                     .ok_or(Rejection::Invalid)?;
-                self.confidentiality.require_publish(
+                self.policies.confidentiality().require_publish(
                     context,
                     &message.classification,
                     &classification,
@@ -633,9 +643,12 @@ impl ChannelLoop {
             .chain(carried)
             .chain(message.tool_results.iter().map(|r| &r.classification));
         for part in parts {
-            self.confidentiality.require_publish(context, part, classification, || {
-                Rejection::ClassificationRefused
-            })?;
+            self.policies.confidentiality().require_publish(
+                context,
+                part,
+                classification,
+                || Rejection::ClassificationRefused,
+            )?;
         }
         Ok(())
     }

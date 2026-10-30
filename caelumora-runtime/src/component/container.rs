@@ -449,7 +449,8 @@ mod tests {
     use super::*;
     use crate::component::testing::*;
     use crate::component::ComponentKind;
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::security::Policies;
+    use caelumora_model::store::{EntityStores, Persistence};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[tokio::test]

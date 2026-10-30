@@ -5,9 +5,9 @@
 use super::{ComponentContext, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::runtime::Services;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
-use caelumora_model::security::{AccessPolicy, AllowAllPolicy, SecurityContext};
+use caelumora_model::security::{AccessPolicy, AllowAllPolicy, Policies, SecurityContext};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStores, Persistence, Policies};
+use caelumora_model::store::{EntityStores, Persistence};
 use caelumora_model::type_map::TypeKey;
 use serde_json::{json, Value};
 use std::fmt::Debug;

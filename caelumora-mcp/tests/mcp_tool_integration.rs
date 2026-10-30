@@ -19,10 +19,10 @@ use caelumora_model::component::{
 };
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::security::{Policies, SecurityAttributes, SecurityContext};
 use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStores, Persistence, Policies};
+use caelumora_model::store::{EntityStores, Persistence};
 use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::{Name, ScopedName};

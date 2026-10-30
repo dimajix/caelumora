@@ -20,13 +20,11 @@ use crate::situation::Situation;
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision, ToolMatcher};
-use caelumora_model::confidentiality::{
-    Classification, Compartment, Confidentiality, ConfidentialityPolicy,
-};
+use caelumora_model::confidentiality::{Classification, Compartment, Confidentiality};
 use caelumora_model::content::ContentRef;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::{Answers, Questions};
-use caelumora_model::security::{AccessPolicy, ActionType, Enforcement};
+use caelumora_model::security::{ActionType, Enforcement, Policies};
 use caelumora_model::tool::{
     Tool, ToolCall, ToolCallResult, ToolCallState, ToolParameters, ToolResultStatus, ToolSet,
     ToolVisibility,
@@ -722,10 +720,9 @@ fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
 /// call to a person for a decision of their own, whatever its tool says.
 #[derive(Debug)]
 pub struct ToolExecutor {
-    access_policy: Arc<dyn AccessPolicy>,
-    /// What may flow where (issue 304): a result into the agent's context,
-    /// the channel's content to a tool set's remote side.
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// Who may call a tool (`CallTool`), and what may flow where (issue 304): a result into the
+    /// agent's context, the channel's content to a tool set's remote side.
+    policies: Policies,
     providers: ToolProviders,
     system_rules: Arc<[ApprovalRule]>,
     session: Arc<SessionController>,
@@ -750,8 +747,7 @@ impl ToolExecutor {
         runtime: ActorRuntime,
     ) -> ComponentResult<Self> {
         Ok(Self {
-            access_policy: Arc::clone(runtime.access_policy()),
-            confidentiality: Arc::clone(runtime.confidentiality()),
+            policies: runtime.policies().clone(),
             providers: ToolProviders::new(providers)?,
             system_rules: Arc::clone(runtime.approval_rules()),
             session: Arc::clone(runtime.session_controller()),
@@ -878,7 +874,7 @@ impl ToolExecutor {
             .chain(output.shown.iter().map(|shown| &shown.classification));
         if let Some(refused) = parts
             .into_iter()
-            .find(|part| !self.confidentiality.may_publish(context, part, &channel))
+            .find(|part| !self.policies.confidentiality().may_publish(context, part, &channel))
         {
             debug!(tool = %call.function_name, classification = %refused, "Withheld a result the channel does not admit");
             return ToolCallResult::of(
@@ -932,7 +928,8 @@ impl ToolExecutor {
         // The one question of the call's permission (issue 304, rule 4):
         // asked as it is admitted, not again when it runs.
         if self
-            .access_policy
+            .policies
+            .access_policy()
             .require(turn.situation().security_context(), ActionType::CallTool(call), |_| ())
             .await
             .is_err()
@@ -1006,7 +1003,7 @@ impl ToolExecutor {
         for set in self.providers.tool_sets(situation).await {
             let withheld = match (&set.destination, &set.unavailable) {
                 (Some(destination), None) => {
-                    !self.confidentiality.may_publish(context, channel, destination)
+                    !self.policies.confidentiality().may_publish(context, channel, destination)
                 }
                 _ => false,
             };
@@ -1060,14 +1057,16 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::Channel;
-    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_model::config::{AppConfig, ApprovalsConfig};
     use caelumora_model::content::testing::make_content_ref;
     use caelumora_model::content::ContentId;
     use caelumora_model::context::{ContextRef, FrameRef};
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::note::NoteId;
-    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy, SecurityContext};
+    use caelumora_model::security::{
+        AccessPolicy, AllowAllPolicy, OwnershipPolicy, SecurityContext,
+    };
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::{Session, SessionId, SessionUpdateEvent};
     use caelumora_model::tool::{ToolCallStatus, ToolResultStatus};

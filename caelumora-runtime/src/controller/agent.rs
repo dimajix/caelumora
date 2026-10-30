@@ -105,7 +105,8 @@ mod tests {
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::{Persistence, Policies};
+    use caelumora_model::security::Policies;
+    use caelumora_model::store::Persistence;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;

@@ -24,15 +24,14 @@ use caelumora_model::scope::Scope;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{
-    Admission, AllowAllPolicy, Grant, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject,
+    Admission, AllowAllPolicy, Grant, OwnershipPolicy, Policies, SecurityAttributes,
+    SecurityContext, Subject,
 };
 use caelumora_model::store::documents::Document;
 use caelumora_model::store::history::Memberships;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
-use caelumora_model::store::{
-    suite, EntityStores, Persistence, Policies, Presence, Revision, StoreError,
-};
+use caelumora_model::store::{suite, EntityStores, Persistence, Presence, Revision, StoreError};
 use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;

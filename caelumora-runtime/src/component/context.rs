@@ -130,8 +130,8 @@ mod tests {
     use super::*;
     use crate::component::testing::*;
     use crate::component::{ComponentContainer, ComponentKind, ComponentRegistry};
-    use caelumora_model::security::AccessPolicy;
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::security::{AccessPolicy, Policies};
+    use caelumora_model::store::{EntityStores, Persistence};
     use std::sync::Mutex;
 
     #[tokio::test]

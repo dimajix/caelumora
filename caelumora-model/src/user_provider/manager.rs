@@ -176,9 +176,9 @@ mod tests {
     use crate::event::EntityChange;
     use crate::removal::Removal;
     use crate::role::RoleId;
-    use crate::security::SecurityAttributes;
+    use crate::security::{Policies, SecurityAttributes};
     use crate::store::testing::ContendedStore;
-    use crate::store::{EntityStores, Persistence, Policies, Stored};
+    use crate::store::{EntityStores, Persistence, Stored};
     use crate::user::testing::make_user;
     use crate::value::name::Name;
     use async_trait::async_trait;

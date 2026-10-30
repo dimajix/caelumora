@@ -15,9 +15,7 @@ use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
-use caelumora_model::confidentiality::{
-    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
-};
+use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_model::content::ContentId;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
@@ -25,8 +23,8 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{
-    AccessPolicy, AclEntry, ActionType, Enforcement, SecuredMut, SecurityAttributes,
-    SecurityContext, Subject, WRITE,
+    AclEntry, ActionType, Enforcement, Policies, SecuredMut, SecurityAttributes, SecurityContext,
+    Subject, WRITE,
 };
 use caelumora_model::store::{
     purge_behind, Address, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
@@ -131,9 +129,9 @@ pub struct ArtifactManager {
     holders: Arc<ScopeHolders>,
     groups: Arc<dyn EntityStore<Group>>,
     events: Arc<EventBus>,
-    access_policy: Arc<dyn AccessPolicy>,
-    /// What may flow where (issue 304): into a storage that keeps it.
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// Who may create and write an artifact, and what may flow where (issue 304): into a storage
+    /// that keeps it.
+    policies: Policies,
     storages: Arc<NamedBackends<dyn ContentStorage>>,
     /// The storage new artifacts are made in, with its name.
     keep_in: Option<(String, Arc<dyn ContentStorage>)>,
@@ -173,8 +171,7 @@ impl ArtifactManager {
             holders: Arc::clone(runtime.scope_holders()),
             groups: Arc::clone(&runtime.entity_stores().groups),
             events: Arc::clone(runtime.event_bus()),
-            access_policy: Arc::clone(runtime.access_policy()),
-            confidentiality: Arc::clone(runtime.confidentiality()),
+            policies: runtime.policies().clone(),
             storages,
             keep_in,
             max_bytes: config.max_bytes,
@@ -241,7 +238,8 @@ impl ArtifactManager {
             self.artifacts.find_by_name(&SecurityContext::system(), name).await.optional()?;
         let (id, (storage_name, storage)) = match &existing {
             Some(artifact) => {
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(
                         ctx,
                         ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes),
@@ -255,7 +253,8 @@ impl ArtifactManager {
             }
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
-                self.access_policy
+                self.policies
+                    .access_policy()
                     .require(
                         ctx,
                         ActionType::create(Artifact::KIND, &attributes),
@@ -266,7 +265,7 @@ impl ArtifactManager {
                 (ArtifactId::new(), (name, storage))
             }
         };
-        self.confidentiality.require_storable(
+        self.policies.confidentiality().require_storable(
             ctx,
             classification,
             storage.destination(),

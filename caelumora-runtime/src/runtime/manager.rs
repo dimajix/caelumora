@@ -24,7 +24,7 @@ use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::AccessPolicy;
+use caelumora_model::security::{AccessPolicy, Policies};
 use caelumora_model::session::Session;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
@@ -37,10 +37,10 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct RuntimeManager {
-    pub(super) access_policy: Arc<dyn AccessPolicy>,
-    /// What may flow where, and who is cleared for what (issue 304): asked
-    /// beside the `AccessPolicy`, never by it.
-    pub(super) confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// Who may do what, and - asked beside it, never by it - what may flow
+    /// where and who is cleared for what (issue 304): those its stores are
+    /// checked by (issue 449).
+    pub(super) policies: Policies,
     pub(super) state_store: Arc<dyn StateStore>,
     /// The read side of the histories the states hold (issue 379).
     pub(super) history_store: Arc<dyn HistoryStore>,
@@ -97,7 +97,7 @@ impl RuntimeManager {
     /// # Errors
     /// As `seed::load`.
     pub async fn seed(&self, paths: &[PathBuf]) -> Result<()> {
-        seed::load(&self.entity_stores, self.confidentiality.as_ref(), &self.seed_sections, paths)
+        seed::load(&self.entity_stores, self.confidentiality().as_ref(), &self.seed_sections, paths)
             .await
     }
 
@@ -139,13 +139,19 @@ impl RuntimeManager {
         &self.event_bus
     }
 
+    /// The policies of the process, the pair its stores are checked by.
+    pub fn policies(&self) -> &Policies {
+        &self.policies
+    }
+
+    /// Who may do what.
     pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
-        &self.access_policy
+        self.policies.access_policy()
     }
 
     /// What may flow where, and who is cleared for what (issue 304).
     pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
-        &self.confidentiality
+        self.policies.confidentiality()
     }
 
     pub fn state_store(&self) -> &Arc<dyn StateStore> {
