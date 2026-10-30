@@ -373,7 +373,8 @@ What changes an entity is split by what it changes:
 An attachment is no entity: it is part of its message, read and taken back with it. The lifecycle
 of its content is the `AttachmentManager`'s: kept as it is uploaded for a message - or copied, as an
 agent attaches what it heard -, claimed by the message as the channel admits it, and removed with
-the channel's history (issue 282).
+the channel's history (issue 282). What a tool gave its model is kept the same way, but for its
+result, which refers to it at once: claimed by none (issue 512).
 
 ## Security and confidentiality
 

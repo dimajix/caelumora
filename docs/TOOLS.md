@@ -162,6 +162,24 @@ say, with the knowledge it is. It is written after the results of the step, sinc
 between the calls and their results (see
 [AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)).
 
+### Media a tool gives its model
+
+A tool may give its model files to see besides its value (`ToolOutput::media`, issue 512) - an
+image it generated, say: each a name and its bytes. A tool hands over bytes; the executor has them
+kept, so that what is checked is checked once for every tool and no tool reaches the storage. They
+are kept only for a result that goes to the model, not one withheld, as the result's
+(`ToolCallResult::media`, through `ActorRuntime::create_media`): in the agent's name, classified as
+the result, in the channel's key space, each an image a model can be given as its bytes say - png,
+jpeg or webp, never what the tool or a name claims -, at most as many as a message may carry
+attachments, and all of them or none. Anything else fails the call, saying why. They wait for no
+message: the result refers to them from the moment they are kept, and its turn keeps the result
+(see [CHANNELS.md](CHANNELS.md#what-a-message-carries)).
+
+What a tool gave is seen, not said: the model is given it with the result as it is given an
+attachment, numbered as one and noted after the result's text - its number, name, type and whether
+it is given along -, so that a model that cannot see learns of it and any model can name it; the
+agent shows it to the others by `attach`. The card of the call shows it where the result is shown.
+
 ## MCP servers
 
 An `mcp_tool` component exposes the tools of a remote MCP server, reached over the Streamable HTTP

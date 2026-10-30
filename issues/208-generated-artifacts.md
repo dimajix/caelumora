@@ -159,3 +159,8 @@ A2A is the first producer, not the shape of the design.
   within which bounds, is neither decided nor documented. These four are what this issue is done
   with; the summary says so now. The panel of a channel's attachments is split off as issue
   [509](509-channel-attachments-panel.md).
+- **2026-10-30** - How a tool hands over media moved to issue
+  [512](512-comfyui-image-tool.md), with ComfyUI as its first producer, and came with its step 1:
+  `ToolOutput::media`, kept by the `ToolExecutor` for the result, admitted by the channel. What
+  remains here is the MCP result's images and resources, the A2A answer's file parts, and files
+  given by URL - each built on that.

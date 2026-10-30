@@ -80,9 +80,11 @@ use futures::stream;
 use futures::StreamExt;
 use serde_json::json;
 use std::collections::HashMap;
+use std::fs;
 use std::future::Future;
 use std::iter;
 use std::mem;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -334,6 +336,24 @@ pub struct World {
 impl World {
     pub async fn new() -> Self {
         Self::with(&[], |_| {}).await
+    }
+
+    /// The files the storage of content "kept" holds of attachments, of every channel.
+    pub fn attachments_kept(&self) -> Vec<PathBuf> {
+        fn below(dir: &Path) -> Vec<PathBuf> {
+            let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+            entries
+                .flat_map(|entry| {
+                    let path = entry.unwrap().path();
+                    if path.is_dir() {
+                        below(&path)
+                    } else {
+                        vec![path]
+                    }
+                })
+                .collect()
+        }
+        below(&self.files.path().join("content").join("attachments"))
     }
 
     /// The world with `plugins` (issue 323), and the component kinds

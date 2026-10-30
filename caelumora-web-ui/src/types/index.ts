@@ -342,7 +342,7 @@ export interface ToolResult {
    */
   shown?: ContentRef[];
   // UI only: the message that carries the result, where the chat put it with its call
-  // (`mergeToolResults`) - what `shown` is downloaded through.
+  // (`mergeToolResults`) - what `media` and `shown` are downloaded through.
   message_id?: string;
 }
 

@@ -16,6 +16,7 @@ use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{Channel, HistoryAccess, LEFT};
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
+use caelumora_model::content::ContentRef;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::privacy::PrivacyConfig;
@@ -1158,7 +1159,8 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
 /// that carries it - the channel asks the flow of each again as it lets the message in. Another
 /// participant's message cannot carry it. Its content is read through the message by whoever reads
 /// it, asked what reading the message asks; a stranger reaches neither. What a tool's result showed
-/// of it is read the same way through the message of the result, where the result is shown.
+/// of it, or gave its model (issue 512), is read the same way through the message of the result,
+/// where the result is shown.
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
@@ -1256,7 +1258,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
         "reaching the channel, as reading the message asks; its attachment asks nothing more"
     );
 
-    let showing = |visibility: ToolVisibility| {
+    let seeing = |visibility: ToolVisibility, media: Vec<ContentRef>, shown: Vec<ContentRef>| {
         let call = ToolCall {
             id: Some("1".to_string()),
             function_name: "view_attachment".to_string(),
@@ -1265,7 +1267,8 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
             presentation: Default::default(),
         };
         let result = ToolCallResult {
-            shown: vec![uploaded.clone()],
+            media,
+            shown,
             ..ToolCallResult::of(
                 &call,
                 Default::default(),
@@ -1281,9 +1284,13 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
             ..Message::new(main.classification())
         }
     };
-    let shown = showing(ToolVisibility::SHOWN);
-    let withheld = showing(ToolVisibility::WITHOUT_RESULT);
-    main.record_said(vec![shown.clone(), withheld.clone()]).await;
+    let it = || vec![uploaded.clone()];
+    let shown = seeing(ToolVisibility::SHOWN, Vec::new(), it());
+    let withheld = seeing(ToolVisibility::WITHOUT_RESULT, Vec::new(), it());
+    let given = seeing(ToolVisibility::SHOWN, it(), Vec::new());
+    let given_withheld = seeing(ToolVisibility::WITHOUT_RESULT, it(), Vec::new());
+    main.record_said(vec![shown.clone(), withheld.clone(), given.clone(), given_withheld.clone()])
+        .await;
     let (read, asked) = world
         .asked(async {
             channel_of(world.bob).await.unwrap().attachment(shown.id, uploaded.id).await
@@ -1304,6 +1311,67 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
         matches!(hidden, Err(ViewError::Attachment(AttachmentError::NotFound(_)))),
         "not what a result withheld from him showed: {hidden:?}"
     );
+    let (read, asked) = world
+        .asked(async {
+            channel_of(world.bob).await.unwrap().attachment(given.id, uploaded.id).await
+        })
+        .await;
+    assert_eq!(read.expect("what a result shown to him gave"), uploaded);
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes"
+        ]),
+        "as reading the message of the result asks"
+    );
+    let hidden =
+        channel_of(world.bob).await.unwrap().attachment(given_withheld.id, uploaded.id).await;
+    assert!(
+        matches!(hidden, Err(ViewError::Attachment(AttachmentError::NotFound(_)))),
+        "not what a result withheld from him gave: {hidden:?}"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// M4: what a tool gave its model (issue 512) is kept in the name of whoever made the call, a
+/// participant of the channel, asked of the flow alone as an upload is; for a stranger nothing is
+/// kept, asking nothing.
+#[tokio::test]
+async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
+    use bytes::Bytes;
+    use caelumora_model::tool::ToolMedia;
+    use caelumora_runtime::attachment::AttachmentError;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let attachments = world.runtime.attachment_manager();
+    let drawn = || {
+        let content = Bytes::from_static(b"\x89PNG\r\n\x1a\ndrawn");
+        vec![ToolMedia { name: "drawn.png".to_string(), content }]
+    };
+    let channel = main.channel();
+    let keep = |user: UserId| {
+        let channel = Arc::clone(&channel);
+        async move {
+            let context = World::as_user(user);
+            attachments
+                .create_media(&context, &channel, channel.classification.clone(), drawn())
+                .await
+        }
+    };
+
+    let (kept, asked) = world.asked(keep(world.alice)).await;
+    assert_eq!(kept.expect("hers, as she takes part").len(), 1);
+    assert_eq!(
+        asked,
+        checks(&["alice: Publish yes"]),
+        "the flow into the channel, the storage bounding nothing"
+    );
+    let (refused, asked) = world.asked(keep(world.carol)).await;
+    assert!(matches!(refused, Err(AttachmentError::NotAParticipant(_))), "{refused:?}");
+    assert!(asked.is_empty(), "asking nothing: {asked:?}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -1,9 +1,9 @@
 //! What messages carry besides their text (issue 282): the one owner of the content of attachments,
 //! the `AttachmentManager` - what is uploaded for a message not yet sent, what a message claims as
-//! its channel admits it, what is read for a download or given a model along - held in memory for
-//! its next calls -, and what goes with a channel purged. An
-//! attachment is a `ContentRef` a message holds; its bytes lie under `attachments/<channel>/<id>`
-//! in a storage of content.
+//! its channel admits it, what a tool gave its model (issue 512), what is read for a download or
+//! given a model along - held in memory for its next calls -, and what goes with a channel purged.
+//! An attachment is a `ContentRef` a message holds; its bytes lie under
+//! `attachments/<channel>/<id>` in a storage of content.
 
 mod cache;
 mod manager;
@@ -39,6 +39,12 @@ pub enum AttachmentError {
     /// No such attachment, or none the caller may reach - one case, so that nothing can be probed.
     #[error("there is no attachment {0}")]
     NotFound(ContentId),
+    /// More files for one tool result than a message may carry attachments (issue 512).
+    #[error("more than {0} files for one tool result")]
+    TooMany(usize),
+    /// What is to be given a model to see that is no image a model can be given (issue 512).
+    #[error("'{name}' is {media_type}, not an image a model can be given")]
+    NotAnImage { name: String, media_type: String },
     #[error(transparent)]
     Invalid(#[from] ValueError),
     /// What the storage of content reported: content too large, other than it was said to be, or

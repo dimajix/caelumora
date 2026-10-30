@@ -1,13 +1,14 @@
 //! Tools as a model is offered them and their calls as they are recorded: a `Tool` with its
 //! parameters, who sees its calls and how they are shown, the `ToolSet` of a provider, a `ToolCall`
-//! and how it ended (`ToolCallResult`), and where a call stands while its turn runs
-//! (`ToolCallState`).
+//! and how it ended (`ToolCallResult`) - with what its tool gave its model (`ToolMedia`) -, and
+//! where a call stands while its turn runs (`ToolCallState`).
 use crate::actor::ActorEvent;
 use crate::approval::{ApprovalDecision, ApprovalId, ToolMatcher};
 use crate::confidentiality::{Classification, Visibility};
 use crate::content::ContentRef;
 use crate::intern::intern;
 use crate::question::{Answers, QuestionId, Questions};
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -487,6 +488,15 @@ impl ToolCallResult {
             ..self.clone()
         }
     }
+}
+
+/// What a tool gives its model to see besides its value (issue 512), before it is kept as the
+/// result's (`ToolCallResult::media`): a file by its name and its bytes. What it is, its bytes
+/// tell, never the name nor the tool.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolMedia {
+    pub name: String,
+    pub content: Bytes,
 }
 
 /// A tool call of the current step of a turn, and where it stands (issue

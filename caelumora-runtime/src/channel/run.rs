@@ -406,52 +406,42 @@ impl ChannelLoop {
         }
     }
 
-    /// Nothing if `event` may enter the channel; why not otherwise (issue
-    /// 304) - the channel's one decision of what enters it, made here, in
-    /// order, against the channel as it is when the event is taken in, so
-    /// that nothing changed between a check and the entry. Actors ask
-    /// nothing for what they send; who sent what is not let in is told
-    /// (`MessageRejected`). Whether whoever sends it may act so is asked
-    /// before the flow of what it carries. Decided:
+    /// Nothing if `event` may enter the channel; why not otherwise (issue 304) - the channel's one
+    /// decision of what enters it, made here, in order, against the channel as it is when the event
+    /// is taken in, so that nothing changed between a check and the entry. Actors ask nothing for
+    /// what they send; who sent what is not let in is told (`MessageRejected`). Whether whoever
+    /// sends it may act so is asked before the flow of what it carries. Decided:
     ///
-    /// - a message, by the actor that is acting - only who acts puts
-    ///   something into the channel -, each part of it, the message, its
-    ///   attachments, its tool results and what they showed, as it is
-    ///   classified (`ConfidentialityPolicy::may_publish`, issue 133): its
-    ///   sender misclassified what does not flow in; what a result showed is
-    ///   one of the channel's attachments, and a tool's result carries no
-    ///   media yet (issues 282, 208);
-    /// - a change of a message (issue 234): the message is in its history,
-    ///   its author - the sender the history names - may change it, and it
-    ///   can be changed so as it stands (`Message::modify`,
-    ///   `Message::revoke`); a reclassification (issue 239) by its author or
+    /// - a message, by the actor that is acting - only who acts puts something into the channel -,
+    ///   each part of it, the message, its attachments, its tool results and what they gave and
+    ///   showed, as it is classified (`ConfidentialityPolicy::may_publish`, issue 133): its sender
+    ///   misclassified what does not flow in; what a result gave or showed lies in the channel's
+    ///   key space (issues 282, 512);
+    /// - a change of a message (issue 234): the message is in its history, its author - the sender
+    ///   the history names - may change it, and it can be changed so as it stands
+    ///   (`Message::modify`, `Message::revoke`); a reclassification (issue 239) by its author or
     ///   the channel's owner (`Reclassify`), never above the channel;
-    /// - a request to answer again (`RetryMessage`): of a message, not
-    ///   taken back, or of a turn, of an agent taking part (issue 362);
-    /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) -
-    ///   whether its sender was asked is the agent's to check;
-    /// - a user's answer to an approval request, by whoever may approve the
-    ///   calls of the agent it names (`ApproveToolCall`, issues 14, 312) -
-    ///   whether that agent asked is the approver's to check; a decision
-    ///   comes from an approver alone;
-    /// - a command for an agent (issue 269) comes from a user and names an
-    ///   agent taking part - whether the issuer may ask for it, its actor
-    ///   asked of the agent's commands, and the agent asks again; a nudge
-    ///   (issue 278) comes from a user and names someone else taking part;
-    /// - what the channel records of a turn besides its messages - where a
-    ///   step of its plan began, a command or an activity it carried out,
-    ///   how it ended - and the start of an activity come from an agent in
-    ///   its own name (issue 284): nobody else has turns; so does what an
-    ///   agent was given to read and a compaction of its context (issue
-    ///   417), what it was given classified so that it may flow in;
-    /// - who joined or left is the channel's own word (`announce`, issue
-    ///   408), never an actor's;
-    /// - last, once everything else is admitted, a message said or changed
-    ///   claims its attachments (`AttachmentManager::claim`, issue 282): it
-    ///   carries what it carried before or what the actor acting uploaded
-    ///   for the channel, never what lies elsewhere nor another's upload. A
-    ///   message streamed, or repeated as its turn ends, claims nothing - it
-    ///   is not what the history keeps.
+    /// - a request to answer again (`RetryMessage`): of a message, not taken back, or of a turn, of
+    ///   an agent taking part (issue 362);
+    /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) - whether its sender was
+    ///   asked is the agent's to check;
+    /// - a user's answer to an approval request, by whoever may approve the calls of the agent it
+    ///   names (`ApproveToolCall`, issues 14, 312) - whether that agent asked is the approver's to
+    ///   check; a decision comes from an approver alone;
+    /// - a command for an agent (issue 269) comes from a user and names an agent taking part -
+    ///   whether the issuer may ask for it, its actor asked of the agent's commands, and the agent
+    ///   asks again; a nudge (issue 278) comes from a user and names someone else taking part;
+    /// - what the channel records of a turn besides its messages - where a step of its plan began,
+    ///   a command or an activity it carried out, how it ended - and the start of an activity come
+    ///   from an agent in its own name (issue 284): nobody else has turns; so does what an agent
+    ///   was given to read and a compaction of its context (issue 417), what it was given
+    ///   classified so that it may flow in;
+    /// - who joined or left is the channel's own word (`announce`, issue 408), never an actor's;
+    /// - last, once everything else is admitted, a message said or changed claims its attachments
+    ///   (`AttachmentManager::claim`, issue 282): it carries what it carried before or what the
+    ///   actor acting uploaded for the channel, never what lies elsewhere nor another's upload. A
+    ///   message streamed, or repeated as its turn ends, claims nothing - it is not what the
+    ///   history keeps.
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn admission(&self, event: &Envelope) -> Result<(), Rejection> {
         let context = &event.security;
@@ -623,19 +613,19 @@ impl ChannelLoop {
     }
 
     /// Nothing if every part of `message` - the message, its attachments, its tool results and what
-    /// they showed - may enter the channel, classified `classification`, in `context` (issue 133);
-    /// why not otherwise. What a result showed its model is one of the channel's attachments
-    /// (issue 282); what a tool gave it is admitted with its first producer (issue 208).
+    /// they gave and showed - may enter the channel, classified `classification`, in `context`
+    /// (issue 133); why not otherwise. What a result showed its model is one of the channel's
+    /// attachments (issue 282), what it gave was kept for the channel (issue 512): both lie in its
+    /// key space.
     fn require_parts(
         &self,
         context: &SecurityContext,
         message: &Message,
         classification: &Classification,
     ) -> Result<(), Rejection> {
-        let shown = message.tool_results.iter().flat_map(|result| &result.shown);
-        if message.tool_results.iter().any(|result| !result.media.is_empty())
-            || !shown.into_iter().all(|content| self.attachments.lies_in(self.id, content))
-        {
+        let mut seen =
+            message.tool_results.iter().flat_map(|result| result.media.iter().chain(&result.shown));
+        if !seen.all(|content| self.attachments.lies_in(self.id, content)) {
             return Err(Rejection::Invalid);
         }
         let carried = message.carried().map(|content| &content.classification);
@@ -956,6 +946,7 @@ mod tests {
     use crate::testing::{file, shown, World};
     use crate::transport::{EventReceiver, EventSender};
     use anyhow::Result;
+    use bytes::Bytes;
     use caelumora_model::actor::{
         ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RequestReason,
         RetryTarget,
@@ -968,7 +959,7 @@ mod tests {
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::ChannelId;
-    use caelumora_model::tool::{ToolCall, ToolCallResult};
+    use caelumora_model::tool::{ToolCall, ToolCallResult, ToolMedia};
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
@@ -2761,28 +2752,62 @@ mod tests {
             visibility: Default::default(),
             presentation: Default::default(),
         };
-        let result = ToolCallResult {
-            media: vec![hers.clone()],
-            ..ToolCallResult::of(
-                &call,
-                Default::default(),
-                "done".to_string(),
-                main.classification(),
+        let giving = |media: ContentRef| {
+            let result = ToolCallResult {
+                media: vec![media],
+                ..ToolCallResult::of(
+                    &call,
+                    Default::default(),
+                    "done".to_string(),
+                    main.classification(),
+                )
+            };
+            sent(
+                alice,
+                ActorEvent::CompleteMessageGenerated(Message {
+                    sender_id: alice,
+                    role: MessageRole::Tool,
+                    tool_results: vec![result],
+                    ..Message::new(main.classification())
+                }),
             )
         };
-        let with_media = sent(
-            alice,
-            ActorEvent::CompleteMessageGenerated(Message {
-                sender_id: alice,
-                role: MessageRole::Assistant,
-                tool_results: vec![result],
-                ..Message::new(main.classification())
-            }),
+        let png = ToolMedia {
+            name: "d.png".to_string(),
+            content: Bytes::from_static(b"\x89PNG\r\n\x1a\ndrawn"),
+        };
+        let drawn = attachments
+            .create_media(&World::as_user(world.alice), &channel, main.classification(), vec![png])
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            main.admission(&giving(drawn.clone())).await,
+            Ok(()),
+            "what a tool gave (issue 512): kept for the channel"
         );
         assert_eq!(
-            main.admission(&with_media).await,
+            main.admission(&giving(drawn.clone())).await,
+            Ok(()),
+            "and waiting for no message, so claimed by none"
+        );
+        let drawn_elsewhere = ContentRef {
+            key: format!("attachments/{}/{}", ChannelId::new(), drawn.id),
+            ..drawn.clone()
+        };
+        assert_eq!(
+            main.admission(&giving(drawn_elsewhere)).await,
             Err(Rejection::Invalid),
-            "what a tool gave, not yet (issue 208)"
+            "not another channel's"
+        );
+        let drawn_above = ContentRef {
+            classification: Classification::general(Confidentiality::StrictlyConfidential),
+            ..drawn
+        };
+        assert_eq!(
+            main.admission(&giving(drawn_above)).await,
+            Err(Rejection::ClassificationRefused),
+            "nor what may not flow in"
         );
         let elsewhere = ContentRef {
             key: format!("attachments/{}/{}", ChannelId::new(), hers.id),

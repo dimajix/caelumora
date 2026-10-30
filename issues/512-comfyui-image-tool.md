@@ -1,6 +1,6 @@
 # 512 — No tool can generate an image
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** high
 **Area:** Tools and approvals
@@ -211,3 +211,24 @@ in a bundle, that ComfyUI can no longer open.
   offered by name; a random seed, sizes bounded per workflow; a call dropped ends its prompt in
   ComfyUI; no approval, destination public, the result classified as the turn's label. `edit_image`
   and video follow as issues of their own.
+- **2026-10-30** - Step 1 done: how a tool hands over media. `ToolOutput::media`, each a
+  `ToolMedia` of a name and its bytes (`caelumora_model::tool`, so that the executor hands the same
+  type on to the manager), without a media type - the bytes tell it, as for an upload
+  (`content::media_type`); a type the tool says is to come with the first producer whose bytes do
+  not tell it, to refine what they tell, never to contradict it. The `ToolExecutor` has them kept
+  for a result not withheld through `ActorRuntime::create_media` and
+  `AttachmentManager::create_media`: in the agent's name, classified as the result, images alone
+  (`content::is_image`), at most `attachments.max_per_message`, all of them or none - what was kept
+  before one failed is removed again; anything else fails the call. Decided with the maintainer
+  after the review (option A of three): what a tool gave waits for no message, unlike an upload -
+  the result refers to it from the moment it is kept, and the turn that holds the result keeps it
+  across a restart and however long the other calls of its step wait for approval, which an upload
+  waiting in memory would not survive. The channel admits it as it admits what a result showed, by
+  `lies_in` and its label; `AttachmentManager::claim` stays as it was. Rejected: storing the
+  waiting uploads (B, a stored state of its own), and the channel dropping media it cannot claim
+  (C, which leaves the turn naming content that is gone). `Message::carried` yields the media, so
+  that loading for the model, the numbers, the download and the channel's flow take them as they
+  take `shown`; `ModelProfile::frame` notes them after the result's text - number, name, type,
+  whether given along - so that a model that cannot see learns of them and any model can `attach`
+  them; `ollama_client` sends them with the result. No test tool of `test-support` was needed: the
+  executor's tests bring their own provider, as for `shown`.
