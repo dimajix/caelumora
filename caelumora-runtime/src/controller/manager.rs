@@ -13,10 +13,9 @@ use crate::terminal::TerminalProvider;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::{Channel, ChannelId};
-use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::{EntityChange, GlobalEvent};
 use caelumora_model::project::{Project, ProjectId};
-use caelumora_model::security::{AccessPolicy, Secured, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{Policies, Secured, SecurityAttributes, SecurityContext};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultExt};
@@ -55,8 +54,7 @@ pub struct ControllerManager {
     /// Who may do what, and what may flow where: a workspace's controller
     /// asks who may change its files, and of a new classification (issue
     /// 304).
-    access_policy: Arc<dyn AccessPolicy>,
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    policies: Policies,
     /// The storages of workspaces, by name, shared with the
     /// `WorkspaceManager` and the `CommandReaper`: a workspace's controller
     /// holds its own.
@@ -79,8 +77,7 @@ impl ControllerManager {
     pub fn new(
         stores: EntityStores,
         event_bus: Arc<EventBus>,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        policies: &Policies,
         storages: Arc<NamedBackends<dyn TerminalProvider>>,
         states: Arc<dyn StateStore>,
         histories: Arc<dyn HistoryStore>,
@@ -88,8 +85,7 @@ impl ControllerManager {
         Self {
             stores,
             event_bus,
-            access_policy,
-            confidentiality,
+            policies: policies.clone(),
             storages,
             states,
             histories,
@@ -229,8 +225,7 @@ impl ControllerManager {
             provider,
             Arc::<EventBus>::clone(&self.event_bus),
             &self.stores,
-            Arc::clone(&self.access_policy),
-            Arc::clone(&self.confidentiality),
+            &self.policies,
         ));
         remember(&mut workspaces, id, &controller);
         Ok(controller)
@@ -254,7 +249,7 @@ impl ControllerManager {
             project,
             Arc::<EventBus>::clone(&self.event_bus),
             &self.stores,
-            Arc::clone(&self.access_policy),
+            Arc::clone(self.policies.access_policy()),
         ));
         remember(&mut projects, id, &controller);
         Ok(controller)
@@ -436,15 +431,13 @@ mod tests {
     use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::approval::ApproverId;
-    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::project::ProjectUpdateEvent;
     use caelumora_model::removal::Removal;
     use caelumora_model::role::RoleId;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::security::{AclEntry, Grant, Subject};
-    use caelumora_model::store::{Persistence, Policies, StoreError};
+    use caelumora_model::security::{AclEntry, Grant, Policies, Subject};
+    use caelumora_model::store::{Persistence, StoreError};
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{User, UserUpdateEvent};
     use caelumora_model::value::language::Language;
@@ -455,15 +448,12 @@ mod tests {
 
     fn manager() -> (Persistence, Arc<EventBus>, ControllerManager) {
         let store = Persistence::in_memory();
-        let bus = Arc::new(EventBus::new(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        ));
+        let policies = Policies::permitting_all();
+        let bus = Arc::new(EventBus::new(&policies));
         let manager = ControllerManager::new(
-            EntityStores::open(&store, &Policies::permitting_all()).unwrap(),
+            EntityStores::open(&store, &policies).unwrap(),
             Arc::clone(&bus),
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
+            &policies,
             Default::default(),
             store.state_store(),
             store.history_store(),

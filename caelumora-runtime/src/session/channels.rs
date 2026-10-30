@@ -169,8 +169,7 @@ impl SessionLoop {
         let (channel, run) = self.listed_channel(channel_id).ok_or_else(not_found)?;
         let at = Place::of(&channel, self.privacy());
         channel_reading(
-            self.access_policy.as_ref(),
-            self.confidentiality.as_ref(),
+            &self.policies,
             context,
             &channel.security_attributes,
             &at,
@@ -251,7 +250,7 @@ impl SessionLoop {
         let name = Name::new(&spec.name)?;
         let language = Language::optional(spec.language.as_deref())?;
         let classification = spec.classification.unwrap_or_default();
-        require_classification(self.confidentiality.as_ref(), &classification)?;
+        require_classification(self.policies.confidentiality().as_ref(), &classification)?;
 
         // The creator first, if they take part in the session at all.
         let mut ids = vec![context.initiator_id];
@@ -297,7 +296,8 @@ impl SessionLoop {
         // Whether the actor may create it, before anything is asked of the
         // others in it (issues 198, 312): who may not learns nothing of their
         // clearance. The store asks again as it stores.
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 context,
                 ActionType::create(Channel::KIND, &channel.security_attributes),
@@ -476,7 +476,8 @@ impl SessionLoop {
     ) -> Result<()> {
         // Also one that does not run (issue 463): its owner removes it so.
         let (channel, _) = self.listed_channel_for(context, channel_id).await?;
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 context,
                 ActionType::delete(Channel::KIND, &channel.security_attributes),
@@ -572,7 +573,8 @@ impl SessionLoop {
                 SessionError::ChannelNotFound { session: self.id, channel: channel_id }.into()
             );
         };
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 context,
                 ActionType::restore(Channel::KIND, &channel.security_attributes),

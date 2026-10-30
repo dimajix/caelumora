@@ -308,8 +308,8 @@ mod tests {
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
+    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
     use serde_json::json;

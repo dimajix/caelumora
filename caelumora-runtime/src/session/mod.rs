@@ -36,7 +36,7 @@ use caelumora_model::group::GroupId;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessPolicy, SecurityContext};
+use caelumora_model::security::{Policies, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::store::{EntityStores, StoreResult, StoreResultExt};
 use caelumora_model::template::SessionTemplateId;
@@ -186,8 +186,7 @@ pub struct SessionLoop {
     runtime_manager: Arc<RuntimeManager>,
     /// The services it works with, taken from `runtime_manager` once (issue
     /// 229).
-    access_policy: Arc<dyn AccessPolicy>,
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    policies: Policies,
     stores: EntityStores,
     controllers: Arc<ControllerManager>,
     /// What a workspace attached to it is reached by.
@@ -342,8 +341,7 @@ impl SessionLoop {
             id,
             session_controller,
             workspace: ArcSwapOption::new(workspace),
-            access_policy: Arc::clone(runtime_manager.access_policy()),
-            confidentiality: Arc::clone(runtime_manager.confidentiality()),
+            policies: runtime_manager.policies().clone(),
             stores: runtime_manager.entity_stores().clone(),
             controllers: Arc::clone(runtime_manager.controller_manager()),
             workspaces: Arc::clone(runtime_manager.workspace_manager()),

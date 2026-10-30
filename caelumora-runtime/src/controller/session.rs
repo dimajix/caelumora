@@ -272,9 +272,9 @@ impl SessionController {
 mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::security::{Policies, SecurityAttributes};
     use caelumora_model::session::testing::bare_session;
-    use caelumora_model::store::{Persistence, Policies};
+    use caelumora_model::store::Persistence;
     use caelumora_model::value::ValueError;
     use chrono::{Duration, Utc};
     use std::sync::Mutex;

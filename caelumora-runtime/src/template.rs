@@ -236,12 +236,12 @@ mod tests {
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, Verb};
+    use caelumora_model::security::{AccessPolicy, ActionType, Policies, SecurityAttributes, Verb};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::{Persistence, Policies, Stored};
+    use caelumora_model::store::{Persistence, Stored};
     use caelumora_model::template::testing::make_template;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, TemplateError};
     use caelumora_model::user::testing::make_user;
@@ -295,10 +295,7 @@ mod tests {
         session_id: SessionId,
         owner: UserId,
     ) -> Result<Vec<(String, Participant)>> {
-        let events = Arc::new(EventBus::new(
-            Arc::clone(policies.access_policy()),
-            Arc::clone(policies.confidentiality()),
-        ));
+        let events = Arc::new(EventBus::new(policies));
         let stores = EntityStores::open(store, policies).unwrap();
         let agents = AgentManager::new(
             &stores,

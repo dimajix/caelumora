@@ -336,9 +336,8 @@ mod tests {
     use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::role::RoleId;
-    use caelumora_model::security::OwnershipPolicy;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::store::{Persistence, Policies};
+    use caelumora_model::security::{OwnershipPolicy, Policies, SecurityAttributes};
+    use caelumora_model::store::Persistence;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserUpdateEvent;
     use caelumora_model::value::text::Introduction;

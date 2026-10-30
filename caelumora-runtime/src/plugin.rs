@@ -48,15 +48,15 @@ mod tests {
     use caelumora_model::group::Group;
     use caelumora_model::removal::Removal;
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
-    use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
+    use caelumora_model::security::{Policies, Secured, SecurityAttributes, SecurityContext};
     use caelumora_model::store::documents::{DocumentOf, DocumentStorage};
     use caelumora_model::store::history::HistoryStore;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::transcript::TranscriptStore;
     use caelumora_model::store::{
-        EntityKind, EntityStore, NoEntity, Persistence, PersistenceBackend, Policies, Revision,
-        StateStore, StoreError, StoreResult, Stored,
+        EntityKind, EntityStore, NoEntity, Persistence, PersistenceBackend, Revision, StateStore,
+        StoreError, StoreResult, Stored,
     };
     use caelumora_model::type_map::TypeKey;
     use serde::{Deserialize, Serialize};

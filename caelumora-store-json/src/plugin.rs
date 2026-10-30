@@ -36,7 +36,8 @@ impl Plugin for JsonStorePlugin {
 mod tests {
     use super::*;
     use caelumora_model::config::BackendConfig;
-    use caelumora_model::store::{Persistence, Policies};
+    use caelumora_model::security::Policies;
+    use caelumora_model::store::Persistence;
     use caelumora_model::user::User;
     use caelumora_runtime::runtime::Services;
     use serde_json::json;
