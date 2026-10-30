@@ -1,6 +1,6 @@
 # 507 — Imports are grouped by chance
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -43,6 +43,22 @@ by hand - which the next mechanical change has to do again.
 - **The change.** The rule and the check first; then the 20 blocks merged in a mechanical change of
   its own, which `cargo fmt` sorts.
 
+## Decision
+
+One block, the re-exports before it: a module's `mod` declarations, then its re-exports
+(`pub use`) as a block of their own, then its private imports in one block without blank lines -
+in a `mod tests` as at the top of a file. Grouping by origin is the more common convention (the
+Rust project's own `rustfmt.toml`, rust-analyzer's style guide), but on stable nothing keeps it, a
+check would have to sort every path by origin, and an import added by a script would still land in
+the wrong group; the Rust style guide leaves the groups to the author. The re-exports stand before
+the imports, as in most modules that have them, next to the `mod` declarations they export;
+rust-analyzer puts them after, as items. The check is `scripts/import-blocks.sh`, which reads a
+module from the indentation rustfmt gives it, and checks the `mod` declarations too, so that the
+rule it is named for is the rule it checks.
+
+Two steps: the rule and the check; then every module the check finds put in order - its blocks
+merged, its re-exports and `mod` declarations moved before its imports.
+
 ## Done when
 
 - The coding guidelines say how imports are grouped, a check of the pre-commit hook keeps it, and
@@ -53,3 +69,8 @@ by hand - which the next mechanical change has to do again.
 - **2026-10-29** — Opened from the findings of the reviews of issues
   [501](501-tests-build-a-personality-field-by-field.md) and
   [505](505-tests-build-sessions-and-users-field-by-field.md).
+- **2026-10-30** — Decided: one block, the re-exports before it; on branch
+  `issue-507-import-blocks`. Step 1: the rule in CODING-GUIDELINES.md, `scripts/import-blocks.sh`
+  and its call in the pre-commit hook. The script finds 37 files out of order: 30 split blocks in
+  21 files, re-exports after the imports in 11, and `mod` declarations after the imports in 14 -
+  among them a `mod tests;` at the bottom of `caelumora-store-postgres/src/lib.rs`.
