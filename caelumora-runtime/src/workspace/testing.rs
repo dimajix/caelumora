@@ -9,8 +9,8 @@ use crate::terminal::{Shell, Terminal};
 use crate::testing::TestRuntime;
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::testing::make_personality;
-use caelumora_model::agent::{Agent, AgentId};
+use caelumora_model::agent::testing::{make_personality, stored_agent};
+use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -21,8 +21,8 @@ use caelumora_model::security::{Grant, SecurityContext};
 use caelumora_model::session::testing::make_session;
 use caelumora_model::session::Session;
 use caelumora_model::store::Persistence;
-use caelumora_model::user::testing::make_user;
-use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_model::user::testing::{make_user, record_users};
+use caelumora_model::value::name::Name;
 use caelumora_model::workspace::Workspace;
 use serde_json::json;
 use std::path::PathBuf;
@@ -72,10 +72,9 @@ pub async fn session_with_workspace() -> WithWorkspace {
         ..Default::default()
     }
     .build();
-    let system = SecurityContext::system();
 
-    let mut owner = make_user("owner");
-    store.entity_stores().unwrap().users.create(&system, &mut owner).await.unwrap();
+    let owner = make_user("owner");
+    record_users(&store.entity_stores().unwrap(), &[&owner]).await;
     let owner = owner.id;
     let as_owner =
         SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -92,14 +91,13 @@ pub async fn session_with_workspace() -> WithWorkspace {
         .await
         .unwrap();
 
-    let mut personality = make_personality("plain");
-    store.entity_stores().unwrap().personalities.create(&system, &mut personality).await.unwrap();
-    let mut agent = Agent::new(
-        ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),
-        personality.id,
+    let agent = stored_agent(
+        &store.entity_stores().unwrap(),
+        "Jonathan",
+        make_personality("plain"),
         ActorId::User(owner),
-    );
-    store.entity_stores().unwrap().agents.create(&system, &mut agent).await.unwrap();
+    )
+    .await;
     let session = make_session("s", owner);
     let mut channel = Channel::build(
         session.id,

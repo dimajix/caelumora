@@ -492,7 +492,7 @@ mod tests {
     use caelumora_model::channel::{Channel, HistoryAccess, JOINED, LEFT};
     use caelumora_model::history::HistoryEntry;
     use caelumora_model::session::testing::make_session;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -615,7 +615,8 @@ mod tests {
         let mut session = make_session("hers", alice.id);
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
         let hr_confidential =
@@ -985,7 +986,8 @@ mod tests {
         let carol_id = ActorId::User(carol.id);
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob, &carol]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob, &carol]).await;
         session.security_attributes = session
             .security_attributes
             .clone()

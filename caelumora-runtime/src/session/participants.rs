@@ -200,22 +200,20 @@ mod tests {
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::{Agent, AgentId};
+    use caelumora_model::agent::testing::{make_personality, stored_agent};
+    use caelumora_model::agent::AgentId;
     use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::{self, Channel, HistoryAccess};
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::group::GroupId;
-    use caelumora_model::scope::Scope;
     use caelumora_model::security::{
         AclEntry, Grant, SecurityAttributes, SecurityContext, Subject,
     };
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{Session, SessionUpdateEvent};
     use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::{User, UserId};
-    use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;
@@ -234,8 +232,8 @@ mod tests {
         let runtime = Arc::clone(manager.runtime());
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &carol]).await;
-        record_users(&manager, &[&bob]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice, &carol]).await;
+        record_users(runtime.entity_stores(), &[&bob]).await;
         let session = create(&manager, &as_user(&alice), session).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         let bob_id = ActorId::User(bob.id);
@@ -314,8 +312,8 @@ mod tests {
             attributes.granting(Subject::Actor(bob_id), Grant::Join)
         };
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
-        record_users(&manager, &[&bob, &carol]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
+        record_users(manager.runtime().entity_stores(), &[&bob, &carol]).await;
         session.security_attributes = invited(session.security_attributes);
         let channel = Channel {
             security_attributes: invited(main_channel(&session).security_attributes),
@@ -349,20 +347,6 @@ mod tests {
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
-    /// An agent of a personality of its own, stored, owned by nobody here.
-    async fn stored_agent(runtime: &RuntimeManager) -> Agent {
-        let system = SecurityContext::system();
-        let mut personality = make_personality("plain");
-        runtime.entity_stores().personalities.create(&system, &mut personality).await.unwrap();
-        let mut helper = Agent::new(
-            ScopedName::new("helper", Scope::GlobalScope).unwrap(),
-            personality.id,
-            ActorId::User(UserId::new()),
-        );
-        runtime.entity_stores().agents.create(&system, &mut helper).await.unwrap();
-        helper
-    }
-
     /// Deletes `agent` and waits until its actor stopped in `channel`: the
     /// session heard of the deletion.
     async fn deleted_stops_in(
@@ -386,7 +370,13 @@ mod tests {
     async fn an_agent_taken_in_later_is_followed_as_one_taken_in_from_the_start() {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
-        let helper = stored_agent(&runtime).await;
+        let helper = stored_agent(
+            runtime.entity_stores(),
+            "helper",
+            make_personality("plain"),
+            ActorId::User(UserId::new()),
+        )
+        .await;
         let actor = ActorId::Agent(helper.id);
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let main = Arc::clone(&session.channels()[0]);
@@ -417,7 +407,13 @@ mod tests {
     async fn an_agent_taken_in_while_events_were_lost_is_followed() {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
-        let helper = stored_agent(&runtime).await;
+        let helper = stored_agent(
+            runtime.entity_stores(),
+            "helper",
+            make_personality("plain"),
+            ActorId::User(UserId::new()),
+        )
+        .await;
         let actor = ActorId::Agent(helper.id);
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let main = Arc::clone(&session.channels()[0]);

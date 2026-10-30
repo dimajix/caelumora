@@ -1024,7 +1024,7 @@ mod tests {
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
     use caelumora_model::actor::Rejection;
-    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
     use caelumora_model::approval::ToolMatcher;
     use caelumora_model::channel::testing::{founded, main_channel};
@@ -1039,9 +1039,9 @@ mod tests {
     use caelumora_model::snapshot::Detail;
     use caelumora_model::store::Persistence;
     use caelumora_model::turn::GivenUpReason;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserId;
-    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
     use caelumora_model::value::text::{Briefing, Summary};
     use caelumora_model::work::TurnId;
@@ -1101,27 +1101,13 @@ mod tests {
     }
 
     async fn an_agent_of_kind(store: &Persistence, owner: ActorId, kind: PersonalityKind) -> Agent {
-        let mut personality = Personality { kind, ..make_personality("plain") };
-        store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .create(&SecurityContext::system(), &mut personality)
-            .await
-            .unwrap();
-        let mut agent = Agent::new(
-            ScopedName::new("Helper", Scope::GlobalScope).unwrap(),
-            personality.id,
+        stored_agent(
+            &store.entity_stores().unwrap(),
+            "Helper",
+            Personality { kind, ..make_personality("plain") },
             owner,
-        );
-        store
-            .entity_stores()
-            .unwrap()
-            .agents
-            .create(&SecurityContext::system(), &mut agent)
-            .await
-            .unwrap();
-        agent
+        )
+        .await
     }
 
     #[tokio::test]
@@ -1133,7 +1119,7 @@ mod tests {
         let remote =
             an_agent_of_kind(&store, ActorId::User(alice.id), PersonalityKind::External).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
         let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
@@ -1234,7 +1220,8 @@ mod tests {
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
 
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let main = main_channel(&session);
         let running =
@@ -1371,7 +1358,7 @@ mod tests {
         let alice = make_user("Alice Example");
         let gone = UserId::new();
         let mut session = make_session("s", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         let mut channel = main_channel(&session);
         channel.participants.push(Participant::User(gone));
         channel.internal_actors.push(InternalActor::Approver(Approver::new(ApprovalStrategy::Any)));
@@ -1412,7 +1399,7 @@ mod tests {
         let (_, manager) = owned_runtime(Default::default());
         let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         (session.summary, session.briefing) = (
             Some(Summary::new("Release 2.0").unwrap()),
             Some(Briefing::new("Dates are in UTC.").unwrap()),
@@ -1452,29 +1439,19 @@ mod tests {
 
         let (store, manager) = owned_runtime(Default::default());
         let system = SecurityContext::system();
-        let (alice, bob, mut carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
+        let stores = store.entity_stores().unwrap();
+        let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         // Carol owns the agent but takes no part in the session.
-        store.entity_stores().unwrap().users.create(&system, &mut carol).await.unwrap();
-        let remote =
-            an_agent_of_kind(&store, ActorId::User(carol.id), PersonalityKind::External).await;
-        let mut personality = store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .get(&system, remote.personality_id)
-            .await
-            .unwrap();
-        personality.introduction =
-            Some(Introduction::new("Answers questions about the weather.").unwrap());
-        store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .update(&system, &mut personality)
-            .await
-            .unwrap();
+        record_users(&stores, &[&carol]).await;
+        let introduction = Introduction::new("Answers questions about the weather.").unwrap();
+        let personality = Personality {
+            kind: PersonalityKind::External,
+            introduction: Some(introduction),
+            ..make_personality("plain")
+        };
+        let remote = stored_agent(&stores, "Helper", personality, ActorId::User(carol.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants = record_users(&stores, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
         store
@@ -1566,7 +1543,8 @@ mod tests {
         let carol = make_user("carol");
         let dave = make_user("dave");
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob, &carol, &dave]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob, &carol, &dave]).await;
         let mut channel = main_channel(&session);
         channel
             .participants
@@ -1727,7 +1705,8 @@ mod tests {
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session =
@@ -1913,7 +1892,8 @@ mod tests {
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(&store, ActorId::User(bob.id)).await;
         let mut session = make_session("shared", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
         let team = like(&template, "team");
@@ -2006,7 +1986,8 @@ mod tests {
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
         session.channels.clear();
@@ -2072,7 +2053,7 @@ mod tests {
         let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let system = SecurityContext::system();
@@ -2148,7 +2129,7 @@ mod tests {
         let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
@@ -2219,7 +2200,7 @@ mod tests {
         let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
@@ -2329,7 +2310,7 @@ mod tests {
         let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
         session.channels.clear();
@@ -2551,7 +2532,7 @@ mod tests {
         let alice = make_user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         // The agent took part, said something, and was removed. Beside it, a
         // channel deleted later.
         let channel = main_channel(&session);
@@ -2653,7 +2634,7 @@ mod tests {
         let (store, manager) = owned_runtime(ConfidentialityRules::default().with_roles(roles));
         let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         let main = Channel {
             classification: Classification::general(Confidentiality::Internal),
             ..main_channel(&session)
@@ -2703,7 +2684,8 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         let channel = main_channel(&session);
         let side = like(&channel, "side");
         let session = stored(&manager, session, &mut [channel.clone(), side.clone()]).await;
@@ -2755,7 +2737,8 @@ mod tests {
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         // Both took part and were removed by alice, neither said anything.
         let mut channel = main_channel(&session);
@@ -2819,7 +2802,8 @@ mod tests {
         let mut session = make_session("hers", alice.id);
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
@@ -2910,7 +2894,7 @@ mod tests {
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
 
         let mut hers = make_session("hers", alice.id);
-        hers.participants = record_users(&manager, &[&alice]).await;
+        hers.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         hers.privacy = PrivacyConfig::SameOwner;
         let hers = create(&manager, &alice_ctx, hers).await.unwrap();
         let theirs = make_session("theirs", carol.id);
@@ -2972,7 +2956,7 @@ mod tests {
         let alice_id = ActorId::User(alice.id);
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&manager, &[&alice]).await;
+        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
@@ -3078,21 +3062,14 @@ mod tests {
         let system = SecurityContext::system();
 
         let alice = make_user("alice");
-        let participants = record_users(&manager, &[&alice]).await;
-        let mut personality = make_personality("thinker");
-        store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .create(&system, &mut personality)
-            .await
-            .unwrap();
-        let mut thinker = Agent::new(
-            ScopedName::new("thinker", Scope::GlobalScope).unwrap(),
-            personality.id,
+        let participants = record_users(runtime.entity_stores(), &[&alice]).await;
+        let thinker = stored_agent(
+            runtime.entity_stores(),
+            "thinker",
+            make_personality("thinker"),
             ActorId::User(alice.id),
-        );
-        store.entity_stores().unwrap().agents.create(&system, &mut thinker).await.unwrap();
+        )
+        .await;
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx =

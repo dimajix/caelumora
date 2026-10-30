@@ -69,3 +69,10 @@ never stored - is written nowhere but in the one controller that keeps it.
   by `StoreResultExt::created`, as an outdated write by `written`, wherever it was matched by
   hand. `UserManager::find_user`, which nothing called, is gone. PERMISSION-CHECKS.md names
   `CreateUserProfile` for the first change of a profile.
+- **2026-10-30** — Step 4 done, without a change of behaviour: the tests store an agent of a
+  personality of its own through `agent::testing::stored_agent`, and their users through
+  `user::testing::record_users`, which moved from the runtime into the model so that the tests
+  of a channel without a session manager share it - issue
+  [315](315-view-and-session-test-fixtures.md) had it take the manager. `alice_and_an_agent`
+  takes the agent's name and personality, and the tests of an external agent build their channel
+  on it.

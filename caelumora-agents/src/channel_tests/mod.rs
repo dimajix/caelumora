@@ -19,6 +19,7 @@ use crate::turn::Turn;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::actor::{EventContext, RetryTarget};
+use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::{AgentId, HearsDuringTurn, Personality};
 use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::command::{Command, CommandOutput};
@@ -184,22 +185,9 @@ async fn agent_channel_hearing(
     components: ComponentConfig,
 ) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     let store = Persistence::in_memory();
-    let (context, agent, alice) = alice_and_an_agent(&store, components).await;
-    let system = SecurityContext::system();
-    let personalities = &store.entity_stores().unwrap().personalities;
-    let personality_id = store
-        .entity_stores()
-        .unwrap()
-        .agents
-        .get(&system, agent)
-        .await
-        .expect("stored")
-        .personality_id;
-    let mut personality = Personality {
-        hears_during_turn: hears,
-        ..personalities.get(&system, personality_id).await.expect("stored")
-    };
-    personalities.update(&system, &mut personality).await.expect("stored");
+    let personality =
+        Personality { hears_during_turn: hears, components, ..make_personality("plain") };
+    let (context, agent, alice) = alice_and_an_agent(&store, "helper", personality).await;
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
     let mut registry = test_registry(&store);

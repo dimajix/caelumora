@@ -180,7 +180,7 @@ mod tests {
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
@@ -318,11 +318,9 @@ mod tests {
                 .build();
         let system = SecurityContext::system();
 
-        let mut kaya = make_user("Kaya");
-        let mut bob = make_user("Bob");
-        for user in [&mut kaya, &mut bob] {
-            store.entity_stores().unwrap().users.create(&system, user).await.unwrap();
-        }
+        let kaya = make_user("Kaya");
+        let bob = make_user("Bob");
+        record_users(&store.entity_stores().unwrap(), &[&kaya, &bob]).await;
         store
             .entity_stores()
             .unwrap()

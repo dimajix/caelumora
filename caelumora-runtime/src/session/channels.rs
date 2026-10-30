@@ -674,7 +674,7 @@ mod tests {
     use caelumora_model::command::HELP_COMMAND_KIND;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::session::testing::make_session;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
 
     use crate::channel::ChannelLoop;
 
@@ -1162,7 +1162,8 @@ mod tests {
             .security_attributes
             .clone()
             .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let main = session.channel_named("main").unwrap().id();
 
@@ -1192,7 +1193,8 @@ mod tests {
             .security_attributes
             .clone()
             .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
-        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants =
+            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
         let session = create(&manager, &as_user(alice.id), session).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
         let hers = session.create_channel(&as_user(alice.id), spec("hers", vec![])).await.unwrap();

@@ -32,7 +32,7 @@ use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::Detail;
 use caelumora_model::store::{EntityKind, StoreError, Stored};
-use caelumora_model::user::testing::make_user;
+use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::user::{UserId, UserProfile};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, Introduction};
@@ -865,8 +865,8 @@ async fn an_agent_is_taken_in_only_by_who_may_read_it_and_only_if_it_may_run() {
 #[tokio::test]
 async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
     let world = World::new().await;
-    let mut dave = make_user("dave");
-    world.runtime.entity_stores().users.create(&World::system(), &mut dave).await.unwrap();
+    let dave = make_user("dave");
+    record_users(world.runtime.entity_stores(), &[&dave]).await;
     let mut limited = Personality {
         roles: Some(vec![]),
         ..world.personality("limited", Some(world.alice), &[]).await
@@ -911,8 +911,8 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
 async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     use caelumora_model::snapshot::CandidateRefusal;
     let world = World::new().await;
-    let mut dave = make_user("dave");
-    world.runtime.entity_stores().users.create(&World::system(), &mut dave).await.unwrap();
+    let dave = make_user("dave");
+    record_users(world.runtime.entity_stores(), &[&dave]).await;
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
     let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
@@ -2393,8 +2393,8 @@ async fn creating_a_channel_needs_owning_its_session() {
 #[tokio::test]
 async fn a_founder_who_is_not_cleared_leaves_no_channel() {
     let world = World::new().await;
-    let mut dave = make_user("dave");
-    world.runtime.entity_stores().users.create(&World::system(), &mut dave).await.unwrap();
+    let dave = make_user("dave");
+    record_users(world.runtime.entity_stores(), &[&dave]).await;
     world.access_policy.names.lock().unwrap().insert(ActorId::User(dave.id), "dave".to_string());
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);

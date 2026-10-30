@@ -11,8 +11,10 @@ use crate::testing::test_registry;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Envelope};
-use caelumora_model::agent::testing::make_personality;
-use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
+use caelumora_model::agent::testing::{make_personality, stored_agent};
+use caelumora_model::agent::{
+    AgentChannelState, AgentId, Personality, PersonalityKind, RetryRefused,
+};
 use caelumora_model::chain::Position;
 use caelumora_model::channel::testing::{founded, make_channel};
 use caelumora_model::channel::{Channel, HistoryAccess};
@@ -26,8 +28,7 @@ use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::testing::{bare_session, make_session};
 use caelumora_model::session::{ChannelId, Participant, SessionId};
 use caelumora_model::store::Persistence;
-use caelumora_model::user::testing::make_user;
-use caelumora_model::value::name::ScopedName;
+use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::work::Work;
 use caelumora_runtime::actor::user::ChannelWatch;
 use caelumora_runtime::channel::ChannelLoop;
@@ -80,42 +81,10 @@ async fn external_channel(
     components: ComponentConfig,
     stored: impl FnOnce(AgentId) -> Option<AgentChannelState>,
 ) -> Result<(Arc<ChannelLoop>, SecurityContext, AgentId, UserId)> {
-    use caelumora_model::agent::{Agent, Personality, PersonalityKind};
-    use caelumora_model::scope::Scope;
-
     let store = Persistence::in_memory();
-    let mut personality =
+    let personality =
         Personality { kind: PersonalityKind::External, components, ..make_personality("remote") };
-    store
-        .entity_stores()
-        .unwrap()
-        .personalities
-        .create(&SecurityContext::system(), &mut personality)
-        .await
-        .unwrap();
-    let mut alice = make_user("alice");
-    let context =
-        SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let mut agent = Agent::new(
-        ScopedName::new("hermes", Scope::GlobalScope).unwrap(),
-        personality.id,
-        context.initiator_id,
-    );
-    let agent_id = agent.id;
-    store
-        .entity_stores()
-        .unwrap()
-        .users
-        .create(&SecurityContext::system(), &mut alice)
-        .await
-        .unwrap();
-    store
-        .entity_stores()
-        .unwrap()
-        .agents
-        .create(&SecurityContext::system(), &mut agent)
-        .await
-        .unwrap();
+    let (context, agent_id, alice) = alice_and_an_agent(&store, "hermes", personality).await;
 
     let mut registry = test_registry(&store);
     registry.register(
@@ -140,8 +109,8 @@ async fn external_channel(
     }
     .build();
     let mut channel = Channel {
-        participants: vec![Participant::User(alice.id), Participant::Agent(agent_id)],
-        security_attributes: SecurityAttributes::owned_by(ActorId::User(alice.id)),
+        participants: vec![Participant::User(alice), Participant::Agent(agent_id)],
+        security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)),
         ..make_channel(SessionId::new(), "main")
     };
     runtime
@@ -171,7 +140,7 @@ async fn external_channel(
         .unwrap();
     let channel =
         ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, session, channel)).await?;
-    Ok((channel, context, agent_id, alice.id))
+    Ok((channel, context, agent_id, alice))
 }
 
 /// Registers `HeardCount` as the kind `test_heard`.
@@ -1942,8 +1911,6 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_since() {
     use crate::external::ExternalEvent;
-    use caelumora_model::agent::{Agent, Personality, PersonalityKind};
-    use caelumora_model::scope::Scope;
 
     let answer = |text: &str| {
         vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)]
@@ -1979,27 +1946,25 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     }
     .build();
     let manager = SessionManager::new(Arc::clone(&runtime));
-    let system = SecurityContext::system();
 
     let (alice, bob) = (make_user("alice"), make_user("bob"));
-    let participants = record_users(&manager, &[&alice, &bob]).await;
+    let participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
     let mut roster =
         ComponentDescriptor::new("participants", "channel_participants_prompt_provider");
     roster.params = serde_json::json!({ "changes_only": true });
-    let mut personality = Personality {
-        kind: PersonalityKind::External,
-        components: ComponentConfig {
-            component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), roster],
+    let hermes = stored_agent(
+        runtime.entity_stores(),
+        "hermes",
+        Personality {
+            kind: PersonalityKind::External,
+            components: ComponentConfig {
+                component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), roster],
+            },
+            ..make_personality("remote")
         },
-        ..make_personality("remote")
-    };
-    store.entity_stores().unwrap().personalities.create(&system, &mut personality).await.unwrap();
-    let mut hermes = Agent::new(
-        ScopedName::new("hermes", Scope::GlobalScope).unwrap(),
-        personality.id,
         ActorId::User(alice.id),
-    );
-    store.entity_stores().unwrap().agents.create(&system, &mut hermes).await.unwrap();
+    )
+    .await;
 
     let alice_ctx =
         SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());

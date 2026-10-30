@@ -961,7 +961,7 @@ mod tests {
     use caelumora_model::actor::EventContext;
     use caelumora_model::channel::testing::make_channel;
     use caelumora_model::session::testing::bare_session;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use std::iter;
     use std::time::Duration;
     use tokio::time;
@@ -972,7 +972,7 @@ mod tests {
         let runtime = test_runtime();
         let session_id = SessionId::new();
         let channel = make_channel(session_id, "main");
-        let mut user = make_user("alice");
+        let user = make_user("alice");
         let channel_runtime = ChannelRuntime::outside_a_session(
             Arc::clone(&runtime),
             bare_session(session_id),
@@ -980,7 +980,7 @@ mod tests {
         );
         let channel_loop = ChannelLoop::new(channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id));
-        runtime.entity_stores().users.create(&SecurityContext::system(), &mut user).await.unwrap();
+        record_users(runtime.entity_stores(), &[&user]).await;
         let actor = UserActor::new(
             runtime.controller_manager().user_controller(user.id).await.unwrap(),
             actor_runtime,

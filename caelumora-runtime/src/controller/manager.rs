@@ -433,7 +433,7 @@ mod tests {
     use super::*;
     use crate::backend::StorageGone;
     use crate::workspace::WorkspaceError;
-    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::approval::ApproverId;
     use caelumora_model::confidentiality::ConfidentialityRules;
@@ -473,27 +473,13 @@ mod tests {
     }
 
     async fn agent_in(store: &Persistence) -> Agent {
-        let mut personality = make_personality("plain");
-        store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .create(&SecurityContext::system(), &mut personality)
-            .await
-            .unwrap();
-        let mut agent = Agent::new(
-            ScopedName::new("helper", Scope::GlobalScope).unwrap(),
-            personality.id,
+        stored_agent(
+            &store.entity_stores().unwrap(),
+            "helper",
+            make_personality("plain"),
             ActorId::User(UserId::new()),
-        );
-        store
-            .entity_stores()
-            .unwrap()
-            .agents
-            .create(&SecurityContext::system(), &mut agent)
-            .await
-            .unwrap();
-        agent
+        )
+        .await
     }
 
     async fn user_in(store: &Persistence) -> User {

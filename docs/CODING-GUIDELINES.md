@@ -520,8 +520,9 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in
     (`Personality { kind, ..make_personality("remote") }`), so that a new field of the kind changes
     one place and every test says what is particular about its document. These modules are the
-    model's, so that its own tests reach them too; the runtime's `testing` modules build what runs
-    and stores - a runtime, a running or a stored session.
+    model's, so that its own tests reach them too; so is what stores documents in `EntityStores`
+    and needs nothing of the runtime - `stored_agent`, `record_users`. The runtime's `testing`
+    modules build what runs and stores - a runtime, a running or a stored session.
 *   **A runtime in tests:** a test builds its runtime with `testing::TestRuntime` (issue 375), whose
     parts all have defaults - a new memory store, no policy, the default rules, the default
     configuration, the runtime's component kinds and agents that answer "ok" - and names only those

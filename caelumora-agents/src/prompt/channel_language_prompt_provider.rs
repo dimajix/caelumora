@@ -139,17 +139,16 @@ mod tests {
     use crate::testing::{self, TestAgents};
     use crate::turn::Turn;
     use caelumora_model::actor::{ActorId, EventContext};
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::{Agent, AgentChannelState, AgentId};
+    use caelumora_model::agent::testing::{make_personality, stored_agent};
+    use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::Persistence;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserId;
-    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::session::testing::actor_runtime_in;
@@ -217,22 +216,15 @@ mod tests {
                 .build();
         let system = SecurityContext::system();
 
-        let mut personality = make_personality("plain");
-        store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .create(&system, &mut personality)
-            .await
-            .unwrap();
-        let mut agent = Agent::new(
-            ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(),
-            personality.id,
+        let agent = stored_agent(
+            &store.entity_stores().unwrap(),
+            "Jonathan",
+            make_personality("plain"),
             ActorId::User(UserId::new()),
-        );
-        store.entity_stores().unwrap().agents.create(&system, &mut agent).await.unwrap();
-        let mut owner = make_user("owner");
-        store.entity_stores().unwrap().users.create(&system, &mut owner).await.unwrap();
+        )
+        .await;
+        let owner = make_user("owner");
+        record_users(&store.entity_stores().unwrap(), &[&owner]).await;
         let as_owner =
             SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
         let session = make_session("s", owner.id);

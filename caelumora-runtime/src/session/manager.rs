@@ -1124,7 +1124,7 @@ mod tests {
     use anyhow::Result;
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::{ActorEvent, ActorState, Envelope};
-    use caelumora_model::agent::testing::make_personality;
+    use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::Agent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::approval::ApprovalStrategy;
@@ -1154,7 +1154,7 @@ mod tests {
         ChannelTemplate, InternalActorTemplate, SessionTemplate, SessionTemplateId,
     };
     use caelumora_model::turn::{GivenUpReason, TurnState};
-    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserProfile;
     use caelumora_model::user::{User, UserId};
     use caelumora_model::value::language::Language;
@@ -1379,14 +1379,13 @@ mod tests {
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let agents = runtime.agent_manager();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
-        let mut personality = make_personality("plain");
-        runtime.entity_stores().personalities.create(&system, &mut personality).await.unwrap();
-        let mut helper = Agent::new(
-            ScopedName::new("helper", Scope::GlobalScope).unwrap(),
-            personality.id,
+        let helper = stored_agent(
+            runtime.entity_stores(),
+            "helper",
+            make_personality("plain"),
             ActorId::User(UserId::new()),
-        );
-        runtime.entity_stores().agents.create(&system, &mut helper).await.unwrap();
+        )
+        .await;
         let actor = ActorId::Agent(helper.id);
 
         // In a running session's channel, and in a stopped one's.
@@ -1460,7 +1459,7 @@ mod tests {
         // Its name taken meanwhile: not restored.
         let mut again = Agent::new(
             ScopedName::new("helper", Scope::GlobalScope).unwrap(),
-            personality.id,
+            helper.personality_id,
             ActorId::User(UserId::new()),
         );
         runtime.entity_stores().agents.create(&system, &mut again).await.unwrap();
@@ -1490,14 +1489,13 @@ mod tests {
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
-        let mut personality = make_personality("plain");
-        runtime.entity_stores().personalities.create(&system, &mut personality).await.unwrap();
-        let mut helper = Agent::new(
-            ScopedName::new("helper", Scope::GlobalScope).unwrap(),
-            personality.id,
+        let helper = stored_agent(
+            runtime.entity_stores(),
+            "helper",
+            make_personality("plain"),
             ActorId::User(UserId::new()),
-        );
-        runtime.entity_stores().agents.create(&system, &mut helper).await.unwrap();
+        )
+        .await;
         let actor = ActorId::Agent(helper.id);
         let mut session = make_session("running", UserId::new());
         session.participants = vec![Participant::Agent(helper.id)];
@@ -1531,8 +1529,7 @@ mod tests {
     async fn pairing(runtime: &RuntimeManager) -> (UserId, SessionTemplate) {
         let system = SecurityContext::system();
         let owner = UserId::new();
-        let mut alice = User { id: owner, ..make_user("alice") };
-        runtime.entity_stores().users.create(&system, &mut alice).await.unwrap();
+        record_users(runtime.entity_stores(), &[&User { id: owner, ..make_user("alice") }]).await;
         let mut template = SessionTemplate {
             channels: vec![ChannelTemplate {
                 components: moderation_components(None, Some("broadcast_policy")),
@@ -2282,23 +2279,15 @@ mod tests {
         }
         .build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        let system = SecurityContext::system();
         let alice = make_user("alice");
-        let participants = record_users(&manager, &[&alice]).await;
-        let mut personality = make_personality("thinker");
-        store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .create(&system, &mut personality)
-            .await
-            .unwrap();
-        let mut thinker = Agent::new(
-            ScopedName::new("thinker", Scope::GlobalScope).unwrap(),
-            personality.id,
+        let participants = record_users(runtime.entity_stores(), &[&alice]).await;
+        let thinker = stored_agent(
+            runtime.entity_stores(),
+            "thinker",
+            make_personality("thinker"),
             ActorId::User(alice.id),
-        );
-        store.entity_stores().unwrap().agents.create(&system, &mut thinker).await.unwrap();
+        )
+        .await;
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx =

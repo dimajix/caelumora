@@ -68,7 +68,7 @@ use caelumora_model::template::{
     ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate,
     SessionTemplateId,
 };
-use caelumora_model::user::testing::make_user;
+use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
@@ -430,8 +430,8 @@ impl World {
     }
 
     pub async fn user(&self, name: &str) -> UserId {
-        let mut user = User { roles: vec![*STAFF], ..make_user(name) };
-        self.runtime.entity_stores().users.create(&Self::system(), &mut user).await.unwrap();
+        let user = User { roles: vec![*STAFF], ..make_user(name) };
+        record_users(self.runtime.entity_stores(), &[&user]).await;
         self.access_policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id
     }

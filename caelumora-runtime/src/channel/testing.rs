@@ -17,13 +17,12 @@ use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::agent::testing::make_personality;
-use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::agent::testing::stored_agent;
+use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::chain::Position;
 use caelumora_model::channel::testing::{founded, make_channel};
 use caelumora_model::channel::{Channel, InternalActor, Participant};
-use caelumora_model::component::ComponentConfig;
 use caelumora_model::history::testing::{items_of, messages_of};
 use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::Message;
@@ -33,9 +32,8 @@ use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
 use caelumora_model::store::StoreResult;
-use caelumora_model::user::testing::make_user;
+use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::user::UserId;
-use caelumora_model::value::name::ScopedName;
 use caelumora_model::work::TurnId;
 use std::ops::Range;
 use std::sync::Arc;
@@ -75,45 +73,18 @@ pub struct Stuck {
     pub running: JoinHandle<Result<()>>,
 }
 
-/// Alice and her agent `helper` of a personality with `components`,
-/// stored in `store`: her context, the agent and her.
+/// Alice and her agent `name` of `personality`, stored in `store`: her context, the agent and her.
 pub async fn alice_and_an_agent(
     store: &Persistence,
-    components: ComponentConfig,
+    name: &str,
+    personality: Personality,
 ) -> (SecurityContext, AgentId, UserId) {
-    use caelumora_model::agent::{Agent, Personality};
-    use caelumora_model::scope::Scope;
-
-    let mut personality = Personality { components, ..make_personality("plain") };
-    store
-        .entity_stores()
-        .unwrap()
-        .personalities
-        .create(&SecurityContext::system(), &mut personality)
-        .await
-        .unwrap();
-    let mut alice = make_user("alice");
+    let stores = store.entity_stores().unwrap();
+    let alice = make_user("alice");
+    record_users(&stores, &[&alice]).await;
     let context =
         SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let mut agent = Agent::new(
-        ScopedName::new("helper", Scope::GlobalScope).unwrap(),
-        personality.id,
-        context.initiator_id,
-    );
-    store
-        .entity_stores()
-        .unwrap()
-        .users
-        .create(&SecurityContext::system(), &mut alice)
-        .await
-        .unwrap();
-    store
-        .entity_stores()
-        .unwrap()
-        .agents
-        .create(&SecurityContext::system(), &mut agent)
-        .await
-        .unwrap();
+    let agent = stored_agent(&stores, name, personality, context.initiator_id).await;
     (context, agent.id, alice.id)
 }
 

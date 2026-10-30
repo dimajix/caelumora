@@ -19,6 +19,7 @@ use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::moderator::{Moderator, Routing};
+use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::AgentId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
 use caelumora_model::history::Audience;
@@ -32,6 +33,7 @@ mod commands;
 pub(super) use crate::channel::testing::*;
 use caelumora_model::channel::testing::founded;
 use caelumora_model::session::testing::bare_session;
+use caelumora_model::user::testing::record_users;
 
 /// A channel of `users`, who are recorded in the store its actors are
 /// read from.
@@ -40,17 +42,7 @@ pub(super) async fn channel_with(
     access_policy: Arc<dyn AccessPolicy>,
 ) -> Arc<ChannelLoop> {
     let store = Persistence::in_memory();
-    let mut participants = Vec::new();
-    for user in users {
-        store
-            .entity_stores()
-            .unwrap()
-            .users
-            .create(&SecurityContext::system(), &mut (*user).clone())
-            .await
-            .unwrap();
-        participants.push(Participant::User(user.id));
-    }
+    let participants = record_users(&store.entity_stores().unwrap(), users).await;
     channel_of(store, participants, access_policy).await
 }
 
@@ -190,17 +182,7 @@ pub(super) async fn channel_moderated_by(
 ) -> Arc<ChannelLoop> {
     use crate::component::{ComponentFacets, ComponentKind};
     let store = Persistence::in_memory();
-    let mut participants = Vec::new();
-    for user in users {
-        store
-            .entity_stores()
-            .unwrap()
-            .users
-            .create(&SecurityContext::system(), &mut (*user).clone())
-            .await
-            .unwrap();
-        participants.push(Participant::User(user.id));
-    }
+    let participants = record_users(&store.entity_stores().unwrap(), users).await;
     let mut registry = test_registry(&store);
     registry.register(
         ComponentKind::new("test_moderator").provides::<dyn Moderator>(),
@@ -262,7 +244,8 @@ pub(super) async fn scripted_channel(
     script: Script,
 ) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     let store = Persistence::in_memory();
-    let (context, agent, alice) = alice_and_an_agent(&store, ComponentConfig::default()).await;
+    let (context, agent, alice) =
+        alice_and_an_agent(&store, "helper", make_personality("plain")).await;
     let runtime =
         TestRuntime { store, plugins: vec![&ScriptedAgents(script)], ..Default::default() }.build();
     (channel_of_alice_and(runtime, alice, agent).await, context, agent, alice)
