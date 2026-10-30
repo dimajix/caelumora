@@ -238,7 +238,7 @@ impl ProjectManager {
 
     /// Removes what lies behind `project` once its purge is begun, in the runtime's name: the
     /// sessions deleted that lie in it, what lies in its scope and the group of its members. What a
-    /// purge that failed before removed already is passed over.
+    /// purge that failed before removed already, or another purged meanwhile, is passed over.
     ///
     /// # Errors
     /// `Session` if purging a session failed, or whatever the store reports.
@@ -283,12 +283,13 @@ impl ProjectManager {
         let mut kept = 0;
         for session in sessions {
             match self.sessions.delete_with(ctx, session.id, removal).await {
-                Ok(_) => {}
+                Ok(true) => {}
+                Ok(false) => kept += 1,
                 Err(e)
                     if is_forbidden(&e)
                         || matches!(
                             e.downcast_ref::<SessionError>(),
-                            Some(SessionError::NotFound(_) | SessionError::ScopeNotEmpty(_))
+                            Some(SessionError::ScopeNotEmpty(_))
                         ) =>
                 {
                     kept += 1

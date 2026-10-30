@@ -197,9 +197,10 @@ async fn a_stranger_finds_nothing_of_a_session() {
         &world.manager.open(&carol, session.id()).await.expect_err("not hers to open")
     ));
     assert!(not_found(&world.manager.stop(&carol, session.id()).await.expect_err("nor to stop")));
-    assert!(not_found(
-        &world.manager.delete(&carol, session.id()).await.expect_err("nor to delete")
-    ));
+    assert!(
+        !world.manager.delete(&carol, session.id()).await.unwrap(),
+        "nor to delete (issue 510)"
+    );
     let views = world.manager.views(Viewer::new(carol));
     assert!(matches!(views.session(session.id()).await, Err(ViewError::SessionNotFound(_))));
     assert!(views.sessions().await.unwrap().is_empty(), "nor listed");
@@ -1509,7 +1510,7 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
     // A channel is not marked with its session (issue 458): its session is asked too, in S,
     // after the channel - its owner reads the channel still, and learns that the session is gone.
     let alice = World::as_user(world.alice);
-    world.manager.delete(&World::system(), session.id()).await.expect("with his agents");
+    assert!(world.manager.delete(&World::system(), session.id()).await.expect("with his agents"));
     let (refused, asked) = world.asked(agents.create(&alice, "late", in_main, plain.id)).await;
     assert!(
         matches!(refused, Err(AgentError::Store(StoreError::NotFound { entity: "session", .. }))),
@@ -1542,7 +1543,7 @@ async fn a_workspace_is_not_put_into_a_deleted_session() {
         .expect("hers, in her session");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap(), "deleted alone first");
     world.manager.stop(&alice, session.id()).await.unwrap();
-    world.manager.delete(&alice, session.id()).await.unwrap();
+    assert!(world.manager.delete(&alice, session.id()).await.unwrap());
 
     let refused = workspaces.restore(&alice, docs.id).await;
     assert!(matches!(refused, Err(WorkspaceError::NotFound(_))), "not restored: {refused:?}");
@@ -1659,8 +1660,9 @@ async fn deleting_a_session_needs_owning_it() {
         ActorId::User(world.bob),
     );
     world.runtime.entity_stores().agents.create(&World::system(), &mut bobs).await.unwrap();
-    let (_, asked) =
+    let (deleted, asked) =
         world.asked(world.manager.delete(&World::as_user(world.carol), session.id())).await;
+    assert!(!deleted.unwrap(), "nothing she could see");
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
     let (_, asked) =
         world.asked(world.manager.delete(&World::as_user(world.bob), session.id())).await;
@@ -1983,7 +1985,7 @@ async fn a_project_is_seen_by_who_reads_it() {
     );
 
     world.projects.delete(&alice, project.id).await.unwrap();
-    world.manager.delete(&alice, session.id()).await.unwrap();
+    assert!(world.manager.delete(&alice, session.id()).await.unwrap());
     let deleted: Vec<ProjectId> =
         views(&alice).deleted_projects().await.unwrap().iter().map(|d| d.id).collect();
     assert_eq!(
@@ -2309,11 +2311,11 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
         .create(&World::system(), &mut bundle)
         .await
         .unwrap();
-    world
+    assert!(world
         .manager
         .delete(&World::system(), session.id())
         .await
-        .expect("the system's to delete, all of it");
+        .expect("the system's to delete, all of it"));
 
     let (restored, asked) = world.asked(world.manager.restore(&alice, session.id())).await;
     restored.expect("restored all the same");
@@ -2827,7 +2829,7 @@ async fn deleting_a_channel_needs_owning_its_session() {
 async fn restoring_a_session_needs_owning_it() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    world.manager.delete(&World::as_user(world.alice), session.id()).await.unwrap();
+    assert!(world.manager.delete(&World::as_user(world.alice), session.id()).await.unwrap());
     let (_, asked) =
         world.asked(world.manager.restore(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: ReadDeletedSession(alice's) no"]));
@@ -2859,9 +2861,10 @@ async fn restoring_a_session_needs_owning_it() {
 async fn purging_a_session_is_not_its_owners() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    world.manager.delete(&World::as_user(world.alice), session.id()).await.unwrap();
-    let (_, asked) =
+    assert!(world.manager.delete(&World::as_user(world.alice), session.id()).await.unwrap());
+    let (purged, asked) =
         world.asked(world.manager.purge(&World::as_user(world.bob), session.id())).await;
+    assert!(!purged.unwrap(), "nothing he could see (issue 510)");
     assert_eq!(asked, checks(&["bob: ReadDeletedSession(alice's) no"]));
     let (refused, asked) =
         world.asked(world.manager.purge(&World::as_user(world.alice), session.id())).await;
@@ -4199,7 +4202,7 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
         .event_bus()
         .subscribe(World::as_user(world.bob), vec![SubscriptionTopic::All]);
     world.manager.stop(&alice, session_id).await.unwrap();
-    world.manager.delete(&alice, session_id).await.unwrap();
+    assert!(world.manager.delete(&alice, session_id).await.unwrap());
     hears(
         &mut bobs,
         [
@@ -4328,8 +4331,8 @@ async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored()
     );
 
     world.manager.stop(&alice, session_id).await.unwrap();
-    world.manager.delete(&alice, session_id).await.unwrap();
-    world.manager.purge(&system, session_id).await.unwrap();
+    assert!(world.manager.delete(&alice, session_id).await.unwrap());
+    assert!(world.manager.purge(&system, session_id).await.unwrap());
     controller.update_access(&alice, renamed.security_attributes.acl.clone()).await.unwrap();
     let kept = Arc::clone(&controller.load());
     assert!(
