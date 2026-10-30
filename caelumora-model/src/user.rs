@@ -413,8 +413,8 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confidentiality::ConfidentialityRules;
     use crate::store::testing::{replayed, stored};
+    use crate::store::{EntityStores, Policies};
     use std::slice;
 
     /// Issue 404: two frontends of one user cannot move the mark back.
@@ -529,11 +529,10 @@ mod tests {
         use crate::store::StoreError;
         use std::sync::Arc;
 
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
         )
-        .entity_stores()
         .unwrap()
         .user_profiles;
         let (alice, bob) = (UserId::new(), UserId::new());

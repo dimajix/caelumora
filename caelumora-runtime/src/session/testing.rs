@@ -24,7 +24,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::security::{AccessPolicy, Admission, AllowAllPolicy, OwnershipPolicy};
+use caelumora_model::security::{AccessPolicy, Admission, OwnershipPolicy};
 use caelumora_model::session::testing::{bare_session, make_session};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
@@ -48,19 +48,16 @@ use uuid::Uuid;
 
 /// A runtime under the ownership policy, which learns who belongs to a
 /// group from its store (issue 23), with `rules` as the confidentiality
-/// policy beside it (issue 304), and a manager on it.
-pub fn owned_runtime(rules: ConfidentialityRules) -> (Persistence, Arc<SessionManager>) {
+/// policy beside it (issue 304), and a manager on it - what a test writes, it writes through the
+/// runtime's stores, which check as the runtime does.
+pub fn owned_runtime(rules: ConfidentialityRules) -> (Arc<RuntimeManager>, Arc<SessionManager>) {
     let memberships = Arc::new(StoreMemberships::new());
     let access_policy: Arc<dyn AccessPolicy> =
         Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
     let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
-    let store =
-        Persistence::in_memory_with(Arc::clone(&access_policy), Arc::clone(&confidentiality));
-    memberships.bind(&store.entity_stores().unwrap().groups);
-    let runtime =
-        TestRuntime { store: store.clone(), access_policy, confidentiality, ..Default::default() }
-            .build();
-    (store, Arc::new(SessionManager::new(runtime)))
+    let runtime = TestRuntime { access_policy, confidentiality, ..Default::default() }.build();
+    memberships.bind(&runtime.entity_stores().groups);
+    (Arc::clone(&runtime), Arc::new(SessionManager::new(runtime)))
 }
 
 /// A runtime under no policy: everything is allowed (`TestRuntime`).
@@ -189,13 +186,7 @@ pub fn failing_runtime(kind: EntityKind) -> (Arc<RuntimeManager>, Arc<AtomicUsiz
     let passing = Arc::new(AtomicUsize::new(usize::MAX));
     let entities =
         Arc::new(FailingBackend { inner: MemoryStore::new(), kind, passing: Arc::clone(&passing) });
-    let store = Persistence::new(
-        entities,
-        Arc::new(MemoryStore::new()),
-        Arc::new(AllowAllPolicy::new()),
-        Arc::new(ConfidentialityRules::default()),
-    )
-    .unwrap();
+    let store = Persistence::new(entities, Arc::new(MemoryStore::new())).unwrap();
     (TestRuntime { store, ..Default::default() }.build(), passing)
 }
 

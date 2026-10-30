@@ -2475,9 +2475,8 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
         attributes(Some(world.bob), &[world.alice]),
     );
     world
-        .store
+        .runtime
         .entity_stores()
-        .unwrap()
         .component_bundles
         .create(&World::as_user(world.bob), &mut policy)
         .await
@@ -2517,9 +2516,8 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     let mut withdrawn =
         ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..policy };
     world
-        .store
+        .runtime
         .entity_stores()
-        .unwrap()
         .component_bundles
         .update(&World::as_user(world.bob), &mut withdrawn)
         .await
@@ -2555,7 +2553,7 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
         },
         attributes(Some(world.bob), &[world.alice]),
     );
-    let bundles = world.store.entity_stores().unwrap().component_bundles;
+    let bundles = Arc::clone(&world.runtime.entity_stores().component_bundles);
     bundles.create(&World::as_user(world.bob), &mut shared).await.expect("bob keeps his policy");
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
@@ -2671,9 +2669,8 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
         attributes(Some(world.bob), &[world.alice]),
     );
     world
-        .store
+        .runtime
         .entity_stores()
-        .unwrap()
         .component_bundles
         .create(&World::as_user(world.bob), &mut tools)
         .await
@@ -2736,9 +2733,8 @@ async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_r
         attributes(None, &[world.alice]),
     );
     world
-        .store
+        .runtime
         .entity_stores()
-        .unwrap()
         .component_bundles
         .create(&World::system(), &mut operated)
         .await

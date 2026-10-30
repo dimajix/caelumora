@@ -686,25 +686,27 @@ impl TranscriptStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confidentiality::ConfidentialityRules;
     use crate::group::GroupId;
     use crate::security::{Grant, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject};
     use crate::store::query::Query;
     use crate::store::suite;
-    use crate::store::{EntityStoreFactory, Persistence};
+    use crate::store::{EntityStores, Persistence, Policies};
     use crate::user::UserId;
 
+    /// The stores of a memory store, permitting everything.
+    fn permitting() -> EntityStores {
+        EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap()
+    }
+
     /// The stores of a memory store, as the owners' policy checks them.
-    fn owners() -> Persistence {
-        Persistence::in_memory_with(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
+    fn owners() -> EntityStores {
+        let policies = Policies::by_default_rules(Arc::new(OwnershipPolicy::new()));
+        EntityStores::open(&Persistence::in_memory(), &policies).unwrap()
     }
 
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
-        suite::entity_store_behaves(&Persistence::in_memory().entity_stores().unwrap()).await;
+        suite::entity_store_behaves(&permitting()).await;
     }
 
     /// A scan hands out what the admission may admit (issue 332): what
@@ -764,13 +766,11 @@ mod tests {
     #[tokio::test]
     async fn lists_what_check_decides() {
         let (memberships, access_policy) = suite::admitting_policy();
-        let store = Persistence::in_memory_with(
-            Arc::clone(&access_policy),
-            Arc::new(ConfidentialityRules::default()),
-        );
-        let folders = store.entity_store::<suite::Folder>().unwrap();
+        let store = Persistence::in_memory();
+        let policies = Policies::by_default_rules(Arc::clone(&access_policy));
+        let folders = store.entity_store::<suite::Folder>(&policies).unwrap();
         suite::lists_admit_what_check_decides(
-            &store.entity_stores().unwrap(),
+            &EntityStores::open(&store, &policies).unwrap(),
             folders.as_ref(),
             &memberships,
             access_policy.as_ref(),
@@ -781,8 +781,12 @@ mod tests {
     #[tokio::test]
     async fn answers_queries() {
         let store = Persistence::in_memory();
-        suite::queries_behave(&store.entity_stores().unwrap()).await;
-        suite::queries_reach_parts(store.entity_store::<suite::Folder>().unwrap().as_ref()).await;
+        suite::queries_behave(&EntityStores::open(&store, &Policies::permitting_all()).unwrap())
+            .await;
+        suite::queries_reach_parts(
+            store.entity_store::<suite::Folder>(&Policies::permitting_all()).unwrap().as_ref(),
+        )
+        .await;
     }
 
     /// A limit counts what the caller may read (issue 293): the policy is
@@ -793,7 +797,7 @@ mod tests {
         use crate::confidentiality::Classification;
         use crate::scope::Scope;
         use crate::workspace::Workspace;
-        let store = owners().entity_stores().unwrap().workspaces;
+        let store = owners().workspaces;
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
@@ -850,26 +854,23 @@ mod tests {
 
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
-        suite::deleting_marks(&Persistence::in_memory().entity_stores().unwrap()).await;
+        suite::deleting_marks(&permitting()).await;
     }
 
     #[tokio::test]
     async fn writes_are_judged_on_their_revision() {
-        suite::writes_are_judged_on_their_revision(
-            &Persistence::in_memory().entity_stores().unwrap(),
-        )
-        .await;
+        suite::writes_are_judged_on_their_revision(&permitting()).await;
         suite::storage_judges_writes_on_their_revision(&MemoryStore::new()).await;
     }
 
     #[tokio::test]
     async fn purges_are_begun() {
-        suite::purges_are_begun(&Persistence::in_memory().entity_stores().unwrap()).await;
+        suite::purges_are_begun(&permitting()).await;
     }
 
     #[tokio::test]
     async fn keeps_names_unique() {
-        suite::names_are_unique(&Persistence::in_memory().entity_stores().unwrap()).await;
-        suite::names_are_unique_beyond_what_is_read(&owners().entity_stores().unwrap()).await;
+        suite::names_are_unique(&permitting()).await;
+        suite::names_are_unique_beyond_what_is_read(&owners()).await;
     }
 }

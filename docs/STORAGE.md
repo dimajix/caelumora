@@ -68,19 +68,23 @@ another instance.
 What the runtime holds is one `Persistence`, the stores: made of the backend the configuration names
 under `persistence.entity_store`, the one it names under `persistence.state_store` - each a backend
 of the `Backends` like every other, the core's `memory` and `json` or a plugin's (`dyn
-PersistenceBackend`, see [CONFIGURATION.md](CONFIGURATION.md#backends)), the same type or two - and
-the two policies (`Persistence::new`; `Persistence::over` for one backend in both roles). It takes
-the documents from the first, as their kinds are opened, and the three state stores from the second
-when it is made, together - so that a backend that keeps no states fails the start, as the state
-store. It opens the store of a kind for whoever asks (`EntityStoreFactory::entity_store::<T>()`),
-once - whoever asks for a kind again, the core or a plugin, is given the same store -, refuses a
-kind whose name another kind has, and gives the state stores. The stores of the core's kinds are
-`EntityStores`, which the runtime is given; a plugin asks for the store of its kind while it
-registers. A manager is made with `&EntityStores` - or the store of its kind - and keeps the stores
-of the kinds it uses as fields, as every service is held. Tests make their stores the same way,
-`Persistence::in_memory()` for stores in memory that permit everything,
-`Persistence::in_memory_with` for the policies of a test - both cannot fail, since the memory store
-is the three state stores itself.
+PersistenceBackend`, see [CONFIGURATION.md](CONFIGURATION.md#backends)), the same type or two
+(`Persistence::new`; `Persistence::over` for one backend in both roles). It takes the documents from
+the first, as their kinds are opened, and the three state stores from the second when it is made,
+together - so that a backend that keeps no states fails the start, as the state store. It holds no
+policies: the store of a kind is checked by the `Policies` - the `AccessPolicy` and the
+`ConfidentialityPolicy` - given where it is opened (`Persistence::entity_store::<T>(&policies)`),
+and the runtime opens its stores by its own, those it was given (`RuntimeBuilder::new`), so that the
+policies come into the process at one place and no store of the runtime checks by others (issue
+[449](../issues/449-runtime-given-the-policies-twice.md)). Whoever opens a kind again, the core or a
+plugin, is given a store over the same storage; a kind whose name another kind has is refused. The
+stores of the core's kinds are `EntityStores` (`EntityStores::open(&persistence, &policies)`); a
+plugin asks the builder for the store of its kind while it registers. A manager is made with
+`&EntityStores` - or the store of its kind - and keeps the stores of the kinds it uses as fields, as
+every service is held. Tests make their stores the same way, `Persistence::in_memory()` for stores
+in memory, which cannot fail, since the memory store is the three state stores itself; what a test
+writes before it runs what it tests, it writes through stores it opens by policies it names - most
+by `Policies::permitting_all()` -, while the runtime it runs checks by its own.
 
 Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an `EntityKind`
 named by a string (`"skill"`) that is unique among the kinds; its id - a UUID under a type of its

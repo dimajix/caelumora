@@ -1059,7 +1059,7 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use caelumora_model::tool::ToolCall;
     use caelumora_model::type_map::TypeKey;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
@@ -1382,7 +1382,9 @@ mod tests {
         let gemma = tempfile::tempdir().unwrap();
         prompts.add_variant("gemma4", gemma.path()).unwrap();
         let mut registry = ComponentRegistry::new(
-            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
         );
         // As the agents' plugin declares it.
         registry.single::<dyn ModelProfileProvider>(None);
@@ -1444,7 +1446,9 @@ mod tests {
         let fake = FakeOllama { seeing: Some("gemma4:26b"), ..FakeOllama::default() };
         let url = serve(fake.clone()).await;
         let mut registry = ComponentRegistry::new(
-            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
         );
         registry.single::<dyn ModelProfileProvider>(None);
         register(&mut registry);

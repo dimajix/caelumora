@@ -74,7 +74,7 @@ mod tests {
     use super::*;
     use crate::actor::ActorId;
     use crate::removal::Removal;
-    use crate::store::Persistence;
+    use crate::store::{EntityStores, Persistence, Policies};
     use crate::user::UserId;
     use crate::value::name::ScopedName;
 
@@ -88,7 +88,9 @@ mod tests {
             ..Group::team(ScopedName::new("project", Default::default()).unwrap(), alice)
         };
         assert!(memberships.group(team.id).await.is_none(), "none before a store is bound");
-        let store = Persistence::in_memory().entity_stores().unwrap().groups;
+        let store = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .groups;
         memberships.bind(&store);
         store.create(&SecurityContext::system(), &mut team).await.unwrap();
         let kept = memberships.group(team.id).await.expect("the group");

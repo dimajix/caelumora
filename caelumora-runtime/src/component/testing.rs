@@ -7,7 +7,7 @@ use crate::runtime::Services;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::security::{AccessPolicy, AllowAllPolicy, SecurityContext};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::Persistence;
+use caelumora_model::store::{EntityStores, Persistence, Policies};
 use caelumora_model::type_map::TypeKey;
 use serde_json::{json, Value};
 use std::fmt::Debug;
@@ -86,8 +86,11 @@ pub const NAMED: &[TypeKey] = &[TypeKey::of::<dyn Named>()];
 /// A registry with the single `Choice`, the kinds `declared` and `other`
 /// that provide it, and how often `declared` was built.
 pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
-    let mut registry =
-        ComponentRegistry::new(Persistence::in_memory().entity_stores().unwrap().component_bundles);
+    let mut registry = ComponentRegistry::new(
+        EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .component_bundles,
+    );
     let built = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&built);
     let choice = |id: &str| {

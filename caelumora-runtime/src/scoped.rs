@@ -566,7 +566,7 @@ mod tests {
     use caelumora_model::security::{SecurityAttributes, SecurityContext};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::{Persistence, StoreError};
+    use caelumora_model::store::{EntityStores, Persistence, Policies, StoreError};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;
@@ -581,7 +581,8 @@ mod tests {
     /// session among it, which is not marked with the session.
     #[tokio::test]
     async fn a_scope_is_entered_only_while_its_holder_is_there() {
-        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let stores =
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap();
         let holders = ScopeHolders::new(&stores);
         let system = SecurityContext::system();
         let mut session = bare_session(SessionId::new());
@@ -626,7 +627,8 @@ mod tests {
     /// back - made, purged; restored, marked deleted again with the mark it carried.
     #[tokio::test]
     async fn what_is_put_into_a_scope_whose_holder_went_is_taken_back() {
-        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let stores =
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap();
         let holders = ScopeHolders::new(&stores);
         let bundles = Unowned(Arc::clone(&stores.component_bundles));
         let system = SecurityContext::system();

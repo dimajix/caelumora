@@ -274,7 +274,7 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::testing::bare_session;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{Persistence, Policies};
     use caelumora_model::value::ValueError;
     use chrono::{Duration, Utc};
     use std::sync::Mutex;
@@ -309,18 +309,15 @@ mod tests {
     async fn a_renamed_session_is_stored_first() {
         let mut session = session();
         let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().sessions.create(&ctx, &mut session).await.unwrap();
-        let controller =
-            SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
+        stores.sessions.create(&ctx, &mut session).await.unwrap();
+        let controller = SessionController::new(session.clone(), Arc::new(()), &stores);
 
         controller.update_name(&ctx, "renamed").await.unwrap();
 
         assert_eq!(controller.name(), "renamed");
-        assert_eq!(
-            store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().name,
-            "renamed"
-        );
+        assert_eq!(stores.sessions.get(&ctx, session.id).await.unwrap().name, "renamed");
     }
 
     /// Issue 492: a change made by hand is made again when the session was written past the
@@ -330,7 +327,7 @@ mod tests {
         let mut session = session();
         let store = Persistence::in_memory();
         let ctx = SecurityContext::default();
-        let stores = store.entity_stores().unwrap();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         stores.sessions.create(&ctx, &mut session).await.unwrap();
         let controller = SessionController::new(session.clone(), Arc::new(()), &stores);
         let mut renamed = session.clone();
@@ -353,13 +350,11 @@ mod tests {
         let long_ago = Utc::now() - Duration::days(1);
         let mut session = Session { updated_at: long_ago, ..session() };
         let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().sessions.create(&ctx, &mut session).await.unwrap();
-        let controller =
-            SessionController::new(session.clone(), Arc::new(()), &store.entity_stores().unwrap());
-        let stored = || async {
-            store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().updated_at
-        };
+        stores.sessions.create(&ctx, &mut session).await.unwrap();
+        let controller = SessionController::new(session.clone(), Arc::new(()), &stores);
+        let stored = || async { stores.sessions.get(&ctx, session.id).await.unwrap().updated_at };
 
         controller.update_name(&ctx, "renamed").await.unwrap();
         let renamed = stored().await;
@@ -373,17 +368,15 @@ mod tests {
     async fn a_description_is_checked_as_it_is_applied() {
         let mut session = session();
         let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().sessions.create(&ctx, &mut session).await.unwrap();
+        stores.sessions.create(&ctx, &mut session).await.unwrap();
         let announced = Arc::new(Announced::default());
-        let controller = SessionController::new(
-            session.clone(),
-            Arc::<Announced>::clone(&announced),
-            &store.entity_stores().unwrap(),
-        );
+        let controller =
+            SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), &stores);
 
         controller.update_description(&ctx, Some("Release 2.0"), Some("")).await.unwrap();
-        let stored = store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap();
+        let stored = stores.sessions.get(&ctx, session.id).await.unwrap();
         assert_eq!(
             (stored.summary.as_ref().map(|s| s.as_str()), stored.briefing),
             (Some("Release 2.0"), None),
@@ -409,7 +402,7 @@ mod tests {
             "a name is checked so, too: {renamed:?}"
         );
         assert_eq!(
-            store.entity_stores().unwrap().sessions.get(&ctx, session.id).await.unwrap().summary,
+            stores.sessions.get(&ctx, session.id).await.unwrap().summary,
             stored.summary,
             "unchanged by what is refused"
         );

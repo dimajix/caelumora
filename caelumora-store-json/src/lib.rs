@@ -787,19 +787,17 @@ mod tests {
     use caelumora_model::actor::ActorState;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::chain::Position;
-    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
+    use caelumora_model::confidentiality::Classification;
     use caelumora_model::history::Reader;
     use caelumora_model::message::testing::{id, make_message};
     use caelumora_model::note::{NoteChange, NoteId};
     use caelumora_model::removal::Removal;
-    use caelumora_model::security::{AccessPolicy, SecurityContext};
-    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::security::{OwnershipPolicy, SecurityContext};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::suite;
     use caelumora_model::store::{
-        EntityStore, EntityStoreFactory, Persistence, StoreError, Stored,
+        suite, EntityStore, EntityStores, Persistence, Policies, StoreError, Stored,
     };
     use caelumora_model::turn::TurnState;
     use caelumora_model::value::name::Name;
@@ -811,10 +809,9 @@ mod tests {
         JsonFileStore::new(dir).unwrap()
     }
 
-    /// The stores of the files under `dir`, checked by `policy`.
-    fn checked(dir: &Path, policy: Arc<dyn AccessPolicy>) -> Persistence {
-        Persistence::over(Arc::new(store(dir)), policy, Arc::new(ConfidentialityRules::default()))
-            .unwrap()
+    /// The stores of the files under `dir`.
+    fn files(dir: &Path) -> Persistence {
+        Persistence::over(Arc::new(store(dir))).unwrap()
     }
 
     /// A new session of `name`, of the system, with nothing in it.
@@ -825,7 +822,7 @@ mod tests {
     /// The store of the kind `T` in the files under `dir`, which permits
     /// everything.
     fn of_kind<T: Stored>(dir: &Path) -> Arc<dyn EntityStore<T>> {
-        checked(dir, Arc::new(AllowAllPolicy::new())).entity_store().unwrap()
+        files(dir).entity_store(&Policies::permitting_all()).unwrap()
     }
 
     /// Where the document `id` of the kind `T` lies in the files under
@@ -838,7 +835,7 @@ mod tests {
     async fn behaves_as_an_entity_store() {
         let dir = tempdir().unwrap();
         suite::entity_store_behaves(
-            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+            &EntityStores::open(&files(dir.path()), &Policies::permitting_all()).unwrap(),
         )
         .await;
     }
@@ -847,10 +844,11 @@ mod tests {
     async fn lists_what_check_decides() {
         let dir = tempdir().unwrap();
         let (memberships, access_policy) = suite::admitting_policy();
-        let store = checked(dir.path(), Arc::clone(&access_policy));
-        let folders = store.entity_store::<suite::Folder>().unwrap();
+        let store = files(dir.path());
+        let policies = Policies::by_default_rules(Arc::clone(&access_policy));
+        let folders = store.entity_store::<suite::Folder>(&policies).unwrap();
         suite::lists_admit_what_check_decides(
-            &store.entity_stores().unwrap(),
+            &EntityStores::open(&store, &policies).unwrap(),
             folders.as_ref(),
             &memberships,
             access_policy.as_ref(),
@@ -861,9 +859,13 @@ mod tests {
     #[tokio::test]
     async fn answers_queries() {
         let dir = tempdir().unwrap();
-        let store = checked(dir.path(), Arc::new(AllowAllPolicy::new()));
-        suite::queries_behave(&store.entity_stores().unwrap()).await;
-        suite::queries_reach_parts(store.entity_store::<suite::Folder>().unwrap().as_ref()).await;
+        let store = files(dir.path());
+        suite::queries_behave(&EntityStores::open(&store, &Policies::permitting_all()).unwrap())
+            .await;
+        suite::queries_reach_parts(
+            store.entity_store::<suite::Folder>(&Policies::permitting_all()).unwrap().as_ref(),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -902,7 +904,7 @@ mod tests {
     async fn keeps_what_is_deleted_marked() {
         let dir = tempdir().unwrap();
         suite::deleting_marks(
-            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+            &EntityStores::open(&files(dir.path()), &Policies::permitting_all()).unwrap(),
         )
         .await;
     }
@@ -911,7 +913,7 @@ mod tests {
     async fn judges_writes_on_their_revision() {
         let dir = tempdir().unwrap();
         suite::writes_are_judged_on_their_revision(
-            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+            &EntityStores::open(&files(dir.path()), &Policies::permitting_all()).unwrap(),
         )
         .await;
         suite::storage_judges_writes_on_their_revision(&store(dir.path())).await;
@@ -921,7 +923,7 @@ mod tests {
     async fn begins_purges() {
         let dir = tempdir().unwrap();
         suite::purges_are_begun(
-            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+            &EntityStores::open(&files(dir.path()), &Policies::permitting_all()).unwrap(),
         )
         .await;
     }
@@ -930,12 +932,16 @@ mod tests {
     async fn keeps_names_unique() {
         let dir = tempdir().unwrap();
         suite::names_are_unique(
-            &checked(dir.path(), Arc::new(AllowAllPolicy::new())).entity_stores().unwrap(),
+            &EntityStores::open(&files(dir.path()), &Policies::permitting_all()).unwrap(),
         )
         .await;
         let dir = tempdir().unwrap();
         suite::names_are_unique_beyond_what_is_read(
-            &checked(dir.path(), Arc::new(OwnershipPolicy::new())).entity_stores().unwrap(),
+            &EntityStores::open(
+                &files(dir.path()),
+                &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
+            )
+            .unwrap(),
         )
         .await;
     }

@@ -1117,24 +1117,20 @@ mod tests {
     use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::{self, moderation_components, Channel, InternalActor};
     use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
-    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
+    use caelumora_model::confidentiality::Classification;
     use caelumora_model::event::EntityChange;
     use caelumora_model::group::GroupId;
     use caelumora_model::project::Project;
     use caelumora_model::removal::Removal;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{
-        AllowAllPolicy, Grant, Secured, SecurityAttributes, SecurityContext, Subject,
-    };
+    use caelumora_model::security::{Grant, Secured, SecurityAttributes, SecurityContext, Subject};
     use caelumora_model::session;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::ChannelId;
     use caelumora_model::session::Session;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::StoreError;
-    use caelumora_model::store::{Deleted, Stored};
-    use caelumora_model::store::{Persistence, StateStore};
+    use caelumora_model::store::{Deleted, Persistence, StateStore, StoreError, Stored};
     use caelumora_model::template::testing::{make_channel_template, make_template};
     use caelumora_model::template::{
         ChannelTemplate, InternalActorTemplate, SessionTemplate, SessionTemplateId,
@@ -1736,15 +1732,10 @@ mod tests {
     #[tokio::test]
     async fn a_deleted_session_keeps_its_state_until_it_is_purged_and_can_be_restored() {
         let (entities, states) = (Arc::new(MemoryStore::new()), Arc::new(MemoryStore::new()));
-        let store = Persistence::new(
-            entities,
-            Arc::<MemoryStore>::clone(&states),
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
-        .unwrap();
-        let runtime = TestRuntime { store: store.clone(), ..Default::default() }.build();
+        let store = Persistence::new(entities, Arc::<MemoryStore>::clone(&states)).unwrap();
+        let runtime = TestRuntime { store, ..Default::default() }.build();
         let manager = SessionManager::new(runtime);
+        let stores = manager.runtime().entity_stores();
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", UserId::new());
         let (id, channel_id) = (session.id, session.channels[0]);
@@ -1755,7 +1746,7 @@ mod tests {
         );
 
         manager.delete(&ctx, id).await.unwrap();
-        assert!(store.entity_stores().unwrap().sessions.get(&ctx, id).await.is_err(), "not there");
+        assert!(stores.sessions.get(&ctx, id).await.is_err(), "not there");
         assert!(
             states.get_channel_state(channel_id).await.is_ok(),
             "but kept, with its channels' state (issue 164)"
@@ -1778,20 +1769,17 @@ mod tests {
         assert!(states.get_channel_state(side).await.is_ok(), "kept with the deleted channel");
         manager.delete(&ctx, id).await.unwrap();
         manager.purge(&ctx, id).await.expect("purged");
-        assert!(
-            store.entity_stores().unwrap().sessions.get_deleted(&ctx, id).await.is_err(),
-            "nothing left to restore"
-        );
+        assert!(stores.sessions.get_deleted(&ctx, id).await.is_err(), "nothing left to restore");
         assert!(
             states.get_channel_state(channel_id).await.is_err(),
             "deleted from the state store, not only from the entity store"
         );
         assert!(
-            store.entity_stores().unwrap().channels.get(&ctx, channel_id).await.is_err(),
+            stores.channels.get(&ctx, channel_id).await.is_err(),
             "its channels go with it (issue 70)"
         );
         assert!(
-            store.entity_stores().unwrap().channels.get_deleted(&ctx, side).await.is_err(),
+            stores.channels.get_deleted(&ctx, side).await.is_err(),
             "also those deleted from it before"
         );
         assert!(states.get_channel_state(side).await.is_err(), "with their state");

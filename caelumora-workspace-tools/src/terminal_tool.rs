@@ -291,7 +291,7 @@ pub(crate) mod tests {
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use caelumora_model::type_map::TypeKey;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
@@ -354,7 +354,9 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn is_built_without_parameters() {
         let mut registry = ComponentRegistry::new(
-            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
         );
         // The agents' kinds, with a model whose profile names the variant.
         with_agent_kinds(&mut registry);

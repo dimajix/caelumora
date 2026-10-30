@@ -188,7 +188,7 @@ mod tests {
     use caelumora_model::store::query::Query;
     use std::sync::Mutex;
 
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{Persistence, Policies};
 
     use caelumora_model::config::AppConfig;
 
@@ -205,13 +205,10 @@ mod tests {
     async fn a_seed_names_roles_which_are_stored_by_their_ids() {
         let seed: Seed = parse_yaml("personalities:\n- id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: limited\n  roles: [staff]\n").unwrap();
         let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let policy = policy();
-        seed.apply(&store.entity_stores().unwrap(), policy.as_ref(), &BTreeMap::new())
-            .await
-            .unwrap();
-        let stored = store
-            .entity_stores()
-            .unwrap()
+        seed.apply(&stores, policy.as_ref(), &BTreeMap::new()).await.unwrap();
+        let stored = stores
             .personalities
             .list(&SecurityContext::system(), &Query::all())
             .await
@@ -224,7 +221,7 @@ mod tests {
         );
         let unknown: Seed = parse_yaml("personalities:\n- id: 1f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: typo\n  roles: [staf]\n").unwrap();
         let error = unknown
-            .apply(&store.entity_stores().unwrap(), policy.as_ref(), &BTreeMap::new())
+            .apply(&stores, policy.as_ref(), &BTreeMap::new())
             .await
             .expect_err("a role not configured");
         assert!(error.to_string().contains("staf"), "{error}");
@@ -246,23 +243,19 @@ mod tests {
     async fn a_plugins_section_is_seeded_by_it_and_one_nobody_claims_is_refused_before_anything_is_stored(
     ) {
         let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let policy = policy();
         let given = Arc::new(Given::default());
         let sections: BTreeMap<String, Arc<dyn SeedSection>> =
             [("notes".to_string(), Arc::<Given>::clone(&given) as Arc<dyn SeedSection>)].into();
         let seed: Seed = parse_yaml("notes:\n- text: remember\n").unwrap();
-        seed.apply(&store.entity_stores().unwrap(), policy.as_ref(), &sections).await.unwrap();
+        seed.apply(&stores, policy.as_ref(), &sections).await.unwrap();
         assert_eq!(*given.0.lock().unwrap(), [serde_json::json!([{"text": "remember"}])]);
 
         let typo: Seed = parse_yaml("personalites: []\npersonalities:\n- id: 2f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: kept-out\n").unwrap();
-        let error = typo
-            .apply(&store.entity_stores().unwrap(), policy.as_ref(), &sections)
-            .await
-            .expect_err("a typo");
+        let error = typo.apply(&stores, policy.as_ref(), &sections).await.expect_err("a typo");
         assert!(error.to_string().contains("'personalites'"), "{error}");
-        let stored = store
-            .entity_stores()
-            .unwrap()
+        let stored = stores
             .personalities
             .list(&SecurityContext::system(), &Query::all())
             .await

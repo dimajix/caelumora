@@ -228,12 +228,12 @@ mod tests {
 
     #[tokio::test]
     async fn whoever_may_change_the_session_takes_a_user_into_it_and_a_channel_at_once() {
-        let (store, manager) = owned_runtime(Default::default());
-        let runtime = Arc::clone(manager.runtime());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(runtime.entity_stores(), &[&alice, &carol]).await;
-        record_users(runtime.entity_stores(), &[&bob]).await;
+        session.participants = record_users(stores, &[&alice, &carol]).await;
+        record_users(stores, &[&bob]).await;
         let session = create(&manager, &as_user(&alice), session).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         let bob_id = ActorId::User(bob.id);
@@ -262,9 +262,7 @@ mod tests {
             "in the session"
         );
         assert!(main.participants().iter().any(|m| m.id == bob_id), "and in the channel");
-        let members = store
-            .entity_stores()
-            .unwrap()
+        let members = stores
             .groups
             .get(&SecurityContext::system(), GroupId::of_session(session.id()))
             .await

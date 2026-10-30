@@ -157,7 +157,7 @@ impl UserProvider for AcceptAnyUserProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::Persistence;
+    use crate::store::{EntityStores, Persistence, Policies};
     use crate::user::testing::make_user;
     use crate::user_provider::UserManager;
 
@@ -168,7 +168,7 @@ mod tests {
     }
 
     fn store() -> Arc<dyn EntityStore<User>> {
-        Persistence::in_memory().entity_stores().unwrap().users
+        EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap().users
     }
 
     #[tokio::test]

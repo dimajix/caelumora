@@ -26,7 +26,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::Persistence;
+use caelumora_model::store::{EntityStores, Persistence, Policies};
 use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -296,8 +296,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     let store = Persistence::in_memory();
 
     // A bundle is an entity like any other, so it is put into the store directly.
-    store
-        .entity_stores()
+    EntityStores::open(&store, &Policies::permitting_all())
         .unwrap()
         .component_bundles
         .create(

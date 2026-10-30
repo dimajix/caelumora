@@ -1096,30 +1096,30 @@ mod tests {
         }
     }
 
-    async fn an_agent_of(store: &Persistence, owner: ActorId) -> Agent {
-        an_agent_of_kind(store, owner, Default::default()).await
+    async fn an_agent_of(stores: &EntityStores, owner: ActorId) -> Agent {
+        an_agent_of_kind(stores, owner, Default::default()).await
     }
 
-    async fn an_agent_of_kind(store: &Persistence, owner: ActorId, kind: PersonalityKind) -> Agent {
-        stored_agent(
-            &store.entity_stores().unwrap(),
-            "Helper",
-            Personality { kind, ..make_personality("plain") },
-            owner,
-        )
-        .await
+    async fn an_agent_of_kind(
+        stores: &EntityStores,
+        owner: ActorId,
+        kind: PersonalityKind,
+    ) -> Agent {
+        stored_agent(stores, "Helper", Personality { kind, ..make_personality("plain") }, owner)
+            .await
     }
 
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
         use caelumora_model::message::{Message, MessageId};
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let alice = make_user("alice");
         let remote =
-            an_agent_of_kind(&store, ActorId::User(alice.id), PersonalityKind::External).await;
+            an_agent_of_kind(stores, ActorId::User(alice.id), PersonalityKind::External).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
         let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
@@ -1143,19 +1143,19 @@ mod tests {
         let frame = state.keep_frame(&given.frame);
         let later = said("later");
         state.transcript.extend(vec![later.clone()]);
-        store
+        runtime
             .state_store()
             .put_agent_channel_state(remote.id, channel.id, &mut state)
             .await
             .unwrap();
         // Its channel's history, as it records what was said (issue 417).
-        let mut channel_state = store.state_store().get_channel_state(channel.id).await.unwrap();
+        let mut channel_state = runtime.state_store().get_channel_state(channel.id).await.unwrap();
         channel_state.history.extend(vec![
             question.clone(),
             answer.clone().produced_from_context(given.transcript, frame),
             later,
         ]);
-        store.state_store().put_channel_state(channel.id, &mut channel_state).await.unwrap();
+        runtime.state_store().put_channel_state(channel.id, &mut channel_state).await.unwrap();
 
         let for_alice = manager
             .views(as_user(alice.id))
@@ -1215,13 +1215,13 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn the_views_show_what_their_viewer_may_read_and_do_whether_the_session_runs_or_not() {
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
 
         let mut session = make_session("hers", alice.id);
-        session.participants =
-            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let main = main_channel(&session);
         let running =
@@ -1437,26 +1437,24 @@ mod tests {
     async fn a_participants_profile_says_who_it_is_to_everybody_in_the_channel() {
         use caelumora_model::user::UserProfile;
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let system = SecurityContext::system();
-        let stores = store.entity_stores().unwrap();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         // Carol owns the agent but takes no part in the session.
-        record_users(&stores, &[&carol]).await;
+        record_users(stores, &[&carol]).await;
         let introduction = Introduction::new("Answers questions about the weather.").unwrap();
         let personality = Personality {
             kind: PersonalityKind::External,
             introduction: Some(introduction),
             ..make_personality("plain")
         };
-        let remote = stored_agent(&stores, "Helper", personality, ActorId::User(carol.id)).await;
+        let remote = stored_agent(stores, "Helper", personality, ActorId::User(carol.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(&stores, &[&alice, &bob]).await;
+        session.participants = record_users(stores, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
-        store
-            .entity_stores()
-            .unwrap()
+        stores
             .user_profiles
             .create(
                 &system,
@@ -1537,7 +1535,7 @@ mod tests {
         use caelumora_model::store::StoreError;
         use caelumora_model::user::User;
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (_, manager) = owned_runtime(Default::default());
         let alice = make_user("alice");
         let bob = make_user("bob");
         let carol = make_user("carol");
@@ -1586,7 +1584,7 @@ mod tests {
         state.history.push(hello.clone());
         state.history.enter(joined(&bob));
         state.history.extend(vec![hers.clone(), step.clone(), notice, asking.clone()]);
-        store.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
+        manager.runtime().state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
         let unread_of = |viewer: &User| {
             let (manager, viewer) = (&manager, viewer.id);
@@ -1655,7 +1653,13 @@ mod tests {
             "but does not move the mark back"
         );
         assert_eq!(
-            store.state_store().get_user_channel_state(bob.id, channel.id).await.unwrap().read,
+            manager
+                .runtime()
+                .state_store()
+                .get_user_channel_state(bob.id, channel.id)
+                .await
+                .unwrap()
+                .read,
             None,
             "hers alone"
         );
@@ -1701,12 +1705,12 @@ mod tests {
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants =
-            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session =
@@ -1743,7 +1747,7 @@ mod tests {
         state.history.enter(joined(ActorId::User(bob.id)));
         state.history.enter(joined(ActorId::Agent(helper.id)));
         state.history.push(second.clone());
-        store.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
+        runtime.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
         // What the agent noted and saw.
         let mut agent_state = AgentChannelState::default();
         agent_state.notes.push(
@@ -1765,7 +1769,7 @@ mod tests {
             MessageId::default(),
         );
         agent_state.transcript.push(first.clone());
-        store
+        runtime
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut agent_state)
             .await
@@ -1888,12 +1892,12 @@ mod tests {
         use caelumora_model::privacy::SessionPrivacy;
         use caelumora_model::removal::Removal;
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
-        let helper = an_agent_of(&store, ActorId::User(bob.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(bob.id)).await;
         let mut session = make_session("shared", alice.id);
-        session.participants =
-            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
         let team = like(&template, "team");
@@ -1911,13 +1915,13 @@ mod tests {
         session.channels = vec![team.id, hers.id];
         let session = stored(&manager, session, &mut [team.clone(), hers.clone()]).await;
         // Classified as team is: the flow rule alone would let team read it all.
-        let mut state = store.state_store().get_channel_state(hers.id).await.unwrap();
+        let mut state = runtime.state_store().get_channel_state(hers.id).await.unwrap();
         state.history.extend(vec![Message {
             id: MessageId::new(),
             content: Some("hers alone".to_string()),
             ..Message::new(hers.classification.clone())
         }]);
-        store.state_store().put_channel_state(hers.id, &mut state).await.unwrap();
+        runtime.state_store().put_channel_state(hers.id, &mut state).await.unwrap();
         let mut agent_state = AgentChannelState::default();
         let note = |text: &str| Change::Add {
             id: NoteId(1),
@@ -1930,7 +1934,7 @@ mod tests {
             NoteOrigin::default(),
             MessageId::default(),
         );
-        store
+        runtime
             .state_store()
             .put_agent_channel_state(helper.id, hers.id, &mut agent_state)
             .await
@@ -1982,12 +1986,12 @@ mod tests {
         use caelumora_model::message::MessageId;
         use caelumora_model::note::{NoteId, NoteOrigin};
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants =
-            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
         session.channels.clear();
@@ -2010,7 +2014,7 @@ mod tests {
                 NoteOrigin::default(),
                 MessageId::default(),
             );
-            store
+            runtime
                 .state_store()
                 .put_agent_channel_state(helper.id, channel.id, &mut state)
                 .await
@@ -2049,11 +2053,12 @@ mod tests {
         use caelumora_model::message::MessageId;
         use caelumora_model::note::{NoteId, NoteOrigin};
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let alice = make_user("alice");
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let system = SecurityContext::system();
@@ -2070,14 +2075,12 @@ mod tests {
             NoteOrigin::default(),
             MessageId::default(),
         );
-        store
+        runtime
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut kept)
             .await
             .unwrap();
-        assert!(store
-            .entity_stores()
-            .unwrap()
+        assert!(stores
             .personalities
             .delete(&system, helper.personality_id, &Removal::now(system.caller_id))
             .await
@@ -2125,11 +2128,12 @@ mod tests {
         use caelumora_model::tool::{ToolCall, ToolCallState};
         use caelumora_model::turn::TurnState;
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let alice = make_user("alice");
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
@@ -2159,7 +2163,7 @@ mod tests {
             turn: Some(turn),
             ..Default::default()
         };
-        store
+        runtime
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut state)
             .await
@@ -2196,11 +2200,12 @@ mod tests {
         use caelumora_model::tool::{ToolCall, ToolCallState};
         use caelumora_model::turn::TurnState;
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let alice = make_user("alice");
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
@@ -2244,7 +2249,7 @@ mod tests {
             None,
         )];
         state.turn = Some(turn);
-        store
+        runtime
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut state)
             .await
@@ -2306,11 +2311,12 @@ mod tests {
         use caelumora_model::privacy::SessionPrivacy;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
-        let (store, manager) = owned_runtime(ConfidentialityRules::new(compartments));
+        let (runtime, manager) = owned_runtime(ConfidentialityRules::new(compartments));
+        let stores = runtime.entity_stores();
         let alice = make_user("alice");
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
         session.channels.clear();
@@ -2340,7 +2346,7 @@ mod tests {
             content: Some(t.to_string()),
             ..Message::new(classification.clone())
         };
-        let mut state = store.state_store().get_channel_state(secret.id).await.unwrap();
+        let mut state = runtime.state_store().get_channel_state(secret.id).await.unwrap();
         let plan = said("the plan", &secret.classification);
         // Attached to what was released, each with its own label (issue 282) - kept nowhere.
         let attached = |name: &str, classification: &Classification| ContentRef {
@@ -2362,7 +2368,7 @@ mod tests {
             at: Utc::now(),
         };
         state.history.record(ended);
-        store.state_store().put_channel_state(secret.id, &mut state).await.unwrap();
+        runtime.state_store().put_channel_state(secret.id, &mut state).await.unwrap();
         let mut agent_state = AgentChannelState::default();
         let note = |id, text: &str, classification: &Classification| Change::Add {
             id: NoteId(id),
@@ -2379,14 +2385,14 @@ mod tests {
             NoteOrigin::default(),
             MessageId::default(),
         );
-        store
+        runtime
             .state_store()
             .put_agent_channel_state(helper.id, secret.id, &mut agent_state)
             .await
             .unwrap();
-        let mut state = store.state_store().get_channel_state(team.id).await.unwrap();
+        let mut state = runtime.state_store().get_channel_state(team.id).await.unwrap();
         state.history.extend(vec![said("internal", &team.classification)]);
-        store.state_store().put_channel_state(team.id, &mut state).await.unwrap();
+        runtime.state_store().put_channel_state(team.id, &mut state).await.unwrap();
 
         // The agent, reading from one of its channels, as its components do.
         let reading_from = |channel: &Channel| {
@@ -2528,11 +2534,12 @@ mod tests {
     ) {
         use caelumora_model::message::{Message, MessageId};
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let alice = make_user("alice");
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice]).await;
         // The agent took part, said something, and was removed. Beside it, a
         // channel deleted later.
         let channel = main_channel(&session);
@@ -2542,14 +2549,14 @@ mod tests {
             ..channel.clone()
         };
         let session = stored(&manager, session, &mut [channel.clone(), deleted.clone()]).await;
-        let mut state = store.state_store().get_channel_state(channel.id).await.unwrap();
+        let mut state = runtime.state_store().get_channel_state(channel.id).await.unwrap();
         state.history.extend(vec![Message {
             id: MessageId::new(),
             sender_id: ActorId::Agent(helper.id),
             content: Some("I was here".to_string()),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         }]);
-        store.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
+        runtime.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
         let views = manager.views(as_user(alice.id));
         let reached =
@@ -2588,9 +2595,7 @@ mod tests {
         // Gone (issue 164): the channel deleted, then the session - with who
         // deleted it, to whoever could read it, and never there for others.
         let alice_ctx = as_user(alice.id).context().clone();
-        store
-            .entity_stores()
-            .unwrap()
+        stores
             .channels
             .delete(&alice_ctx, deleted.id, &Removal::now(alice_ctx.caller_id))
             .await
@@ -2603,9 +2608,7 @@ mod tests {
             matches!(stranger.channel_of(session.id, deleted.id).await.unwrap(), Reached::Never),
             "not to a stranger"
         );
-        store
-            .entity_stores()
-            .unwrap()
+        stores
             .sessions
             .delete(&alice_ctx, session.id, &Removal::now(alice_ctx.caller_id))
             .await
@@ -2631,10 +2634,11 @@ mod tests {
             vec![Clearance { level: Confidentiality::Internal, compartment: None }],
         )])
         .unwrap();
-        let (store, manager) = owned_runtime(ConfidentialityRules::default().with_roles(roles));
+        let (runtime, manager) = owned_runtime(ConfidentialityRules::default().with_roles(roles));
+        let stores = runtime.entity_stores();
         let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.runtime().entity_stores(), &[&alice]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice]).await;
         let main = Channel {
             classification: Classification::general(Confidentiality::Internal),
             ..main_channel(&session)
@@ -2649,16 +2653,12 @@ mod tests {
         };
         let session =
             stored(&manager, session, &mut [main.clone(), internal.clone(), secret.clone()]).await;
-        store
-            .entity_stores()
-            .unwrap()
+        stores
             .channels
             .delete(&SecurityContext::system(), internal.id, &Removal::now(ActorId::System))
             .await
             .unwrap();
-        store
-            .entity_stores()
-            .unwrap()
+        stores
             .channels
             .delete(&SecurityContext::system(), secret.id, &Removal::now(ActorId::System))
             .await
@@ -2681,18 +2681,16 @@ mod tests {
 
     #[tokio::test]
     async fn what_was_deleted_is_shown_to_its_owner_with_what_they_may_do_about_it() {
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let mut session = make_session("hers", alice.id);
-        session.participants =
-            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
         let channel = main_channel(&session);
         let side = like(&channel, "side");
         let session = stored(&manager, session, &mut [channel.clone(), side.clone()]).await;
         let alice_ctx = as_user(alice.id).context().clone();
-        store
-            .entity_stores()
-            .unwrap()
+        stores
             .channels
             .delete(&alice_ctx, side.id, &Removal::now(alice_ctx.caller_id))
             .await
@@ -2715,9 +2713,7 @@ mod tests {
             "not shown to a contributor"
         );
 
-        store
-            .entity_stores()
-            .unwrap()
+        stores
             .sessions
             .delete(&alice_ctx, session.id, &Removal::now(alice_ctx.caller_id))
             .await
@@ -2733,12 +2729,12 @@ mod tests {
         use caelumora_model::channel::FormerParticipant;
         use caelumora_model::removal::Removal;
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
-        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", alice.id);
-        session.participants =
-            record_users(manager.runtime().entity_stores(), &[&alice, &bob]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         // Both took part and were removed by alice, neither said anything.
         let mut channel = main_channel(&session);

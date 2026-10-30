@@ -485,7 +485,7 @@ mod tests {
     use axum::body::Body;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_model::user_provider::UserProvider;
     use caelumora_runtime::event::EventBus;
@@ -503,7 +503,7 @@ mod tests {
 
     /// Auth asking `providers`, the users recorded in `store` (issue 306).
     fn auth(store: Persistence, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
-        let stores = store.entity_stores().unwrap();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let events = Arc::new(EventBus::new(
             Arc::new(AllowAllPolicy::new()),
             Arc::new(ConfidentialityRules::default()),
@@ -527,7 +527,8 @@ mod tests {
     /// Auth that accepts anybody, finding and recording users in one store.
     fn accepting_any() -> Arc<Auth> {
         let store = Persistence::in_memory();
-        let users = Arc::clone(&store.entity_stores().unwrap().users);
+        let users =
+            Arc::clone(&EntityStores::open(&store, &Policies::permitting_all()).unwrap().users);
         auth(store, vec![Arc::new(AcceptAnyUserProvider::new(users))])
     }
 

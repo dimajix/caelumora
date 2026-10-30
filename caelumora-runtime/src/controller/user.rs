@@ -334,11 +334,11 @@ impl UserController {
 mod tests {
     use super::*;
     use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
-    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
+    use caelumora_model::confidentiality::Classification;
     use caelumora_model::role::RoleId;
     use caelumora_model::security::OwnershipPolicy;
     use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{Persistence, Policies};
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserUpdateEvent;
     use caelumora_model::value::text::Introduction;
@@ -371,6 +371,7 @@ mod tests {
     /// The controller of `user`, keeping everything in `store`.
     fn controller_in(
         store: &Persistence,
+        policies: &Policies,
         user: &User,
         event_publisher: Arc<dyn EventPublisher>,
     ) -> UserController {
@@ -378,7 +379,7 @@ mod tests {
             user.clone(),
             UserProfile::new(user.id, None),
             event_publisher,
-            &store.entity_stores().unwrap(),
+            &EntityStores::open(store, policies).unwrap(),
             store.state_store(),
             store.history_store(),
         )
@@ -391,7 +392,7 @@ mod tests {
     async fn a_change_is_made_again_on_the_profile_as_written_meanwhile() {
         let store = Persistence::in_memory();
         let user = make_user("alice");
-        let controller = controller_in(&store, &user, Arc::new(()));
+        let controller = controller_in(&store, &Policies::permitting_all(), &user, Arc::new(()));
         let hers = as_user(user.id);
         let rule = ApprovalRule::new(
             ToolMatcher { tool: "shell".to_string(), arguments: Default::default() },
@@ -402,7 +403,12 @@ mod tests {
         .unwrap();
         let mut elsewhere = UserProfile::new(user.id, None);
         elsewhere.add_approval_rule(rule.clone()).unwrap();
-        store.entity_stores().unwrap().user_profiles.create(&hers, &mut elsewhere).await.unwrap();
+        EntityStores::open(&store, &Policies::permitting_all())
+            .unwrap()
+            .user_profiles
+            .create(&hers, &mut elsewhere)
+            .await
+            .unwrap();
 
         let profile = controller
             .update_profile(&hers, Some("I run the budget."), None)
@@ -418,13 +424,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_profile_is_stored_first_then_taken_over_and_announced() {
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let store = Persistence::in_memory();
+        let policies = Policies::by_default_rules(Arc::new(OwnershipPolicy::new()));
         let announced = Arc::new(Announced::default());
         let user = make_user("alice");
-        let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
+        let controller =
+            controller_in(&store, &policies, &user, Arc::<Announced>::clone(&announced));
         let hers = as_user(user.id);
 
         for text in ["I run the budget.", "I run the budget and the team."] {
@@ -439,8 +444,7 @@ mod tests {
                 "live"
             );
             assert_eq!(
-                store
-                    .entity_stores()
+                EntityStores::open(&store, &policies)
                     .unwrap()
                     .user_profiles
                     .get(&hers, user.id)
@@ -463,8 +467,12 @@ mod tests {
     #[test]
     fn the_roles_follow_their_announcement() {
         let user = make_user("alice");
-        let controller =
-            controller_in(&Persistence::in_memory(), &user, Arc::new(Announced::default()));
+        let controller = controller_in(
+            &Persistence::in_memory(),
+            &Policies::permitting_all(),
+            &user,
+            Arc::new(Announced::default()),
+        );
         let staff = RoleId::new();
         controller.process_global_event(&GlobalEvent::updated::<User>(
             &UserId::new(),
@@ -485,13 +493,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_profile_changes_nothing() {
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let store = Persistence::in_memory();
+        let policies = Policies::by_default_rules(Arc::new(OwnershipPolicy::new()));
         let announced = Arc::new(Announced::default());
         let user = make_user("alice");
-        let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
+        let controller =
+            controller_in(&store, &policies, &user, Arc::<Announced>::clone(&announced));
 
         let invalid = controller.update_profile(&as_user(user.id), Some("a\u{1b}[2Jb"), None).await;
         assert!(matches!(invalid, Err(StoreError::Invalid(_))), "{invalid:?}");
@@ -511,12 +518,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_rule_is_added_and_taken_back_by_the_user_alone() {
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let store = Persistence::in_memory();
+        let policies = Policies::by_default_rules(Arc::new(OwnershipPolicy::new()));
         let user = make_user("alice");
-        let controller = controller_in(&store, &user, Arc::new(()));
+        let controller = controller_in(&store, &policies, &user, Arc::new(()));
         let hers = as_user(user.id);
         controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
         let rule = ApprovalRule::new(
@@ -537,8 +542,7 @@ mod tests {
         controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
         assert_eq!(controller.profile().approval_rules(), slice::from_ref(&rule), "live");
         assert_eq!(
-            store
-                .entity_stores()
+            EntityStores::open(&store, &policies)
                 .unwrap()
                 .user_profiles
                 .get(&hers, user.id)
@@ -582,7 +586,12 @@ mod tests {
     #[tokio::test]
     async fn a_profile_changed_elsewhere_is_taken_over() {
         let user = make_user("alice");
-        let controller = controller_in(&Persistence::in_memory(), &user, Arc::new(()));
+        let controller = controller_in(
+            &Persistence::in_memory(),
+            &Policies::permitting_all(),
+            &user,
+            Arc::new(()),
+        );
         let changed =
             UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));
 

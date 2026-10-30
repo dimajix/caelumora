@@ -309,7 +309,7 @@ mod tests {
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
-    use caelumora_model::store::{EntityStoreFactory, Persistence};
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
     use serde_json::json;
@@ -452,13 +452,8 @@ mod tests {
                 &Services::empty(),
             )
             .unwrap();
-        let stores = Persistence::over(
-            kept,
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
-        .expect("its states, too");
-        stores.entity_store::<User>().expect("any kind is kept");
+        let stores = Persistence::over(kept).expect("its states, too");
+        stores.entity_store::<User>(&Policies::permitting_all()).expect("any kind is kept");
 
         let with_params = BackendConfig::new("memory", json!({ "path": "x" }));
         let refused = Backends::built_in()
@@ -532,7 +527,9 @@ mod tests {
         // The hash of "wonderland", made cheaply.
         let hash = "$argon2id$v=19$m=8,t=1,p=1$Y2FlbHVtb3JhLXRlc3RzIQ$O5O4BCrndw3DwlDMCkis9v7MtqH5yH38HhXnJ6aRr2M";
         fs::write(&file, format!("users:\n  - id: {alice}\n    username: alice\n    roles: [hr]\n    password_hash: \"{hash}\"\n")).unwrap();
-        let users = Persistence::in_memory().entity_stores().unwrap().users;
+        let users = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
         let confidentiality: Arc<dyn ConfidentialityPolicy> =
@@ -564,7 +561,9 @@ mod tests {
 
     #[tokio::test]
     async fn accept_any_gives_the_configured_roles_and_refuses_others() {
-        let users = Persistence::in_memory().entity_stores().unwrap().users;
+        let users = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .users;
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
         let confidentiality: Arc<dyn ConfidentialityPolicy> =

@@ -179,7 +179,7 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};
@@ -284,8 +284,7 @@ mod tests {
             introduction: introduction.map(|text| Introduction::new(text).unwrap()),
             ..make_personality(&format!("plain {id}"))
         };
-        store
-            .entity_stores()
+        EntityStores::open(store, &Policies::permitting_all())
             .unwrap()
             .personalities
             .create(&SecurityContext::system(), &mut personality)
@@ -300,8 +299,7 @@ mod tests {
             personality.id,
             ActorId::User(UserId::new()),
         );
-        store
-            .entity_stores()
+        EntityStores::open(store, &Policies::permitting_all())
             .unwrap()
             .agents
             .create(&SecurityContext::system(), &mut agent)
@@ -320,10 +318,9 @@ mod tests {
 
         let kaya = make_user("Kaya");
         let bob = make_user("Bob");
-        record_users(&store.entity_stores().unwrap(), &[&kaya, &bob]).await;
-        store
+        record_users(runtime.entity_stores(), &[&kaya, &bob]).await;
+        runtime
             .entity_stores()
-            .unwrap()
             .user_profiles
             .create(
                 &system,

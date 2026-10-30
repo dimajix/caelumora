@@ -63,7 +63,9 @@ use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityKind, Persistence, StoreError};
+use caelumora_model::store::{
+    EntityKind, EntityStore, EntityStores, Persistence, Policies, StoreError, Stored,
+};
 use caelumora_model::template::testing::{make_channel_template, make_template};
 use caelumora_model::template::{
     ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate,
@@ -249,8 +251,8 @@ pub fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttribut
 /// `TestRuntime { plugins: vec![&Notes], ..Default::default() }`.
 /// Its secrets are always none, under its access policy.
 pub struct TestRuntime<'a> {
-    /// What the entities and the states are kept in: new, empty stores in
-    /// memory that permit everything.
+    /// What the entities and the states are kept in: new, empty stores in memory, which the
+    /// runtime opens by the two policies below.
     pub store: Persistence,
     /// Allows everything.
     pub access_policy: Arc<dyn AccessPolicy>,
@@ -296,8 +298,7 @@ impl TestRuntime<'_> {
         let mut builder = RuntimeBuilder::new(
             self.store,
             secrets,
-            self.access_policy,
-            self.confidentiality,
+            Policies::new(self.access_policy, self.confidentiality),
             &self.config,
             Backends::with_plugins(&self.plugins),
         )?;
@@ -362,11 +363,7 @@ impl World {
             names: Mutex::new(HashMap::new()),
         });
         let access_policy: Arc<dyn AccessPolicy> = Arc::<Recorder>::clone(&recorder);
-        let store = Persistence::in_memory_with(
-            Arc::clone(&access_policy),
-            Arc::<Recorder>::clone(&recorder),
-        );
-        memberships.bind(&store.entity_stores().unwrap().groups);
+        let store = Persistence::in_memory();
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new(
             "local",
@@ -397,6 +394,7 @@ impl World {
             plugins: plugins.to_vec(),
         }
         .build();
+        memberships.bind(&runtime.entity_stores().groups);
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
         let mut world = Self {
@@ -414,6 +412,15 @@ impl World {
         world.bob = world.user("bob").await;
         world.carol = world.user("carol").await;
         world
+    }
+
+    /// The store of the kind `T` - a plugin's -, checked as the runtime checks it.
+    pub fn entity_store<T: Stored>(&self) -> Arc<dyn EntityStore<T>> {
+        let policies = Policies::new(
+            Arc::<Recorder>::clone(&self.access_policy),
+            Arc::<Recorder>::clone(&self.access_policy),
+        );
+        self.store.entity_store(&policies).unwrap()
     }
 
     pub fn system() -> SecurityContext {
@@ -714,7 +721,9 @@ pub async fn shown(watch: &mut ChannelWatch, wanted: &str) -> ActorEvent {
 /// `ref` names in `store`: the runtime's own (`ComponentRegistry::built_in`). Those of an agent and
 /// a model are the agents' tests' (`caelumora_agents::testing::test_registry`, issue 370).
 pub fn test_registry(store: &Persistence) -> ComponentRegistry {
-    ComponentRegistry::built_in(store.entity_stores().unwrap().component_bundles)
+    ComponentRegistry::built_in(
+        EntityStores::open(store, &Policies::permitting_all()).unwrap().component_bundles,
+    )
 }
 
 /// `lines`, as `World::asked` records them.

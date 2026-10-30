@@ -712,7 +712,9 @@ mod tests {
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::query::{Page, Query};
-    use caelumora_model::store::{Deleted, Persistence, StoreError, StoreResult};
+    use caelumora_model::store::{
+        Deleted, EntityStores, Persistence, Policies, StoreError, StoreResult,
+    };
     use caelumora_model::user::UserId;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -726,7 +728,9 @@ mod tests {
     async fn store_with(
         bundles: &[(&str, &[(&str, &str)])],
     ) -> Arc<dyn EntityStore<ComponentBundle>> {
-        let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
+        let store = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .component_bundles;
         for (name, nodes) in bundles {
             store
                 .create(&SecurityContext::default(), &mut bundle(name, config(nodes)))
@@ -878,8 +882,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_ref_to_nothing_stored_is_refused_as_unavailable() {
-        let registry =
-            named_registry(Persistence::in_memory().entity_stores().unwrap().component_bundles);
+        let registry = named_registry(
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
+        );
         let config =
             ComponentConfig { component_nodes: vec![reference("ref-a", "does-not-exist")] };
         let error = ComponentContainer::from_config(&config, ASKED, &registry, &test_context())
@@ -1014,7 +1021,9 @@ mod tests {
     /// one unless it names another (issue 455), and by nothing else.
     #[tokio::test]
     async fn a_ref_names_a_bundle_in_exactly_its_scope() {
-        let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
+        let store = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .component_bundles;
         let user_id = UserId::new();
         let mut own = ComponentBundle::new(
             ScopedName::new("mine", Scope::UserScope { user_id }).unwrap(),
@@ -1055,7 +1064,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_bundle_cannot_include_a_ref() {
-        let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
+        let store = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .component_bundles;
         let nested = ComponentConfig {
             component_nodes: vec![
                 descriptor("plain", "named", json!(null)),
@@ -1084,7 +1095,9 @@ mod tests {
     /// `choosing` needs `Other`, and `other`, which needs nothing.
     fn needing() -> (Arc<ComponentRegistry>, Arc<AtomicUsize>) {
         let mut registry = ComponentRegistry::new(
-            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
         );
         let built = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&built);
@@ -1363,7 +1376,9 @@ mod tests {
     /// the configuration's; within a bundle as where it is written.
     #[tokio::test]
     async fn a_component_builds_on_the_containers_own_default_and_within_a_ref_as_well() {
-        let store = Persistence::in_memory().entity_stores().unwrap().component_bundles;
+        let store = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .component_bundles;
         let mut shared = bundle(
             "shared",
             ComponentConfig { component_nodes: vec![on_default("listed", "model", json!(null))] },

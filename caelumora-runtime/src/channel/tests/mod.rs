@@ -10,6 +10,7 @@ use caelumora_model::channel::testing::make_channel;
 use caelumora_model::channel::{moderation_components, Channel, Participant};
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
 use caelumora_model::session::SessionId;
+use caelumora_model::store::{EntityStores, Policies};
 use caelumora_model::user::testing::make_user;
 use caelumora_model::user::UserId;
 use std::sync::atomic::Ordering;
@@ -42,7 +43,9 @@ pub(super) async fn channel_with(
     access_policy: Arc<dyn AccessPolicy>,
 ) -> Arc<ChannelLoop> {
     let store = Persistence::in_memory();
-    let participants = record_users(&store.entity_stores().unwrap(), users).await;
+    let participants =
+        record_users(&EntityStores::open(&store, &Policies::permitting_all()).unwrap(), users)
+            .await;
     channel_of(store, participants, access_policy).await
 }
 
@@ -108,8 +111,7 @@ async fn channel_built(
 async fn a_participant_that_no_longer_exists_is_left_out() {
     let mut alice = make_user("alice");
     let store = Persistence::in_memory();
-    store
-        .entity_stores()
+    EntityStores::open(&store, &Policies::permitting_all())
         .unwrap()
         .users
         .create(&SecurityContext::system(), &mut alice)
@@ -182,7 +184,9 @@ pub(super) async fn channel_moderated_by(
 ) -> Arc<ChannelLoop> {
     use crate::component::{ComponentFacets, ComponentKind};
     let store = Persistence::in_memory();
-    let participants = record_users(&store.entity_stores().unwrap(), users).await;
+    let participants =
+        record_users(&EntityStores::open(&store, &Policies::permitting_all()).unwrap(), users)
+            .await;
     let register = move |registry: &mut ComponentRegistry| {
         registry.register(
             ComponentKind::new("test_moderator").provides::<dyn Moderator>(),

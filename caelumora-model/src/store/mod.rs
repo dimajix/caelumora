@@ -28,13 +28,11 @@ use uuid::Uuid;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentBundle;
-use crate::confidentiality::ConfidentialityRules;
 use crate::confidentiality::{Classification, ConfidentialityPolicy};
 use crate::group::Group;
 use crate::intern::intern;
 use crate::project::Project;
 use crate::removal::{Removal, RemovalId};
-use crate::security::AllowAllPolicy;
 use crate::security::{AccessPolicy, Refused, Secured, SecurityContext, Verb};
 use crate::session::Session;
 use crate::store::documents::{CheckedStore, Document, DocumentOf, DocumentStorage};
@@ -43,7 +41,7 @@ use crate::store::memory::MemoryStore;
 use crate::store::query::{Field, Page, Query};
 use crate::store::transcript::TranscriptStore;
 use crate::template::SessionTemplate;
-use crate::type_map::{TypeKey, TypeMap};
+use crate::type_map::TypeKey;
 use crate::user::{User, UserChannelState, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::value::ValueError;
@@ -94,9 +92,34 @@ impl StoreError {
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
-/// The `AccessPolicy` and the `ConfidentialityPolicy` every store of a
-/// backend asks.
-pub(crate) type Policies = (Arc<dyn AccessPolicy>, Arc<dyn ConfidentialityPolicy>);
+/// The `AccessPolicy` and the `ConfidentialityPolicy` a store asks about every access to an entity
+/// (issue 449): those of the process, which the runtime is given and opens its stores by.
+#[derive(Debug, Clone)]
+pub struct Policies {
+    access_policy: Arc<dyn AccessPolicy>,
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
+}
+
+impl Policies {
+    /// The policies of `access_policy`, which decides who may do what, and `confidentiality`,
+    /// which decides whether the caller is cleared for what is reached by clearance.
+    pub fn new(
+        access_policy: Arc<dyn AccessPolicy>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+    ) -> Self {
+        Self { access_policy, confidentiality }
+    }
+
+    /// Who may do what.
+    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        &self.access_policy
+    }
+
+    /// Whether a caller is cleared for what is reached by clearance.
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+        &self.confidentiality
+    }
+}
 
 /// What a lookup answers when what it looks for may no longer exist (issue 192), and what a write
 /// answers when it may have been refused as outdated (issue 492).
@@ -527,24 +550,10 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;
 }
 
-/// What opens the store of any kind (issue 323): a backend, which opens
-/// each kind once - asked again, it gives the same store, so that the core
-/// and every plugin asking for a kind share its store.
-pub trait EntityStoreFactory {
-    /// What opening a store can fail with.
-    type Error;
-
-    /// The store of the entities of `T`.
-    ///
-    /// # Errors
-    /// If the store cannot be opened.
-    fn entity_store<T: Stored>(&self) -> Result<Arc<dyn EntityStore<T>>, Self::Error>;
-}
-
 /// The stores of the entities (issue 323), one per kind of the core,
 /// which the runtime is given and hands to the managers that keep each
-/// kind. A plugin's kinds are not among them: it asks for their stores
-/// itself (`EntityStoreFactory`).
+/// kind. A plugin's kinds are not among them: it asks the builder for their
+/// stores itself (`RuntimeBuilder::entity_store`).
 #[derive(Debug, Clone)]
 pub struct EntityStores {
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
@@ -561,23 +570,23 @@ pub struct EntityStores {
 }
 
 impl EntityStores {
-    /// The stores of the core's kinds, as `factory` opens them.
+    /// The stores of the core's kinds in `persistence`, every access checked by `policies`.
     ///
     /// # Errors
     /// If one cannot be opened.
-    pub fn open<F: EntityStoreFactory>(factory: &F) -> Result<Self, F::Error> {
+    pub fn open(persistence: &Persistence, policies: &Policies) -> StoreResult<Self> {
         Ok(Self {
-            workspaces: factory.entity_store()?,
-            groups: factory.entity_store()?,
-            projects: factory.entity_store()?,
-            session_templates: factory.entity_store()?,
-            user_profiles: factory.entity_store()?,
-            personalities: factory.entity_store()?,
-            users: factory.entity_store()?,
-            agents: factory.entity_store()?,
-            channels: factory.entity_store()?,
-            sessions: factory.entity_store()?,
-            component_bundles: factory.entity_store()?,
+            workspaces: persistence.entity_store(policies)?,
+            groups: persistence.entity_store(policies)?,
+            projects: persistence.entity_store(policies)?,
+            session_templates: persistence.entity_store(policies)?,
+            user_profiles: persistence.entity_store(policies)?,
+            personalities: persistence.entity_store(policies)?,
+            users: persistence.entity_store(policies)?,
+            agents: persistence.entity_store(policies)?,
+            channels: persistence.entity_store(policies)?,
+            sessions: persistence.entity_store(policies)?,
+            component_bundles: persistence.entity_store(policies)?,
         })
     }
 }
@@ -588,7 +597,7 @@ impl EntityStores {
 /// transcripts they hold. It offers each store by a method of its own and is
 /// none of them, so that a backend that keeps only the one part refuses the
 /// other. The checks are the `Persistence`'s, which is made of a backend of
-/// the entities, a backend of the states and the policies.
+/// the entities and a backend of the states, and checks a store by the policies it is opened by.
 #[async_trait]
 pub trait PersistenceBackend: Debug + Send + Sync {
     /// The storage of the documents of `kind`, opened once - asked again,
@@ -639,14 +648,12 @@ pub trait PersistenceBackend: Debug + Send + Sync {
     }
 }
 
-/// The stores (issues 323, 446, 448): of the entities of every kind and of
-/// the states, over the backend of the entities and the backend of the
-/// states - one, or two - and the entities checked by the policies it was
-/// made with, the same way for every backend (`CheckedStore`). It opens the
-/// store of a kind for whoever asks - the core, a plugin -, once, and
-/// refuses a kind whose name another kind has already, since the name is
-/// what a kind is kept, asked about and announced by (`EntityKind`). The
-/// three state stores are taken from the backend of the states when it is
+/// The stores (issues 323, 446, 448, 449): of the entities of every kind and of the states, over
+/// the backend of the entities and the backend of the states - one, or two. It holds no policies:
+/// the store of a kind is checked by the policies whoever opens it gives, the same way for every
+/// backend (`CheckedStore`) - the runtime's by its own. It refuses a kind whose name another kind
+/// has already, since the name is what a kind is kept, asked about and announced by
+/// (`EntityKind`). The three state stores are taken from the backend of the states when it is
 /// made, together, since they read what one another writes.
 #[derive(Debug, Clone)]
 pub struct Persistence {
@@ -657,32 +664,18 @@ pub struct Persistence {
     state_store: Arc<dyn StateStore>,
     history_store: Arc<dyn HistoryStore>,
     transcript_store: Arc<dyn TranscriptStore>,
-    policies: Policies,
-    /// The stores of the kinds opened.
-    opened: Arc<Mutex<Opened>>,
-}
-
-/// The kinds a `Persistence` opened: their stores by type, and the type of
-/// each by its name.
-#[derive(Debug, Default)]
-struct Opened {
-    stores: TypeMap,
-    kinds: HashMap<EntityKind, TypeKey>,
+    /// The type of each kind opened, by its name.
+    kinds: Arc<Mutex<HashMap<EntityKind, TypeKey>>>,
 }
 
 impl Persistence {
-    /// The stores of the entities in `entities` and of the states in
-    /// `states`, asking `access_policy` about every access to an entity,
-    /// and `confidentiality` whether the caller is cleared for what is
-    /// reached by clearance.
+    /// The stores of the entities in `entities` and of the states in `states`.
     ///
     /// # Errors
     /// If `states` keeps no states, or its state stores cannot be opened.
     pub fn new(
         entities: Arc<dyn PersistenceBackend>,
         states: Arc<dyn PersistenceBackend>,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
     ) -> StoreResult<Self> {
         Ok(Self {
             state_store: Arc::clone(&states).state_store()?,
@@ -690,41 +683,21 @@ impl Persistence {
             transcript_store: Arc::clone(&states).transcript_store()?,
             entities,
             states,
-            policies: (access_policy, confidentiality),
-            opened: Default::default(),
+            kinds: Default::default(),
         })
     }
 
-    /// The stores of the entities and of the states, both in `backend`,
-    /// asking the policies as `new`.
+    /// The stores of the entities and of the states, both in `backend`.
     ///
     /// # Errors
     /// As `new`.
-    pub fn over(
-        backend: Arc<dyn PersistenceBackend>,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
-    ) -> StoreResult<Self> {
-        Self::new(Arc::clone(&backend), backend, access_policy, confidentiality)
+    pub fn over(backend: Arc<dyn PersistenceBackend>) -> StoreResult<Self> {
+        Self::new(Arc::clone(&backend), backend)
     }
 
-    /// Stores in memory that permit everything - for tests and throwaway
-    /// setups.
+    /// Stores in memory, the entities and the states in one - for tests and throwaway setups.
+    /// Unlike `over`, it cannot fail: the memory store is the three state stores itself.
     pub fn in_memory() -> Self {
-        Self::in_memory_with(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
-    }
-
-    /// Stores in memory, the entities and the states in one, asking
-    /// `access_policy` and `confidentiality` - for tests of the policies.
-    /// Unlike `over`, it cannot fail: the memory store is the three state
-    /// stores itself.
-    pub fn in_memory_with(
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
-    ) -> Self {
         let memory = Arc::new(MemoryStore::new());
         Self {
             entities: Arc::<MemoryStore>::clone(&memory),
@@ -732,8 +705,7 @@ impl Persistence {
             state_store: Arc::<MemoryStore>::clone(&memory),
             history_store: Arc::<MemoryStore>::clone(&memory),
             transcript_store: memory,
-            policies: (access_policy, confidentiality),
-            opened: Default::default(),
+            kinds: Default::default(),
         }
     }
 
@@ -749,14 +721,6 @@ impl Persistence {
             self.entities.open().await?;
         }
         Ok(())
-    }
-
-    /// The stores of the core's kinds.
-    ///
-    /// # Errors
-    /// If one cannot be opened.
-    pub fn entity_stores(&self) -> StoreResult<EntityStores> {
-        EntityStores::open(self)
     }
 
     /// The store of the states.
@@ -776,38 +740,31 @@ impl Persistence {
         Arc::clone(&self.transcript_store)
     }
 
-    /// The store of the kind `T`, opened once.
+    /// The store of the kind `T`, every access checked by `policies`: over the one storage of the
+    /// kind its backend keeps, whoever opens it, and by whichever policies.
     ///
     /// # Errors
-    /// `StoreError::Conflict` if another kind has the name of `T`; whatever
-    /// opening its storage fails with.
-    fn checked<T: Stored>(&self) -> StoreResult<Arc<CheckedStore<T>>> {
+    /// `StoreError::Conflict` if another kind has the name of `T`; whatever opening its storage
+    /// fails with.
+    pub fn entity_store<T: Stored>(
+        &self,
+        policies: &Policies,
+    ) -> StoreResult<Arc<dyn EntityStore<T>>> {
         let kind = TypeKey::of::<T>();
-        let mut opened = self.opened.lock().unwrap_or_else(PoisonError::into_inner);
-        let named = *opened.kinds.entry(T::KIND).or_insert(kind);
-        if named.id != kind.id {
-            return Err(StoreError::Conflict(format!(
-                "the kinds {} and {} are both named '{}'",
-                named.name(),
-                kind.name(),
-                T::KIND
-            )));
+        {
+            let mut kinds = self.kinds.lock().unwrap_or_else(PoisonError::into_inner);
+            let named = *kinds.entry(T::KIND).or_insert(kind);
+            if named.id != kind.id {
+                return Err(StoreError::Conflict(format!(
+                    "the kinds {} and {} are both named '{}'",
+                    named.name(),
+                    kind.name(),
+                    T::KIND
+                )));
+            }
         }
-        opened.stores.get_or_try_insert(|| {
-            let storage = self.entities.documents(T::KIND, Document::read::<T>)?;
-            Ok(Arc::new(CheckedStore::<T>::new(storage, &self.policies)))
-        })
-    }
-}
-
-impl EntityStoreFactory for Persistence {
-    type Error = StoreError;
-
-    /// # Errors
-    /// `StoreError::Conflict` if another kind has the name of `T`; whatever
-    /// opening it fails with.
-    fn entity_store<T: Stored>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
-        Ok(self.checked::<T>()?)
+        let storage = self.entities.documents(T::KIND, Document::read::<T>)?;
+        Ok(Arc::new(CheckedStore::<T>::new(storage, policies)))
     }
 }
 
@@ -884,10 +841,8 @@ pub trait StateStore: Debug + Sync + Send {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confidentiality::ConfidentialityRules;
     use crate::removal::Removal;
-    use crate::security::AllowAllPolicy;
-    use crate::security::{SecurityAttributes, SecurityContext};
+    use crate::security::{OwnershipPolicy, SecurityAttributes, SecurityContext};
     use crate::session::testing::bare_session;
     use crate::session::SessionId;
     use crate::store::memory::MemoryStore;
@@ -912,7 +867,9 @@ mod tests {
             Session { name: Name::new("session1").unwrap(), ..bare_session(SessionId::new()) };
         let mut session2 =
             Session { name: Name::new("session2").unwrap(), ..bare_session(SessionId::new()) };
-        let store = Persistence::in_memory().entity_stores().unwrap().sessions;
+        let store = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .sessions;
         let ctx = SecurityContext::default();
 
         store.create(&ctx, &mut session1).await.unwrap();
@@ -1006,16 +963,13 @@ mod tests {
         }
     }
 
+    /// A kind is kept in one storage of its backend however it is opened, by whichever policies
+    /// (issue 449), and no two kinds share a name.
     #[tokio::test]
-    async fn a_backend_opens_a_kind_once_for_everybody_and_no_two_kinds_of_one_name() {
+    async fn a_kind_is_kept_in_one_storage_however_it_is_opened_and_no_two_kinds_of_one_name() {
         let memory = Arc::new(MemoryStore::new());
-        let backend = Persistence::over(
-            Arc::<MemoryStore>::clone(&memory),
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
-        .unwrap();
-        let notes = backend.entity_store::<Note>().unwrap();
+        let backend = Persistence::over(Arc::<MemoryStore>::clone(&memory)).unwrap();
+        let notes = backend.entity_store::<Note>(&Policies::permitting_all()).unwrap();
         let mut note = Note {
             id: NoteId::new(),
             security_attributes: SecurityAttributes::systems(),
@@ -1023,30 +977,24 @@ mod tests {
             revision: Default::default(),
         };
         notes.create(&SecurityContext::system(), &mut note).await.unwrap();
-        let again = backend.entity_store::<Note>().unwrap();
+        let owners = Policies::by_default_rules(Arc::new(OwnershipPolicy::new()));
+        let again = backend.entity_store::<Note>(&owners).unwrap();
         assert!(
             again.get(&SecurityContext::system(), note.id).await.is_ok(),
-            "the same store, asked again"
+            "the same storage, opened again by other policies"
         );
-        let core = backend.entity_stores().unwrap();
-        assert!(
-            Arc::ptr_eq(&core.groups, &backend.entity_stores().unwrap().groups),
-            "the core's kinds, too"
-        );
-        let refused = backend.entity_store::<Impostor>().expect_err("named as the groups are");
+        EntityStores::open(&backend, &Policies::permitting_all()).unwrap();
+        let refused = backend
+            .entity_store::<Impostor>(&Policies::permitting_all())
+            .expect_err("named as the groups are");
         assert!(
             matches!(&refused, StoreError::Conflict(why) if why.contains("'group'")),
             "{refused}"
         );
-        let other = Persistence::over(
-            memory,
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
-        .unwrap();
+        let other = Persistence::over(memory).unwrap();
         assert!(
             other
-                .entity_store::<Note>()
+                .entity_store::<Note>(&Policies::permitting_all())
                 .unwrap()
                 .get(&SecurityContext::system(), note.id)
                 .await

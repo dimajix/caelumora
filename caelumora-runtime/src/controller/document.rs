@@ -339,7 +339,7 @@ mod tests {
     use caelumora_model::group::GroupId;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::Grant;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
     use std::time::Duration;
@@ -357,7 +357,8 @@ mod tests {
     /// access list the entries naming a group that is gone (issue 347), and keeps the others.
     #[tokio::test]
     async fn a_change_drops_the_entries_naming_a_group_that_is_gone() {
-        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let stores =
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap();
         let system = SecurityContext::system();
         let owner = UserId::new();
         let mut team = Group::team(
@@ -394,7 +395,8 @@ mod tests {
     #[tokio::test]
     async fn taking_over_what_is_stored_waits_for_a_change_under_way() {
         let mut agent = assistant();
-        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let stores =
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap();
         stores.agents.create(&SecurityContext::system(), &mut agent).await.unwrap();
         let document =
             LiveDocument::new(agent.id, agent, stores.agents, stores.groups, Arc::new(()));

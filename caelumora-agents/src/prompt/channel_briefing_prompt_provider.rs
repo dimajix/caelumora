@@ -168,7 +168,6 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
-    use caelumora_model::store::Persistence;
     use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
@@ -229,21 +228,18 @@ mod tests {
 
     #[tokio::test]
     async fn the_descriptions_are_read_at_every_turn_and_classified_as_their_place() {
-        let store = Persistence::in_memory();
-        let runtime =
-            TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }
-                .build();
+        let runtime = TestRuntime { plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 
         let agent = stored_agent(
-            &store.entity_stores().unwrap(),
+            runtime.entity_stores(),
             "Jonathan",
             make_personality("plain"),
             ActorId::User(UserId::new()),
         )
         .await;
         let owner = make_user("owner");
-        record_users(&store.entity_stores().unwrap(), &[&owner]).await;
+        record_users(runtime.entity_stores(), &[&owner]).await;
         let as_owner =
             SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
         let session = make_session("s", owner.id);

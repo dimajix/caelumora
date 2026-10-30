@@ -105,7 +105,7 @@ mod tests {
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{Persistence, Policies};
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
@@ -119,22 +119,15 @@ mod tests {
             ActorId::User(UserId::new()),
         );
         let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let ctx = SecurityContext::default();
-        store.entity_stores().unwrap().agents.create(&ctx, &mut agent).await.unwrap();
-        let controller = AgentController::new(
-            agent.clone(),
-            None,
-            Arc::new(()),
-            &store.entity_stores().unwrap(),
-        );
+        stores.agents.create(&ctx, &mut agent).await.unwrap();
+        let controller = AgentController::new(agent.clone(), None, Arc::new(()), &stores);
 
         controller.update_name(&ctx, "new_name").await.unwrap();
 
         assert_eq!(controller.name(), "new_name");
-        assert_eq!(
-            store.entity_stores().unwrap().agents.get(&ctx, agent.id).await.unwrap().name.as_str(),
-            "new_name"
-        );
+        assert_eq!(stores.agents.get(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
     }
 
     /// Issue 304: an agent acts with its owner's roles as they are now - a
@@ -148,11 +141,12 @@ mod tests {
         let (staff, hr) = (RoleId::new(), RoleId::new());
         let alice = User { roles: vec![staff], ..make_user("alice") };
         let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let owner = Arc::new(UserController::new(
             alice.clone(),
             UserProfile::new(alice.id, None),
             Arc::new(()),
-            &store.entity_stores().unwrap(),
+            &stores,
             store.state_store(),
             store.history_store(),
         ));
@@ -162,12 +156,8 @@ mod tests {
             personality.id,
             ActorId::User(alice.id),
         );
-        let controller = AgentController::new(
-            agent,
-            Some(Arc::clone(&owner)),
-            Arc::new(()),
-            &store.entity_stores().unwrap(),
-        );
+        let controller =
+            AgentController::new(agent, Some(Arc::clone(&owner)), Arc::new(()), &stores);
         let (session, channel) = (Default::default(), Default::default());
 
         let context = controller.security_context(session, channel, personality.limiting_roles());

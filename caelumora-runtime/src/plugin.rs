@@ -54,11 +54,10 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::transcript::TranscriptStore;
-    use caelumora_model::store::Persistence;
     use caelumora_model::store::{
-        EntityKind, EntityStore, EntityStoreFactory, NoEntity, Revision, StoreError, Stored,
+        EntityKind, EntityStore, NoEntity, Persistence, PersistenceBackend, Policies, Revision,
+        StateStore, StoreError, StoreResult, Stored,
     };
-    use caelumora_model::store::{PersistenceBackend, StateStore, StoreResult};
     use caelumora_model::type_map::TypeKey;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
@@ -289,7 +288,7 @@ mod tests {
         fs::write(&seed, "notes:\n- id: 3f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  text: remember\n")
             .unwrap();
         runtime.seed(&[seed]).await.unwrap();
-        let notes = store.entity_store::<Note>().unwrap();
+        let notes = store.entity_store::<Note>(&Policies::permitting_all()).unwrap();
         let note = notes
             .get(
                 &SecurityContext::system(),

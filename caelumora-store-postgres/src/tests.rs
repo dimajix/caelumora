@@ -13,7 +13,6 @@ use caelumora_model::approval::ApproverId;
 use caelumora_model::chain::Position;
 use caelumora_model::channel::{ChannelId, ChannelState};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::digest;
 use caelumora_model::group::Group;
@@ -25,15 +24,15 @@ use caelumora_model::scope::Scope;
 use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{
-    AccessPolicy, Admission, AllowAllPolicy, Grant, OwnershipPolicy, SecurityAttributes,
-    SecurityContext, Subject,
+    Admission, AllowAllPolicy, Grant, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject,
 };
 use caelumora_model::store::documents::Document;
 use caelumora_model::store::history::Memberships;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
-use caelumora_model::store::suite;
-use caelumora_model::store::{EntityStoreFactory, Persistence, Presence, Revision, StoreError};
+use caelumora_model::store::{
+    suite, EntityStores, Persistence, Policies, Presence, Revision, StoreError,
+};
 use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
@@ -79,18 +78,11 @@ impl Database {
         Arc::new(PostgresStore::new(Arc::clone(&self.connection)))
     }
 
-    /// The stores of the entities in the schema, of a backend of their own,
-    /// checked by `policy` - the states in memory -, with the core's kinds
-    /// opened and the backends opened after them, as at start.
-    async fn stores(&self, policy: Arc<dyn AccessPolicy>) -> Persistence {
-        let stores = Persistence::new(
-            self.backend(),
-            Arc::new(MemoryStore::new()),
-            policy,
-            Arc::new(ConfidentialityRules::default()),
-        )
-        .unwrap();
-        stores.entity_stores().unwrap();
+    /// The stores of the entities in the schema, of a backend of their own - the states in
+    /// memory -, with the core's kinds opened and the backends opened after them, as at start.
+    async fn stores(&self) -> Persistence {
+        let stores = Persistence::new(self.backend(), Arc::new(MemoryStore::new())).unwrap();
+        EntityStores::open(&stores, &Policies::permitting_all()).unwrap();
         stores.open().await.expect("opened against the test database");
         stores
     }
@@ -109,7 +101,7 @@ impl Database {
 async fn behaves_as_an_entity_store() {
     let Some(database) = Database::new() else { return };
     suite::entity_store_behaves(
-        &database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap(),
+        &EntityStores::open(&database.stores().await, &Policies::permitting_all()).unwrap(),
     )
     .await;
     database.drop().await;
@@ -120,9 +112,12 @@ async fn behaves_as_an_entity_store() {
 #[tokio::test]
 async fn answers_queries() {
     let Some(database) = Database::new() else { return };
-    let stores = database.stores(Arc::new(AllowAllPolicy::new())).await;
-    suite::queries_behave(&stores.entity_stores().unwrap()).await;
-    suite::queries_reach_parts(stores.entity_store::<suite::Folder>().unwrap().as_ref()).await;
+    let stores = database.stores().await;
+    suite::queries_behave(&EntityStores::open(&stores, &Policies::permitting_all()).unwrap()).await;
+    suite::queries_reach_parts(
+        stores.entity_store::<suite::Folder>(&Policies::permitting_all()).unwrap().as_ref(),
+    )
+    .await;
     database.drop().await;
 }
 
@@ -130,10 +125,11 @@ async fn answers_queries() {
 async fn lists_what_check_decides() {
     let Some(database) = Database::new() else { return };
     let (memberships, access_policy) = suite::admitting_policy();
-    let stores = database.stores(Arc::clone(&access_policy)).await;
-    let folders = stores.entity_store::<suite::Folder>().unwrap();
+    let stores = database.stores().await;
+    let policies = Policies::by_default_rules(Arc::clone(&access_policy));
+    let folders = stores.entity_store::<suite::Folder>(&policies).unwrap();
     suite::lists_admit_what_check_decides(
-        &stores.entity_stores().unwrap(),
+        &EntityStores::open(&stores, &policies).unwrap(),
         folders.as_ref(),
         &memberships,
         access_policy.as_ref(),
@@ -146,7 +142,7 @@ async fn lists_what_check_decides() {
 async fn keeps_what_is_deleted_marked() {
     let Some(database) = Database::new() else { return };
     suite::deleting_marks(
-        &database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap(),
+        &EntityStores::open(&database.stores().await, &Policies::permitting_all()).unwrap(),
     )
     .await;
     database.drop().await;
@@ -156,7 +152,7 @@ async fn keeps_what_is_deleted_marked() {
 async fn judges_writes_on_their_revision() {
     let Some(database) = Database::new() else { return };
     suite::writes_are_judged_on_their_revision(
-        &database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap(),
+        &EntityStores::open(&database.stores().await, &Policies::permitting_all()).unwrap(),
     )
     .await;
     suite::storage_judges_writes_on_their_revision(database.backend().as_ref()).await;
@@ -167,7 +163,7 @@ async fn judges_writes_on_their_revision() {
 async fn begins_purges() {
     let Some(database) = Database::new() else { return };
     suite::purges_are_begun(
-        &database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap(),
+        &EntityStores::open(&database.stores().await, &Policies::permitting_all()).unwrap(),
     )
     .await;
     database.drop().await;
@@ -177,7 +173,7 @@ async fn begins_purges() {
 async fn keeps_names_unique() {
     let Some(database) = Database::new() else { return };
     suite::names_are_unique(
-        &database.stores(Arc::new(AllowAllPolicy::new())).await.entity_stores().unwrap(),
+        &EntityStores::open(&database.stores().await, &Policies::permitting_all()).unwrap(),
     )
     .await;
     database.drop().await;
@@ -187,7 +183,11 @@ async fn keeps_names_unique() {
 async fn keeps_names_unique_beyond_what_is_read() {
     let Some(database) = Database::new() else { return };
     suite::names_are_unique_beyond_what_is_read(
-        &database.stores(Arc::new(OwnershipPolicy::new())).await.entity_stores().unwrap(),
+        &EntityStores::open(
+            &database.stores().await,
+            &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
+        )
+        .unwrap(),
     )
     .await;
     database.drop().await;
@@ -198,20 +198,23 @@ async fn keeps_names_unique_beyond_what_is_read() {
 #[tokio::test]
 async fn backends_of_one_schema_keep_one_store() {
     let Some(database) = Database::new() else { return };
-    let here = database.stores(Arc::new(AllowAllPolicy::new())).await;
-    let there = database.stores(Arc::new(AllowAllPolicy::new())).await;
+    let here = database.stores().await;
+    let there = database.stores().await;
+    let there_stores = EntityStores::open(&there, &Policies::permitting_all()).unwrap();
     let owner = UserId::new();
     let team = |name: &str| {
         Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner)
     };
     let system = SecurityContext::system();
     let mut ours = team("Ours");
-    here.entity_stores().unwrap().groups.create(&system, &mut ours).await.unwrap();
-    assert!(
-        there.entity_stores().unwrap().groups.get(&system, ours.id).await.is_ok(),
-        "read by the other"
-    );
-    let taken = there.entity_stores().unwrap().groups.create(&system, &mut team("ours")).await;
+    EntityStores::open(&here, &Policies::permitting_all())
+        .unwrap()
+        .groups
+        .create(&system, &mut ours)
+        .await
+        .unwrap();
+    assert!(there_stores.groups.get(&system, ours.id).await.is_ok(), "read by the other");
+    let taken = there_stores.groups.create(&system, &mut team("ours")).await;
     assert!(
         matches!(taken, Err(StoreError::NameTaken { entity: "group" })),
         "its name taken: {taken:?}"
@@ -224,20 +227,14 @@ async fn backends_of_one_schema_keep_one_store() {
 #[tokio::test]
 async fn a_table_of_another_form_is_refused() {
     let Some(database) = Database::new() else { return };
-    database.stores(Arc::new(AllowAllPolicy::new())).await;
+    database.stores().await;
     let pool = database.connection.pool().await.unwrap();
     sqlx::query("UPDATE kinds SET schema_version = 99 WHERE name = 'group'")
         .execute(pool)
         .await
         .unwrap();
-    let stores = Persistence::new(
-        database.backend(),
-        Arc::new(MemoryStore::new()),
-        Arc::new(AllowAllPolicy::new()),
-        Arc::new(ConfidentialityRules::default()),
-    )
-    .unwrap();
-    stores.entity_stores().unwrap();
+    let stores = Persistence::new(database.backend(), Arc::new(MemoryStore::new())).unwrap();
+    EntityStores::open(&stores, &Policies::permitting_all()).unwrap();
     let refused = stores.open().await.expect_err("of another form");
     assert!(refused.to_string().contains("the kind group has the form 99"), "{refused}");
     database.drop().await;
@@ -265,12 +262,7 @@ fn the_backend_is_made_from_its_parameters() {
     let made = backends
         .make_one::<dyn PersistenceBackend>("entity store", "entity_store", &postgres, &services)
         .unwrap();
-    Persistence::over(
-        made,
-        Arc::new(AllowAllPolicy::new()),
-        Arc::new(ConfidentialityRules::default()),
-    )
-    .expect("keeps the states too");
+    Persistence::over(made).expect("keeps the states too");
 
     let misspelt = BackendConfig::new("postgres", json!({ "url": "postgres://somewhere" }));
     let refused = backends

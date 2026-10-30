@@ -30,8 +30,7 @@ use caelumora_model::message::MessageId;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::Persistence;
-use caelumora_model::store::StoreResult;
+use caelumora_model::store::{EntityStores, Persistence, Policies, StoreResult};
 use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::user::UserId;
 use caelumora_model::work::TurnId;
@@ -79,7 +78,7 @@ pub async fn alice_and_an_agent(
     name: &str,
     personality: Personality,
 ) -> (SecurityContext, AgentId, UserId) {
-    let stores = store.entity_stores().unwrap();
+    let stores = EntityStores::open(store, &Policies::permitting_all()).unwrap();
     let alice = make_user("alice");
     record_users(&stores, &[&alice]).await;
     let context =

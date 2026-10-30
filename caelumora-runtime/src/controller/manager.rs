@@ -444,8 +444,7 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::security::{AclEntry, Grant, Subject};
-    use caelumora_model::store::Persistence;
-    use caelumora_model::store::StoreError;
+    use caelumora_model::store::{Persistence, Policies, StoreError};
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{User, UserUpdateEvent};
     use caelumora_model::value::language::Language;
@@ -461,7 +460,7 @@ mod tests {
             Arc::new(ConfidentialityRules::default()),
         ));
         let manager = ControllerManager::new(
-            store.entity_stores().unwrap(),
+            EntityStores::open(&store, &Policies::permitting_all()).unwrap(),
             Arc::clone(&bus),
             Arc::new(AllowAllPolicy::new()),
             Arc::new(ConfidentialityRules::default()),
@@ -474,7 +473,7 @@ mod tests {
 
     async fn agent_in(store: &Persistence) -> Agent {
         stored_agent(
-            &store.entity_stores().unwrap(),
+            &EntityStores::open(store, &Policies::permitting_all()).unwrap(),
             "helper",
             make_personality("plain"),
             ActorId::User(UserId::new()),
@@ -484,8 +483,7 @@ mod tests {
 
     async fn user_in(store: &Persistence) -> User {
         let mut user = make_user("alice");
-        store
-            .entity_stores()
+        EntityStores::open(store, &Policies::permitting_all())
             .unwrap()
             .users
             .create(&SecurityContext::system(), &mut user)
@@ -503,8 +501,7 @@ mod tests {
             Default::default(),
             owner,
         );
-        store
-            .entity_stores()
+        EntityStores::open(store, &Policies::permitting_all())
             .unwrap()
             .workspaces
             .create(&SecurityContext::system(), &mut workspace)
@@ -520,8 +517,7 @@ mod tests {
             ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(),
             owner,
         );
-        store
-            .entity_stores()
+        EntityStores::open(store, &Policies::permitting_all())
             .unwrap()
             .projects
             .create(&SecurityContext::system(), &mut project)
@@ -575,7 +571,7 @@ mod tests {
         let users = manager.user_controller(user.id).await.unwrap();
         let workspaces = manager.workspace_controller(workspace.id).await.unwrap();
         let projects = manager.project_controller(project.id).await.unwrap();
-        let stores = store.entity_stores().unwrap();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let system = SecurityContext::system();
 
         // Changed in the store, as elsewhere, and not announced here.
@@ -629,8 +625,7 @@ mod tests {
         drop(first);
         let mut renamed = agent.clone();
         renamed.name.name = Name::new("renamed").unwrap();
-        store
-            .entity_stores()
+        EntityStores::open(&store, &Policies::permitting_all())
             .unwrap()
             .agents
             .update(&SecurityContext::system(), &mut renamed)
@@ -651,6 +646,7 @@ mod tests {
     #[tokio::test]
     async fn a_personality_has_one_controller_in_the_instance_while_it_is_used() {
         let (store, _, manager) = manager();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let agent = agent_in(&store).await;
         let system = SecurityContext::system();
 
@@ -665,7 +661,7 @@ mod tests {
 
         let mut narrowed = Personality::clone(&first.load());
         narrowed.roles = Some(vec![RoleId::new()]);
-        store.entity_stores().unwrap().personalities.update(&system, &mut narrowed).await.unwrap();
+        stores.personalities.update(&system, &mut narrowed).await.unwrap();
         assert_eq!(first.load().roles, None, "not taken in by itself");
         manager.personality_controller(agent.personality_id).await.unwrap();
         assert_eq!(
@@ -674,9 +670,7 @@ mod tests {
             "taken in when asked for, for all that hold it"
         );
 
-        store
-            .entity_stores()
-            .unwrap()
+        stores
             .personalities
             .delete(&system, agent.personality_id, &Removal::now(system.caller_id))
             .await
@@ -759,8 +753,7 @@ mod tests {
             subject: Subject::Actor(ActorId::User(UserId::new())),
             grant: Grant::Read,
         }];
-        store
-            .entity_stores()
+        EntityStores::open(&store, &Policies::permitting_all())
             .unwrap()
             .workspaces
             .update(&SecurityContext::system(), &mut changed)
@@ -801,8 +794,7 @@ mod tests {
             subject: Subject::Actor(ActorId::User(UserId::new())),
             grant: Grant::Read,
         }];
-        store
-            .entity_stores()
+        EntityStores::open(&store, &Policies::permitting_all())
             .unwrap()
             .projects
             .update(&SecurityContext::system(), &mut changed)
@@ -850,8 +842,7 @@ mod tests {
         let (store, _bus, manager) = manager();
         let staff = RoleId::new();
         let mut alice = User { roles: vec![staff], ..user_in(&store).await };
-        store
-            .entity_stores()
+        EntityStores::open(&store, &Policies::permitting_all())
             .unwrap()
             .users
             .update(&SecurityContext::system(), &mut alice)

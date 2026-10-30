@@ -265,8 +265,7 @@ mod tests {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::EntityStoreFactory;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{Persistence, Policies};
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
@@ -315,8 +314,7 @@ mod tests {
         let mut builder = RuntimeBuilder::new(
             store.clone(),
             secrets,
-            access_policy,
-            config.create_confidentiality_policy(),
+            Policies::new(access_policy, config.create_confidentiality_policy()),
             config,
             Backends::with_plugins(&plugins),
         )
@@ -349,7 +347,7 @@ mod tests {
         assert!(!seed.personalities.is_empty() && !seed.session_templates.is_empty());
         let store = Persistence::in_memory();
         let runtime = runtime(&store);
-        let stores = store.entity_stores().unwrap();
+        let stores = runtime.entity_stores();
         let system = SecurityContext::system();
 
         runtime.seed(&[example("seed.yaml")]).await.unwrap();
@@ -396,7 +394,7 @@ mod tests {
             changed.description
         );
         let skills = store
-            .entity_store::<Skill>()
+            .entity_store::<Skill>(&Policies::permitting_all())
             .unwrap()
             .list(&system, &Query::all())
             .await
@@ -443,8 +441,8 @@ mod tests {
         let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
         let store = Persistence::in_memory();
         let runtime = runtime(&store);
-        let stores = store.entity_stores().unwrap();
-        let skills = store.entity_store::<Skill>().unwrap();
+        let stores = runtime.entity_stores();
+        let skills = store.entity_store::<Skill>(&Policies::permitting_all()).unwrap();
         let system = SecurityContext::system();
         runtime.seed(&[example("seed.yaml")]).await.unwrap();
         let bundle = seed.component_bundles[0].id;

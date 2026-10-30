@@ -266,8 +266,7 @@ mod tests {
     use crate::session::testing::bare_session;
     use crate::session::{Session, SessionId};
     use crate::store::query::Query;
-    use crate::store::Persistence;
-    use crate::store::{StoreError, Stored};
+    use crate::store::{EntityStores, Persistence, Policies, StoreError, Stored};
     use crate::user::testing::make_user;
     use crate::user::UserId;
     use std::sync::Arc;
@@ -327,10 +326,12 @@ mod tests {
         )])
         .unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
-        let store = Persistence::in_memory_with(Arc::new(AllowAllPolicy::new()), Arc::new(rules))
-            .entity_stores()
-            .unwrap()
-            .workspaces;
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::new(Arc::new(AllowAllPolicy::new()), Arc::new(rules)),
+        )
+        .unwrap()
+        .workspaces;
         let owner = UserId::new();
         let cleared =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default())
@@ -394,11 +395,10 @@ mod tests {
 
     #[tokio::test]
     async fn what_the_caller_may_not_read_does_not_exist_for_them() {
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnersAndContributors),
-            Arc::new(ConfidentialityRules::default()),
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::by_default_rules(Arc::new(OwnersAndContributors)),
         )
-        .entity_stores()
         .unwrap()
         .sessions;
         let (alice, alice_ctx) = user();
@@ -425,11 +425,10 @@ mod tests {
 
     #[tokio::test]
     async fn changes_are_checked_against_what_is_stored() {
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnersAndContributors),
-            Arc::new(ConfidentialityRules::default()),
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::by_default_rules(Arc::new(OwnersAndContributors)),
         )
-        .entity_stores()
         .unwrap()
         .sessions;
         let (alice, alice_ctx) = user();
@@ -472,11 +471,10 @@ mod tests {
 
     #[tokio::test]
     async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
         )
-        .entity_stores()
         .unwrap()
         .sessions;
         let (alice, alice_ctx) = user();
@@ -541,11 +539,10 @@ mod tests {
     /// that goes with what is deleted -, which names the caller; the system's names another.
     #[tokio::test]
     async fn a_deletion_sets_the_mark_it_is_given_by_its_caller() {
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
         )
-        .entity_stores()
         .unwrap()
         .sessions;
         let system = SecurityContext::system();
@@ -577,11 +574,10 @@ mod tests {
 
     #[tokio::test]
     async fn nobody_creates_in_someone_elses_name() {
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnersAndContributors),
-            Arc::new(ConfidentialityRules::default()),
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::by_default_rules(Arc::new(OwnersAndContributors)),
         )
-        .entity_stores()
         .unwrap()
         .sessions;
         let (alice, _) = user();
@@ -598,11 +594,10 @@ mod tests {
         use crate::user::User;
         use crate::value::name::ScopedName;
 
-        let store = Persistence::in_memory_with(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
         )
-        .entity_stores()
         .unwrap()
         .users;
         let system = SecurityContext::system();

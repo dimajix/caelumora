@@ -45,7 +45,7 @@ use caelumora_model::security::{
 };
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::testing::ContendedStore;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, Persistence, StoreError, Stored};
+use caelumora_model::store::{EntityStore, Persistence, Policies, StoreError, Stored};
 use caelumora_model::user::UserId;
 use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
 use caelumora_model::user_provider::UserManager;
@@ -91,7 +91,7 @@ fn manager(world: &World) -> Arc<ArtifactManager> {
 
 /// The store of artifacts of `world`, as the plugin has it.
 fn store(world: &World) -> Arc<dyn EntityStore<Artifact>> {
-    world.store.entity_store::<Artifact>().unwrap()
+    world.entity_store::<Artifact>()
 }
 
 fn checks(lines: &[&str]) -> Vec<String> {
@@ -1602,7 +1602,7 @@ async fn a_purge_that_fails_between_is_restored_by_nobody_and_finished_by_the_ne
 
     let failed = stranded.purge(&system, artifact.id).await;
     assert!(matches!(failed, Err(ArtifactError::StorageGone(_))), "{failed:?}");
-    let artifacts = persistence.entity_store::<Artifact>().unwrap();
+    let artifacts = persistence.entity_store::<Artifact>(&Policies::permitting_all()).unwrap();
     let left = artifacts.get_deleted(&system, artifact.id).await.expect("still deleted");
     assert!(left.removal.purging, "its purge begun");
     let refused = manager.restore(&system, artifact.id).await;

@@ -476,9 +476,8 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
         attributes(Some(world.bob), &[world.alice]),
     );
     world
-        .store
+        .runtime
         .entity_stores()
-        .unwrap()
         .component_bundles
         .create(&World::as_user(world.bob), &mut tools)
         .await
@@ -515,9 +514,8 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let mut withdrawn =
         ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..tools };
     world
-        .store
+        .runtime
         .entity_stores()
-        .unwrap()
         .component_bundles
         .update(&World::as_user(world.bob), &mut withdrawn)
         .await
@@ -1037,9 +1035,8 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
         attributes(Some(world.bob), &[world.alice]),
     );
     world
-        .store
+        .runtime
         .entity_stores()
-        .unwrap()
         .component_bundles
         .create(&World::as_user(world.bob), &mut tools)
         .await

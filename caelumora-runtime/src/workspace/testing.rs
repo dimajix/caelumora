@@ -20,7 +20,6 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{Grant, SecurityContext};
 use caelumora_model::session::testing::make_session;
 use caelumora_model::session::Session;
-use caelumora_model::store::Persistence;
 use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::value::name::Name;
 use caelumora_model::workspace::Workspace;
@@ -55,7 +54,6 @@ impl WithWorkspace {
 /// "docs" of the user attached, made as the runtime makes a session (`SessionManager::create`,
 /// issue 486) and running.
 pub async fn session_with_workspace() -> WithWorkspace {
-    let store = Persistence::in_memory();
     let files = tempfile::tempdir().unwrap();
     let internal = Classification::general(Confidentiality::Internal);
     let storage = BackendConfig::new(
@@ -67,14 +65,13 @@ pub async fn session_with_workspace() -> WithWorkspace {
         max_file_bytes: MAX_FILE_BYTES,
     };
     let runtime = TestRuntime {
-        store: store.clone(),
         config: AppConfig { workspaces, ..Default::default() },
         ..Default::default()
     }
     .build();
 
     let owner = make_user("owner");
-    record_users(&store.entity_stores().unwrap(), &[&owner]).await;
+    record_users(runtime.entity_stores(), &[&owner]).await;
     let owner = owner.id;
     let as_owner =
         SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -92,7 +89,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
         .unwrap();
 
     let agent = stored_agent(
-        &store.entity_stores().unwrap(),
+        runtime.entity_stores(),
         "Jonathan",
         make_personality("plain"),
         ActorId::User(owner),

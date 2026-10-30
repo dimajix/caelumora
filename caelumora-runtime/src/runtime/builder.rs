@@ -30,8 +30,7 @@ use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{
-    EntityStore, EntityStoreFactory, EntityStores, Persistence, PersistenceBackend, StoreResult,
-    Stored,
+    EntityStore, EntityStores, Persistence, PersistenceBackend, Policies, StoreResult, Stored,
 };
 use caelumora_model::user_provider::{UserManager, UserProvider};
 use serde::de::DeserializeOwned;
@@ -52,8 +51,7 @@ pub struct RuntimeBuilder {
     entity_stores: EntityStores,
     secret_manager: Arc<SecretManager>,
     user_manager: Arc<UserManager>,
-    access_policy: Arc<dyn AccessPolicy>,
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    policies: Policies,
     component_registry: ComponentRegistry,
     /// The kinds of agent the program runs (issue 370).
     agent_kinds: AgentKinds,
@@ -97,12 +95,12 @@ impl fmt::Debug for RuntimeBuilder {
 
 impl RuntimeBuilder {
     /// The builder of the runtime everything in a process shares, with the
-    /// core's services and managers made. `access_policy` is the one the
-    /// whole process was configured with: it decides tool calls and what may
-    /// be done to a channel, so it must be the same instance the stores were
-    /// built with, not a second one made up here; so is `confidentiality`,
-    /// which decides what may flow where (issue 304). `persistence` keeps the
-    /// entities of every kind, the core's and the plugins', and the states.
+    /// core's services and managers made. `policies` are those the whole
+    /// process was configured with: the access policy decides tool calls and
+    /// what may be done to a channel, the confidentiality policy what may flow
+    /// where (issue 304). `persistence` keeps the entities of every kind, the
+    /// core's and the plugins', and the states; the builder opens its stores
+    /// by `policies`, so that they check by nothing else (issue 449).
     /// Of `config`, the runtime takes what it runs by itself, so that a
     /// binary cannot drop a configured part for a default: the global user
     /// commands (`commands`), the components that replace built-in defaults
@@ -124,13 +122,14 @@ impl RuntimeBuilder {
     pub fn new(
         persistence: Persistence,
         secret_manager: Arc<SecretManager>,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        policies: Policies,
         config: &AppConfig,
         backends: Backends,
     ) -> Result<Self> {
+        let access_policy = Arc::clone(policies.access_policy());
+        let confidentiality = Arc::clone(policies.confidentiality());
         let state_store = persistence.state_store();
-        let entity_stores = persistence.entity_stores()?;
+        let entity_stores = EntityStores::open(&persistence, &policies)?;
         let scope_holders = Arc::new(ScopeHolders::new(&entity_stores));
         let event_bus =
             Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
@@ -231,8 +230,7 @@ impl RuntimeBuilder {
             entity_stores,
             secret_manager,
             user_manager,
-            access_policy,
-            confidentiality,
+            policies,
             component_registry,
             agent_kinds: AgentKinds::default(),
             component_defaults: config.component_defaults.clone(),
@@ -274,8 +272,8 @@ impl RuntimeBuilder {
     /// opened, or as `new` and `plugin`.
     pub async fn from_config(config: &AppConfig, plugins: &[&dyn Plugin]) -> Result<Self> {
         let backends = Backends::with_plugins(plugins);
-        // The policy is made before the store it guards, and bound to it
-        // once it exists.
+        // The policy is made before the store it guards, and bound to the
+        // runtime's once it exists.
         let memberships = Arc::new(StoreMemberships::new());
         let access_policy =
             config.create_access_policy(Arc::<StoreMemberships>::clone(&memberships));
@@ -297,22 +295,12 @@ impl RuntimeBuilder {
         };
         let states = backend("state store", "state_store", &config.persistence.state_store)?;
         let entities = backend("entity store", "entity_store", &config.persistence.entity_store)?;
-        let persistence = Persistence::new(
-            entities,
-            states,
-            Arc::clone(&access_policy),
-            Arc::clone(&confidentiality),
-        )
-        .context("Cannot make the state store")?;
-        memberships.bind(&persistence.entity_stores()?.groups);
-        let mut builder = Self::new(
-            persistence.clone(),
-            secret_manager,
-            access_policy,
-            confidentiality,
-            config,
-            backends,
-        )?;
+        let persistence =
+            Persistence::new(entities, states).context("Cannot make the state store")?;
+        let policies = Policies::new(access_policy, confidentiality);
+        let mut builder =
+            Self::new(persistence.clone(), secret_manager, policies, config, backends)?;
+        memberships.bind(&builder.entity_stores().groups);
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
@@ -330,14 +318,14 @@ impl RuntimeBuilder {
             .with_context(|| format!("Cannot register the plugin {}", plugin.name()))
     }
 
-    /// The store of the entities of `T`, a plugin's kind - the same for
-    /// whoever asks.
+    /// The store of the entities of `T`, a plugin's kind: over the one
+    /// storage of the kind, checked by the builder's policies.
     ///
     /// # Errors
     /// `StoreError::Conflict` if another kind has its name; if it cannot be
     /// opened.
     pub fn entity_store<T: Stored>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
-        self.persistence.entity_store()
+        self.persistence.entity_store(&self.policies)
     }
 
     /// The stores of the core's kinds.
@@ -355,11 +343,11 @@ impl RuntimeBuilder {
     }
 
     pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
-        &self.access_policy
+        self.policies.access_policy()
     }
 
     pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
-        &self.confidentiality
+        self.policies.confidentiality()
     }
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> {
@@ -466,12 +454,12 @@ impl RuntimeBuilder {
         let participation = Arc::new(Participation::new(
             Arc::clone(&self.entity_stores.agents),
             Arc::clone(&self.controller_manager),
-            Arc::clone(&self.access_policy),
-            Arc::clone(&self.confidentiality),
+            Arc::clone(self.policies.access_policy()),
+            Arc::clone(self.policies.confidentiality()),
         ));
         Ok(RuntimeManager {
-            access_policy: self.access_policy,
-            confidentiality: self.confidentiality,
+            access_policy: Arc::clone(self.policies.access_policy()),
+            confidentiality: Arc::clone(self.policies.confidentiality()),
             state_store: self.persistence.state_store(),
             history_store: self.persistence.history_store(),
             transcript_store: self.persistence.transcript_store(),

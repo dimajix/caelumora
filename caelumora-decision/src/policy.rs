@@ -446,7 +446,7 @@ mod tests {
     use caelumora_model::confidentiality::{Confidentiality, ConfidentialityRules};
     use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
@@ -834,7 +834,9 @@ mod tests {
     #[tokio::test]
     async fn a_request_does_not_write_it_itself() {
         let mut registry = ComponentRegistry::built_in(
-            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
         );
         register(&mut registry);
         let config = ComponentConfig {

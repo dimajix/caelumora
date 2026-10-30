@@ -201,15 +201,15 @@ impl<T: Stored> CheckedStore<T> {
     /// The store of the documents of `storage`, asking the `AccessPolicy`
     /// and the `ConfidentialityPolicy` of `policies`.
     pub(crate) fn new(storage: Arc<dyn DocumentStorage>, policies: &Policies) -> Self {
-        Self {
-            storage,
-            policies: (Arc::clone(&policies.0), Arc::clone(&policies.1)),
-            kind: PhantomData,
-        }
+        Self { storage, policies: policies.clone(), kind: PhantomData }
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(self.policies.0.as_ref(), self.policies.1.as_ref(), ctx)
+        Access::new(
+            self.policies.access_policy().as_ref(),
+            self.policies.confidentiality().as_ref(),
+            ctx,
+        )
     }
 
     /// The entity of `id` as it is stored, deleted or not.
@@ -444,12 +444,11 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
 mod tests {
     use super::*;
     use crate::actor::ActorId;
-    use crate::confidentiality::ConfidentialityRules;
     use crate::group::{Group, GroupField};
     use crate::scope::Scope;
-    use crate::security::AllowAllPolicy;
     use crate::store::query::ordered_after;
     use crate::store::testing::ContendedStore;
+    use crate::store::EntityStores;
     use crate::user::UserId;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -511,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn what_reads_what_it_writes_writes_again_when_it_was_changed_meanwhile() {
         let (stores, refusals) = ContendedStore::stores(Group::KIND);
-        let groups = stores.entity_stores().unwrap().groups;
+        let groups = EntityStores::open(&stores, &Policies::permitting_all()).unwrap().groups;
         let system = SecurityContext::system();
         let alice = UserId::new();
         let mut team = Group::team(
@@ -543,9 +542,10 @@ mod tests {
     #[tokio::test]
     async fn a_list_judges_what_a_storage_hands_out_and_reads_on_in_batches() {
         let storage = Arc::new(Careless::default());
-        let policies: Policies =
-            (Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
-        let groups = CheckedStore::<Group>::new(Arc::<Careless>::clone(&storage), &policies);
+        let groups = CheckedStore::<Group>::new(
+            Arc::<Careless>::clone(&storage),
+            &Policies::permitting_all(),
+        );
         let system = SecurityContext::system();
         let (alice, bob) = (UserId::new(), UserId::new());
         let team = |index: usize, owner: UserId| {

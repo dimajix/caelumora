@@ -1,13 +1,14 @@
-//! Stand-ins for the stores, and checks of what they keep, for tests.
+//! What tests open the stores by, stand-ins for them, and checks of what they keep.
 //!
-//! `ContendedStore` stands in for a storage that another writer got to first (issue 492): stores
-//! in memory whose documents of one kind refuse to be written as many times as a test says.
-//! `stored` and `replayed` check a journaled state (`Journaled`): as a store holds it, and what its
-//! changes replay onto.
+//! `Policies::permitting_all` opens the stores for what a test writes before it runs what it tests,
+//! `Policies::by_default_rules` for a test of an access policy (issue 449). `ContendedStore` stands
+//! in for a storage that another writer got to first (issue 492): stores in memory whose documents
+//! of one kind refuse to be written as many times as a test says. `stored` and `replayed` check a
+//! journaled state (`Journaled`): as a store holds it, and what its changes replay onto.
 #![expect(clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::confidentiality::ConfidentialityRules;
-use crate::security::{Admission, AllowAllPolicy};
+use crate::security::{AccessPolicy, Admission, AllowAllPolicy};
 use crate::store::documents::{Document, DocumentOf, DocumentStorage};
 use crate::store::history::HistoryStore;
 use crate::store::memory::MemoryStore;
@@ -16,8 +17,8 @@ use crate::store::transcript::TranscriptStore;
 #[cfg(test)]
 use crate::store::Journaled;
 use crate::store::{
-    EntityKind, Persistence, PersistenceBackend, Presence, Revision, StateStore, StoreError,
-    StoreResult,
+    EntityKind, Persistence, PersistenceBackend, Policies, Presence, Revision, StateStore,
+    StoreError, StoreResult,
 };
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
@@ -25,6 +26,20 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
+
+impl Policies {
+    /// The policies that permit everything (`AllowAllPolicy`) by the default rules - for what a
+    /// test writes before it runs what it tests, not for the runtime it runs.
+    pub fn permitting_all() -> Self {
+        Self::by_default_rules(Arc::new(AllowAllPolicy::new()))
+    }
+
+    /// The policies of `access_policy` by the default rules (`ConfidentialityRules::default`) - for
+    /// a test of what `access_policy` decides.
+    pub fn by_default_rules(access_policy: Arc<dyn AccessPolicy>) -> Self {
+        Self::new(access_policy, Arc::new(ConfidentialityRules::default()))
+    }
+}
 
 /// A backend in memory whose documents of one kind refuse a write as many times as the count of
 /// refusals says, counted down with every refusal: a storage another writer got to between a read
@@ -39,19 +54,13 @@ pub struct ContendedStore {
 }
 
 impl ContendedStore {
-    /// The stores over such a backend of `kind`, permitting everything, and the count of the
-    /// refusals to come - none until a test sets it; a test reads it back to see that they were
-    /// given.
+    /// The stores over such a backend of `kind`, and the count of the refusals to come - none until
+    /// a test sets it; a test reads it back to see that they were given.
     pub fn stores(kind: EntityKind) -> (Persistence, Arc<AtomicUsize>) {
         let refusals = Arc::new(AtomicUsize::new(0));
         let backend =
             Self { inner: Arc::new(MemoryStore::new()), kind, refusals: Arc::clone(&refusals) };
-        let stores = Persistence::over(
-            Arc::new(backend),
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
-        .expect("stores in memory");
+        let stores = Persistence::over(Arc::new(backend)).expect("stores in memory");
         (stores, refusals)
     }
 }

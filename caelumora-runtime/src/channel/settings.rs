@@ -300,13 +300,13 @@ mod tests {
     async fn renaming_a_channel_is_stored_and_only_the_owner_may() {
         use caelumora_model::actor::ActorId;
 
-        let (store, manager) = owned_runtime(Default::default());
+        let (runtime, manager) = owned_runtime(Default::default());
+        let stores = runtime.entity_stores();
         let users = (make_user("alice"), make_user("bob"));
         let (alice, bob) = (ActorId::User(users.0.id), ActorId::User(users.1.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", users.0.id);
-        session.participants =
-            record_users(manager.runtime().entity_stores(), &[&users.0, &users.1]).await;
+        session.participants = record_users(runtime.entity_stores(), &[&users.0, &users.1]).await;
         let running = create(&manager, &as_user(alice), session).await.unwrap();
         let main = running.channel_named("main").unwrap();
 
@@ -318,14 +318,7 @@ mod tests {
         main.update_name(&as_user(alice), "lobby").await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
         assert_eq!(
-            store
-                .entity_stores()
-                .unwrap()
-                .channels
-                .get(&as_user(alice), main.id())
-                .await
-                .unwrap()
-                .name,
+            stores.channels.get(&as_user(alice), main.id()).await.unwrap().name,
             "lobby",
             "stored, not only in memory"
         );

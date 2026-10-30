@@ -30,7 +30,7 @@ use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subj
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::query::Query;
 use caelumora_model::store::testing::ContendedStore;
-use caelumora_model::store::{EntityStore, EntityStoreFactory, StoreError, Stored};
+use caelumora_model::store::{EntityStore, Policies, StoreError, Stored};
 use caelumora_model::tool::{ToolCall, ToolVisibility};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::value::name::ScopedName;
@@ -65,7 +65,7 @@ fn manager(world: &World) -> Arc<SkillManager> {
 
 /// The store of skills of `world`, as the plugin has it.
 fn store(world: &World) -> Arc<dyn EntityStore<Skill>> {
-    world.store.entity_store::<Skill>().unwrap()
+    world.entity_store::<Skill>()
 }
 
 fn component(world: &World) -> SkillsComponent {
@@ -834,7 +834,14 @@ async fn a_skill_is_changed_once_more_when_it_was_written_meanwhile() {
     assert_eq!(renamed.name.name, "release-notes");
     assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
     assert_eq!(
-        store.entity_store::<Skill>().unwrap().get(&system, skill.id).await.unwrap().name.name,
+        store
+            .entity_store::<Skill>(&Policies::permitting_all())
+            .unwrap()
+            .get(&system, skill.id)
+            .await
+            .unwrap()
+            .name
+            .name,
         "release-notes"
     );
 }

@@ -35,10 +35,8 @@ impl Plugin for JsonStorePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::BackendConfig;
-    use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::store::{EntityStoreFactory, Persistence};
+    use caelumora_model::store::{Persistence, Policies};
     use caelumora_model::user::User;
     use caelumora_runtime::runtime::Services;
     use serde_json::json;
@@ -58,13 +56,10 @@ mod tests {
                 &Services::empty(),
             )
             .unwrap();
-        let stores = Persistence::over(
-            files,
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
-        .expect("its states, too");
-        stores.entity_store::<User>().expect("its kinds are opened in its files");
+        let stores = Persistence::over(files).expect("its states, too");
+        stores
+            .entity_store::<User>(&Policies::permitting_all())
+            .expect("its kinds are opened in its files");
         assert!(dir.path().join("entities/user").is_dir(), "below its path");
 
         let misspelt = BackendConfig::new("json", json!({ "pth": dir.path() }));

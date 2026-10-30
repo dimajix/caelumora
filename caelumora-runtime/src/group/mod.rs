@@ -212,9 +212,9 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::store::testing::ContendedStore;
-    use caelumora_model::store::EntityStores;
-    use caelumora_model::store::Persistence;
-    use caelumora_model::store::{Deleted, PersistenceBackend, Stored};
+    use caelumora_model::store::{
+        Deleted, EntityStores, Persistence, PersistenceBackend, Policies, Stored,
+    };
     use caelumora_model::value::name::ScopedName;
     use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -313,7 +313,9 @@ mod tests {
 
     #[tokio::test]
     async fn the_participants_follow_again_once_their_group_was_left_deleted() {
-        let groups = Persistence::in_memory().entity_stores().unwrap().groups;
+        let groups = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
         let bob = ActorId::User(UserId::new());
@@ -339,7 +341,7 @@ mod tests {
     #[tokio::test]
     async fn the_participants_follow_once_more_when_their_group_was_written_meanwhile() {
         let (stores, refusals) = ContendedStore::stores(Group::KIND);
-        let groups = stores.entity_stores().unwrap().groups;
+        let groups = EntityStores::open(&stores, &Policies::permitting_all()).unwrap().groups;
         let system = SecurityContext::system();
         let bob = ActorId::User(UserId::new());
         let session = SessionId::new();
@@ -362,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn the_participants_follow_when_their_group_was_made_meanwhile() {
         let (stores, refusals) = ContendedStore::stores(Group::KIND);
-        let groups = stores.entity_stores().unwrap().groups;
+        let groups = EntityStores::open(&stores, &Policies::permitting_all()).unwrap().groups;
         let system = SecurityContext::system();
         let bob = ActorId::User(UserId::new());
         let session = SessionId::new();
@@ -384,7 +386,7 @@ mod tests {
     #[tokio::test]
     async fn a_team_is_changed_once_more_when_it_was_written_meanwhile() {
         let (stores, refusals) = ContendedStore::stores(Group::KIND);
-        let stores = stores.entity_stores().unwrap();
+        let stores = EntityStores::open(&stores, &Policies::permitting_all()).unwrap();
         let events = Arc::new(EventBus::new(
             Arc::new(AllowAllPolicy::new()),
             Arc::new(ConfidentialityRules::default()),
@@ -409,7 +411,8 @@ mod tests {
     /// has itself.
     #[tokio::test]
     async fn the_participants_go_and_come_back_all_or_none() {
-        let stores = Persistence::in_memory().entity_stores().unwrap();
+        let stores =
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap();
         let failing = Arc::new(Failing {
             inner: Arc::clone(&stores.groups),
             passing: AtomicUsize::new(usize::MAX),
@@ -476,15 +479,8 @@ mod tests {
     #[tokio::test]
     async fn only_the_entries_naming_a_group_known_to_be_gone_are_dropped() {
         let memory = Arc::new(MemoryStore::new());
-        let groups = Persistence::over(
-            Arc::<MemoryStore>::clone(&memory),
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        )
-        .unwrap()
-        .entity_stores()
-        .unwrap()
-        .groups;
+        let stores = Persistence::over(Arc::<MemoryStore>::clone(&memory)).unwrap();
+        let groups = EntityStores::open(&stores, &Policies::permitting_all()).unwrap().groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
         let team = |name: &str| {

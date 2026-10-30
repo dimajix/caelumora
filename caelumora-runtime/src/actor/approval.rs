@@ -503,7 +503,7 @@ mod tests {
     use caelumora_model::security::{Grant, OwnershipPolicy, Subject};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::{User, UserId};
@@ -535,19 +535,13 @@ mod tests {
         agent: impl FnOnce(&[UserId]) -> SecurityAttributes,
     ) -> Approving {
         let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let system = SecurityContext::system();
         let users: Vec<User> = (0..users).map(|n| make_user(&format!("user{n}"))).collect();
-        let participants =
-            record_users(&store.entity_stores().unwrap(), &users.iter().collect::<Vec<_>>()).await;
+        let participants = record_users(&stores, &users.iter().collect::<Vec<_>>()).await;
         let ids: Vec<UserId> = users.iter().map(|user| user.id).collect();
         let mut personality = make_personality("plain");
-        store
-            .entity_stores()
-            .unwrap()
-            .personalities
-            .create(&system, &mut personality)
-            .await
-            .unwrap();
+        stores.personalities.create(&system, &mut personality).await.unwrap();
         let attributes = agent(&ids);
         let mut stored = Agent::new(
             ScopedName::new("helper", Default::default()).unwrap(),
@@ -555,7 +549,7 @@ mod tests {
             attributes.owner_id,
         );
         stored.security_attributes = attributes;
-        store.entity_stores().unwrap().agents.create(&system, &mut stored).await.unwrap();
+        stores.agents.create(&system, &mut stored).await.unwrap();
 
         let runtime = TestRuntime {
             store: store.clone(),
@@ -570,7 +564,7 @@ mod tests {
             security_attributes: SecurityAttributes::owned_by(ActorId::User(ids[0])),
             ..make_channel(SessionId::new(), "test")
         };
-        store.entity_stores().unwrap().channels.create(&system, &mut channel).await.unwrap();
+        runtime.entity_stores().channels.create(&system, &mut channel).await.unwrap();
         let session_id = channel.session_id;
         let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(
             Arc::clone(&runtime),

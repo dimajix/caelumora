@@ -35,9 +35,9 @@ does with an agent, not what an agent does. A backend's factory is registered wi
 with `config_of_params` and asks the services it is given - the policies, the `SecretManager`, the
 store of the users - with `service_of`. While it registers, a plugin
 
-*   asks for the store of its kind (`entity_store::<T>()`). The configured backend opens a store
-    for any kind (`EntityStoreFactory`), once - whoever asks for the kind again is given the same
-    store - and refuses a kind whose name another kind has;
+*   asks for the store of its kind (`entity_store::<T>()`), checked by the runtime's policies. The
+    configured backend keeps any kind in one storage - whoever asks for the kind again is given a
+    store over the same storage - and a kind whose name another kind has is refused;
 *   reaches the core's services it needs for its manager - the event bus, the policies, the
     secrets, the controllers - and offers its manager as a service (`provide`), which its component
     kinds use (`ComponentKind::uses`), its views read through (`Views::service`) and its routes

@@ -178,7 +178,7 @@ mod tests {
     use crate::role::RoleId;
     use crate::security::SecurityAttributes;
     use crate::store::testing::ContendedStore;
-    use crate::store::{Persistence, Stored};
+    use crate::store::{EntityStores, Persistence, Policies, Stored};
     use crate::user::testing::make_user;
     use crate::value::name::Name;
     use async_trait::async_trait;
@@ -216,7 +216,9 @@ mod tests {
     fn chain(providers: Vec<Arc<dyn UserProvider>>) -> UserManager {
         UserManager::new(
             providers,
-            Persistence::in_memory().entity_stores().unwrap().users,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .users,
             Arc::new(Announced::default()),
         )
     }
@@ -285,7 +287,7 @@ mod tests {
     #[tokio::test]
     async fn a_record_is_changed_once_more_when_it_was_written_meanwhile() {
         let (stores, refusals) = ContendedStore::stores(User::KIND);
-        let users = stores.entity_stores().unwrap().users;
+        let users = EntityStores::open(&stores, &Policies::permitting_all()).unwrap().users;
         let announced = Arc::new(Announced::default());
         let alice = make_user("alice");
         let manager = UserManager::new(
@@ -312,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn a_record_made_meanwhile_is_read_again() {
         let (stores, refusals) = ContendedStore::stores(User::KIND);
-        let users = stores.entity_stores().unwrap().users;
+        let users = EntityStores::open(&stores, &Policies::permitting_all()).unwrap().users;
         let announced = Arc::new(Announced::default());
         let alice = make_user("alice");
         let manager = UserManager::new(
@@ -332,7 +334,9 @@ mod tests {
     /// record left as it is.
     #[tokio::test]
     async fn a_user_whose_record_was_deleted_is_shut_out() {
-        let users = Persistence::in_memory().entity_stores().unwrap().users;
+        let users = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .users;
         let announced = Arc::new(Announced::default());
         let alice = make_user("alice");
         let manager = UserManager::new(
@@ -454,7 +458,9 @@ mod tests {
     /// announced, nothing written where nothing changed.
     #[tokio::test]
     async fn the_manager_keeps_and_announces_the_records_the_providers_answer() {
-        let store = Persistence::in_memory().entity_stores().unwrap().users;
+        let store = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .users;
         let announced = Arc::new(Announced::default());
         // A manager whose one provider knows `user` with the password "a".
         let answering = |user: &User| {

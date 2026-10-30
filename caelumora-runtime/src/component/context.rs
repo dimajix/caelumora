@@ -131,14 +131,16 @@ mod tests {
     use crate::component::testing::*;
     use crate::component::{ComponentContainer, ComponentKind, ComponentRegistry};
     use caelumora_model::security::AccessPolicy;
-    use caelumora_model::store::Persistence;
+    use caelumora_model::store::{EntityStores, Persistence, Policies};
     use std::sync::Mutex;
 
     #[tokio::test]
     async fn a_component_gets_every_other_that_provides_what_it_asks_for_in_the_order_of_the_configuration(
     ) {
         let mut registry = ComponentRegistry::new(
-            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
         );
         registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| {
             Ok(named(&descriptor.id))
@@ -189,7 +191,9 @@ mod tests {
     #[tokio::test]
     async fn a_component_is_given_the_services_its_kind_uses_alone() {
         let mut registry = ComponentRegistry::new(
-            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
         );
         registry.register(
             ComponentKind::new("seeing").provides::<dyn Named>().uses::<dyn AccessPolicy>(),
@@ -231,7 +235,9 @@ mod tests {
     #[tokio::test]
     async fn a_facet_that_was_not_declared_is_refused() {
         let mut registry = ComponentRegistry::new(
-            Persistence::in_memory().entity_stores().unwrap().component_bundles,
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+                .unwrap()
+                .component_bundles,
         );
         registry.register_async(
             ComponentKind::new("greedy").provides::<dyn Named>(),

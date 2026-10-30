@@ -1,6 +1,6 @@
 # 449 — The runtime is given the policies twice, in its stores and beside them
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -130,3 +130,13 @@ In two steps:
   `RuntimeManager::new` is gone. The tests of an external agent and of the texts of a model's
   variant no longer register the agent's kinds themselves beside the plugin that registers them:
   they run `TestAgents`.
+- **2026-10-30** — Step 2 done, and with it the issue: a `Persistence` is made of its backends
+  alone, and a store is checked by the `Policies` it is opened by (`Persistence::entity_store`,
+  `EntityStores::open`); `RuntimeBuilder::new` takes the `Policies` and opens its stores by them.
+  `EntityStoreFactory` and `Persistence::in_memory_with` are gone. The memberships are bound to
+  the runtime's store of the groups. What a test writes before its runtime exists, it writes
+  through stores opened by `Policies::permitting_all()`, or by the policies it tests
+  (`Policies::by_default_rules`); what it writes once the runtime exists, through the runtime's
+  stores - the `World` and `owned_runtime`, which now gives the runtime beside its manager, as
+  well. The `World` opens a plugin's kind by its policies (`World::entity_store`). A kind opened
+  again is a store over the same storage, no longer the same instance.

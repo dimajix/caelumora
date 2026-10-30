@@ -427,8 +427,9 @@ mod tests {
         /// learns who belongs to a group from its store, with `rules` as the
         /// confidentiality policy (`owned_runtime`).
         fn under(rules: ConfidentialityRules) -> Self {
-            let (store, manager) = owned_runtime(rules);
-            Self { stores: store.entity_stores().unwrap(), manager, loops: HashMap::new(), made: 0 }
+            let (runtime, manager) = owned_runtime(rules);
+            let stores = runtime.entity_stores().clone();
+            Self { stores, manager, loops: HashMap::new(), made: 0 }
         }
 
         /// A user named `name`, stored (`record_users`): to own sessions and
