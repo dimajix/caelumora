@@ -1,6 +1,18 @@
 //! The routes of the API (issue 323): the core's, behind the login, with the plugins', and what
 //! the handlers share to reach the runtime as the user who asks.
 
+mod agents;
+mod attachments;
+mod channels;
+mod compartments;
+mod events;
+mod groups;
+mod profile;
+mod projects;
+mod sessions;
+mod templates;
+mod workspaces;
+
 use crate::auth::{require_auth, require_stream_auth, router, AuthenticatedUser};
 use crate::error::ApiError;
 use crate::plugin::RestPlugin;
@@ -25,18 +37,6 @@ use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::terminal::ByteStream;
 use caelumora_runtime::view::{ChannelView, Viewer, Views};
 use std::sync::Arc;
-
-mod agents;
-mod attachments;
-mod channels;
-mod compartments;
-mod events;
-mod groups;
-mod profile;
-mod projects;
-mod sessions;
-mod templates;
-mod workspaces;
 
 pub async fn ensure_session(
     state: &Arc<AppState>,

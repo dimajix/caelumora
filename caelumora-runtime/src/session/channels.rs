@@ -666,45 +666,42 @@ impl SessionLoop {
 
 #[cfg(test)]
 mod tests {
-    use crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND;
-    use crate::moderator::random_policy::RANDOM_POLICY_KIND;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::channel::moderation_components;
-    use caelumora_model::channel::testing::main_channel;
-    use caelumora_model::command::HELP_COMMAND_KIND;
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::user::testing::{make_user, record_users};
-
-    use crate::channel::ChannelLoop;
-
-    use crate::view::Viewer;
-    use anyhow::Result;
-    use caelumora_model::approval::ApprovalStrategy;
-    use caelumora_model::channel::{Channel, InternalActor, STARTED, STOPPED};
-    use caelumora_model::event::EntityChange;
-    use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subject};
-    use caelumora_model::snapshot::Detail;
-    use caelumora_model::store::StoreError;
-    use caelumora_model::template::InternalActorTemplate;
-    use caelumora_model::value::language::Language;
-    use caelumora_model::value::time_zone::TimeZone;
-    use std::sync::Arc;
-
     use super::unavailable_components;
+    use crate::channel::ChannelLoop;
     use crate::component::ComponentError;
     use crate::error::is_forbidden;
+    use crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND;
+    use crate::moderator::random_policy::RANDOM_POLICY_KIND;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
+    use crate::view::Viewer;
     use anyhow::Error;
+    use anyhow::Result;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::approval::ApprovalStrategy;
+    use caelumora_model::channel::moderation_components;
+    use caelumora_model::channel::testing::main_channel;
+    use caelumora_model::channel::{Channel, InternalActor, STARTED, STOPPED};
+    use caelumora_model::command::HELP_COMMAND_KIND;
     use caelumora_model::component::ComponentBundle;
+    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::event::EntityChange;
     use caelumora_model::group::GroupId;
     use caelumora_model::scope::Scope;
+    use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subject};
+    use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
+    use caelumora_model::snapshot::Detail;
+    use caelumora_model::store::StoreError;
     use caelumora_model::store::Stored;
+    use caelumora_model::template::InternalActorTemplate;
+    use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserId;
+    use caelumora_model::value::language::Language;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_model::value::time_zone::TimeZone;
     use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;
 

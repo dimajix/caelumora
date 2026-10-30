@@ -195,16 +195,15 @@ impl ChannelLoop {
 
 #[cfg(test)]
 mod tests {
+    use crate::channel::tests::*;
+    use crate::error::is_forbidden;
     use caelumora_model::actor::ActorId;
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
     use caelumora_model::user::testing::make_user;
     use std::sync::Arc;
     use std::time::Duration;
-
-    use crate::channel::tests::*;
-    use crate::error::is_forbidden;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::security::AllowAllPolicy;
     use tokio::time;
 
     /// Refuses everything, to see that a refusal reaches the caller.

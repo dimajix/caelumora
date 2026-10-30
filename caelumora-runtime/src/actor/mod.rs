@@ -10,13 +10,12 @@ mod kinds;
 mod manager;
 pub mod user;
 
-use anyhow::{Context, Result};
-use async_trait::async_trait;
-use std::any::Any;
-use std::fmt::Debug;
-use tracing::warn;
+pub use kinds::AgentKinds;
+pub use manager::{ActorManager, Shown};
 
 use crate::transport::{EventReceiver, EventSender};
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext,
 };
@@ -29,8 +28,9 @@ use caelumora_model::session::SessionId;
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::{TurnId, Work};
-pub use kinds::AgentKinds;
-pub use manager::{ActorManager, Shown};
+use std::any::Any;
+use std::fmt::Debug;
+use tracing::warn;
 use uuid::Uuid;
 
 /// A participant of a channel as the channel runs it. The runtime's own are

@@ -17,13 +17,6 @@
 //! builds the components of one configuration and hands them out as
 //! `ComponentImpl`s (`container`).
 
-use caelumora_model::component::ComponentDescriptor;
-use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::store::StoreError;
-use caelumora_model::type_map::TypeKey;
-use serde::de::DeserializeOwned;
-use serde_json::Value;
-
 mod container;
 mod context;
 mod registry;
@@ -35,6 +28,13 @@ pub use context::{service_of, ComponentContext};
 pub use registry::{
     ComponentFacets, ComponentKind, ComponentRegistry, BUNDLE_REF_KIND, COMPONENT_DEFAULT_KIND,
 };
+
+use caelumora_model::component::ComponentDescriptor;
+use caelumora_model::prompt_catalogue::PromptError;
+use caelumora_model::store::StoreError;
+use caelumora_model::type_map::TypeKey;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComponentError {

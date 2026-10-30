@@ -9,11 +9,12 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
+pub use crate::testing::actor_runtime_in;
+
 use crate::actor::user::ChannelWatch;
 use crate::channel::ChannelLoop;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
-pub use crate::testing::actor_runtime_in;
 use crate::testing::TestRuntime;
 use anyhow::Result;
 use async_trait::async_trait;

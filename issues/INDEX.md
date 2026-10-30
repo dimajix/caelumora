@@ -546,7 +546,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [504](504-bus-has-two-delivery-paths.md) | done | The event bus has two kinds of subscription - by topic, delivered at once and unchecked, and as someone, delivered later by a dispatcher and checked - so its subscribers receive the same events in no common order, and two ways of subscribing exist for one concept. |
 | [505](505-tests-build-sessions-and-users-field-by-field.md) | done | Tests write a `Session` or a `User` by a literal of every field - the model's, which cannot reach `session::testing::make_session` of the runtime, and those of every crate for a user, which has no `make_…` at all -, so that a new field of either changes tests that have nothing to do with it. |
 | [506](506-a-test-replays-a-users-channel-state-by-hand.md) | done | `what_was_read_only_moves_forward` replays the changes of a `UserChannelState` by hand and checks only `read`, where the tests of every other journaled state use `store::testing::replayed`, which also checks that replaying is idempotent and records nothing. |
-| [507](507-imports-are-grouped-by-chance.md) | open | Nothing says how the imports of a module are grouped, and neither rustfmt nor a check keeps it, so about 20 modules split their imports by blank lines into groups of no common order, and a script or `cargo clippy --fix` puts a new import into whichever group comes first. |
+| [507](507-imports-are-grouped-by-chance.md) | done | Nothing says how the imports of a module are grouped, and neither rustfmt nor a check keeps it, so about 20 modules split their imports by blank lines into groups of no common order, and a script or `cargo clippy --fix` puts a new import into whichever group comes first. |
 
 ## Integrations
 

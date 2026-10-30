@@ -1,9 +1,10 @@
 //! A session (issue 88): the container of one interaction - who takes part, its channels, how
 //! private it is, the workspace it is done in and the project its results go to - and its changes.
 
+pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
+
 use crate::actor::ActorId;
 use crate::approval::ApprovalRule;
-pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::component::ComponentConfig;
 use crate::group::GroupId;
 use crate::privacy::PrivacyConfig;

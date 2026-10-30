@@ -1297,7 +1297,6 @@ impl Actor for AgentActor {
 mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
-
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
     use caelumora_model::message::MessageId;

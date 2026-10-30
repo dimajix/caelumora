@@ -1,40 +1,39 @@
 //! The tests of `ChannelLoop` itself, and the fixtures of every test of a running channel.
 
-use super::*;
-use crate::actor::Actor;
-use crate::component::{ComponentImpl, ComponentRegistry};
-use crate::runtime::ChannelRuntime;
-use crate::testing::{Script, ScriptedAgent, ScriptedAgents, StandIn, TestRuntime};
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
-use caelumora_model::channel::testing::make_channel;
-use caelumora_model::channel::{moderation_components, Channel, Participant};
-use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
-use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStores, Policies};
-use caelumora_model::user::testing::make_user;
-use caelumora_model::user::UserId;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Weak};
-
-use crate::command::help_command::HelpCommandProvider;
-use crate::command::wakeup_command::WakeupCommandProvider;
-use crate::command::{ChannelCommandProvider, CommandExecutor};
-use crate::moderator::{Moderator, Routing};
-use caelumora_model::agent::testing::make_personality;
-use caelumora_model::agent::AgentId;
-use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
-use caelumora_model::history::Audience;
-use caelumora_model::security::AllowAllPolicy;
-use caelumora_model::store::Persistence;
-use caelumora_model::user::User;
-use std::any::Any;
-
 mod commands;
 
 pub(super) use crate::channel::testing::*;
+
+use super::*;
+use crate::actor::Actor;
+use crate::command::help_command::HelpCommandProvider;
+use crate::command::wakeup_command::WakeupCommandProvider;
+use crate::command::{ChannelCommandProvider, CommandExecutor};
+use crate::component::{ComponentImpl, ComponentRegistry};
+use crate::moderator::{Moderator, Routing};
+use crate::runtime::ChannelRuntime;
+use crate::testing::{Script, ScriptedAgent, ScriptedAgents, StandIn, TestRuntime};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
+use caelumora_model::agent::testing::make_personality;
+use caelumora_model::agent::AgentId;
 use caelumora_model::channel::testing::founded;
+use caelumora_model::channel::testing::make_channel;
+use caelumora_model::channel::{moderation_components, Channel, Participant};
+use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
+use caelumora_model::history::Audience;
+use caelumora_model::security::AllowAllPolicy;
+use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
 use caelumora_model::session::testing::bare_session;
+use caelumora_model::session::SessionId;
+use caelumora_model::store::Persistence;
+use caelumora_model::store::{EntityStores, Policies};
+use caelumora_model::user::testing::make_user;
 use caelumora_model::user::testing::record_users;
+use caelumora_model::user::User;
+use caelumora_model::user::UserId;
+use std::any::Any;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Weak};
 
 /// A channel of `users`, who are recorded in the store its actors are
 /// read from.

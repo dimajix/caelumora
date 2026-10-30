@@ -7,6 +7,13 @@
 //! (issue 333); these are built on the terminal's public API and the
 //! agents' tools and prompt parts, as the tools of any other subject are.
 
+pub mod plugin;
+pub mod terminal_tool;
+pub mod workspace_prompt_provider;
+
+mod files;
+mod shell;
+
 #[cfg(test)]
 use caelumora_agents::prompt::{NAMESPACE as AGENTS, PROMPTS as AGENTS_PROMPTS};
 #[cfg(test)]
@@ -20,13 +27,6 @@ pub const NAMESPACE: &str = "workspace_tools";
 
 /// Their texts, added to the catalogue under `NAMESPACE` by the plugin.
 pub const PROMPTS: &str = include_str!("prompts.yaml");
-
-pub mod plugin;
-pub mod terminal_tool;
-pub mod workspace_prompt_provider;
-
-mod files;
-mod shell;
 
 /// The prompt catalogue with the texts of the core, of the agents and of
 /// these tools, as the runtime and the plugins add them - for what a test

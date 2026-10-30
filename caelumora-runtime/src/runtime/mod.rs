@@ -11,8 +11,6 @@
 //! - An `ActorRuntime` (`actor`) is what an actor runs with: the services
 //!   every actor needs and what concerns this actor alone (issues 69, 359).
 
-use caelumora_model::type_map::TypeMap;
-
 mod actor;
 mod builder;
 mod channel;
@@ -22,6 +20,8 @@ pub use actor::ActorRuntime;
 pub use builder::RuntimeBuilder;
 pub use channel::ChannelRuntime;
 pub use manager::RuntimeManager;
+
+use caelumora_model::type_map::TypeMap;
 
 /// The services of the runtime, by type (issues 296, 323): the policy, the
 /// secrets, the managers of the core that components use and what the

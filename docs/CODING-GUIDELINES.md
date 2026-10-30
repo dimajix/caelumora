@@ -18,6 +18,9 @@ against this list, rule by rule, before it is reported (the self-review of
     be called by its module (`time::sleep` after `use tokio::time;`), never by a longer path. A
     path is written out only where an import cannot serve ([Imports](#imports); clippy checks
     it).
+*   A module begins with its `mod` declarations, then its re-exports (`pub use`) as a block of
+    their own, then its private imports in one block, without blank lines ([Imports](#imports);
+    `scripts/import-blocks.sh` checks it).
 *   One `let` binds several values by a tuple only where they belong together and the line stays
     within 100 characters; values that merely begin at the same place get a `let` each
     ([Small return values](#small-return-values); `scripts/tuple-bindings.sh` checks the length).
@@ -181,6 +184,18 @@ A path of two segments is written where its first says where something comes fro
 A longer path is written only where no import can serve: inside a `macro_rules!`, which expands in
 other modules and writes `$crate::…`. `absolute_paths` checks it, with
 `absolute-paths-max-segments = 2` (issue 452).
+
+A module begins with its `mod` declarations, then its re-exports (`pub use`), then its private
+imports - in a `mod tests` as at the top of a file. The private imports stand in one block, without
+blank lines, which rustfmt sorts; the re-exports are a block of their own, set apart by a blank
+line, since rustfmt would sort them in among the imports. The imports are not grouped by origin:
+rustfmt keeps groups only as they are written, the option that would keep them (`group_imports`)
+is unstable, and an import added by a script or by an editor lands in its place only where there
+is one block for `cargo fmt` to sort (issue 507).
+
+`scripts/import-blocks.sh` checks the order and the one block - of a function's imports too -, in
+every Rust file or in those it is given; the pre-commit hook gives it the Rust files a commit adds
+or changes.
 
 ## Crates and interfaces
 

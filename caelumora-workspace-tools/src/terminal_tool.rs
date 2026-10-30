@@ -28,6 +28,12 @@
 //! that only read; `command_output`, `kill_command` and `publish_file`
 //! never ask.
 
+pub use files::{
+    DELETE_FILE, GREP_FILES, LIST_FILES, MOVE_FILE, PUBLISH_FILE, READ_FILE, REPLACE_IN_FILE,
+    WRITE_FILE,
+};
+pub use shell::{COMMAND_OUTPUT, KILL_COMMAND, RUN_COMMAND};
+
 use crate::{files, shell, NAMESPACE};
 use async_trait::async_trait;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
@@ -53,12 +59,6 @@ use std::sync::Arc;
 use tracing::error;
 
 pub const TERMINAL_TOOL_KIND: &str = "terminal_tool";
-
-pub use files::{
-    DELETE_FILE, GREP_FILES, LIST_FILES, MOVE_FILE, PUBLISH_FILE, READ_FILE, REPLACE_IN_FILE,
-    WRITE_FILE,
-};
-pub use shell::{COMMAND_OUTPUT, KILL_COMMAND, RUN_COMMAND};
 
 fn default_wait_secs() -> u64 {
     60

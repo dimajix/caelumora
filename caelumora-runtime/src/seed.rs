@@ -185,12 +185,10 @@ pub async fn load(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::store::query::Query;
-    use std::sync::Mutex;
-
-    use caelumora_model::store::{Persistence, Policies};
-
     use caelumora_model::config::AppConfig;
+    use caelumora_model::store::query::Query;
+    use caelumora_model::store::{Persistence, Policies};
+    use std::sync::Mutex;
 
     /// The policy of the example configuration, which knows the roles the
     /// example seed names.

@@ -310,15 +310,14 @@ impl SessionLoop {
 #[cfg(test)]
 mod tests {
 
+    use crate::session::testing::*;
     use crate::view::Viewer;
     use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::session::testing::make_session;
+    use caelumora_model::session::Session;
     use caelumora_model::store::StoreError;
     use caelumora_model::user::testing::{make_user, record_users};
     use std::sync::Arc;
-
-    use crate::session::testing::*;
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::session::Session;
 
     #[tokio::test]
     async fn only_the_owner_changes_a_sessions_privacy_and_everyone_in_it_sees_it() {

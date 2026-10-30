@@ -2,6 +2,11 @@
 //! document and every state in files below a directory (`JsonFileStore`),
 //! registered as the backend `json` by its plugin (`JsonStorePlugin`).
 
+mod chains;
+mod histories;
+pub mod plugin;
+mod transcripts;
+
 use async_trait::async_trait;
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::channel::{ChannelId, ChannelState};
@@ -32,11 +37,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-
-mod chains;
-mod histories;
-pub mod plugin;
-mod transcripts;
 
 /// A journal is folded into its snapshot once it is at least as large as
 /// the snapshot, and at least this large (issue 193): small states are not

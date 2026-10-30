@@ -17,6 +17,11 @@ mod state;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+pub use attachments::AttachmentIndex;
+pub use channel_state::{AgentChannelState, AgentChannelStateChange, RetryRefused};
+pub use personality::{HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind};
+pub use state::{AgentState, AgentStateChange, STATE_CHANGED};
+
 use crate::actor::ActorId;
 use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
@@ -28,11 +33,6 @@ use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
 use uuid::Uuid;
-
-pub use attachments::AttachmentIndex;
-pub use channel_state::{AgentChannelState, AgentChannelStateChange, RetryRefused};
-pub use personality::{HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind};
-pub use state::{AgentState, AgentStateChange, STATE_CHANGED};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdateEvent {

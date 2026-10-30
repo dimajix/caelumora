@@ -4,6 +4,11 @@
 //! the agents' logic into a crate of its own (issue 370); what they share
 //! with the runtime's tests is `channel::testing`.
 
+mod agent;
+mod agent_commands;
+mod external_agent;
+mod questions;
+
 use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommandProvider;
 use crate::llm::{LLMClient, LLMResult};
@@ -56,11 +61,6 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time;
-
-mod agent;
-mod agent_commands;
-mod external_agent;
-mod questions;
 
 /// What the channel shows next of `wanted`'s kind from `agent`.
 async fn shown_by(events: &mut Receiver<Envelope>, agent: AgentId, wanted: &str) -> ActorEvent {

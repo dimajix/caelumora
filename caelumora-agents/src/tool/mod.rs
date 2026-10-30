@@ -1059,16 +1059,13 @@ mod tests {
     use crate::testing::{self, TestAgents};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::channel::Channel;
+    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::{AppConfig, ApprovalsConfig};
     use caelumora_model::content::testing::make_content_ref;
     use caelumora_model::content::ContentId;
-    use caelumora_model::event::GlobalEvent;
-    use caelumora_runtime::session::testing::detached_actor_runtime_in;
-    use caelumora_runtime::testing::TestRuntime;
-
-    use caelumora_model::channel::Channel;
-    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::context::{ContextRef, FrameRef};
+    use caelumora_model::event::GlobalEvent;
     use caelumora_model::note::NoteId;
     use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy, SecurityContext};
     use caelumora_model::session::testing::bare_session;
@@ -1078,6 +1075,8 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
+    use caelumora_runtime::session::testing::detached_actor_runtime_in;
+    use caelumora_runtime::testing::TestRuntime;
     use serde_json::json;
     use std::future;
     use tokio::time;

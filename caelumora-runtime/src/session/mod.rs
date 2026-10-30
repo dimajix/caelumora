@@ -1,5 +1,16 @@
 //! A running session: `SessionLoop`, how it is built and runs its channels.
 
+mod channels;
+mod manager;
+mod participants;
+mod settings;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
+pub use channels::ChannelSpec;
+pub(crate) use manager::Found;
+pub use manager::{SessionManager, SessionSpec};
+
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::{ComponentError, ComponentRegistry};
@@ -37,17 +48,6 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use tracing::warn;
-
-mod channels;
-mod manager;
-mod participants;
-mod settings;
-#[cfg(any(test, feature = "test-support"))]
-pub mod testing;
-
-pub use channels::ChannelSpec;
-pub(crate) use manager::Found;
-pub use manager::{SessionManager, SessionSpec};
 
 /// A request for a channel that cannot be met as asked (issue 09). The
 /// messages are meant for users (see `crate::error::user_message`).
@@ -528,14 +528,12 @@ impl SessionLoop {
 #[cfg(test)]
 mod tests {
 
-    use caelumora_model::event::GlobalEvent;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
-
-    use std::sync::Arc;
-
     use crate::session::testing::*;
     use crate::session::SessionManager;
+    use caelumora_model::event::GlobalEvent;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
     use caelumora_model::user::User;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;
 
