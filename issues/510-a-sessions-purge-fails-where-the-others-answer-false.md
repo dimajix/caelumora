@@ -1,6 +1,6 @@
 # 510 — A session's purge fails where every other purge answers `false`
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -39,9 +39,18 @@ there" as an answer and the session's as an error, and a new kind has two exampl
 
 - Every manager's purge answers "nothing deleted the caller could see" the same way, and its REST
   handler maps it the same way.
+- Every manager's deletion answers "nothing there the caller could see" the same way, the
+  session's among them, and its REST handler maps it the same way.
 
 ## History
 
 - **2026-10-30** — Opened from the findings of issue
   [496](496-a-sessions-purge-removes-its-channels-documents-first.md), whose review noticed the
   difference once both purges went through `purge_behind`.
+- **2026-10-30** — Decided for the first option, in two steps, the second added to the issue: a
+  session's deletion differs the same way - "not there" fails with `NotFound` through
+  `SessionManager::find`, where every other manager's `delete` answers `false`, and the REST
+  handler `delete_session` drops the answer. The difference was a fault, too: a project's purge
+  stopped with `SessionError::NotFound` where one of its sessions was purged meanwhile. Step 1
+  done: `SessionManager::purge` answers `bool`, its REST handler a 404 of its own for `false`, and
+  a project's purge passes over a session purged meanwhile.

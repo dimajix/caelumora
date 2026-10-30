@@ -133,8 +133,13 @@ pub(super) async fn purge_session(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
-    state.session_manager.purge(&user.security_context(), session_id).await?;
-    Ok(StatusCode::NO_CONTENT)
+    match state.session_manager.purge(&user.security_context(), session_id).await? {
+        true => Ok(StatusCode::NO_CONTENT),
+        false => Err(ApiError::not_found(
+            "session_not_found",
+            format!("There is no deleted session {session_id}"),
+        )),
+    }
 }
 
 pub(super) async fn delete_session(

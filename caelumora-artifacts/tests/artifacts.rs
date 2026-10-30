@@ -946,7 +946,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     // Not restored into its own project while the session is deleted (issue 458).
     let refused = manager(&world).restore(&alice, draft.id).await;
     assert!(matches!(refused, Err(ArtifactError::NotFound(_))), "{refused:?}");
-    world.manager.purge(&World::system(), session_id).await.unwrap();
+    assert!(world.manager.purge(&World::system(), session_id).await.unwrap());
     for gone in [artifact.id, draft.id] {
         assert!(
             store(&world).get_deleted(&World::system(), gone).await.is_err(),
@@ -1362,7 +1362,7 @@ async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_p
 
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
-    world.manager.purge(&World::system(), session_id).await.unwrap();
+    assert!(world.manager.purge(&World::system(), session_id).await.unwrap());
     let described = manager(&world)
         .describe(&alice, artifact.id, Some("The report"))
         .await
@@ -1444,7 +1444,7 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
 
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
-    world.manager.purge(&World::system(), session_id).await.unwrap();
+    assert!(world.manager.purge(&World::system(), session_id).await.unwrap());
     assert!(store(&world).get(&alice, artifact.id).await.is_ok(), "it outlives the session");
     assert_eq!(
         read_version(&world, &alice, artifact.id, 1).await,

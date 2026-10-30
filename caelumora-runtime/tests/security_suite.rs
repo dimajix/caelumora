@@ -2860,8 +2860,9 @@ async fn purging_a_session_is_not_its_owners() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     world.manager.delete(&World::as_user(world.alice), session.id()).await.unwrap();
-    let (_, asked) =
+    let (purged, asked) =
         world.asked(world.manager.purge(&World::as_user(world.bob), session.id())).await;
+    assert!(!purged.unwrap(), "nothing he could see (issue 510)");
     assert_eq!(asked, checks(&["bob: ReadDeletedSession(alice's) no"]));
     let (refused, asked) =
         world.asked(world.manager.purge(&World::as_user(world.alice), session.id())).await;
@@ -4329,7 +4330,7 @@ async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored()
 
     world.manager.stop(&alice, session_id).await.unwrap();
     world.manager.delete(&alice, session_id).await.unwrap();
-    world.manager.purge(&system, session_id).await.unwrap();
+    assert!(world.manager.purge(&system, session_id).await.unwrap());
     controller.update_access(&alice, renamed.security_attributes.acl.clone()).await.unwrap();
     let kept = Arc::clone(&controller.load());
     assert!(
