@@ -8,6 +8,7 @@
 #![expect(clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::confidentiality::ConfidentialityRules;
+use crate::security::Policies;
 use crate::security::{AccessPolicy, Admission, AllowAllPolicy};
 use crate::store::documents::{Document, DocumentOf, DocumentStorage};
 use crate::store::history::HistoryStore;
@@ -17,8 +18,8 @@ use crate::store::transcript::TranscriptStore;
 #[cfg(test)]
 use crate::store::Journaled;
 use crate::store::{
-    EntityKind, Persistence, PersistenceBackend, Policies, Presence, Revision, StateStore,
-    StoreError, StoreResult,
+    EntityKind, Persistence, PersistenceBackend, Presence, Revision, StateStore, StoreError,
+    StoreResult,
 };
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
@@ -29,7 +30,7 @@ use uuid::Uuid;
 
 impl Policies {
     /// The policies that permit everything (`AllowAllPolicy`) by the default rules - for what a
-    /// test writes before it runs what it tests, not for the runtime it runs.
+    /// test writes before it runs what it tests, and for what a test runs that checks nothing.
     pub fn permitting_all() -> Self {
         Self::by_default_rules(Arc::new(AllowAllPolicy::new()))
     }

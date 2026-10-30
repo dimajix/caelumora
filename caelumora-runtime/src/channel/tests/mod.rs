@@ -8,9 +8,9 @@ use crate::testing::{Script, ScriptedAgent, ScriptedAgents, StandIn, TestRuntime
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_model::channel::testing::make_channel;
 use caelumora_model::channel::{moderation_components, Channel, Participant};
-use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
+use caelumora_model::security::{AccessPolicy, ActionType, Policies, SecurityContext};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStores, Policies};
+use caelumora_model::store::EntityStores;
 use caelumora_model::user::testing::make_user;
 use caelumora_model::user::UserId;
 use std::sync::atomic::Ordering;

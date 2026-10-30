@@ -9,12 +9,11 @@
 //! storage of a kind it was never told the type of - a plugin's too.
 
 use crate::removal::{Removal, RemovalId};
-use crate::security::{ActionType, Admission, SecurityAttributes, SecurityContext};
+use crate::security::{ActionType, Admission, Policies, SecurityAttributes, SecurityContext};
 use crate::store::access::Access;
 use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
 use crate::store::{
-    Deleted, EntityStore, Policies, Presence, Revision, StoreError, StoreResult, StoreResultExt,
-    Stored,
+    Deleted, EntityStore, Presence, Revision, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
@@ -205,11 +204,7 @@ impl<T: Stored> CheckedStore<T> {
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(
-            self.policies.access_policy().as_ref(),
-            self.policies.confidentiality().as_ref(),
-            ctx,
-        )
+        Access::new(&self.policies, ctx)
     }
 
     /// The entity of `id` as it is stored, deleted or not.

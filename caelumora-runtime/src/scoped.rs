@@ -551,10 +551,10 @@ mod tests {
     use caelumora_model::project::Project;
     use caelumora_model::removal::Removal;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::{Policies, SecurityAttributes, SecurityContext};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::{EntityStores, Persistence, Policies, StoreError};
+    use caelumora_model::store::{EntityStores, Persistence, StoreError};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;

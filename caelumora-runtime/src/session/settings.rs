@@ -142,7 +142,8 @@ impl SessionLoop {
         share: Option<Grant>,
     ) -> Result<()> {
         let session = self.session();
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 context,
                 ActionType::update(Session::KIND, &session.security_attributes),
@@ -184,7 +185,8 @@ impl SessionLoop {
     ) -> Result<()> {
         let _moving = self.moving.lock().await;
         let session = self.session();
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 context,
                 ActionType::update(Session::KIND, &session.security_attributes),

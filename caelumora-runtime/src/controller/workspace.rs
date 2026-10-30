@@ -11,13 +11,13 @@ use crate::workspace::{
 };
 use arc_swap::Guard;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
+use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{
-    AccessPolicy, AccessQuestions, AclEntry, Grant, SecurityContext, Subject,
+    AccessQuestions, AclEntry, Grant, Policies, SecurityContext, Subject,
 };
 use caelumora_model::session::{Channel, Session};
 use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt};
@@ -52,10 +52,9 @@ pub struct WorkspaceController {
     /// configured.
     provider: Option<Arc<dyn TerminalProvider>>,
     groups: Arc<dyn EntityStore<Group>>,
-    /// Who may change its files (`WriteWorkspace`, issue 23).
-    access_policy: Arc<dyn AccessPolicy>,
-    /// What may flow where, and who is cleared for what (issue 304).
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// Who may change its files (`WriteWorkspace`, issue 23), and what may flow where and who is
+    /// cleared for what (issue 304).
+    policies: Policies,
 }
 
 impl WorkspaceController {
@@ -66,8 +65,7 @@ impl WorkspaceController {
         provider: Option<Arc<dyn TerminalProvider>>,
         event_publisher: Arc<dyn EventPublisher>,
         stores: &EntityStores,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        policies: &Policies,
     ) -> Self {
         Self {
             workspace: LiveDocument::new(
@@ -79,8 +77,7 @@ impl WorkspaceController {
             ),
             provider,
             groups: Arc::clone(&stores.groups),
-            access_policy,
-            confidentiality,
+            policies: policies.clone(),
         }
     }
 
@@ -114,7 +111,7 @@ impl WorkspaceController {
     ) -> WorkspaceResult<Arc<dyn Terminal>> {
         let workspace = self.reached(ctx).await?;
         if need == Grant::Write {
-            require_write(self.access_policy.as_ref(), ctx, &workspace).await?;
+            require_write(self.policies.access_policy().as_ref(), ctx, &workspace).await?;
         }
         Ok(self.provider(&workspace)?.terminal_for(self.id()).await?)
     }
@@ -156,12 +153,17 @@ impl WorkspaceController {
             warn!(session = %session.id, workspace = %self.id(), "A workspace of another session's scope is attached to a session");
             return Ok(None);
         }
-        if !self.access_policy.may_read_workspace(ctx, &workspace.security_attributes).await {
+        if !self
+            .policies
+            .access_policy()
+            .may_read_workspace(ctx, &workspace.security_attributes)
+            .await
+        {
             return Ok(None);
         }
         let (inside, outside) = (&workspace.classification, &channel.classification);
-        let flows = self.confidentiality.may_publish(ctx, inside, outside)
-            && self.confidentiality.may_publish(ctx, outside, inside);
+        let flows = self.policies.confidentiality().may_publish(ctx, inside, outside)
+            && self.policies.confidentiality().may_publish(ctx, outside, inside);
         Ok(flows.then_some(workspace))
     }
 
@@ -220,7 +222,8 @@ impl WorkspaceController {
         channel: &Channel,
         need: Grant,
     ) -> WorkspaceResult<Workspace> {
-        if !self.access_policy.may_read_session(ctx, &session.security_attributes).await {
+        if !self.policies.access_policy().may_read_session(ctx, &session.security_attributes).await
+        {
             return Err(WorkspaceError::NotUsableInChannel);
         }
         let at = Place::of(channel, SessionPrivacy::of(session));
@@ -228,16 +231,9 @@ impl WorkspaceController {
         // it from there.
         let agent = matches!(ctx.caller_id, ActorId::Agent(_));
         let reader = ChannelReader::of(agent.then_some(&at));
-        if channel_reading(
-            self.access_policy.as_ref(),
-            self.confidentiality.as_ref(),
-            ctx,
-            &channel.security_attributes,
-            &at,
-            reader,
-        )
-        .await
-        .is_none()
+        if channel_reading(&self.policies, ctx, &channel.security_attributes, &at, reader)
+            .await
+            .is_none()
         {
             return Err(WorkspaceError::NotUsableInChannel);
         }
@@ -246,7 +242,7 @@ impl WorkspaceController {
             .await?
             .ok_or(WorkspaceError::NotUsableInChannel)?;
         if need == Grant::Write {
-            require_write(self.access_policy.as_ref(), ctx, &workspace).await?;
+            require_write(self.policies.access_policy().as_ref(), ctx, &workspace).await?;
         }
         Ok(workspace)
     }
@@ -404,7 +400,7 @@ impl WorkspaceController {
         if let WorkspaceUpdateEvent::ClassificationChanged(classification) = &event {
             let provider = self.provider(&workspace)?;
             require_classification(
-                self.confidentiality.as_ref(),
+                self.policies.confidentiality().as_ref(),
                 ctx,
                 &workspace.storage,
                 provider.as_ref(),

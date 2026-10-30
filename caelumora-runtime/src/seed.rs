@@ -188,7 +188,8 @@ mod tests {
     use caelumora_model::store::query::Query;
     use std::sync::Mutex;
 
-    use caelumora_model::store::{Persistence, Policies};
+    use caelumora_model::security::Policies;
+    use caelumora_model::store::Persistence;
 
     use caelumora_model::config::AppConfig;
 

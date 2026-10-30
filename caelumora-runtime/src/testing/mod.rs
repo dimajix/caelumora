@@ -56,15 +56,15 @@ use caelumora_model::role::{RoleId, Roles};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{
-    AccessPolicy, ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified,
-    SecurityAttributes, SecurityContext, Subject, Verb,
+    AccessPolicy, ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Policies,
+    Reclassified, SecurityAttributes, SecurityContext, Subject, Verb,
 };
 use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::query::Query;
 use caelumora_model::store::{
-    EntityKind, EntityStore, EntityStores, Persistence, Policies, StoreError, Stored,
+    EntityKind, EntityStore, EntityStores, Persistence, StoreError, Stored,
 };
 use caelumora_model::template::testing::{make_channel_template, make_template};
 use caelumora_model::template::{
@@ -416,11 +416,7 @@ impl World {
 
     /// The store of the kind `T` - a plugin's -, checked as the runtime checks it.
     pub fn entity_store<T: Stored>(&self) -> Arc<dyn EntityStore<T>> {
-        let policies = Policies::new(
-            Arc::<Recorder>::clone(&self.access_policy),
-            Arc::<Recorder>::clone(&self.access_policy),
-        );
-        self.store.entity_store(&policies).unwrap()
+        self.store.entity_store(self.runtime.policies()).unwrap()
     }
 
     pub fn system() -> SecurityContext {

@@ -22,9 +22,9 @@ use caelumora_model::message::{Message, MessageId};
 use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::question::{QuestionError, Questions};
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::Grant;
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::security::{AccessPolicy, SecurityContext};
+use caelumora_model::security::{
+    AccessPolicy, Grant, Policies, SecurityAttributes, SecurityContext,
+};
 use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
@@ -55,6 +55,11 @@ impl ActorRuntime {
     /// The actor this runtime is for.
     pub fn actor_id(&self) -> ActorId {
         self.actor
+    }
+
+    /// The policies of the process, the pair its stores are checked by.
+    pub fn policies(&self) -> &Policies {
+        self.runtime.runtime_manager.policies()
     }
 
     pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {

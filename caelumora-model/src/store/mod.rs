@@ -28,12 +28,12 @@ use uuid::Uuid;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentBundle;
-use crate::confidentiality::{Classification, ConfidentialityPolicy};
+use crate::confidentiality::Classification;
 use crate::group::Group;
 use crate::intern::intern;
 use crate::project::Project;
 use crate::removal::{Removal, RemovalId};
-use crate::security::{AccessPolicy, Refused, Secured, SecurityContext, Verb};
+use crate::security::{Policies, Refused, Secured, SecurityContext, Verb};
 use crate::session::Session;
 use crate::store::documents::{CheckedStore, Document, DocumentOf, DocumentStorage};
 use crate::store::history::HistoryStore;
@@ -91,35 +91,6 @@ impl StoreError {
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
-
-/// The `AccessPolicy` and the `ConfidentialityPolicy` a store asks about every access to an entity
-/// (issue 449): those of the process, which the runtime is given and opens its stores by.
-#[derive(Debug, Clone)]
-pub struct Policies {
-    access_policy: Arc<dyn AccessPolicy>,
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
-}
-
-impl Policies {
-    /// The policies of `access_policy`, which decides who may do what, and `confidentiality`,
-    /// which decides whether the caller is cleared for what is reached by clearance.
-    pub fn new(
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
-    ) -> Self {
-        Self { access_policy, confidentiality }
-    }
-
-    /// Who may do what.
-    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
-        &self.access_policy
-    }
-
-    /// Whether a caller is cleared for what is reached by clearance.
-    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
-        &self.confidentiality
-    }
-}
 
 /// What a lookup answers when what it looks for may no longer exist (issue 192), and what a write
 /// answers when it may have been refused as outdated (issue 492).

@@ -42,9 +42,9 @@
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
-use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
+use crate::confidentiality::{may_reach, ConfidentialityQuestions};
 use crate::removal::Removal;
-use crate::security::{AccessPolicy, ActionType, Admission, Enforcement, Refused, SecurityContext};
+use crate::security::{ActionType, Admission, Enforcement, Policies, Refused, SecurityContext};
 use crate::store::{Presence, StoreError, StoreResult, Stored};
 use std::slice;
 
@@ -53,18 +53,13 @@ use std::slice;
 // 93), and a store implements the five operations once for all kinds.
 
 pub(crate) struct Access<'a> {
-    access_policy: &'a dyn AccessPolicy,
-    confidentiality: &'a dyn ConfidentialityPolicy,
+    policies: &'a Policies,
     ctx: &'a SecurityContext,
 }
 
 impl<'a> Access<'a> {
-    pub(crate) fn new(
-        access_policy: &'a dyn AccessPolicy,
-        confidentiality: &'a dyn ConfidentialityPolicy,
-        ctx: &'a SecurityContext,
-    ) -> Self {
-        Self { access_policy, confidentiality, ctx }
+    pub(crate) fn new(policies: &'a Policies, ctx: &'a SecurityContext) -> Self {
+        Self { policies, ctx }
     }
 
     /// `action`, or the error `refusal` makes of what was refused if the
@@ -74,7 +69,7 @@ impl<'a> Access<'a> {
         action: ActionType<'_>,
         refusal: impl FnOnce(Refused) -> E + Send,
     ) -> Result<(), E> {
-        self.access_policy.require(self.ctx, action, refusal).await
+        self.policies.access_policy().require(self.ctx, action, refusal).await
     }
 
     /// Nothing if the caller is cleared for how `value` is classified
@@ -85,16 +80,18 @@ impl<'a> Access<'a> {
         refusal: impl FnOnce() -> E,
     ) -> Result<(), E> {
         match value.classification() {
-            Some(classification) => {
-                self.confidentiality.require_cleared_for(self.ctx, classification, refusal)
-            }
+            Some(classification) => self.policies.confidentiality().require_cleared_for(
+                self.ctx,
+                classification,
+                refusal,
+            ),
             None => Ok(()),
         }
     }
 
     /// An action that concerns no single entity, such as listing.
     pub(crate) async fn allow(&self, action: ActionType<'_>) -> StoreResult<()> {
-        self.access_policy.require(self.ctx, action, StoreError::PermissionDenied).await
+        self.policies.access_policy().require(self.ctx, action, StoreError::PermissionDenied).await
     }
 
     /// Nothing if `value` is among `presence`, the caller may read it as such
@@ -147,14 +144,14 @@ impl<'a> Access<'a> {
     /// the attributes alone (issue 332): the admission of what `readable`
     /// asks.
     pub(crate) fn admission<T: Stored>(&self, presence: Presence) -> Option<Admission> {
-        self.access_policy.admission(self.ctx, T::KIND, presence.verb())
+        self.policies.access_policy().admission(self.ctx, T::KIND, presence.verb())
     }
 
     /// Whether the caller reaches `value`, asked as `read`: `may_reach`,
     /// with how it is classified.
     async fn reachable<T: Stored>(&self, value: &T, read: ActionType<'_>) -> bool {
         let classifications = value.classification().map_or(&[][..], slice::from_ref);
-        may_reach(self.access_policy, self.confidentiality, self.ctx, read, classifications).await
+        may_reach(self.policies, self.ctx, read, classifications).await
     }
 
     /// Whether the caller may create `value`.
@@ -266,13 +263,13 @@ mod tests {
     use crate::removal::Removal;
     use crate::role::RoleId;
     use crate::security::{
-        AccessPolicy, ActionType, OwnershipPolicy, SecurityAttributes, SecurityContext, Subject,
-        Verb,
+        AccessPolicy, ActionType, OwnershipPolicy, Policies, SecurityAttributes, SecurityContext,
+        Subject, Verb,
     };
     use crate::session::testing::bare_session;
     use crate::session::{Session, SessionId};
     use crate::store::query::Query;
-    use crate::store::{EntityStores, Persistence, Policies, StoreError, Stored};
+    use crate::store::{EntityStores, Persistence, StoreError, Stored};
     use crate::user::testing::make_user;
     use crate::user::UserId;
     use std::sync::Arc;

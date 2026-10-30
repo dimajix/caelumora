@@ -18,12 +18,12 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::actor::Envelope;
 use caelumora_model::chain::Position;
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant};
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::mention::MentionDirectory;
 use caelumora_model::message::MessageId;
 use caelumora_model::question::{QuestionError, QuestionId};
 use caelumora_model::security::{
-    AccessPolicy, ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext,
+    ActionType, Enforcement, Policies, Refused, SecurityAttributes, SecurityContext,
 };
 use caelumora_model::session::SessionId;
 use caelumora_model::store::history::HistoryStore;
@@ -229,8 +229,7 @@ pub struct ChannelLoop {
     /// What builds the runtimes of its actors.
     runtime: ChannelRuntime,
     /// The services it works with, taken from `runtime` once (issue 229).
-    access_policy: Arc<dyn AccessPolicy>,
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    policies: Policies,
     controllers: Arc<ControllerManager>,
     participation: Arc<Participation>,
     /// What the attachments of a message are claimed from (issue 282).
@@ -322,8 +321,7 @@ impl ChannelLoop {
             id,
             session_id,
             channel: channel_controller,
-            access_policy: Arc::clone(runtime.access_policy()),
-            confidentiality: Arc::clone(runtime.confidentiality()),
+            policies: runtime.policies().clone(),
             controllers: Arc::clone(runtime.controller_manager()),
             participation: Arc::clone(runtime.participation()),
             attachments: Arc::clone(runtime.attachment_manager()),
@@ -477,7 +475,8 @@ impl ChannelLoop {
         let attributes = self.security_attributes();
         let channel = self.id;
         Ok(self
-            .access_policy
+            .policies
+            .access_policy()
             .require(context, action(&attributes), |refused| ChannelError::Forbidden {
                 action: what,
                 channel,

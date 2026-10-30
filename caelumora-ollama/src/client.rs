@@ -1058,8 +1058,8 @@ mod tests {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::security::SecurityContext;
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::security::{Policies, SecurityContext};
+    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::tool::ToolCall;
     use caelumora_model::type_map::TypeKey;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};

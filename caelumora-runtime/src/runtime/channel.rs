@@ -9,10 +9,9 @@ use crate::session::SessionLoop;
 use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::channel::Channel;
-use caelumora_model::confidentiality::ConfidentialityPolicy;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::prompt_catalogue::PromptCatalogue;
-use caelumora_model::security::AccessPolicy;
+use caelumora_model::security::Policies;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::session::Session;
 use caelumora_model::store::history::HistoryStore;
@@ -127,12 +126,8 @@ impl ChannelRuntime {
 /// handing out the `RuntimeManager` behind it (issue 191), and `ChannelLoop::new` takes no service
 /// beside it.
 impl ChannelRuntime {
-    pub(crate) fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
-        self.runtime_manager.access_policy()
-    }
-
-    pub(crate) fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
-        self.runtime_manager.confidentiality()
+    pub(crate) fn policies(&self) -> &Policies {
+        self.runtime_manager.policies()
     }
 
     pub(crate) fn services(&self) -> &Services {

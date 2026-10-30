@@ -41,11 +41,11 @@ use caelumora_model::project::Project;
 use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{
-    AclEntry, Grant, Refused, Secured, SecurityAttributes, SecurityContext, Subject,
+    AclEntry, Grant, Policies, Refused, Secured, SecurityAttributes, SecurityContext, Subject,
 };
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::testing::ContendedStore;
-use caelumora_model::store::{EntityStore, Persistence, Policies, StoreError, Stored};
+use caelumora_model::store::{EntityStore, Persistence, StoreError, Stored};
 use caelumora_model::user::UserId;
 use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
 use caelumora_model::user_provider::UserManager;

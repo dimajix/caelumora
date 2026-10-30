@@ -709,12 +709,10 @@ mod tests {
     use caelumora_model::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
     use caelumora_model::removal::{Removal, RemovalId};
     use caelumora_model::scope::ScopeField;
-    use caelumora_model::security::SecurityAttributes;
+    use caelumora_model::security::{Policies, SecurityAttributes};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::query::{Page, Query};
-    use caelumora_model::store::{
-        Deleted, EntityStores, Persistence, Policies, StoreError, StoreResult,
-    };
+    use caelumora_model::store::{Deleted, EntityStores, Persistence, StoreError, StoreResult};
     use caelumora_model::user::UserId;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};

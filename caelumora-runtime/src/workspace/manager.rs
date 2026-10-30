@@ -9,12 +9,12 @@ use crate::scoped::{purge_for_good, ScopeHolders, ScopeMember};
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
+use caelumora_model::security::{ActionType, Enforcement, Policies, SecurityContext};
 use caelumora_model::store::{
     purge_behind, EntityStore, EntityStores, StoreError, StoreResult, Stored,
 };
@@ -30,9 +30,9 @@ pub struct WorkspaceManager {
     /// Asked whether a workspace may be put into a scope.
     holders: Arc<ScopeHolders>,
     events: Arc<EventBus>,
-    access_policy: Arc<dyn AccessPolicy>,
-    /// What may flow where, and who is cleared for what (issue 304).
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// Who may make and change a workspace in a scope, and what may flow where and who is cleared
+    /// for what (issue 304).
+    policies: Policies,
     /// The storages, by name, in which it makes and removes places; shared
     /// with the `ControllerManager`, which gives a workspace's controller
     /// its own, and the `CommandReaper`.
@@ -55,8 +55,7 @@ impl WorkspaceManager {
         stores: &EntityStores,
         holders: Arc<ScopeHolders>,
         events: Arc<EventBus>,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        policies: &Policies,
         storages: Arc<NamedBackends<dyn TerminalProvider>>,
         config: &WorkspacesConfig,
     ) -> Self {
@@ -64,8 +63,7 @@ impl WorkspaceManager {
             workspaces: Arc::clone(&stores.workspaces),
             holders,
             events,
-            access_policy,
-            confidentiality,
+            policies: policies.clone(),
             storages,
             max_file_bytes: config.max_file_bytes,
         }
@@ -124,14 +122,15 @@ impl WorkspaceManager {
             Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
         require_classification(
-            self.confidentiality.as_ref(),
+            self.policies.confidentiality().as_ref(),
             ctx,
             storage,
             provider.as_ref(),
             &workspace.classification,
         )?;
         if let Scope::SessionScope { .. } = workspace.name.scope {
-            self.access_policy
+            self.policies
+                .access_policy()
                 .require(
                     ctx,
                     ActionType::create(Workspace::KIND, &workspace.security_attributes),
@@ -261,7 +260,8 @@ impl WorkspaceManager {
         id: WorkspaceId,
     ) -> WorkspaceResult<Workspace> {
         let workspace = self.reached(ctx, id).await?;
-        self.access_policy
+        self.policies
+            .access_policy()
             .require(
                 ctx,
                 ActionType::update(Workspace::KIND, &workspace.security_attributes),

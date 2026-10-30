@@ -5,9 +5,9 @@
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Channel;
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::{may_reach_each, Classification, ConfidentialityPolicy};
+use caelumora_model::confidentiality::{may_reach_each, Classification};
 use caelumora_model::event::{EntityChange, EventPublisher, GlobalEvent};
-use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{ActionType, Policies, SecurityAttributes, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -109,22 +109,16 @@ impl PublishedEvent {
     /// part, who reads the part as well (issue 316). Asked of all of them at
     /// once, so that what the question needs of others is read once per
     /// question (issue 503).
-    async fn receivable_by(
-        &self,
-        access_policy: &dyn AccessPolicy,
-        confidentiality: &dyn ConfidentialityPolicy,
-        contexts: &[SecurityContext],
-    ) -> Vec<bool> {
+    async fn receivable_by(&self, policies: &Policies, contexts: &[SecurityContext]) -> Vec<bool> {
         let reached = may_reach_each(
-            access_policy,
-            confidentiality,
+            policies,
             contexts,
             self.action_on(&self.attributes),
             &self.classifications,
         )
         .await;
         let Some(part) = &self.part else { return reached };
-        let part = access_policy.check_each(contexts, self.action_on(part)).await;
+        let part = policies.access_policy().check_each(contexts, self.action_on(part)).await;
         reached.into_iter().zip(part).map(|(whole, part)| whole && part).collect()
     }
 }
@@ -157,10 +151,9 @@ struct Subscriber {
 #[derive(Debug)]
 struct Dispatcher {
     subscribers: Mutex<Vec<Subscriber>>,
-    access_policy: Arc<dyn AccessPolicy>,
-    /// Who is cleared for what a classified entity's events are about
-    /// (issue 312).
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// Who may read what an event is about, and who is cleared for what a
+    /// classified entity's events are about (issue 312).
+    policies: Policies,
 }
 
 impl Dispatcher {
@@ -235,9 +228,7 @@ impl Dispatcher {
         if contexts.is_empty() {
             return;
         }
-        let receiving = published
-            .receivable_by(self.access_policy.as_ref(), self.confidentiality.as_ref(), &contexts)
-            .await;
+        let receiving = published.receivable_by(&self.policies, &contexts).await;
         for (tx, receives) in asking.into_iter().zip(receiving) {
             if receives {
                 let _ = tx.send(Arc::clone(&published.event));
@@ -432,18 +423,14 @@ impl EventPublisher for EventBus {
 }
 
 impl EventBus {
-    /// A bus whose subscriptions receive what `access_policy` lets their
-    /// context read and, of what is classified, what `confidentiality`
-    /// clears them for.
-    pub fn new(
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
-    ) -> Self {
+    /// A bus whose subscriptions receive what the access policy of `policies`
+    /// lets their context read and, of what is classified, what its
+    /// confidentiality policy clears them for.
+    pub fn new(policies: &Policies) -> Self {
         Self {
             dispatcher: Arc::new(Dispatcher {
                 subscribers: Mutex::new(Vec::new()),
-                access_policy,
-                confidentiality,
+                policies: policies.clone(),
             }),
             queue: OnceLock::new(),
         }
@@ -595,9 +582,8 @@ mod tests {
     use caelumora_model::group::{Group, GroupId};
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{
-        AclEntry, AllowAllPolicy, Memberships, OwnershipPolicy, Secured,
+        AccessPolicy, AclEntry, Grant, Memberships, OwnershipPolicy, Secured, Subject,
     };
-    use caelumora_model::security::{Grant, Subject};
     use caelumora_model::store::Stored;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::value::text::Introduction;
@@ -608,7 +594,7 @@ mod tests {
     use tokio::time;
 
     fn bus() -> EventBus {
-        EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
+        EventBus::new(&Policies::permitting_all())
     }
 
     fn created() -> GlobalEvent {
@@ -726,10 +712,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_subscriber_receives_what_it_may_read_and_nothing_else() {
-        let bus = EventBus::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(OwnershipPolicy::new())));
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe(as_user(alice), vec![SubscriptionTopic::All]);
         let mut bobs = bus.subscribe(as_user(bob), vec![SubscriptionTopic::All]);
@@ -778,7 +761,7 @@ mod tests {
             }
         }
 
-        let bus = EventBus::new(Arc::new(ChannelsOnly), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(ChannelsOnly)));
         let alice = UserId::new();
         let mut alices = bus.subscribe(as_user(alice), vec![SubscriptionTopic::All]);
         let (session, channel) = (SessionId::new(), ChannelId::new());
@@ -824,7 +807,7 @@ mod tests {
             }
         }
 
-        let bus = EventBus::new(Arc::new(DeletionsOnly), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(DeletionsOnly)));
         let alice = UserId::new();
         let mut alices = bus.subscribe(as_user(alice), vec![SubscriptionTopic::All]);
         let session = SessionId::new();
@@ -852,7 +835,7 @@ mod tests {
         )])
         .unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
-        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(rules));
+        let bus = EventBus::new(&Policies::new(Arc::new(OwnershipPolicy::new()), Arc::new(rules)));
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut alices = bus
             .subscribe(as_user(alice).with_roles(vec![staff], None), vec![SubscriptionTopic::All]);
@@ -890,10 +873,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_profile_s_change_reaches_its_user_alone() {
-        let bus = EventBus::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(OwnershipPolicy::new())));
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut alices = bus.subscribe(as_user(alice), vec![SubscriptionTopic::All]);
         let mut bobs = bus.subscribe(as_user(bob), vec![SubscriptionTopic::All]);
@@ -911,10 +891,7 @@ mod tests {
     /// 316) - reaches whoever may read both the entity and the part.
     #[tokio::test]
     async fn a_part_s_events_reach_whoever_reads_the_entity_and_the_part() {
-        let bus = EventBus::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(OwnershipPolicy::new())));
         let alice = UserId::new();
         let bob = UserId::new();
         let carol = UserId::new();
@@ -946,10 +923,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_workspace_s_events_reach_whoever_may_use_it() {
-        let bus = EventBus::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(OwnershipPolicy::new())));
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe(as_user(alice), vec![SubscriptionTopic::All]);
         let mut bobs = bus.subscribe(as_user(bob), vec![SubscriptionTopic::All]);
@@ -978,10 +952,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_belongs_to_the_system_reaches_every_subscriber() {
-        let bus = EventBus::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(OwnershipPolicy::new())));
         let mut someone = bus.subscribe(as_user(UserId::new()), vec![SubscriptionTopic::All]);
         bus.publish(
             GlobalEvent::created::<Session>(&SessionId::new()),
@@ -1015,10 +986,9 @@ mod tests {
         let (alice, bob) = (UserId::new(), UserId::new());
         let counting =
             Arc::new(Counting { members: vec![ActorId::User(bob)], ..Default::default() });
-        let bus = EventBus::new(
-            Arc::new(OwnershipPolicy::with_memberships(Arc::<Counting>::clone(&counting))),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(
+            OwnershipPolicy::with_memberships(Arc::<Counting>::clone(&counting)),
+        )));
         let mut bobs = bus.subscribe(as_user(bob), vec![SubscriptionTopic::All]);
         let mut strangers: Vec<EventSubscription> = (0..5)
             .map(|_| bus.subscribe(as_user(UserId::new()), vec![SubscriptionTopic::All]))
@@ -1092,10 +1062,7 @@ mod tests {
     /// runtime's do - what it is about, and still only what it may read.
     #[tokio::test]
     async fn a_subscription_in_someones_name_follows_a_topic() {
-        let bus = EventBus::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-        );
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(OwnershipPolicy::new())));
         let alice = UserId::new();
         let (theirs, other) = (AgentId::new(), AgentId::new());
         let mut hers = bus.subscribe(as_user(alice), vec![SubscriptionTopic::Agent(other)]);
@@ -1129,7 +1096,7 @@ mod tests {
                 false
             }
         }
-        let bus = EventBus::new(Arc::new(RefusesAll), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(&Policies::by_default_rules(Arc::new(RefusesAll)));
         let mut runtime = bus.subscribe_all();
         let mut someone = bus.subscribe(as_user(UserId::new()), vec![SubscriptionTopic::All]);
 

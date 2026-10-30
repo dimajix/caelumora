@@ -122,7 +122,7 @@ impl ChannelLoop {
             "reclassifying",
         )
         .await?;
-        self.confidentiality.require_classifiable(&classification, || {
+        self.policies.confidentiality().require_classifiable(&classification, || {
             ChannelError::ClassificationRefused {
                 classification: classification.clone(),
                 channel: self.id,
@@ -134,7 +134,8 @@ impl ChannelLoop {
             self.participation.require_cleared(participant, context, &classification)?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
-        let lowered = !self.confidentiality.may_publish(context, &channel, &classification);
+        let lowered =
+            !self.policies.confidentiality().may_publish(context, &channel, &classification);
         if lowered {
             self.cancel_actors();
         }

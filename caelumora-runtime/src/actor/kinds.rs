@@ -111,7 +111,8 @@ mod tests {
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, Personality};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::security::Policies;
+    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
 

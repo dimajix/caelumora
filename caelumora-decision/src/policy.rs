@@ -445,8 +445,8 @@ mod tests {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::confidentiality::{Confidentiality, ConfidentialityRules};
     use caelumora_model::message::{MessageId, MessageRole};
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
-    use caelumora_model::store::{EntityStores, Persistence, Policies};
+    use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
+    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;

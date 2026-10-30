@@ -792,12 +792,12 @@ mod tests {
     use caelumora_model::message::testing::{id, make_message};
     use caelumora_model::note::{NoteChange, NoteId};
     use caelumora_model::removal::Removal;
-    use caelumora_model::security::{OwnershipPolicy, SecurityContext};
+    use caelumora_model::security::{OwnershipPolicy, Policies, SecurityContext};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::query::Query;
     use caelumora_model::store::{
-        suite, EntityStore, EntityStores, Persistence, Policies, StoreError, Stored,
+        suite, EntityStore, EntityStores, Persistence, StoreError, Stored,
     };
     use caelumora_model::turn::TurnState;
     use caelumora_model::value::name::Name;

@@ -63,7 +63,8 @@ use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{
-    AccessPolicy, AccessQuestions, AclEntry, Refused, SecurityAttributes, SecurityContext, Subject,
+    AccessPolicy, AccessQuestions, AclEntry, Policies, Refused, SecurityAttributes,
+    SecurityContext, Subject,
 };
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{
@@ -212,8 +213,7 @@ impl RunningSessions for OwnSession {
 #[derive(Clone)]
 pub struct Views {
     services: Services,
-    access_policy: Arc<dyn AccessPolicy>,
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    policies: Policies,
     stores: EntityStores,
     states: Arc<dyn StateStore>,
     /// Where every history is read, in pages (issue 379).
@@ -244,8 +244,7 @@ impl Views {
     ) -> Self {
         Self {
             services: runtime.services().clone(),
-            access_policy: Arc::clone(runtime.access_policy()),
-            confidentiality: Arc::clone(runtime.confidentiality()),
+            policies: runtime.policies().clone(),
             stores: runtime.entity_stores().clone(),
             states: Arc::clone(runtime.state_store()),
             histories: Arc::clone(runtime.history_store()),
@@ -280,14 +279,19 @@ impl Views {
         self.viewer.context()
     }
 
+    /// The policies every edge asks, in the viewer's `context`.
+    pub fn policies(&self) -> &Policies {
+        &self.policies
+    }
+
     /// The policy every edge asks, in the viewer's `context`.
     pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
-        &self.access_policy
+        self.policies.access_policy()
     }
 
     /// What may flow where, and who is cleared for what (issue 304).
     pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
-        &self.confidentiality
+        self.policies.confidentiality()
     }
 
     /// The service `T` of the runtime (`Services`) - a plugin's manager,
@@ -387,7 +391,12 @@ impl Views {
         let found = match self.running.running(id) {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
-                if !self.access_policy.may_read_session(self.viewer.context(), &attributes).await {
+                if !self
+                    .policies
+                    .access_policy()
+                    .may_read_session(self.viewer.context(), &attributes)
+                    .await
+                {
                     return Err(not_found());
                 }
                 Found::Running(session_loop)
@@ -448,7 +457,8 @@ impl Views {
         Ok(match deleted {
             Some(Deleted { entity: session, removal })
                 if self
-                    .access_policy
+                    .policies
+                    .access_policy()
                     .may_read_session(self.viewer.context(), &session.security_attributes)
                     .await =>
             {
@@ -664,7 +674,8 @@ impl Views {
                 ),
                 Subject::Actor(_) | Subject::Everyone => (None, None),
                 Subject::Role(role) => (
-                    self.confidentiality
+                    self.policies
+                        .confidentiality()
                         .roles()
                         .and_then(|roles| roles.name_of(role))
                         .map(str::to_string),
@@ -833,9 +844,17 @@ impl Views {
                 name: name(&entity),
                 // One whose purge is begun is restored by nobody (issue 492).
                 can_restore: !entity.purging()
-                    && self.access_policy.may_restore(context, T::KIND, attributes).await,
+                    && self
+                        .policies
+                        .access_policy()
+                        .may_restore(context, T::KIND, attributes)
+                        .await,
                 deleted: removal,
-                can_purge: self.access_policy.may_purge(context, T::KIND, attributes).await,
+                can_purge: self
+                    .policies
+                    .access_policy()
+                    .may_purge(context, T::KIND, attributes)
+                    .await,
             });
         }
         Ok(deleted)
@@ -848,7 +867,7 @@ impl Views {
     /// entry, so nothing may be copied for them so.
     pub(crate) fn may_copy_from(&self, from: &Place) -> bool {
         let Some(into) = &self.viewer.from else { return false };
-        self.confidentiality.may_copy_information(self.viewer.context(), from, into)
+        self.policies.confidentiality().may_copy_information(self.viewer.context(), from, into)
     }
 
     /// Where `scope` is, as the viewer is shown it (issue 475): with the name of its user if it is
@@ -963,28 +982,36 @@ impl<'a> ChannelReader<'a> {
 /// otherwise. What the views reach a channel by, and what an operation in a
 /// channel asks before it acts there.
 pub async fn channel_reading(
-    access_policy: &dyn AccessPolicy,
-    confidentiality: &dyn ConfidentialityPolicy,
+    policies: &Policies,
     context: &SecurityContext,
     channel: &SecurityAttributes,
     at: &Place,
     reader: ChannelReader<'_>,
 ) -> Option<Reading> {
-    if !access_policy.may_read_channel(context, channel).await {
+    if !policies.access_policy().may_read_channel(context, channel).await {
         return None;
     }
     match reader {
         ChannelReader::From(from) => Some(
-            match confidentiality.copyable_information(context, at.channel, &at.session, from) {
-                reading if reading.admits(&at.classification, confidentiality.compartments()) => {
+            match policies.confidentiality().copyable_information(
+                context,
+                at.channel,
+                &at.session,
+                from,
+            ) {
+                reading
+                    if reading
+                        .admits(&at.classification, policies.confidentiality().compartments()) =>
+                {
                     Reading::Whole
                 }
                 reading => reading,
             },
         ),
-        ChannelReader::Cleared => {
-            confidentiality.cleared_for(context, &at.classification).then_some(Reading::Whole)
-        }
+        ChannelReader::Cleared => policies
+            .confidentiality()
+            .cleared_for(context, &at.classification)
+            .then_some(Reading::Whole),
     }
 }
 

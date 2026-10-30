@@ -27,10 +27,10 @@ use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS, DEFAULT_VARIANT};
 use caelumora_model::secret::{SecretManager, SecretProvider};
-use caelumora_model::security::AccessPolicy;
+use caelumora_model::security::{AccessPolicy, Policies};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{
-    EntityStore, EntityStores, Persistence, PersistenceBackend, Policies, StoreResult, Stored,
+    EntityStore, EntityStores, Persistence, PersistenceBackend, StoreResult, Stored,
 };
 use caelumora_model::user_provider::{UserManager, UserProvider};
 use serde::de::DeserializeOwned;
@@ -131,8 +131,7 @@ impl RuntimeBuilder {
         let state_store = persistence.state_store();
         let entity_stores = EntityStores::open(&persistence, &policies)?;
         let scope_holders = Arc::new(ScopeHolders::new(&entity_stores));
-        let event_bus =
-            Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
+        let event_bus = Arc::new(EventBus::new(&policies));
         // What a backend may ask for: the policies, the secrets and, for a
         // user provider, the records of the users.
         let backend_services = Services::empty()
@@ -148,8 +147,7 @@ impl RuntimeBuilder {
         let controller_manager = Arc::new(ControllerManager::new(
             entity_stores.clone(),
             Arc::clone(&event_bus),
-            Arc::clone(&access_policy),
-            Arc::clone(&confidentiality),
+            &policies,
             Arc::clone(&storages),
             Arc::clone(&state_store),
             persistence.history_store(),
@@ -168,8 +166,7 @@ impl RuntimeBuilder {
             &entity_stores,
             Arc::clone(&scope_holders),
             Arc::clone(&event_bus),
-            Arc::clone(&access_policy),
-            Arc::clone(&confidentiality),
+            &policies,
             storages,
             &config.workspaces,
         ));
@@ -342,6 +339,11 @@ impl RuntimeBuilder {
         &self.event_bus
     }
 
+    /// The policies of the process, the pair its stores are checked by.
+    pub fn policies(&self) -> &Policies {
+        &self.policies
+    }
+
     pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
         self.policies.access_policy()
     }
@@ -454,12 +456,10 @@ impl RuntimeBuilder {
         let participation = Arc::new(Participation::new(
             Arc::clone(&self.entity_stores.agents),
             Arc::clone(&self.controller_manager),
-            Arc::clone(self.policies.access_policy()),
-            Arc::clone(self.policies.confidentiality()),
+            &self.policies,
         ));
         Ok(RuntimeManager {
-            access_policy: Arc::clone(self.policies.access_policy()),
-            confidentiality: Arc::clone(self.policies.confidentiality()),
+            policies: self.policies,
             state_store: self.persistence.state_store(),
             history_store: self.persistence.history_store(),
             transcript_store: self.persistence.transcript_store(),
