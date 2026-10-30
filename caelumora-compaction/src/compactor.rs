@@ -5,8 +5,8 @@
 //! stands; where the cut lies is the [`Cut`]'s. What replaces the part before it is asked of the
 //! agent's [`CompactionStrategy`]; what the agent had been given there is given again, as it is
 //! now, by the component that gave it, its [`KnowledgeRestorer`] (issue 323), after the
-//! replacement. Nothing changes until all of it is had: then the context moves to the compacted one
-//! at once (`Turn::compact`).
+//! replacement - what the strategy answers the agent still needs of it (issue 413). Nothing changes
+//! until all of it is had: then the context moves to the compacted one at once (`Turn::compact`).
 
 use crate::cut::{Cut, Given};
 use crate::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
@@ -14,7 +14,6 @@ use caelumora_agents::turn::Turn;
 use caelumora_model::actor::ActorId;
 use caelumora_model::context::KnowledgeRef;
 use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::store::EntityKind;
 use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -65,9 +64,10 @@ impl Compactor {
             );
             CompactionError::TranscriptUnreadable
         })?;
-        let given: Vec<String> =
-            restored.iter().map(|(kind, given)| format!("{} {}", kind, given.name)).collect();
+        let given: Vec<String> = restored.iter().map(|(name, _)| name.clone()).collect();
         let replacement = self.strategy.replace(turn, part, &given).await?;
+        let (needed, not_needed): (Vec<_>, Vec<_>) =
+            restored.into_iter().partition(|(name, _)| replacement.still_needed.contains(name));
 
         let (owner, classification) = cut.replaced_as(turn.situation().label());
         let agent = ActorId::Agent(turn.situation().agent_id());
@@ -85,7 +85,7 @@ impl Compactor {
             ..Message::new(classification)
         };
         let mut messages: Vec<(Message, Option<KnowledgeRef>)> = vec![(instead, None)];
-        for (_, given) in &restored {
+        for (_, given) in &needed {
             let message = Message {
                 id: MessageId::new(),
                 sender_id: agent,
@@ -111,7 +111,8 @@ impl Compactor {
         Ok(Some(Compaction {
             replaced: cut.messages_replaced(),
             kept: cut.messages_kept(),
-            given_again: given,
+            given_again: needed.into_iter().map(|(name, _)| name).collect(),
+            not_needed: not_needed.into_iter().map(|(name, _)| name).collect(),
             lost,
         }))
     }
@@ -137,14 +138,15 @@ impl Compactor {
         (self.keep * size as f64) as u64
     }
 
-    /// What `wanted` - given in the part replaced and not in the part kept - is given again by the
-    /// restorer of its kind, with that kind, and how much of it can no longer be given. What no
-    /// restorer gives - a workspace's files - is not given again, and not lost either.
+    /// What `wanted` - given in the part replaced and not in the part kept - can be given again by
+    /// the restorer of its kind, each by its kind and name - `skill release-notes` -, and how much
+    /// of it can no longer be given. What no restorer gives - a workspace's files - is not given
+    /// again, and not lost either.
     async fn give_again(
         &self,
         turn: &mut Turn<'_>,
         wanted: &[Given],
-    ) -> Result<(Vec<(EntityKind, GivenAgain)>, usize), CompactionError> {
+    ) -> Result<(Vec<(String, GivenAgain)>, usize), CompactionError> {
         let mut restored = Vec::new();
         let mut lost = 0;
         for restorer in &self.restorers {
@@ -156,7 +158,8 @@ impl Compactor {
             }
             let given = restorer.give_again(turn, &ids).await?;
             lost += ids.len().saturating_sub(given.len());
-            restored.extend(given.into_iter().map(|given| (kind, given)));
+            restored
+                .extend(given.into_iter().map(|given| (format!("{} {}", kind, given.name), given)));
         }
         Ok((restored, lost))
     }
@@ -172,7 +175,7 @@ mod tests {
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::context::{KnowledgeSource, ModelProfile, SenderFormat};
-    use caelumora_model::store::Stored;
+    use caelumora_model::store::{EntityKind, Stored};
     use caelumora_model::transcript::TranscriptEntry;
     use caelumora_model::user::UserId;
     use caelumora_model::value::time_zone::TimeZone;
@@ -307,6 +310,7 @@ mod tests {
                 replaced: 3,
                 kept: 1,
                 given_again: vec!["workspace release-notes".to_string()],
+                not_needed: Vec::new(),
                 lost: 0
             })
         );
@@ -374,11 +378,46 @@ mod tests {
 
         assert_eq!(
             compaction,
-            Some(Compaction { replaced: 3, kept: 1, given_again: Vec::new(), lost: 1 })
+            Some(Compaction {
+                replaced: 3,
+                kept: 1,
+                given_again: Vec::new(),
+                not_needed: Vec::new(),
+                lost: 1
+            })
         );
         let (_, given) = strategy.asked.lock().unwrap().pop().expect("its strategy was asked");
         assert!(given.is_empty(), "nothing is given again");
         assert_eq!(texts(&state), [SUMMARY, "u2"]);
+    }
+
+    /// Issue 413: what the agent no longer needs, as its strategy answers - a skill of a task
+    /// that is over -, is not given again, and the owners are told so.
+    #[tokio::test]
+    async fn what_is_no_longer_needed_is_not_given_again() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let skill = an_agent_with_a_skill_given(&world, &mut state).await;
+        let strategy = Arc::new(Scripted::needing_nothing());
+        let compactor = compactor(&strategy, vec![Arc::new(Restorer(Some(skill)))]);
+
+        let mut turn = workspace_turn(&world, &mut state);
+        let compaction = compactor.compact(&mut turn).await.expect("compacted");
+        drop(turn);
+
+        assert_eq!(
+            compaction,
+            Some(Compaction {
+                replaced: 3,
+                kept: 1,
+                given_again: Vec::new(),
+                not_needed: vec!["workspace release-notes".to_string()],
+                lost: 0
+            })
+        );
+        let (_, given) = strategy.asked.lock().unwrap().pop().expect("its strategy was asked");
+        assert_eq!(given, ["workspace release-notes"], "asked about what can be given again");
+        assert_eq!(texts(&state), [SUMMARY, "u2"], "the summary alone");
     }
 
     #[tokio::test]

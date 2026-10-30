@@ -612,7 +612,7 @@ first of the next turn as well, with what was heard since - the activity is due 
 fills `threshold` of the model's context size, as soon as a call made on the active branch
 measured it; a model that reports no context size gives nothing to measure against, which the
 component says once. The agent then compacts in the state `Busy` (see [In a turn](#in-a-turn));
-the strategy's call does not count against `MAX_MODEL_CALLS`. A compaction that fails gives the
+the strategy's calls do not count against `MAX_MODEL_CALLS`. A compaction that fails gives the
 turn up: the call it was to make room for would not fit. `/compact` tells of itself as a command
 does.
 
@@ -630,15 +630,19 @@ turn alone is no turn's and classified by what it replaces, since its call was g
 alone.
 
 What the agent had been given in the part replaced and is not still there in the part kept is
-given again after the replacement, as it is now, by the component that gave it: a
-`KnowledgeRestorer` (issue 323), a facet that names its kind and answers, of the entities of that
-kind given - each a `Given` entry of the transcript whose source is a `KnowledgeSource::Entity`
-(issue 389) -, which it gives again and as what text. The strategy is told what is given again, by
-kind and name, so that a summary leaves its text out. What was given without a source - an earlier
-summary - is replaced with the rest. The `skills` component gives the skills the agent may still
-load there ([SKILLS.md](SKILLS.md)); what no component gives again - a workspace's files - is not,
-and neither the compaction nor its strategy knows a kind itself. `/compact` tells the channel what
-was given again, by kind and name, and how much could no longer be given.
+given again after the replacement, as it is now, by the component that gave it, if the agent still
+needs it: a `KnowledgeRestorer` (issue 323), a facet that names its kind and answers, of the
+entities of that kind given - each a `Given` entry of the transcript whose source is a
+`KnowledgeSource::Entity` (issue 389) -, which it can give again and as what text. Whether the agent
+still needs it is the strategy's to answer (issue 413): it is told what can be given again, by kind
+and name, and the work still open is what it reads. `summary_compaction` has the summary leave its
+text out and asks its model after the summary which of it the work still needs; an answer it
+cannot read, or no answer at all, gives all of it again. What was given without a source - an
+earlier summary - is replaced with the rest. The `skills` component gives the skills the agent may
+still load there ([SKILLS.md](SKILLS.md)); what no component gives again - a workspace's files -
+is not, and neither the compaction nor its strategy knows a kind itself. `/compact` tells the
+channel what was given again and what was no longer needed, by kind and name, and how much could
+no longer be given.
 
 ## Prompt parts
 

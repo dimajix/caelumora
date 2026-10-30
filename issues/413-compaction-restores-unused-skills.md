@@ -1,6 +1,6 @@
 # 413 — A compaction gives again every skill the agent once loaded
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Context and knowledge
@@ -121,3 +121,12 @@ behaviour, in the crate `caelumora-compaction`:
   (`CompactionStrategy::replace`, `Replacement`). `still_needed` waits for step 2, which is its
   first user. A test through the runtime (`caelumora-skills/tests/skills.rs`) shows the restorers
   reaching the compaction: a skill given with `/skill`, then `/compact`.
+- **2026-10-30** — Step 2 done: `summary_compaction` asks its model after the summary which of what
+  can be given again the work still open needs - a line a name, or "none" -, and `Replacement`
+  answers it as `still_needed`; an answer that names nothing and does not say "none", an empty one
+  or a model that cannot be asked gives all of it again. The tokens of the question count with those
+  of the summary, summed into its message - how a call without a message of its own is counted is
+  issue [514](514-calls-without-a-message-of-their-own.md). `Compaction::not_needed` tells what was
+  not given again, apart from what is lost. Tests: the strategy (`summary_compaction.rs`), the
+  compactor (`compactor.rs`), and through the runtime two skills given, the one still needed given
+  again (`caelumora-skills/tests/skills.rs`).

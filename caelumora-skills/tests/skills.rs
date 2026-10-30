@@ -391,11 +391,12 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// Issue 413: the `compaction` component asks the agent's `skills` for what it gives again - a
-/// skill given in the part of the context it replaces is given again after it, as `/compact`
-/// tells.
+/// Issue 413: the `compaction` component asks the agent's `skills` for what it can give again - the
+/// skills given in the part of the context it replaces -, and gives again after the summary those
+/// the agent's model still needs, as `/compact` tells: `release-notes`, not the quiz of a task
+/// that is over.
 #[tokio::test]
-async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces() {
+async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_are_still_needed() {
     // As a call of a model whose context holds 1000 tokens answered, given `prompt` tokens.
     let measured = |prompt: u64, text: &str| Message {
         prompt_tokens: Some(prompt),
@@ -403,7 +404,12 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces() {
         context_size: Some(1000),
         ..saying(text)
     };
-    let script = vec![measured(100, "Hi."), measured(300, "Fine."), measured(50, "They met.")];
+    let script = vec![
+        measured(100, "Hi."),
+        measured(300, "Fine."),
+        measured(50, "They met."),
+        measured(60, "skill release-notes"),
+    ];
     let world = World::with(&[&TestAgents, &SkillsPlugin, &CompactionPlugin], |registry| {
         register_scripted(registry, "scripted", script)
     })
@@ -430,17 +436,19 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces() {
         .await
         .unwrap();
     let helper = world.agent("helper", world.alice, &skilled).await;
-    manager(&world)
-        .create(
-            &World::as_user(world.alice),
-            "release-notes",
-            Scope::UserScope { user_id: world.alice },
-            "How we write a release note",
-            "1. Collect.",
-            Classification::general(Confidentiality::Internal),
-        )
-        .await
-        .expect("hers to make");
+    for (name, body) in [("release-notes", "1. Collect."), ("quiz-round", "1. Ask.")] {
+        manager(&world)
+            .create(
+                &World::as_user(world.alice),
+                name,
+                Scope::UserScope { user_id: world.alice },
+                "How it is done",
+                body,
+                Classification::general(Confidentiality::Internal),
+            )
+            .await
+            .expect("hers to make");
+    }
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let alice = main.user_actor(world.alice).unwrap();
@@ -449,23 +457,25 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces() {
 
     alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
-    alice.execute_command(SKILL_COMMAND_NAME, "@helper release-notes").await.expect("hers to give");
-    shown(&mut hers, "CommandExecuted").await;
+    for name in ["quiz-round", "release-notes"] {
+        alice.execute_command(SKILL_COMMAND_NAME, &format!("@helper {name}")).await.expect("hers");
+        shown(&mut hers, "CommandExecuted").await;
+    }
     alice.send_message(Some("@helper next".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
     alice.execute_command("compact", "@helper").await.expect("hers, as its owner");
 
     let told = shown(&mut hers, "CommandExecuted").await;
     assert!(
-        matches!(told, ActorEvent::CommandExecuted { ref output, .. } if output.contains("Given again: skill release-notes.")),
+        matches!(told, ActorEvent::CommandExecuted { ref output, .. } if output.contains("Given again: skill release-notes. No longer needed, not given again: skill quiz-round.")),
         "{told:?}"
     );
     let state = world.store.state_store().get_agent_channel_state(helper, main.id()).await.unwrap();
     let texts: Vec<_> = state.transcript.messages().into_iter().filter_map(|m| m.content).collect();
     assert_eq!(
-        texts.get(1).map(String::as_str),
-        Some("[Skill: release-notes]\n1. Collect.\n"),
-        "after the summary: {texts:?}"
+        texts[1..],
+        ["[Skill: release-notes]\n1. Collect.\n", "Fine."],
+        "after the summary, the skill still needed alone: {texts:?}"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

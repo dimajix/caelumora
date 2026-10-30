@@ -49,8 +49,9 @@ pub const PROMPTS: &str = include_str!("prompts.yaml");
 #[async_trait]
 pub trait CompactionStrategy: Send + Sync + Debug {
     /// What replaces `part` - the older part of `turn`'s context, as its model is given it - for
-    /// the agent to go on from. `given` names, by kind and name, what was given in the part and is
-    /// given again after the replacement.
+    /// the agent to go on from. `given` names, by kind and name, what was given in the part and can
+    /// be given again after the replacement; what the agent still needs of it is given again
+    /// (issue 413).
     ///
     /// # Errors
     /// `ModelUnreachable` if a model it asks cannot be asked, `NoSummary` if it answers nothing,
@@ -68,9 +69,12 @@ pub trait CompactionStrategy: Send + Sync + Debug {
 pub struct Replacement {
     /// The text that stands for the part, as the agent is given it.
     pub text: String,
-    /// The message its model answered with, which carries the measures of the call that wrote the
-    /// text.
+    /// The message its model answered with, which carries the measures of the calls that wrote
+    /// the replacement - their tokens summed, the context size of the last.
     pub call: Message,
+    /// Of what was given in the part, what the agent still needs for the work under way, by kind
+    /// and name; the rest is not given again.
+    pub still_needed: Vec<String>,
 }
 
 /// What a component gave the agent and gives again after a compaction
@@ -119,6 +123,9 @@ pub struct Compaction {
     /// What was given again, as it is now, each by its kind and name -
     /// `skill release-notes`.
     pub given_again: Vec<String>,
+    /// What could have been given again and was not, since the agent no
+    /// longer needs it, each by its kind and name (issue 413).
+    pub not_needed: Vec<String>,
     /// How much the agent had been given before that can no longer be
     /// given and was not given again.
     pub lost: usize,
@@ -135,6 +142,12 @@ impl Compaction {
         );
         if !self.given_again.is_empty() {
             text.push_str(&format!(" Given again: {}.", self.given_again.join(", ")));
+        }
+        if !self.not_needed.is_empty() {
+            text.push_str(&format!(
+                " No longer needed, not given again: {}.",
+                self.not_needed.join(", ")
+            ));
         }
         if self.lost > 0 {
             text.push_str(&format!(" {} of what it had been given can no longer be given here and was not given again.", self.lost));
@@ -173,11 +186,13 @@ mod tests {
             replaced: 3,
             kept: 1,
             given_again: vec!["skill release-notes".to_string()],
+            not_needed: vec!["skill quiz-round".to_string()],
             lost: 1,
         };
         assert_eq!(
             compaction.describe("Jonathan"),
             "Jonathan compacted its context: 3 messages replaced, 1 kept as they were. Given again: skill release-notes. \
+            No longer needed, not given again: skill quiz-round. \
             1 of what it had been given can no longer be given here and was not given again."
         );
     }

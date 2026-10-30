@@ -29,19 +29,36 @@ pub(crate) fn prompts() -> PromptTexts {
 /// The text the strategy puts in the place of a part, unless it fails.
 pub(crate) const SUMMARY: &str = "They want release notes.";
 
+/// What a `Scripted` strategy answers.
+#[derive(Debug, Default, Clone, Copy)]
+enum Answer {
+    /// `SUMMARY`, all that can be given again still needed.
+    #[default]
+    NeedingAll,
+    /// `SUMMARY`, nothing still needed.
+    NeedingNothing,
+    /// What the function returns.
+    Failing(fn() -> CompactionError),
+}
+
 /// A strategy that replaces every part by `SUMMARY`, its call measured as 40 tokens of prompt and 8
-/// of answer - or fails with what `fails` returns -, keeping what it was asked: the part, and what
-/// was given again.
+/// of answer, as its `Answer` says, keeping what it was asked: the part, and what can be given
+/// again.
 #[derive(Debug, Default)]
 pub(crate) struct Scripted {
-    fails: Option<fn() -> CompactionError>,
+    answer: Answer,
     pub(crate) asked: Mutex<Vec<(Vec<Message>, Vec<String>)>>,
 }
 
 impl Scripted {
     /// A strategy that fails with what `fails` returns.
     pub(crate) fn failing(fails: fn() -> CompactionError) -> Self {
-        Self { fails: Some(fails), ..Self::default() }
+        Self { answer: Answer::Failing(fails), ..Self::default() }
+    }
+
+    /// A strategy for whose agent nothing that can be given again is still needed.
+    pub(crate) fn needing_nothing() -> Self {
+        Self { answer: Answer::NeedingNothing, ..Self::default() }
     }
 
     /// How often it was asked.
@@ -59,9 +76,11 @@ impl CompactionStrategy for Scripted {
         given: &[String],
     ) -> Result<Replacement, CompactionError> {
         self.asked.lock().unwrap().push((part, given.to_vec()));
-        if let Some(fails) = self.fails {
-            return Err(fails());
-        }
+        let still_needed = match self.answer {
+            Answer::NeedingAll => given.to_vec(),
+            Answer::NeedingNothing => Vec::new(),
+            Answer::Failing(fails) => return Err(fails()),
+        };
         let call = Message {
             role: MessageRole::Assistant,
             content: Some(SUMMARY.to_string()),
@@ -69,7 +88,7 @@ impl CompactionStrategy for Scripted {
             completion_tokens: Some(8),
             ..unlabelled_message()
         };
-        Ok(Replacement { text: SUMMARY.to_string(), call })
+        Ok(Replacement { text: SUMMARY.to_string(), call, still_needed })
     }
 }
 
