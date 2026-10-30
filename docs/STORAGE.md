@@ -382,24 +382,25 @@ whether the caller is cleared for it, the deleted alike (issue 322, see
 its `AccessPolicy`.
 
 Purging only what is still marked keeps a purge from removing what was restored meanwhile. Where
-something lies behind an entity - an agent's state, a workspace's place, an artifact's content -,
-its purge is begun first (`begin_purge`, issue
-[492](../issues/492-a-document-is-written-under-two-locks.md)): the entity records it, apart from
-the mark of its deletion (`Stored::purging`) - deleting and purging are two acts, each with a
+something lies behind an entity - an agent's state, a workspace's place, an artifact's content, a
+session's channels with their states and attachments -, its purge is begun first (`begin_purge`,
+issue [492](../issues/492-a-document-is-written-under-two-locks.md)): the entity records it, apart
+from the mark of its deletion (`Stored::purging`) - deleting and purging are two acts, each with a
 permission of its own -, and no restoring takes it back from then on; then what lies behind it is
 removed, then the document. The order is written once, in `store::purge_behind`, which every such
 purge goes through: a manager's in its caller's name and in its own errors, what goes with the
 holder of its scope in the runtime's name. A purge that fails between leaves it deleted with its
 purge begun, for the next purge to finish; the record holds across every writer of the store, as no
-lock in one process could. A session's channels are the exception: restoring and purging a session
-are serialised by the `SessionManager`, under the lock it also deletes and starts a session with,
-and its purge removes the documents of its channels before their states and attachments. Deleting,
-restoring and purging a project are serialised by the `ProjectManager`, under one lock per project
-id, since each goes through the project's sessions, its scope and its group. Both tables of locks by
-id are a `LocksById`, which keeps an id's lock only while somebody holds it or waits for it. What
-the runtime removes for good that is not marked - the channels of a session being purged, a document
-whose creation failed - it marks first, in its own name. The state of what was deleted stays in the
-`StateStore` until it is purged (see [Deleting state](#deleting-state)).
+lock in one process could. A channel is restored only through its running session, so the session's
+purge begun keeps its channels too. Deleting, restoring and purging a session are serialised by the
+`SessionManager`, under the lock it also starts a session with, so that a purge never meets it half
+deleted or half restored. Deleting, restoring and purging a project are serialised by the
+`ProjectManager`, under one lock per project id, since each goes through the project's sessions, its
+scope and its group. Both tables of locks by id are a `LocksById`, which keeps an id's lock only
+while somebody holds it or waits for it. What the runtime removes for good that is not marked - the
+channels of a session being purged, a document whose creation failed - it marks first, in its own
+name. The state of what was deleted stays in the `StateStore` until it is purged (see
+[Deleting state](#deleting-state)).
 
 ### Demo data
 

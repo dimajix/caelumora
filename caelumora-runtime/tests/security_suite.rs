@@ -2868,12 +2868,8 @@ async fn purging_a_session_is_not_its_owners() {
     assert!(refused.is_err());
     assert_eq!(
         asked,
-        checks(&[
-            "alice: ReadDeletedSession(alice's) yes",
-            "alice: ReadDeletedSession(alice's) yes",
-            "alice: PurgeSession(alice's) no",
-        ]),
-        "only what was deleted, asked by the agent manager and again by the store"
+        checks(&["alice: ReadDeletedSession(alice's) yes", "alice: PurgeSession(alice's) no"]),
+        "only what was deleted, asked by the store as it begins the purge, before anything goes"
     );
 }
 
