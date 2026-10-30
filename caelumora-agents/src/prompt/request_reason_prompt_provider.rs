@@ -14,7 +14,8 @@
 //! answer whenever they are asked.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    texts_of, writing_for_the_model, ContextError, PositionConfig, Prompt, PromptPosition,
+    PromptProvider,
 };
 use crate::situation::Situation;
 use crate::tool::stop_tool::SILENCE_TOOL_NAME;
@@ -70,7 +71,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let position =
-                PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+                PositionConfig::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(RequestReasonPromptProvider {
                 position,

@@ -96,9 +96,11 @@ pub struct SkillsComponent {
     prompts: PromptTexts,
 }
 
-/// What the component is configured with besides its position.
+/// What the component is configured with.
 #[derive(Debug, Default, Deserialize)]
 struct SkillsConfig {
+    #[serde(default)]
+    position: PromptPosition,
     #[serde(default)]
     requires_approval: ApprovalMode,
 }
@@ -655,8 +657,8 @@ pub fn register(registry: &mut ComponentRegistry) {
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let position = PromptPosition::of_params(&descriptor.params)?;
-            let SkillsConfig { requires_approval } = config_of_params(&descriptor.params)?;
+            let SkillsConfig { position, requires_approval } =
+                config_of_params(&descriptor.params)?;
             let component = Arc::new(SkillsComponent::new(position, requires_approval, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::<SkillsComponent>::clone(&component));

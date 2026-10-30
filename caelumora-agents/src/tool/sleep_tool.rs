@@ -15,7 +15,7 @@ use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use caelumora_runtime::component::{
-    flag_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -31,6 +31,36 @@ pub const SLEEP_TOOL_NAME: &str = "sleep";
 const DEFAULT_SECONDS: f64 = 5.0;
 /// The longest `sleep` waits, whatever it is told.
 pub const MAX_SECONDS: f64 = 60.0;
+
+/// What the component is configured with.
+#[derive(Debug, Deserialize)]
+struct SleepConfig {
+    #[serde(default = "default_seconds")]
+    seconds: f64,
+    #[serde(default)]
+    requires_approval: bool,
+}
+
+fn default_seconds() -> f64 {
+    DEFAULT_SECONDS
+}
+
+impl SleepConfig {
+    /// The configuration `params` give.
+    ///
+    /// # Errors
+    /// `InvalidConfig` if they are not its parameters, or `seconds` is no
+    /// time `sleep` waits.
+    fn of(params: &Value) -> Result<Self, ComponentError> {
+        let config: Self = config_of_params(params)?;
+        if duration(config.seconds).is_none() {
+            return Err(ComponentError::InvalidConfig(format!(
+                "parameter 'seconds' must be a number between 0 and {MAX_SECONDS}"
+            )));
+        }
+        Ok(config)
+    }
+}
 
 #[derive(Debug)]
 pub struct SleepToolProvider {
@@ -133,17 +163,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         writing_for_the_model(ComponentKind::new(SLEEP_TOOL_KIND).provides::<dyn ToolProvider>()),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let seconds = match descriptor.params.get("seconds") {
-                None => DEFAULT_SECONDS,
-                Some(value) => {
-                    value.as_f64().filter(|s| duration(*s).is_some()).ok_or_else(|| {
-                        ComponentError::InvalidConfig(format!(
-                            "parameter 'seconds' must be a number between 0 and {MAX_SECONDS}"
-                        ))
-                    })?
-                }
-            };
-            let requires_approval = flag_of_params(&descriptor.params, "requires_approval")?;
+            let SleepConfig { seconds, requires_approval } = SleepConfig::of(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(SleepToolProvider::new(
                 seconds,

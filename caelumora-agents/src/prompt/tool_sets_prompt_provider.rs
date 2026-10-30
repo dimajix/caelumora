@@ -11,7 +11,8 @@
 //! available it contributes nothing.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    texts_of, writing_for_the_model, ContextError, PositionConfig, Prompt, PromptPosition,
+    PromptProvider,
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
@@ -70,7 +71,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let position = PromptPosition::of_params(&descriptor.params)?;
+            let position = PositionConfig::position_of(&descriptor.params, PromptPosition::Start)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider {
                 position,

@@ -34,7 +34,7 @@ use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::store::StoreError;
 use caelumora_model::type_map::TypeKey;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComponentError {
@@ -111,31 +111,46 @@ impl ComponentError {
 
 pub type ComponentResult<T> = Result<T, ComponentError>;
 
-/// The switch `name` of a component's `params`, `false` if it is left out.
-///
-/// # Errors
-/// `ComponentError::InvalidConfig` if it is neither `true` nor `false`.
-pub fn flag_of_params(params: &Value, name: &str) -> ComponentResult<bool> {
-    match params.get(name) {
-        None => Ok(false),
-        Some(value) => value.as_bool().ok_or_else(|| {
-            ComponentError::InvalidConfig(format!("parameter '{name}' must be true or false"))
-        }),
-    }
-}
-
 /// A component's `params` read as its configuration `T`; left out, they are
 /// read as an empty object, so that a `T` whose fields all have a default
 /// is built from them.
 ///
+/// A parameter is given a value or left out, never `null`: written without
+/// a value in YAML, it is more likely a mistake than meant as left out, and
+/// a field of `T` that may be left out (`Option`) would take it as left out
+/// where another field refuses it.
+///
 /// # Errors
-/// `ComponentError::InvalidConfig` if they are not a `T`.
+/// `ComponentError::InvalidConfig` if they are no object - a list would be
+/// read by the order of `T`'s fields -, a parameter is `null`, or they are
+/// not a `T`, naming the parameter that is not what it should be, where it
+/// is one.
 pub fn config_of_params<T: DeserializeOwned>(params: &Value) -> ComponentResult<T> {
-    let result = match params {
-        Value::Null => T::deserialize(serde_json::json!({})),
-        params => T::deserialize(params),
+    let empty = Value::Object(Map::new());
+    let params = match params {
+        Value::Null => &empty,
+        Value::Object(given) => {
+            if let Some((name, _)) = given.iter().find(|(_, value)| value.is_null()) {
+                return Err(ComponentError::InvalidConfig(format!(
+                    "invalid parameter '{name}': it has no value"
+                )));
+            }
+            params
+        }
+        _ => {
+            return Err(ComponentError::InvalidConfig(
+                "invalid parameters: they must be an object".to_string(),
+            ))
+        }
     };
-    result.map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))
+    serde_path_to_error::deserialize(params).map_err(|e| {
+        let path = e.path().to_string();
+        let message = match path.as_str() {
+            "." => format!("invalid parameters: {}", e.inner()),
+            parameter => format!("invalid parameter '{parameter}': {}", e.inner()),
+        };
+        ComponentError::InvalidConfig(message)
+    })
 }
 
 /// Whether `T` is among the facets `declared` to be asked for.
@@ -173,8 +188,36 @@ mod tests {
         assert_eq!(config_of_params::<Config>(&json!({ "limit": 3 })).unwrap().limit, 3);
         let message = config_of_params::<Config>(&json!({ "limti": 3 })).unwrap_err().to_string();
         assert!(
-            message.starts_with("invalid configuration: invalid parameters: unknown field `limti`"),
+            message.starts_with(
+                "invalid configuration: invalid parameter 'limti': unknown field `limti`"
+            ),
             "{message}"
+        );
+        let message = config_of_params::<Config>(&json!({ "limit": -1 })).unwrap_err().to_string();
+        assert!(
+            message.starts_with("invalid configuration: invalid parameter 'limit': invalid value"),
+            "the parameter named: {message}"
+        );
+        assert!(
+            config_of_params::<Config>(&json!([3])).is_err(),
+            "a list is not read by the order of the fields"
+        );
+    }
+
+    #[test]
+    fn a_parameter_without_a_value_is_refused_whether_it_may_be_left_out_or_not() {
+        #[derive(Debug, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Config {
+            #[serde(default)]
+            title: Option<String>,
+        }
+        assert!(config_of_params::<Config>(&json!({})).unwrap().title.is_none());
+        let message =
+            config_of_params::<Config>(&json!({ "title": null })).unwrap_err().to_string();
+        assert!(
+            message.contains("invalid parameter 'title': it has no value"),
+            "not taken as left out: {message}"
         );
     }
 }

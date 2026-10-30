@@ -26,7 +26,8 @@
 
 use crate::actor::Actor;
 use crate::component::{
-    ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentError, ComponentFacets, ComponentImpl, ComponentKind,
+    ComponentRegistry,
 };
 use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing, Undecided};
 use async_trait::async_trait;
@@ -34,6 +35,7 @@ use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason,
 };
 use caelumora_model::message::Message;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::slice;
@@ -58,7 +60,8 @@ pub const DEFAULT_CONTEXT_MESSAGES: usize = 10;
 /// Whose `@`-mention replaces the moderator's policy (issue 437): a message
 /// that mentions them is addressed to them, and of those only the agents are
 /// asked to respond. A mention of a sender of the message never counts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MentionsReplacePolicy {
     /// Any participant: a message to a person asks nobody.
     #[default]
@@ -68,29 +71,9 @@ pub enum MentionsReplacePolicy {
     Agents,
 }
 
-impl MentionsReplacePolicy {
-    /// The parameter `mentions_replace_policy` of a moderator's `params`,
-    /// `Anyone` if it has none.
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` if it is neither `anyone` nor
-    /// `agents`.
-    fn of_params(params: &Value) -> Result<Self, ComponentError> {
-        match params.get("mentions_replace_policy") {
-            None => Ok(Self::default()),
-            Some(value) => match value.as_str() {
-                Some("anyone") => Ok(Self::Anyone),
-                Some("agents") => Ok(Self::Agents),
-                _ => Err(ComponentError::InvalidConfig(
-                    "parameter 'mentions_replace_policy' must be 'anyone' or 'agents'".to_string(),
-                )),
-            },
-        }
-    }
-}
-
 /// Whom the moderator asks when its policy could not choose (issue 441).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 enum OnUndecided {
     /// Nobody, and the users are told so: a policy that is slow or failing leaves the agents quiet
     /// rather than makes every one of them answer (issue 437).
@@ -100,22 +83,46 @@ enum OnUndecided {
     All,
 }
 
-impl OnUndecided {
-    /// The parameter `on_undecided` of a moderator's `params`, `None` if it has none.
+/// What the component is configured with.
+#[derive(Debug, Deserialize)]
+struct PolicyModeratorConfig {
+    #[serde(default = "default_max_agent_hops")]
+    max_agent_hops: u32,
+    #[serde(default = "default_max_span_depth")]
+    max_span_depth: i32,
+    #[serde(default)]
+    mentions_replace_policy: MentionsReplacePolicy,
+    #[serde(default)]
+    on_undecided: OnUndecided,
+    #[serde(default = "default_context_messages")]
+    context_messages: usize,
+}
+
+fn default_max_agent_hops() -> u32 {
+    DEFAULT_MAX_AGENT_HOPS
+}
+
+fn default_max_span_depth() -> i32 {
+    DEFAULT_MAX_SPAN_DEPTH
+}
+
+fn default_context_messages() -> usize {
+    DEFAULT_CONTEXT_MESSAGES
+}
+
+impl PolicyModeratorConfig {
+    /// The configuration `params` give.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` if it is neither `none` nor `all`.
-    fn of_params(params: &Value) -> Result<Self, ComponentError> {
-        match params.get("on_undecided") {
-            None => Ok(Self::default()),
-            Some(value) => match value.as_str() {
-                Some("none") => Ok(Self::None),
-                Some("all") => Ok(Self::All),
-                _ => Err(ComponentError::InvalidConfig(
-                    "parameter 'on_undecided' must be 'none' or 'all'".to_string(),
-                )),
-            },
+    /// `InvalidConfig` if they are not its parameters, or `max_span_depth` is negative.
+    fn of(params: &Value) -> Result<Self, ComponentError> {
+        let config: Self = config_of_params(params)?;
+        if config.max_span_depth < 0 {
+            return Err(ComponentError::InvalidConfig(
+                "parameter 'max_span_depth' must be a number of at least 0".to_string(),
+            ));
         }
+        Ok(config)
     }
 }
 
@@ -507,40 +514,13 @@ pub fn register(registry: &mut ComponentRegistry) {
             .provides::<dyn Moderator>()
             .needs::<dyn ResponderPolicy>(),
         |descriptor, context| async move {
-            let max_agent_hops = match descriptor.params.get("max_agent_hops") {
-                None => DEFAULT_MAX_AGENT_HOPS,
-                Some(value) => {
-                    value.as_u64().and_then(|hops| u32::try_from(hops).ok()).ok_or_else(|| {
-                        ComponentError::InvalidConfig(
-                            "parameter 'max_agent_hops' must be a number of at least 0".to_string(),
-                        )
-                    })?
-                }
-            };
-            let max_span_depth = match descriptor.params.get("max_span_depth") {
-                None => DEFAULT_MAX_SPAN_DEPTH,
-                Some(value) => {
-                    value.as_u64().and_then(|depth| i32::try_from(depth).ok()).ok_or_else(|| {
-                        ComponentError::InvalidConfig(
-                            "parameter 'max_span_depth' must be a number of at least 0".to_string(),
-                        )
-                    })?
-                }
-            };
-            let mentions_replace_policy = MentionsReplacePolicy::of_params(&descriptor.params)?;
-            let on_undecided = OnUndecided::of_params(&descriptor.params)?;
-            let context_messages = match descriptor.params.get("context_messages") {
-                None => DEFAULT_CONTEXT_MESSAGES,
-                Some(value) => value
-                    .as_u64()
-                    .and_then(|count| usize::try_from(count).ok())
-                    .ok_or_else(|| {
-                        ComponentError::InvalidConfig(
-                            "parameter 'context_messages' must be a number of at least 0"
-                                .to_string(),
-                        )
-                    })?,
-            };
+            let PolicyModeratorConfig {
+                max_agent_hops,
+                max_span_depth,
+                mentions_replace_policy,
+                on_undecided,
+                context_messages,
+            } = PolicyModeratorConfig::of(&descriptor.params)?;
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
@@ -578,6 +558,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use chrono::Utc;
+    use serde_json::Value;
 
     fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
         let context = EventContext::new(
@@ -989,7 +970,7 @@ mod tests {
 
     #[test]
     fn whose_mentions_replace_the_policy_is_configured() {
-        let of = |params| MentionsReplacePolicy::of_params(&params);
+        let of = |params| PolicyModeratorConfig::of(&params).map(|c| c.mentions_replace_policy);
         assert_eq!(
             of(serde_json::json!({})).unwrap(),
             MentionsReplacePolicy::Anyone,
@@ -1192,7 +1173,7 @@ mod tests {
 
     #[test]
     fn whom_to_ask_when_the_policy_could_not_choose_is_configured() {
-        let of = |params| OnUndecided::of_params(&params);
+        let of = |params| PolicyModeratorConfig::of(&params).map(|c| c.on_undecided);
         assert_eq!(of(serde_json::json!({})).unwrap(), OnUndecided::None, "nobody by default");
         assert_eq!(of(serde_json::json!({ "on_undecided": "all" })).unwrap(), OnUndecided::All);
         assert!(of(serde_json::json!({ "on_undecided": "some" })).is_err());

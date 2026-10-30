@@ -15,7 +15,8 @@
 
 use crate::prompt::channel_participants_prompt_provider::participants;
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    texts_of, writing_for_the_model, ContextError, PositionConfig, Prompt, PromptPosition,
+    PromptProvider,
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
@@ -64,7 +65,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
             let position =
-                PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+                PositionConfig::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(ChannelMentionsPromptProvider {
                 position,

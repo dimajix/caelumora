@@ -14,7 +14,8 @@
 //! the component leaves its agents to the times of the messages.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    texts_of, writing_for_the_model, ContextError, PositionConfig, Prompt, PromptPosition,
+    PromptProvider,
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
@@ -70,7 +71,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let position =
-                PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+                PositionConfig::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(CurrentTimePromptProvider::new(
                 position, texts,
@@ -136,23 +137,18 @@ mod tests {
 
     #[test]
     fn it_goes_before_the_turns_input_unless_configured_otherwise() {
-        let position = |params| {
-            PromptPosition::of_params_or(&params, PromptPosition::BeforeTurnInput).unwrap()
-        };
+        let position =
+            |params| PositionConfig::position_of(&params, PromptPosition::BeforeTurnInput);
         assert_eq!(
-            position(serde_json::json!({})),
+            position(serde_json::json!({})).unwrap(),
             PromptPosition::BeforeTurnInput,
             "it changes with every turn"
         );
         assert_eq!(
-            position(serde_json::json!({ "position": "start" })),
+            position(serde_json::json!({ "position": "start" })).unwrap(),
             PromptPosition::Start,
             "as configured"
         );
-        assert!(PromptPosition::of_params_or(
-            &serde_json::json!({ "position": "end" }),
-            PromptPosition::BeforeTurnInput
-        )
-        .is_err());
+        assert!(position(serde_json::json!({ "position": "end" })).is_err());
     }
 }

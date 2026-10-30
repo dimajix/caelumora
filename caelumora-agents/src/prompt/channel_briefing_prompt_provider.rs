@@ -20,7 +20,8 @@
 //! `changes_only`), as the roster and the language are.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    texts_of, writing_for_the_model, ChannelPartConfig, ContextError, Prompt, PromptPosition,
+    PromptProvider,
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
@@ -28,7 +29,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_runtime::component::{
-    flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
 };
 use std::sync::{Arc, Mutex};
 
@@ -141,8 +142,8 @@ pub fn register(registry: &mut ComponentRegistry) {
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let position = PromptPosition::of_params(&descriptor.params)?;
-            let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
+            let ChannelPartConfig { position, changes_only } =
+                config_of_params(&descriptor.params)?;
             let provider = if changes_only {
                 ChannelBriefingPromptProvider::changes_only(position, prompts)
             } else {

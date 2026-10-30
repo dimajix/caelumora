@@ -9,7 +9,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
-| [515](515-parameters-a-component-does-not-take-are-ignored.md) | open | low | bug | A component kind without parameters builds whatever `params` its descriptor gives and ignores them, so a parameter misspelt, set on the wrong component or moved to another is lost without a word, while a kind with parameters refuses what it does not know. |
+| [515](515-parameters-a-component-does-not-take-are-ignored.md) | in progress | low | bug | Most component kinds build whatever `params` their descriptor gives and ignore those they do not know, so a parameter misspelt, set on the wrong component or moved to another is lost without a word; only the kinds that read their parameters as one struct refuse it. |
 
 ## Sessions and channels
 

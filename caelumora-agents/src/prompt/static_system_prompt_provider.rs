@@ -14,12 +14,29 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use caelumora_runtime::component::{
-    ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
 };
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
 pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
+
+/// What the component is configured with.
+#[derive(Debug, Deserialize)]
+struct StaticPromptConfig {
+    prompt: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    position: PromptPosition,
+    #[serde(default = "default_classification")]
+    classification: Classification,
+}
+
+fn default_classification() -> Classification {
+    Classification::PUBLIC
+}
 
 #[derive(Debug)]
 pub struct StaticSystemPromptProvider {
@@ -51,35 +68,13 @@ impl StaticSystemPromptProvider {
     /// is not what it should be; `ComponentError::Prompt` if the form of a
     /// titled part cannot be had.
     fn of_params(params: &Value, prompts: &PromptTexts) -> Result<Self, ComponentError> {
-        let prompt =
-            params.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else(
-                || ComponentError::InvalidConfig("parameter 'prompt' is missing".to_string()),
-            )?;
-        let prompt = match params.get("title") {
-            None => prompt,
-            Some(title) => {
-                let title = title.as_str().ok_or_else(|| {
-                    ComponentError::InvalidConfig("parameter 'title' must be a string".to_string())
-                })?;
-                // A part that says nothing is no part.
-                if prompt.is_empty() {
-                    prompt
-                } else {
-                    prompts.render(
-                        &format!("{NAMESPACE}.titled"),
-                        context! { title, text => prompt },
-                    )?
-                }
-            }
-        };
-        let position = PromptPosition::of_params(params)?;
-        let classification = match params.get("classification") {
-            None => Classification::PUBLIC,
-            Some(value) => serde_json::from_value(value.clone()).map_err(|e| {
-                ComponentError::InvalidConfig(format!(
-                    "parameter 'classification' is not a classification: {e}"
-                ))
-            })?,
+        let StaticPromptConfig { prompt, title, position, classification } =
+            config_of_params(params)?;
+        let prompt = match title {
+            // A part that says nothing is no part.
+            Some(title) if !prompt.is_empty() => prompts
+                .render(&format!("{NAMESPACE}.titled"), context! { title, text => prompt })?,
+            _ => prompt,
         };
         Ok(Self { prompt, position, classification })
     }

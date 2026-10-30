@@ -50,9 +50,11 @@ pub struct WorkspacePromptProvider {
     prompts: PromptTexts,
 }
 
-/// What the component is configured with besides its position.
+/// What the component is configured with.
 #[derive(Debug, Deserialize)]
 struct WorkspacePromptConfig {
+    #[serde(default)]
+    position: PromptPosition,
     #[serde(default = "default_instruction_files")]
     instruction_files: Vec<String>,
 }
@@ -180,8 +182,8 @@ pub fn register(registry: &mut ComponentRegistry) {
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let position = PromptPosition::of_params(&descriptor.params)?;
-            let WorkspacePromptConfig { instruction_files } = config_of_params(&descriptor.params)?;
+            let WorkspacePromptConfig { position, instruction_files } =
+                config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(WorkspacePromptProvider::new(
                 position,

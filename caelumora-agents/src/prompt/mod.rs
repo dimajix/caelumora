@@ -28,7 +28,7 @@ use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptTexts};
 use caelumora_model::store::StoreError;
 use caelumora_runtime::component::{
-    ComponentContext, ComponentError, ComponentImpl, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentContext, ComponentImpl, ComponentKind, ComponentRegistry,
     ComponentResult,
 };
 use caelumora_runtime::view::ViewError;
@@ -58,32 +58,38 @@ pub enum PromptPosition {
     BeforeTurnInput,
 }
 
-impl PromptPosition {
-    /// The parameter `position` of a prompt provider's configuration
-    /// `params`, `Start` if it has none.
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` if it is neither `start` nor
-    /// `before_turn_input`.
-    pub fn of_params(params: &Value) -> Result<Self, ComponentError> {
-        Self::of_params_or(params, Self::default())
-    }
+/// What a prompt provider that takes its position alone is configured
+/// with: where its part goes, its kind's default if left out.
+#[derive(Debug, Deserialize)]
+pub(crate) struct PositionConfig {
+    #[serde(default)]
+    position: Option<PromptPosition>,
+}
 
-    /// The parameter `position` of `params`, `default` if it has none - for
-    /// a provider whose part does not belong at the start.
+impl PositionConfig {
+    /// The position `params` configure, `default` - the kind's - if they
+    /// name none.
     ///
     /// # Errors
-    /// As `of_params`.
-    pub fn of_params_or(params: &Value, default: Self) -> Result<Self, ComponentError> {
-        match params.get("position") {
-            None => Ok(default),
-            Some(value) => serde_json::from_value(value.clone()).map_err(|_| {
-                ComponentError::InvalidConfig(
-                    "parameter 'position' must be \"start\" or \"before_turn_input\"".to_string(),
-                )
-            }),
-        }
+    /// `ComponentError::InvalidConfig` if they are not its parameters.
+    pub(crate) fn position_of(
+        params: &Value,
+        default: PromptPosition,
+    ) -> ComponentResult<PromptPosition> {
+        let Self { position } = config_of_params(params)?;
+        Ok(position.unwrap_or(default))
     }
+}
+
+/// What a prompt provider that tells of its channel is configured with:
+/// where its part goes, and whether it tells only what changed - for an
+/// external agent, which keeps what it was told.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ChannelPartConfig {
+    #[serde(default)]
+    pub(crate) position: PromptPosition,
+    #[serde(default)]
+    pub(crate) changes_only: bool,
 }
 
 /// What a [`PromptProvider`] contributes: the text of its part, the
