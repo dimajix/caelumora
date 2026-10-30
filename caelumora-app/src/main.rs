@@ -16,6 +16,7 @@ use caelumora_agents::llm::LLMClient;
 use caelumora_agents::plugin::AgentsPlugin;
 use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
+use caelumora_comfyui::plugin::ComfyUiPlugin;
 use caelumora_compaction::plugin::CompactionPlugin;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_logging::{init, LogTarget};
@@ -194,7 +195,7 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 }
 
 /// The plugins of the program that bring no routes (issues 325, 327, 329,
-/// 428), which only its runtime is built with - first the essential one,
+/// 428, 512), which only its runtime is built with - first the essential one,
 /// the agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
@@ -206,6 +207,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(OpenTerminalPlugin),
         Box::new(WorkspaceToolsPlugin),
         Box::new(DecisionPlugin),
+        Box::new(ComfyUiPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
     ]

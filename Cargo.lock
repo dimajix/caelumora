@@ -421,6 +421,7 @@ dependencies = [
  "caelumora-a2a",
  "caelumora-agents",
  "caelumora-artifacts",
+ "caelumora-comfyui",
  "caelumora-compaction",
  "caelumora-decision",
  "caelumora-logging",
@@ -468,6 +469,19 @@ dependencies = [
  "tower",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "caelumora-comfyui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "caelumora-model",
+ "caelumora-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -755,6 +769,7 @@ dependencies = [
  "caelumora-a2a",
  "caelumora-agents",
  "caelumora-artifacts",
+ "caelumora-comfyui",
  "caelumora-compaction",
  "caelumora-decision",
  "caelumora-logging",

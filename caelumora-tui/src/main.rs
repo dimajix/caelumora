@@ -7,6 +7,7 @@ use caelumora_agents::llm::LLMClient;
 use caelumora_agents::plugin::AgentsPlugin;
 use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
+use caelumora_comfyui::plugin::ComfyUiPlugin;
 use caelumora_compaction::plugin::CompactionPlugin;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_logging::{init, LogTarget};
@@ -544,6 +545,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(OpenTerminalPlugin),
         Box::new(WorkspaceToolsPlugin),
         Box::new(DecisionPlugin),
+        Box::new(ComfyUiPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
     ]

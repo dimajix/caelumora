@@ -59,6 +59,9 @@ The project is a Rust workspace, with a web UI next to it:
     probabilities, reached through the `/v1/systemone` contract: a plugin that brings nothing but
     its component kind `decision_policy`, a `ResponderPolicy` that chooses who answers by what was
     said (issue 403). See [CHANNELS.md](CHANNELS.md#choosing-by-what-was-said).
+*   **`caelumora-comfyui`** - the workflows of a ComfyUI server (issue 512), a plugin that claims
+    the section `comfyui` of the configuration and reads the workflows it names, checked whole,
+    which it offers as a service. See [CONFIGURATION.md](CONFIGURATION.md#comfyui).
 *   **`caelumora-open-terminal`** - the storages of workspaces backed by Open Terminal,
     `open_terminal_shared` and `open_terminal_docker`, a plugin that brings nothing but these
     backends, the Docker one with `bollard` behind the feature `docker` (issue 327). See
@@ -98,7 +101,8 @@ crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-li
 ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`, `caelumora-ollama`, `caelumora-decision`,
 `caelumora-compaction` and `caelumora-workspace-tools` are ones that bring component kinds alone,
 `caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres` ones that bring
-backends alone.
+backends alone, and `caelumora-comfyui` one that brings a section of the configuration and a
+service.
 The agents are a plugin too, an essential one (issue 370): `caelumora-agents` registers the kinds of
 agent, whose actors the channel builds (`AgentKinds`), and the kinds of their components; without
 it, the program is a chat between users. The plugins whose components serve an agent's facets -

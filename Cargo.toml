@@ -20,6 +20,7 @@ members = [
     "caelumora-workspace-tools",
     "caelumora-ollama",
     "caelumora-decision",
+    "caelumora-comfyui",
 ]
 resolver = "2"
 
@@ -101,6 +102,7 @@ caelumora-store-postgres = { path = "caelumora-store-postgres" }
 caelumora-workspace-tools = { path = "caelumora-workspace-tools" }
 caelumora-ollama = { path = "caelumora-ollama" }
 caelumora-decision = { path = "caelumora-decision" }
+caelumora-comfyui = { path = "caelumora-comfyui" }
 
 [profile.release]
 opt-level = 3

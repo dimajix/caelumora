@@ -232,3 +232,14 @@ in a bundle, that ComfyUI can no longer open.
   whether given along - so that a model that cannot see learns of them and any model can `attach`
   them; `ollama_client` sends them with the result. No test tool of `test-support` was needed: the
   executor's tests bring their own provider, as for `shown`.
+- **2026-10-30** - Step 2 done: the workflows. The plugin `caelumora-comfyui` claims the section
+  `comfyui` and offers the workflows its `workflows` names as a service (`Workflows`, found
+  `named`), read and checked whole as the plan says; without the section there are none. Decided
+  with the maintainer: the defaults of a graph's width and height lie within its own bounds. The
+  rule of a workflow's name is the one of a variant of the texts, now a value type of its own for
+  both (`Identifier`, decided with the maintainer over a bare predicate). Media a tool kept for a
+  result whose turn is given up stay unreferenced until their channel is purged: accepted. The
+  example `z_image_turbo` follows ComfyUI's template `image_z_image_turbo`, its subgraph written out
+  in the API format; it takes no negative prompt, being run without guidance. What the tool needs of
+  a workflow to run it - its graph with the arguments, its output node - comes with step 3, its
+  first caller; until then its fields are unread, said by `#[expect(dead_code)]`.

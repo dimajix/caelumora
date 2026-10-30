@@ -54,6 +54,7 @@ position, `the secret provider 2 (vault)`. An unknown type is answered with the 
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
 | `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment and the largest file a tool gives its model (issue 512); `max_per_message`, also the most files one tool result gives; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
 | `artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
+| `comfyui` | The section of the plugin `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
 | `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
 
@@ -115,6 +116,39 @@ The variants are read when the runtime is built, after every plugin added its te
 whole: a file of no namespace, a text the defaults do not have, a template that does not parse
 and a value a template names that its default is not given keep the runtime from starting, named
 by the variant, the namespace and the key.
+
+## ComfyUI
+
+`comfyui.workflows` names the directory of the workflows of ComfyUI (issue 512), read as `seed`
+is, from where the program runs, when the runtime is built:
+
+```yaml
+comfyui:
+  workflows: examples/comfyui/workflows
+```
+
+A workflow is two files of one name, an identifier - lower case letters, digits, `_` and `-`:
+`<name>.json`, the graph as ComfyUI exports it with "Export (API)", unchanged, and `<name>.yaml`
+beside it, which says what it is for and where the tool's parameters go:
+
+```yaml
+description: fast and photorealistic   # as the tool lists the workflow to a model
+parameters:                            # each to <node id>.<input> of the graph
+  prompt: 27.text                      # required
+  width: 13.width
+  height: 13.height
+  seed: 3.seed                         # negative_prompt as well, where the workflow takes one
+size: { min: 512, max: 2048, multiple_of: 16 }   # optional, 256 to 2048 by 16 when left out
+output: 9                              # the node whose images are the result; left out, every one
+```
+
+The directory is checked whole: a file without the other, a name that is no identifier, a
+parameter mapped to an input the graph does not have or that holds no value of its kind - a
+prompt a text, a size or seed a whole number, never a link to another node -, a width or height
+of the graph outside its own bounds, an output node that is not there keep the runtime from
+starting, named by the workflow. Other files are not read. Whether the nodes are ones the server
+has, and whether the output node gives images, only the server can tell. The example names one,
+`z_image_turbo`, after ComfyUI's template of that name.
 
 ## The model
 

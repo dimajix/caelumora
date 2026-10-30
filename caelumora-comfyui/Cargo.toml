@@ -1,0 +1,20 @@
+[package]
+name = "caelumora-comfyui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caelumora-model.workspace = true
+caelumora-runtime.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+caelumora-runtime = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
