@@ -1098,7 +1098,7 @@ mod tests {
 
         state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| snapshots(read) == 4).await;
-        state.session_manager.delete(&SecurityContext::system(), session).await.unwrap();
+        assert!(state.session_manager.delete(&SecurityContext::system(), session).await.unwrap());
         let ended =
             time::timeout(Duration::from_secs(5), async { while stream.next().await.is_some() {} })
                 .await;

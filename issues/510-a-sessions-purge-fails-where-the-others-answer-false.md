@@ -1,6 +1,6 @@
 # 510 — A session's purge fails where every other purge answers `false`
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -54,3 +54,8 @@ there" as an answer and the session's as an error, and a new kind has two exampl
   stopped with `SessionError::NotFound` where one of its sessions was purged meanwhile. Step 1
   done: `SessionManager::purge` answers `bool`, its REST handler a 404 of its own for `false`, and
   a project's purge passes over a session purged meanwhile.
+- **2026-10-30** — Step 2 done: `SessionManager::delete` answers `false` where there is no such
+  session or the caller may not read it, its REST handler a 404 of its own for it; a project's
+  deletion counts such a session as left, as it counted the `NotFound` before. The tests assert
+  what deleting and purging a session answer, so that one that does nothing no longer passes
+  unnoticed.

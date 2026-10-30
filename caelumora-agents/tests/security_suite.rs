@@ -3501,7 +3501,7 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
         "nor attached to another session: {refused}"
     );
 
-    world.manager.delete(&alice, first.id()).await.unwrap();
+    assert!(world.manager.delete(&alice, first.id()).await.unwrap());
     assert!(
         world.runtime.entity_stores().workspaces.get_deleted(&alice, mine).await.is_ok(),
         "deleted with it"
@@ -3511,8 +3511,8 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
         world.runtime.entity_stores().workspaces.get(&alice, mine).await.is_ok(),
         "restored with it"
     );
-    world.manager.delete(&alice, first.id()).await.unwrap();
-    world.manager.purge(&World::system(), first.id()).await.unwrap();
+    assert!(world.manager.delete(&alice, first.id()).await.unwrap());
+    assert!(world.manager.purge(&World::system(), first.id()).await.unwrap());
     assert!(!world.files.path().join(mine.to_string()).exists(), "purged with it, its files too");
     assert!(world.files.path().join(others.to_string()).is_dir(), "the other session's stays");
     world.manager.stop(&alice, second.id()).await.unwrap();

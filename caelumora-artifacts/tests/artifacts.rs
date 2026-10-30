@@ -942,7 +942,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
         publish(&world, &alice, session_id, main, &at, "draft.csv", None).await.unwrap();
 
     world.manager.stop(&alice, session_id).await.unwrap();
-    world.manager.delete(&alice, session_id).await.unwrap();
+    assert!(world.manager.delete(&alice, session_id).await.unwrap());
     // Not restored into its own project while the session is deleted (issue 458).
     let refused = manager(&world).restore(&alice, draft.id).await;
     assert!(matches!(refused, Err(ArtifactError::NotFound(_))), "{refused:?}");
@@ -1073,11 +1073,11 @@ async fn an_artifact_comes_back_with_its_session_as_far_as_whoever_restores_it_m
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let (session, hers, his) = session_with_artifacts(&world).await;
     let session_id = session.id();
-    world
+    assert!(world
         .manager
         .delete(&World::system(), session_id)
         .await
-        .expect("the system's to delete, all of it");
+        .expect("the system's to delete, all of it"));
 
     let (restored, asked) = world.asked(world.manager.restore(&alice, session_id)).await;
     restored.expect("restored all the same");
@@ -1138,7 +1138,7 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
         .event_bus()
         .subscribe(World::as_user(world.bob), vec![SubscriptionTopic::All]);
     world.manager.stop(&alice, session_id).await.unwrap();
-    world.manager.delete(&alice, session_id).await.unwrap();
+    assert!(world.manager.delete(&alice, session_id).await.unwrap());
     hears(
         &mut bobs,
         [
@@ -1361,7 +1361,7 @@ async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_p
     );
 
     world.manager.stop(&alice, session_id).await.unwrap();
-    world.manager.delete(&alice, session_id).await.unwrap();
+    assert!(world.manager.delete(&alice, session_id).await.unwrap());
     assert!(world.manager.purge(&World::system(), session_id).await.unwrap());
     let described = manager(&world)
         .describe(&alice, artifact.id, Some("The report"))
@@ -1443,7 +1443,7 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
     );
 
     world.manager.stop(&alice, session_id).await.unwrap();
-    world.manager.delete(&alice, session_id).await.unwrap();
+    assert!(world.manager.delete(&alice, session_id).await.unwrap());
     assert!(world.manager.purge(&World::system(), session_id).await.unwrap());
     assert!(store(&world).get(&alice, artifact.id).await.is_ok(), "it outlives the session");
     assert_eq!(

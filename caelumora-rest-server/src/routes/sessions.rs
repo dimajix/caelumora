@@ -151,8 +151,13 @@ pub(super) async fn delete_session(
     // `SessionManager::delete` stops the running loop, marks the session deleted -
     // kept with its channels until it is purged (issue 164) - and emits the
     // corresponding lifecycle events.
-    state.session_manager.delete(&user.security_context(), session_id).await?;
-    Ok(StatusCode::NO_CONTENT)
+    match state.session_manager.delete(&user.security_context(), session_id).await? {
+        true => Ok(StatusCode::NO_CONTENT),
+        false => Err(ApiError::not_found(
+            "session_not_found",
+            format!("There is no session {session_id}"),
+        )),
+    }
 }
 
 pub(super) async fn rename_session(

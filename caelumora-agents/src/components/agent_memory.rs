@@ -487,7 +487,7 @@ mod tests {
         /// Deletes session `id`: there is none such for whoever looks it up.
         async fn delete(&mut self, id: SessionId) {
             let session = self.loops.remove(&id).expect("a running session of the test");
-            self.manager.delete(&owner_of(&session), id).await.unwrap();
+            assert!(self.manager.delete(&owner_of(&session), id).await.unwrap());
         }
 
         /// Restores the deleted session `id` of `owner` and runs it again.

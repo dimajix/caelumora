@@ -283,12 +283,13 @@ impl ProjectManager {
         let mut kept = 0;
         for session in sessions {
             match self.sessions.delete_with(ctx, session.id, removal).await {
-                Ok(_) => {}
+                Ok(true) => {}
+                Ok(false) => kept += 1,
                 Err(e)
                     if is_forbidden(&e)
                         || matches!(
                             e.downcast_ref::<SessionError>(),
-                            Some(SessionError::NotFound(_) | SessionError::ScopeNotEmpty(_))
+                            Some(SessionError::ScopeNotEmpty(_))
                         ) =>
                 {
                     kept += 1

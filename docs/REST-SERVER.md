@@ -242,7 +242,8 @@ the plugin's own handlers; to the core, a plugin answers in the core's types (se
     (`SessionError::NotFound`, `ViewError::ChannelNotFound`, …), as `<kind>_not_found`. A
     `StoreError::NotFound` met on the way - a personality missing while a session is loaded - is a
     server error. An operation that answers `false` where there was nothing the caller could see -
-    a purge - is no error to the runtime; its handler answers that as `<kind>_not_found` itself.
+    a deletion, a purge - is no error to the runtime; its handler answers that as
+    `<kind>_not_found` itself.
 *   **A storage's failure** is answered alike whatever the storage keeps - the files of a
     workspace, an artifact's versions, the attachments of a message -: each kind carries its
     storage's error (`TerminalError`, `ContentError`), which answers itself once. Content larger

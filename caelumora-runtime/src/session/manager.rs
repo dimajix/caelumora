@@ -774,8 +774,10 @@ impl SessionManager {
     /// Asked about before anything happens - a refused deletion must not stop the session on the
     /// way (issue 11).
     ///
+    /// `false` if there is no such session or `context` may not read it, as every deletion answers
+    /// (issue 510).
+    ///
     /// # Errors
-    /// `StoreError::NotFound` if there is no such session or `context` may not read it,
     /// `StoreError::PermissionDenied` if they may read but not delete it,
     /// `SessionError::ScopeNotEmpty` if something of its scope or its own project's is left that
     /// they may not delete - what they may is deleted, the session is kept; whatever else the store
@@ -799,7 +801,13 @@ impl SessionManager {
         // Held until the session is gone from the store, so that no request
         // starts it again from there in the meantime (issue 62).
         let _lifecycle = self.lifecycles.lock(id).await;
-        let session = self.find(context, id).await?.session();
+        let session = match self.find(context, id).await {
+            Ok(found) => found.session(),
+            Err(error) if matches!(error.downcast_ref(), Some(SessionError::NotFound(_))) => {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
         self.policies
             .access_policy()
             .require(
@@ -1775,7 +1783,7 @@ mod tests {
             "the channel keeps its state in the state store"
         );
 
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(stores.sessions.get(&ctx, id).await.is_err(), "not there");
         assert!(
             states.get_channel_state(channel_id).await.is_ok(),
@@ -1797,7 +1805,7 @@ mod tests {
             .id();
         manager.open(&ctx, id).await.unwrap().delete_channel(&ctx, side).await.unwrap();
         assert!(states.get_channel_state(side).await.is_ok(), "kept with the deleted channel");
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(manager.purge(&ctx, id).await.expect("purged"));
         assert!(stores.sessions.get_deleted(&ctx, id).await.is_err(), "nothing left to restore");
         assert!(
@@ -1858,7 +1866,7 @@ mod tests {
         );
         stores.component_bundles.create(&system, &mut bundle).await.unwrap();
 
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(stores.projects.get(&system, project).await.is_err(), "deleted with it");
         assert!(stores.groups.get(&system, members).await.is_err(), "its group too");
         assert!(
@@ -1890,7 +1898,7 @@ mod tests {
             "announced"
         );
 
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(manager.purge(&ctx, id).await.unwrap());
         assert!(stores.projects.get_deleted(&system, project).await.is_err(), "purged with it");
         assert!(stores.groups.get_deleted(&system, members).await.is_err(), "its group too");
@@ -1936,7 +1944,7 @@ mod tests {
             SecurityAttributes::systems(),
         );
         stores.component_bundles.create(&system, &mut bundle).await.unwrap();
-        manager.delete(&ctx, id).await.expect("deleted now");
+        assert!(manager.delete(&ctx, id).await.expect("deleted now"));
         assert_eq!(groups_there().await, (false, false));
         let mark = stores.sessions.get_deleted(&system, id).await.unwrap().removal;
         passing.store(0, Ordering::SeqCst);
@@ -2015,7 +2023,7 @@ mod tests {
         let session = make_session("purged", UserId::new());
         let (id, channel_id) = (session.id, session.channels[0]);
         create(&manager, &ctx, session).await.unwrap();
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
 
         passing.store(0, Ordering::SeqCst);
         manager.purge(&ctx, id).await.expect_err("its channel cannot be marked");
@@ -2058,7 +2066,7 @@ mod tests {
             .unwrap();
 
         world.manager.stop(&alice, session.id()).await.unwrap();
-        world.manager.delete(&alice, session.id()).await.unwrap();
+        assert!(world.manager.delete(&alice, session.id()).await.unwrap());
         assert!(
             attachments.content_of(&uploaded).await.is_ok(),
             "kept while the session can be restored"
@@ -2136,7 +2144,7 @@ mod tests {
         running.restore_channel(&ctx, side).await.unwrap();
         assert!(present(&sides).await, "and comes back with it");
 
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(
             !present(&sessions).await && !present(&sides).await,
             "the session's and its channels' go with it"
@@ -2172,14 +2180,14 @@ mod tests {
 
         // A name taken meanwhile (issue 250): that one stays deleted, the
         // others come back.
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         let mut taker = agent_in("Aside", Scope::ChannelScope { session_id: id, channel_id: side });
         agents.create(&system, &mut taker).await.unwrap();
         manager.restore(&ctx, id).await.unwrap();
         assert!(!present(&sides).await, "the one whose name is taken stays deleted");
         assert!(present(&sessions).await && present(&taker).await, "the others are back");
 
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(manager.purge(&ctx, id).await.unwrap());
         for agent in [&sessions, &sides, &earlier, &taker] {
             assert!(
@@ -2231,7 +2239,7 @@ mod tests {
             states.put_agent_state(agent.id, &mut state).await.unwrap();
         }
 
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(
             events
                 .drain()
@@ -2250,7 +2258,7 @@ mod tests {
             "and as it comes back"
         );
 
-        manager.delete(&ctx, id).await.unwrap();
+        assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(manager.purge(&ctx, id).await.unwrap());
         let remembered = |agent: AgentId| {
             let states = Arc::clone(&states);
@@ -2304,7 +2312,7 @@ mod tests {
         assert!(manager.stop(&as_user(alice), id).await.unwrap(), "the owner stops it");
         assert!(!manager.stop(&as_user(alice), id).await.unwrap(), "stopped already");
 
-        manager.delete(&as_user(alice), id).await.expect("the owner deletes it");
+        assert!(manager.delete(&as_user(alice), id).await.expect("the owner deletes it"));
         assert!(!manager.sessions.contains_key(&id));
     }
 
