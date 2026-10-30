@@ -106,18 +106,14 @@ pub(super) struct Planned {
 }
 
 impl Planned {
-    /// `cause`, as what went wrong with the entry of the configuration that
-    /// brought it - the `ref`, naming it within, or itself.
-    pub(super) fn failed(&self, cause: &str) -> ComponentError {
-        let descriptor = &self.descriptor;
-        let (entry, cause) = match &self.brought_by {
-            Some(reference) => (
-                reference,
-                format!("its component '{}' ({}) {cause}", descriptor.id, descriptor.kind),
-            ),
-            None => (descriptor, format!("it {cause}")),
-        };
-        ComponentError::of_component(entry, ComponentError::InvalidConfig(cause))
+    /// `cause`, as what went wrong with the component, wrapped with it and with the `ref` that
+    /// brought it, if one did - so that the entry of the configuration it came from is named.
+    pub(super) fn wrapped(&self, cause: ComponentError) -> ComponentError {
+        let failed = ComponentError::of_component(&self.descriptor, cause);
+        match &self.brought_by {
+            Some(reference) => ComponentError::of_component(reference, failed),
+            None => failed,
+        }
     }
 }
 
@@ -371,9 +367,10 @@ impl ComponentContainer {
     ) -> ComponentResult<Self> {
         let own_defaults = registry.defaults_of(defaults)?;
         let planned = registry.plan(config, &own_defaults, &context.security_context).await?;
-        // Refused before anything is built: what nobody asks for would read
-        // its owner's secrets for nothing (issue 337).
-        registry.require_asked(&planned, &own_defaults, asked)?;
+        // Refused before anything is built: params a kind does not take
+        // (issue 515), and what nobody asks for, which would read its
+        // owner's secrets for nothing (issue 337).
+        registry.require_buildable(&planned, &own_defaults, asked)?;
         let graph = Arc::new(Graph {
             registry: Arc::clone(registry),
             context: ComponentContext { building: None, ..context.clone() },

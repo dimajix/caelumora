@@ -102,3 +102,8 @@ personality, bundle or session that does no longer builds.
   that no factory can leave out the check. Unlike a component's, whose factory is given its whole
   descriptor and is registered waiting or not, a backend's needs no second way to register for it.
   Done.
+- **2026-10-30** — After the review: the params of the components are checked by
+  `ComponentRegistry::require_params`, beside `require_asked`, so that a request that writes a
+  kind only an operator configures is refused as such whatever its params; a test of
+  `caelumora-app` gives every kind of the program a parameter none takes, so that a struct of
+  parameters without `deny_unknown_fields` is found.

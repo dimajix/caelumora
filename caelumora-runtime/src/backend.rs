@@ -176,9 +176,13 @@ impl Backends {
             |_, config: AcceptAnyConfig, services| {
                 let users = service_of::<dyn EntityStore<User>>(services)?;
                 let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
-                let provider = config.provider(Arc::clone(users), roles).map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-                tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
-                    Development only - never expose this server to a network.");
+                let provider = config
+                    .provider(Arc::clone(users), roles)
+                    .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+                tracing::warn!(
+                    "User provider 'accept_any' is enabled: ANY username and password will be \
+                     accepted. Development only - never expose this server to a network."
+                );
                 Ok(Arc::new(provider))
             },
         );

@@ -339,6 +339,33 @@ mod tests {
         builder.build().unwrap()
     }
 
+    /// Every component kind of the program refuses a parameter it does not
+    /// take (issue 515), before anything is built: one whose struct of
+    /// parameters lacks `deny_unknown_fields` would ignore it without a word.
+    #[tokio::test]
+    async fn every_component_kind_refuses_a_parameter_it_does_not_take() {
+        let runtime = runtime(&Persistence::in_memory());
+        let registry = runtime.component_registry();
+        for kind in registry.registered_kinds() {
+            let config = ComponentConfig {
+                component_nodes: vec![ComponentDescriptor {
+                    params: json!({ "no_kind_takes_this": true }),
+                    ..ComponentDescriptor::new("probed", kind)
+                }],
+            };
+            let context = ComponentContext::new(SecurityContext::default(), Services::empty());
+            let refused = ComponentContainer::from_config(&config, &[], registry, &context)
+                .await
+                .map(|_| ())
+                .expect_err(kind)
+                .to_string();
+            assert!(
+                refused.contains("invalid parameter 'no_kind_takes_this'"),
+                "{kind}: {refused}"
+            );
+        }
+    }
+
     /// An agent whose personality names no model, in a configuration that
     /// names none either, talks to Ollama as before the kind moved into its
     /// plugin (issue 329).

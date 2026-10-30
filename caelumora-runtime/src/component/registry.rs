@@ -447,7 +447,8 @@ impl ComponentRegistry {
     /// `ComponentError::InvalidConfig` for two components of a single, one nobody asks for, or one
     /// whose params its kind does not take - wrapped with it, and with the `ref` that brings it -;
     /// and `ComponentError::OperatorOnly`, wrapped with the component, for one of a kind only an
-    /// operator configures, written in `config` itself.
+    /// operator configures, written in `config` itself. That one is refused before the params are
+    /// checked: whatever its params, a request may not write it.
     pub async fn require_acceptable(
         &self,
         config: &ComponentConfig,
@@ -464,7 +465,7 @@ impl ComponentRegistry {
                 ComponentError::OperatorOnly(written.descriptor.kind.clone()),
             ));
         }
-        self.require_asked(&planned, &HashMap::new(), asked)
+        self.require_buildable(&planned, &HashMap::new(), asked)
     }
 
     /// The components of `config`, its `ref`s resolved in the name `context` and those that build
@@ -475,9 +476,8 @@ impl ComponentRegistry {
     /// `ComponentError::DuplicateId` if two entries of `config` share an id, or two of the
     /// components they stand for do - wrapped with the `ref` that brings the second -;
     /// `ComponentError::UnsupportedKind` for a kind that is not registered,
-    /// `ComponentError::InvalidConfig` if two provide a facet of which there is one, or a
-    /// component's params are not those its kind takes (`ComponentKind::params`) - wrapped with it,
-    /// and with the `ref` that brings it -; whatever resolving an entry reports, wrapped with it.
+    /// `ComponentError::InvalidConfig` if two provide a facet of which there is one; whatever
+    /// resolving an entry reports, wrapped with it.
     pub(super) async fn plan(
         &self,
         config: &ComponentConfig,
@@ -507,20 +507,15 @@ impl ComponentRegistry {
                         ComponentError::DuplicateId(descriptor.id),
                     ));
                 }
-                let registration = self.kinds.get(&descriptor.kind).ok_or_else(|| {
-                    ComponentError::of_component(
-                        node,
-                        ComponentError::UnsupportedKind(descriptor.kind.clone()),
-                    )
-                })?;
-                (registration.params)(&descriptor.params).map_err(|cause| {
-                    let failed = ComponentError::of_component(&descriptor, cause);
-                    match &brought_by {
-                        Some(reference) => ComponentError::of_component(reference, failed),
-                        None => failed,
-                    }
-                })?;
-                let provides = registration.provides.clone();
+                let provides = self
+                    .provides(&descriptor.kind)
+                    .ok_or_else(|| {
+                        ComponentError::of_component(
+                            node,
+                            ComponentError::UnsupportedKind(descriptor.kind.clone()),
+                        )
+                    })?
+                    .to_vec();
                 planned.push(Planned { descriptor, provides, brought_by: brought_by.clone() });
             }
         }
@@ -540,14 +535,50 @@ impl ComponentRegistry {
         Ok(planned)
     }
 
+    /// Whether a container may build `planned` - the components of a configuration, planned
+    /// (`plan`) - for an owner that asks for the facets `asked`, with the defaults `own_defaults`:
+    /// the params of every one are those its kind takes (`require_params`), and every one provides
+    /// a facet of the closure of `asked` (`require_asked`), in that order. Nothing is built.
+    ///
+    /// # Errors
+    /// As `require_params` and `require_asked`.
+    pub(super) fn require_buildable(
+        &self,
+        planned: &[Planned],
+        own_defaults: &HashMap<TypeId, ComponentDescriptor>,
+        asked: &[TypeKey],
+    ) -> ComponentResult<()> {
+        self.require_params(planned)?;
+        self.require_asked(planned, own_defaults, asked)
+    }
+
+    /// Whether the params of every component of `planned` are those its kind takes
+    /// (`ComponentKind::params`): one it does not take is refused before anything is built.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` for the first whose params are not, and
+    /// `ComponentError::UnsupportedKind` for one whose kind is not registered - wrapped with the
+    /// component and the `ref` that brings it (`Planned::wrapped`).
+    fn require_params(&self, planned: &[Planned]) -> ComponentResult<()> {
+        for component in planned {
+            let descriptor = &component.descriptor;
+            let checked = match self.kinds.get(&descriptor.kind) {
+                Some(registration) => (registration.params)(&descriptor.params),
+                None => Err(ComponentError::UnsupportedKind(descriptor.kind.clone())),
+            };
+            checked.map_err(|cause| component.wrapped(cause))?;
+        }
+        Ok(())
+    }
+
     /// Whether every component of `planned` provides a facet of the closure
     /// of `asked` (`closure`): one that provides none would be built for
     /// nothing, reading its owner's secrets (issue 337).
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig`, wrapped with its entry, for the
-    /// first that provides none.
-    pub(super) fn require_asked(
+    /// `ComponentError::InvalidConfig`, wrapped with the component and the `ref` that brings it
+    /// (`Planned::wrapped`), for the first that provides none.
+    fn require_asked(
         &self,
         planned: &[Planned],
         own_defaults: &HashMap<TypeId, ComponentDescriptor>,
@@ -562,9 +593,9 @@ impl ComponentRegistry {
             Some(stray) => {
                 let provided =
                     stray.provides.iter().map(TypeKey::name).collect::<Vec<_>>().join(", ");
-                Err(stray.failed(&format!(
-                    "provides {provided}, which nothing asks for where it is configured"
-                )))
+                Err(stray.wrapped(ComponentError::InvalidConfig(format!(
+                    "it provides {provided}, which nothing asks for where it is configured"
+                ))))
             }
         }
     }
@@ -719,6 +750,18 @@ impl ComponentRegistry {
             return Err(ComponentError::UnsupportedKind(node.kind.clone()));
         };
         Ok((registration.factory)(node, context.for_kind(registration)))
+    }
+}
+
+/// What the tests read of a registry past its own API, behind the feature `test-support` alone,
+/// under names of their own - the registry's API is not widened by them.
+#[cfg(any(test, feature = "test-support"))]
+impl ComponentRegistry {
+    /// The names of the kinds registered, for a test that asks something of every one of them.
+    pub fn registered_kinds(&self) -> Vec<&str> {
+        let mut kinds: Vec<&str> = self.kinds.keys().map(String::as_str).collect();
+        kinds.sort_unstable();
+        kinds
     }
 }
 
@@ -1244,7 +1287,8 @@ mod tests {
             "the ref: {error}"
         );
         assert!(
-            error.to_string().contains("its component 'tracker' (stray) provides Other"),
+            error.to_string().contains("component 'tracker' (stray) cannot be built")
+                && error.to_string().contains("it provides Other"),
             "{error}"
         );
     }
@@ -1541,7 +1585,9 @@ mod tests {
 
     /// What an operator configures alone are the params of its kind
     /// (issue 403): a request that changes those of such a default is
-    /// refused as one that writes the component.
+    /// refused as one that writes the component - also where it gives a
+    /// parameter the kind does not take, which is no question of the
+    /// params a request may not write anyway.
     #[tokio::test]
     async fn a_request_cannot_change_the_params_of_a_default_only_an_operator_configures() {
         let (mut registry, _) = choices();
@@ -1561,7 +1607,7 @@ mod tests {
             component_nodes: vec![on_default(
                 "mine",
                 "model",
-                json!({ "endpoint": { "url": "http://elsewhere" } }),
+                json!({ "url": "http://elsewhere" }),
             )],
         };
         let error = registry
@@ -1569,7 +1615,10 @@ mod tests {
             .await
             .expect_err("written");
         assert!(
-            matches!(causes(&error).last(), Some(ComponentError::OperatorOnly(kind)) if kind == "operated"),
+            matches!(
+                causes(&error).last(),
+                Some(ComponentError::OperatorOnly(kind)) if kind == "operated"
+            ),
             "{error}"
         );
     }

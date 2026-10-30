@@ -273,11 +273,13 @@ personalities:                   # of the seed
 
 A kind declares the parameters it takes as one struct (`ComponentKind::params`), which its factory
 reads with `config_of_params`; a kind that declares none takes none. The registry checks a
-component's params against its kind as it plans a configuration - of a component a `ref` brings
-too, and of one that builds on a default, with the default's params merged -, and the defaults of
-the singles as they are set: a parameter misspelt, set on the wrong component or moved to another
-kind is refused before anything is built, and a request that writes it is refused before the
-verb.
+component's params against its kind before a container builds anything - of a component a `ref`
+brings too, and of one that builds on a default, with the default's params merged -, and the
+defaults of the singles as they are set: a parameter misspelt, set on the wrong component or moved
+to another kind is refused before anything is built, and a request that writes it is refused
+before the verb. A request that writes a kind only an operator configures itself is refused as
+such, whatever the params. That every kind of the program refuses a parameter it does not take -
+that no struct of parameters lacks `deny_unknown_fields` - a test of `caelumora-app` checks.
 
 ### Factories and tags
 
