@@ -26,6 +26,7 @@ use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
 use crate::value::name::{Name, ScopedName};
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 use uuid::Uuid;
 
 pub use attachments::AttachmentIndex;
@@ -66,6 +67,9 @@ pub struct Agent {
     /// Its revision (issue 492), counted up by every write of it.
     #[serde(default)]
     pub revision: Revision,
+    /// Whether its purge has begun (issue 492): set by the store alone.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 impl Agent {
@@ -100,6 +104,7 @@ impl Agent {
             principal_id: owner,
             deleted: None,
             revision: Default::default(),
+            purging: false,
         }
     }
 }
@@ -128,6 +133,14 @@ impl Stored for Agent {
 
     fn set_revision(&mut self, revision: Revision) {
         self.revision = revision;
+    }
+
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
     }
 
     fn unique_name(&self) -> Option<ScopedName> {

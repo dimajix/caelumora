@@ -183,8 +183,6 @@ export interface Removal {
   id: string;
   by: ActorId;
   at: string;
-  /** Its purge is begun: it is restored by nobody any more (issue 492). */
-  purging?: boolean;
 }
 
 /**

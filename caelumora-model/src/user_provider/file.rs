@@ -140,6 +140,7 @@ impl FileUserProvider {
                     roles,
                     deleted: None,
                     revision: Default::default(),
+                    purging: false,
                 };
                 Ok(Known { user, password_hash })
             })

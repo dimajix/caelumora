@@ -30,6 +30,7 @@ pub fn make_personality(name: &str) -> Personality {
         hears_during_turn: Default::default(),
         deleted: None,
         revision: Default::default(),
+        purging: false,
     }
 }
 

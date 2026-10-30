@@ -21,10 +21,10 @@
 //!   may not even read is not found; one they may read but not change is
 //!   refused.
 //! - **What is marked deleted** (issue 164) is not there for any of them, before anything is
-//!   asked: the store treats it as absent. And nothing created or changed may carry the mark, so
-//!   that only deleting sets it. Deleting sets the mark it is given (issue 469), which names the
-//!   caller - another only if the caller is the system, which deletes what goes with something
-//!   deleted by whoever deleted that.
+//!   asked: the store treats it as absent. And nothing created or changed may carry the mark or
+//!   have its purge begun, so that only deleting and beginning a purge set them. Deleting sets the
+//!   mark it is given (issue 469), which names the caller - another only if the caller is the
+//!   system, which deletes what goes with something deleted by whoever deleted that.
 //! - **Reading what was deleted** asks `ReadDeleted` with the stored
 //!   attributes, and answers "not found" alike; **restoring** it asks that
 //!   and then `Restore`, **purging** it that and then `Purge`. What is not
@@ -211,7 +211,7 @@ impl<'a> Access<'a> {
     /// not marked, its purge has begun (issue 492) or they may not read it
     /// as deleted, refused if they may but not restore it.
     pub(crate) async fn restore<T: Stored>(&self, stored: Option<T>, id: String) -> StoreResult<T> {
-        let purging = stored.as_ref().and_then(Stored::deleted).is_some_and(|mark| mark.purging);
+        let purging = stored.as_ref().is_some_and(Stored::purging);
         let stored = self.read(stored, id.clone(), Presence::Deleted).await?;
         if purging {
             return Err(StoreError::NotFound { entity: T::KIND.name(), id });
@@ -233,16 +233,22 @@ impl<'a> Access<'a> {
     }
 }
 
-/// Refuses `value` if it carries the mark of a deletion: only deleting
-/// sets it (issue 164), not whoever writes a document.
+/// Refuses `value` if it carries the mark of a deletion or has its purge begun: only deleting
+/// and beginning its purge set them (issues 164, 492), not whoever writes a document.
 fn unmarked<T: Stored>(value: &T) -> StoreResult<()> {
-    match value.deleted() {
-        None => Ok(()),
-        Some(_) => Err(StoreError::Validation(format!(
+    if value.deleted().is_some() {
+        return Err(StoreError::Validation(format!(
             "a {} is marked deleted only by deleting it",
             T::KIND
-        ))),
+        )));
     }
+    if value.purging() {
+        return Err(StoreError::Validation(format!(
+            "a {}'s purge is begun only by beginning it",
+            T::KIND
+        )));
+    }
+    Ok(())
 }
 
 /// Refuses `value` if it may not be stored as it is: its owner and its access

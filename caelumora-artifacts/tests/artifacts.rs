@@ -1604,7 +1604,7 @@ async fn a_purge_that_fails_between_is_restored_by_nobody_and_finished_by_the_ne
     assert!(matches!(failed, Err(ArtifactError::StorageGone(_))), "{failed:?}");
     let artifacts = persistence.entity_store::<Artifact>().unwrap();
     let left = artifacts.get_deleted(&system, artifact.id).await.expect("still deleted");
-    assert!(left.removal.purging, "its purge begun");
+    assert!(left.entity.purging(), "its purge begun");
     let refused = manager.restore(&system, artifact.id).await;
     assert!(matches!(refused, Err(ArtifactError::NotFound(_))), "restored by nobody: {refused:?}");
     assert!(manager.purge(&system, artifact.id).await.expect("finished"), "purged");

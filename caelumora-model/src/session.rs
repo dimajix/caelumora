@@ -21,6 +21,7 @@ use crate::value::ValueError;
 use crate::workspace::WorkspaceId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
@@ -116,6 +117,9 @@ pub struct Session {
     /// Its revision (issue 492), counted up by every write of it.
     #[serde(default)]
     pub revision: Revision,
+    /// Whether its purge has begun (issue 492): set by the store alone.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 impl Stored for Session {
@@ -142,6 +146,14 @@ impl Stored for Session {
 
     fn set_revision(&mut self, revision: Revision) {
         self.revision = revision;
+    }
+
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
     }
 }
 
@@ -340,6 +352,7 @@ pub mod testing {
             security_attributes: SecurityAttributes::systems(),
             deleted: None,
             revision: Default::default(),
+            purging: false,
         }
     }
 }

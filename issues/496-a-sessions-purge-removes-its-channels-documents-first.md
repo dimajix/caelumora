@@ -9,7 +9,7 @@
 ## The problem
 
 Since issue [492](492-a-document-is-written-under-two-locks.md), what has something behind it is
-purged in three steps: its purge begun (`EntityStore::begin_purge`, `Removal::purging`), what lies
+purged in three steps: its purge begun (`EntityStore::begin_purge`, `Stored::purging`), what lies
 behind it removed, the document last. A purge that fails between leaves the entity deleted with
 its purge begun, and the next purge finishes it - agents, workspaces and artifacts, alone or with
 their scope.
