@@ -43,6 +43,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::iter;
+use std::mem;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -267,10 +268,9 @@ impl ModelProfile {
         self.images && attachment.is_image()
     }
 
-    /// How what the model is given of `message` is classified: the message,
-    /// its tool results, and what it carries that the model is given along -
-    /// an attachment, what a result showed (issue 282) - what sets the label
-    /// of what the model produces from it.
+    /// How what the model is given of `message` is classified: the message, its tool results, and
+    /// what it carries that the model is given along - an attachment, what a result gave or showed
+    /// (issues 282, 512) - what sets the label of what the model produces from it.
     pub fn classifications_given<'m>(
         &self,
         message: &'m Message,
@@ -286,18 +286,19 @@ impl ModelProfile {
             )
     }
 
-    /// `message` framed as the model of `agent` is given it: its attachments
-    /// noted after its text (`noted`), whoever said it; then marked with its
-    /// sender as `sender_format` and `sender_style` say, and with when it was
-    /// written in `time_zone` where `message_times` says so - if another
-    /// participant, a user or agent, said it.
+    /// `message` framed as the model of `agent` is given it: its attachments noted after its text
+    /// (`noted`), whoever said it, and what each of its tool results gave the model after the
+    /// result's text (issue 512), so that the model can name it; then marked with its sender as
+    /// `sender_format` and `sender_style` say, and with when it was written in `time_zone` where
+    /// `message_times` says so - if another participant, a user or agent, said it.
     fn frame(&self, mut message: Message, agent: ActorId, time_zone: TimeZone) -> Message {
         if let Some(note) = self.noted(&message.attachments) {
-            message.content =
-                Some(match message.content.take().filter(|content| !content.is_empty()) {
-                    Some(content) => format!("{content}\n{note}"),
-                    None => note,
-                });
+            message.content = Some(with_note(message.content.take().unwrap_or_default(), note));
+        }
+        for result in &mut message.tool_results {
+            if let Some(note) = self.noted(&result.media) {
+                result.content = with_note(mem::take(&mut result.content), note);
+            }
         }
         let said_by_another = message.sender_id != agent
             && matches!(message.sender_id, ActorId::User(_) | ActorId::Agent(_))
@@ -827,10 +828,9 @@ impl<'a> ContextResolver<'a> {
 }
 
 impl ContextItem {
-    /// About how many tokens the model of `profile` is given of the item
-    /// (issue 284), as `Message::estimated_tokens` estimates, and an image it
-    /// is given along - attached, or shown by a tool - as `IMAGE_TOKENS`
-    /// (issue 282).
+    /// About how many tokens the model of `profile` is given of the item (issue 284), as
+    /// `Message::estimated_tokens` estimates, and an image it is given along - attached, or given
+    /// or shown by a tool - as `IMAGE_TOKENS` (issues 282, 512).
     pub fn estimated_tokens(&self, profile: &ModelProfile) -> u64 {
         match self {
             ContextItem::Conversation { message } => {
@@ -848,6 +848,15 @@ impl ContextItem {
 /// About how many tokens an image counts in a context (issue 282): what Ollama counts one as where
 /// it truncates; an encoder of its own counts it otherwise.
 const IMAGE_TOKENS: u64 = 768;
+
+/// `text` with `note` after it, on a line of its own - `note` alone where there is no text.
+fn with_note(text: String, note: String) -> String {
+    if text.is_empty() {
+        note
+    } else {
+        format!("{text}\n{note}")
+    }
+}
 
 /// `text` as the value of an attribute of a marker: what would end it or open an element escaped,
 /// nothing more - escaping more hides typos in code from the model (RESULTS.md, 7).
@@ -933,11 +942,12 @@ mod tests {
     use crate::digest::prompt;
     use crate::message::{MessageId, TokenUsage};
     use crate::prompt_catalogue::{core, CORE_PROMPTS};
-    use crate::tool::Tool;
+    use crate::tool::{Tool, ToolCall, ToolCallResult};
     use crate::turn::TurnState;
     use crate::user::UserId;
     use crate::work::Work;
     use chrono::{TimeZone as _, Utc};
+    use serde_json::Value;
     use std::fs;
 
     fn text(content: &str) -> Message {
@@ -1042,6 +1052,44 @@ mod tests {
             ContextItem::Conversation { message: attached.clone() }.estimated_tokens(&profile)
         };
         assert_eq!(item(xml) - item(blind), IMAGE_TOKENS, "an image given along counts");
+
+        let call = ToolCall {
+            id: None,
+            function_name: "draw".to_string(),
+            arguments: Value::Null,
+            visibility: Default::default(),
+            presentation: Default::default(),
+        };
+        let drew = Message {
+            sender_id: agent,
+            role: MessageRole::Tool,
+            content: None,
+            tool_results: vec![ToolCallResult {
+                media: vec![image.clone()],
+                ..ToolCallResult::of(
+                    &call,
+                    Default::default(),
+                    "drawn".to_string(),
+                    image.classification.clone(),
+                )
+            }],
+            ..text("")
+        };
+        let result = |profile: ModelProfile| {
+            profile.given(drew.clone(), agent, false, Default::default()).tool_results[0]
+                .content
+                .clone()
+        };
+        assert_eq!(
+            result(blind),
+            "drawn\n[attachment a3: chart \"q3\".png, image/png, 2.3 MB, not shown]",
+            "what a tool gave, noted after its result, so that the model can name it (issue 512)"
+        );
+        assert!(result(xml).ends_with("shown=\"yes\"/>"), "{}", result(xml));
+        let mut silent = drew.clone();
+        silent.tool_results[0].content.clear();
+        let given = blind.given(silent, agent, false, Default::default());
+        assert!(given.tool_results[0].content.starts_with("[attachment a3: "), "the note alone");
     }
 
     #[test]

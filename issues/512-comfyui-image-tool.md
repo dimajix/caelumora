@@ -1,6 +1,6 @@
 # 512 — No tool can generate an image
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** Tools and approvals
@@ -211,3 +211,65 @@ in a bundle, that ComfyUI can no longer open.
   offered by name; a random seed, sizes bounded per workflow; a call dropped ends its prompt in
   ComfyUI; no approval, destination public, the result classified as the turn's label. `edit_image`
   and video follow as issues of their own.
+- **2026-10-30** - Step 1 done: how a tool hands over media. `ToolOutput::media`, each a
+  `ToolMedia` of a name and its bytes (`caelumora_model::tool`, so that the executor hands the same
+  type on to the manager), without a media type - the bytes tell it, as for an upload
+  (`content::media_type`); a type the tool says is to come with the first producer whose bytes do
+  not tell it, to refine what they tell, never to contradict it. The `ToolExecutor` has them kept
+  for a result not withheld through `ActorRuntime::create_media` and
+  `AttachmentManager::create_media`: in the agent's name, classified as the result, images alone
+  (`content::is_image`), at most `attachments.max_per_message`, all of them or none - what was kept
+  before one failed is removed again; anything else fails the call. Decided with the maintainer
+  after the review (option A of three): what a tool gave waits for no message, unlike an upload -
+  the result refers to it from the moment it is kept, and the turn that holds the result keeps it
+  across a restart and however long the other calls of its step wait for approval, which an upload
+  waiting in memory would not survive. The channel admits it as it admits what a result showed, by
+  `lies_in` and its label; `AttachmentManager::claim` stays as it was. Rejected: storing the
+  waiting uploads (B, a stored state of its own), and the channel dropping media it cannot claim
+  (C, which leaves the turn naming content that is gone). `Message::carried` yields the media, so
+  that loading for the model, the numbers, the download and the channel's flow take them as they
+  take `shown`; `ModelProfile::frame` notes them after the result's text - number, name, type,
+  whether given along - so that a model that cannot see learns of them and any model can `attach`
+  them; `ollama_client` sends them with the result. No test tool of `test-support` was needed: the
+  executor's tests bring their own provider, as for `shown`.
+- **2026-10-30** - Step 2 done: the workflows. The plugin `caelumora-comfyui` claims the section
+  `comfyui` and offers the workflows its `workflows` names as a service (`Workflows`, found
+  `named`), read and checked whole as the plan says; without the section there are none. Decided
+  with the maintainer: the defaults of a graph's width and height lie within its own bounds. The
+  rule of a workflow's name is the one of a variant of the texts, now a value type of its own for
+  both (`Identifier`, decided with the maintainer over a bare predicate). Media a tool kept for a
+  result whose turn is given up stay unreferenced until their channel is purged: accepted. The
+  example `z_image_turbo` follows ComfyUI's template `image_z_image_turbo`, its subgraph written out
+  in the API format; it takes no negative prompt, being run without guidance. What the tool needs of
+  a workflow to run it - its graph with the arguments, its output node - comes with step 3, its
+  first caller; until then its fields are unread, said by `#[expect(dead_code)]`.
+- **2026-10-30** - Step 3 done: the tool. `comfyui_tool` offers `generate_image` over the workflows
+  it names (`ComfyUiTool`), the first the default, resolved as it is built; a workflow not
+  configured, none, or an endpoint with `auth` keep it from being built - ComfyUI knows no
+  authentication, decided with the maintainer. A call writes its arguments into its workflow's graph
+  (`Workflow::graph_with`), queues it, follows the history every half second, fetches the output
+  node's images and gives them as `ToolOutput::media` (`ComfyUiClient::generate`), the whole of it
+  bounded by the endpoint's `timeout_secs`. Its value names the workflow, the seed and the files,
+  classified as the turn's label - not the size, as "What the tool answers" planned: the model sees
+  the image, and the size taken is the call's or the workflow's. A prompt is given an id of its own,
+  a UUID, before it is queued - ComfyUI 0.32 takes it, refusing any other form, as a run against it
+  showed -, so that a call dropped while it is queued ends it too. A prompt not done in time, of a
+  call dropped, or whose history fails to answer, is ended in ComfyUI by `CancelOnDrop`, as
+  `terminal_tool` ends a command: the queue asked first, then taken from it where it waits,
+  interrupted by its id where it runs (decided with the maintainer), so that no other prompt is hit;
+  one failed request ends the call. What ComfyUI refused or failed with reaches the model and users
+  in its words, but for the absolute paths on its host, each written `<path>` (decided with the
+  maintainer, by the rule that messages name no file paths). TOOLS.md states that rule for both now.
+  The tool's texts are the catalogue's, namespace `comfyui`; the catalogue a plugin's test builds is
+  `caelumora_agents::testing::catalogue_with` now, for the three plugins that built it alike. The
+  example personality `jonathan-assistant` offers the tool, with `attachment_tool` to show what it
+  generated; two runs against the ComfyUI of this machine generated images in 146 s (the model
+  loaded first) and 20 s.
+- **2026-10-30** - The example's tool moved, as the maintainer asked: `jonathan-assistant` offers it
+  no more; a personality of its own does, `bob-painter`, named after the TV painter Bob Ross, with
+  `attachment_tool` to show what it painted.
+- **2026-10-30** - Done. Step 4 of the plan, the example and the documents, came with the steps
+  before it: the workflow `z_image_turbo` and the personality `bob-painter` in the examples,
+  TOOLS.md, COMPONENTS.md, CONFIGURATION.md, PLUGINS.md and ARCHITECTURE.md describing it, 208's
+  history recording that how a tool hands over media moved here. `edit_image` and video and audio
+  stay to be opened as issues of their own, as "What follows" says.

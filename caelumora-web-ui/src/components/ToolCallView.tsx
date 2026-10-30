@@ -968,6 +968,8 @@ interface ToolCallViewProps {
 
 export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, messageId, abandoned, files, filesVersion, artifacts, attachments, onSelectPage, onInterrupt, onKillCommand, endedCommands}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
+  // What the call gave and showed its model, as a message shows what it carries.
+  const seen = [...(result?.media ?? []), ...(result?.shown ?? [])];
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
       <div className="bg-gray-100 dark:bg-gray-900 px-2 py-1 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
@@ -1023,9 +1025,8 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, message
       </div>
       <div className="p-2">
         <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage} onKillCommand={onKillCommand} endedCommands={endedCommands} />
-        {result?.shown && result.shown.length > 0 && (
-          // What the call showed its model, as a message shows what it carries.
-          <AttachmentList items={result.shown} messageId={result.message_id ?? messageId} attachments={attachments} classification={result.classification} />
+        {result && seen.length > 0 && (
+          <AttachmentList items={seen} messageId={result.message_id ?? messageId} attachments={attachments} classification={result.classification} />
         )}
         {result?.approval && result.approval.length > 0 && (
           // Set apart from what the presentation shows, where it shows anything.

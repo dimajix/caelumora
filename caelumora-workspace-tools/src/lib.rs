@@ -15,9 +15,9 @@ mod files;
 mod shell;
 
 #[cfg(test)]
-use caelumora_agents::prompt::{NAMESPACE as AGENTS, PROMPTS as AGENTS_PROMPTS};
+use caelumora_agents::testing;
 #[cfg(test)]
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts};
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -40,12 +40,5 @@ pub(crate) fn prompts() -> PromptTexts {
 /// these tools, as the runtime and the plugins add them.
 #[cfg(test)]
 pub(crate) fn catalogue() -> Arc<PromptCatalogue> {
-    let mut catalogue = PromptCatalogue::new();
-    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)]
-    {
-        catalogue
-            .add(namespace, texts)
-            .unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
-    }
-    Arc::new(catalogue)
+    testing::catalogue_with(NAMESPACE, PROMPTS)
 }

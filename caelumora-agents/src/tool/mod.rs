@@ -26,8 +26,8 @@ use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::{Answers, Questions};
 use caelumora_model::security::{ActionType, Enforcement, Policies};
 use caelumora_model::tool::{
-    Tool, ToolCall, ToolCallResult, ToolCallState, ToolParameters, ToolResultStatus, ToolSet,
-    ToolVisibility,
+    Tool, ToolCall, ToolCallResult, ToolCallState, ToolMedia, ToolParameters, ToolResultStatus,
+    ToolSet, ToolVisibility,
 };
 use caelumora_model::turn::GivenUpReason;
 use caelumora_runtime::attachment::AttachmentError;
@@ -80,20 +80,34 @@ impl From<ViewError> for ToolError {
 }
 
 /// What reaching an attachment failed with (issue 282), as the model is told it: a storage that
-/// failed, is no longer configured, or holds other bytes than were kept is the tool's; an
-/// attachment that is not there, or what does not fit, the model's to correct.
+/// failed, is no longer configured, or holds other bytes than were kept is the tool's, as is what
+/// a tool gave its model that may not be kept (`TooMany`, `NotAnImage`, issue 512); an attachment
+/// that is not there, or what does not fit, the model's to correct.
 impl From<AttachmentError> for ToolError {
     fn from(error: AttachmentError) -> Self {
         match error {
             AttachmentError::Content(e) => e.into(),
             AttachmentError::StorageGone(e) => e.into(),
-            AttachmentError::Altered(_) => ToolError::ExecutionFailed(error.to_string()),
+            AttachmentError::Altered(_)
+            | AttachmentError::TooMany(_)
+            | AttachmentError::NotAnImage { .. } => ToolError::ExecutionFailed(error.to_string()),
             AttachmentError::NotConfigured
             | AttachmentError::ClassificationRefused
             | AttachmentError::StorageNotCleared(_)
             | AttachmentError::NotAParticipant(_)
             | AttachmentError::NotFound(_)
             | AttachmentError::Invalid(_) => ToolError::InvalidParameter(error.to_string()),
+        }
+    }
+}
+
+/// What a tool gave its model that could not be kept (issue 512), as the model is told it: the
+/// tool's failure, never the model's to correct - a storage no longer configured without its name.
+fn not_kept(error: AttachmentError) -> ToolError {
+    match error {
+        AttachmentError::StorageGone(e) => e.into(),
+        error => {
+            ToolError::ExecutionFailed(format!("what the tool gave could not be kept: {error}"))
         }
     }
 }
@@ -156,30 +170,31 @@ impl From<TerminalError> for ToolError {
     }
 }
 
-/// What a tool gives back (issue 133): its value and, if the tool
-/// classifies it - by its input, by what it read, by the source it drew
-/// on - how sensitive it is. `None` leaves it to the tool's configuration
-/// or the channel (`ToolExecutor`). And the attachments of its channel it
-/// shows its model again (issue 282), which the model is given with the
-/// result as it is given an attachment (`ToolCallResult::shown`).
+/// What a tool gives back (issue 133): its value and, if the tool classifies it - by its input, by
+/// what it read, by the source it drew on - how sensitive it is. `None` leaves it to the tool's
+/// configuration or the channel (`ToolExecutor`). And what its model is given with the result as
+/// it is given an attachment: the attachments of its channel the tool shows it again (issue 282,
+/// `ToolCallResult::shown`), and the media the tool gives it (issue 512), which the executor keeps
+/// as the result's (`ToolCallResult::media`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolOutput {
     pub value: Value,
     pub classification: Option<Classification>,
     pub shown: Vec<ContentRef>,
+    pub media: Vec<ToolMedia>,
 }
 
 impl ToolOutput {
     /// `value`, classified `classification` by the tool.
     pub fn classified(value: Value, classification: Classification) -> Self {
-        Self { value, classification: Some(classification), shown: Vec::new() }
+        Self { classification: Some(classification), ..value.into() }
     }
 }
 
 /// A value the tool does not classify.
 impl From<Value> for ToolOutput {
     fn from(value: Value) -> Self {
-        Self { value, classification: None, shown: Vec::new() }
+        Self { value, classification: None, shown: Vec::new(), media: Vec::new() }
     }
 }
 
@@ -727,17 +742,17 @@ pub struct ToolExecutor {
     system_rules: Arc<[ApprovalRule]>,
     session: Arc<SessionController>,
     channel: Arc<ChannelController>,
-    /// The agent's runtime, through which a call's questions are put to
-    /// the users of its channel as it runs.
+    /// The agent's runtime, through which a call's questions are put to the users of its channel as
+    /// it runs, and what its tool gave its model is kept for the channel (issue 512).
     runtime: ActorRuntime,
 }
 
 impl ToolExecutor {
-    /// An executor for the tools of `providers`, in the order of the
-    /// configuration, for the agent of `runtime`: guarded by the runtime's
-    /// policies and by the rules of the system (`AppConfig::approvals`), of
-    /// the agent's session and of its channel, whose users the questions of
-    /// its calls are put to through `runtime` (issues 371, 374).
+    /// An executor for the tools of `providers`, in the order of the configuration, for the agent
+    /// of `runtime`: guarded by the runtime's policies and by the rules of the system
+    /// (`AppConfig::approvals`), of the agent's session and of its channel, whose users the
+    /// questions of its calls are put to through `runtime` (issues 371, 374), as what its tools
+    /// give their model is kept (issue 512).
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if two providers have a tool of the
@@ -850,12 +865,12 @@ impl ToolExecutor {
         ToolCallResult::of(call, status, content, turn.situation().classification())
     }
 
-    /// The result for `call`, whose tool gave `output`: classified as the
-    /// tool classified it, else as the tool is configured - as the turn
-    /// began with its tools - else as the channel, and withheld - with what
-    /// it showed (issue 282) - if that, or what it showed, may not flow into
-    /// the channel (`ConfidentialityPolicy::may_publish`, in the agent's
-    /// name: the result enters its context in the channel).
+    /// The result for `call`, whose tool gave `output`: classified as the tool classified it, else
+    /// as the tool is configured - as the turn began with its tools - else as the channel, and
+    /// withheld - with what it showed (issue 282) - if that, or what it showed, may not flow into
+    /// the channel (`ConfidentialityPolicy::may_publish`, in the agent's name: the result enters
+    /// its context in the channel). The media it gave are kept as the result's (`keep`, issue 512)
+    /// only where it is not withheld; what cannot be kept fails the call.
     async fn admitted(
         &self,
         call: &ToolCall,
@@ -885,9 +900,16 @@ impl ToolExecutor {
             );
         }
         match successful_result(&turn.situation().texts(), output.value, call.visibility) {
-            Ok(content) => ToolCallResult {
-                shown: output.shown,
-                ..ToolCallResult::of(call, ToolResultStatus::Ok, content, classification)
+            Ok(content) => match self.keep(output.media, &classification, turn).await {
+                Ok(media) => ToolCallResult {
+                    media,
+                    shown: output.shown,
+                    ..ToolCallResult::of(call, ToolResultStatus::Ok, content, classification)
+                },
+                Err(e) => {
+                    warn!("What tool call '{}' gave was not kept: {}", call.function_name, e);
+                    self.failed(call, e, turn)
+                }
             },
             // Not given without the mark that it is the agent's alone.
             Err(e) => {
@@ -900,6 +922,26 @@ impl ToolExecutor {
                 )
             }
         }
+    }
+
+    /// Keeps `media`, what the tool of a call in `turn` gave its model, as its result's (issue
+    /// 512): in the agent's name, classified `classification` as the result
+    /// (`ActorRuntime::create_media`) - images alone, as their bytes say, as many as a message may
+    /// carry attachments, all of them or none.
+    ///
+    /// # Errors
+    /// `ExecutionFailed` for what could not be kept so, saying why.
+    async fn keep(
+        &self,
+        media: Vec<ToolMedia>,
+        classification: &Classification,
+        turn: &Turn<'_>,
+    ) -> ToolResult<Vec<ContentRef>> {
+        if media.is_empty() {
+            return Ok(Vec::new());
+        }
+        let context = turn.situation().security_context();
+        self.runtime.create_media(context, classification.clone(), media).await.map_err(not_kept)
     }
 
     /// How `call`, made by the model in `turn`, is admitted: a call that
@@ -1074,11 +1116,14 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
+    use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::session::testing::detached_actor_runtime_in;
-    use caelumora_runtime::testing::TestRuntime;
+    use caelumora_runtime::testing::{actor_runtime_in, TestRuntime, World};
     use serde_json::json;
+    use std::fs;
     use std::future;
     use tokio::time;
+    use tokio_util::bytes::Bytes;
 
     /// What a storage of content reported is told alike, whatever it keeps (issue 466): what the
     /// model can correct as a parameter, a storage that failed as the tool's failure.
@@ -1911,6 +1956,106 @@ mod tests {
             "the model is told why: {}",
             withheld.content
         );
+    }
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\nthe rest";
+
+    /// Gives its model a file (issue 512): `draw` an image, `draw_secret` one whose result is
+    /// classified above every channel, `write` a text.
+    #[derive(Debug)]
+    struct Drawing;
+
+    #[async_trait]
+    impl ToolProvider for Drawing {
+        fn description(&self) -> String {
+            "draws".to_string()
+        }
+        fn tools(&self) -> Vec<Tool> {
+            ["draw", "draw_secret", "write"].map(|name| tool(name, false, None)).into()
+        }
+        async fn execute(
+            &self,
+            name: &str,
+            _params: &Value,
+            _answers: Option<&Answers>,
+            _turn: &mut Turn,
+        ) -> ToolResult<ToolOutput> {
+            let (file, content): (&str, &'static [u8]) = match name {
+                "write" => ("notes.txt", b"notes"),
+                _ => ("drawn.png", PNG),
+            };
+            let media = vec![ToolMedia { name: file.to_string(), content: Bytes::from(content) }];
+            let output = match name {
+                "draw_secret" => ToolOutput::classified(
+                    json!({ "drawn": true }),
+                    Classification::general(Confidentiality::StrictlyConfidential),
+                ),
+                _ => json!({ "drawn": true }).into(),
+            };
+            Ok(ToolOutput { media, ..output })
+        }
+    }
+
+    /// Issue 512: what a tool gave its model is kept as the result's - in the agent's name, in the
+    /// channel's key space, classified as the result - where the result goes to the model and what
+    /// it gave is an image; nothing is kept otherwise.
+    #[tokio::test]
+    async fn what_a_tool_gave_is_kept_as_the_results_where_it_is_an_image() {
+        let world = testing::world().await;
+        let personality = world.personality("plain", None, &[]).await;
+        let helper = world.agent("helper", world.alice, &personality).await;
+        let session = world.shared_session(&[helper], &[]).await;
+        let main = &session.channels()[0];
+        let drawing = ComponentImpl {
+            id: "drawing".to_string(),
+            fail_policy: Default::default(),
+            facet: Arc::new(Drawing) as Arc<dyn ToolProvider>,
+        };
+        let runtime = actor_runtime_in(main, ActorId::Agent(helper));
+        let executor = ToolExecutor::new(vec![drawing], runtime).unwrap();
+        let mut state = AgentChannelState::default();
+        let tool_sets = {
+            let turn = testing::turn(&session, helper, world.alice, &mut state);
+            executor.tool_sets(&turn.situation()).await
+        };
+        let tools = state.keep_offer(tool_sets);
+        state.turn.as_mut().unwrap().work.context.frame.tools = tools;
+        let mut turn = Turn::of(
+            helper,
+            helper.to_string(),
+            &mut state,
+            AgentStateHandle::detached(),
+            actor_runtime_in(main, ActorId::Agent(helper)),
+        )
+        .unwrap();
+
+        let drawn = executor.execute(&call("draw"), None, &mut turn, future::pending()).await;
+        assert_eq!(drawn.status, ToolResultStatus::Ok, "{}", drawn.content);
+        let [image] = drawn.media.as_slice() else { panic!("one image: {:?}", drawn.media) };
+        assert_eq!(
+            (image.name.as_str(), image.media_type.as_str(), &image.classification),
+            ("drawn.png", "image/png", &drawn.classification),
+            "as its bytes say, classified as the result"
+        );
+        assert!(
+            image.key.starts_with(&format!("attachments/{}/", main.id())),
+            "in the channel's key space: {}",
+            image.key
+        );
+        let [kept] = world.attachments_kept().try_into().unwrap();
+        assert_eq!(fs::read(kept).unwrap(), PNG, "kept");
+
+        let files = || world.attachments_kept().len();
+        let before = files();
+        let secret =
+            executor.execute(&call("draw_secret"), None, &mut turn, future::pending()).await;
+        assert_eq!(secret.status, ToolResultStatus::Withheld);
+        assert!(secret.media.is_empty());
+        let text = executor.execute(&call("write"), None, &mut turn, future::pending()).await;
+        assert_eq!(text.status, ToolResultStatus::Failed);
+        assert!(text.content.contains("text/plain"), "the model is told why: {}", text.content);
+        assert_eq!(files(), before, "nothing kept of a result withheld, nor of what is no image");
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     #[tokio::test]

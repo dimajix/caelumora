@@ -256,7 +256,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [400](400-exact-matcher-long-value.md) | done | `ToolMatcher::exact` escapes every argument's whole value into a pattern, which for a value longer than `MAX_PATTERN_CHARS` fails the check, so the rule an approval card offers for such a call is refused - only after the call was answered. |
 | [419](419-approval-recorded-with-the-call.md) | done | Once a tool call was approved, nothing stored says who approved it or by which rule, so neither the chat nor the record of the turn can show it. |
 | [433](433-mcp-tools-list-changed.md) | open | An MCP server that announces a change of its tools (`notifications/tools/list_changed`) is not heard, so an agent follows the change only once its list of the server's tools expires. |
-| [512](512-comfyui-image-tool.md) | open | No tool can generate an image, and no tool can hand its model media at all: `ToolOutput` has no media and the channel refuses a tool result that carries some. |
+| [512](512-comfyui-image-tool.md) | done | No tool can generate an image, and no tool can hand its model media at all: `ToolOutput` has no media and the channel refuses a tool result that carries some. |
 
 ## User interaction
 

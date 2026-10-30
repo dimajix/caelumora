@@ -388,7 +388,7 @@ it is fetched anew as it starts.
 *   **What a message carries** is shown at it: an image as a preview linked to its full size, any
     other file with name, type, size and a download, each through the message (see
     [REST-SERVER.md](REST-SERVER.md#endpoints)); one classified otherwise than its message says how.
-    What a tool's result showed its model again is shown in the call's frame the same way, through
+    What a tool's result gave or showed its model is shown in the call's frame the same way, through
     the message that carries the result. An image that cannot be fetched is fetched again a few
     times - one's own message is shown as it is sent or changed, before the channel has it so in
     its history - and then named as a file.

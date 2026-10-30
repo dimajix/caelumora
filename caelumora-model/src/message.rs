@@ -283,16 +283,20 @@ impl Message {
     }
 
     /// The content the message carries (issue 282): its attachments, and what its tool results
-    /// showed its model.
+    /// gave and showed their model (issue 512).
     pub fn carried(&self) -> impl Iterator<Item = &ContentRef> {
-        self.attachments.iter().chain(self.tool_results.iter().flat_map(|result| &result.shown))
+        self.attachments.iter().chain(
+            self.tool_results.iter().flat_map(|result| result.media.iter().chain(&result.shown)),
+        )
     }
 
     /// The same, to change: the copy a transcript numbers, or a model is given with content.
     pub fn carried_mut(&mut self) -> impl Iterator<Item = &mut ContentRef> {
-        self.attachments
-            .iter_mut()
-            .chain(self.tool_results.iter_mut().flat_map(|result| &mut result.shown))
+        self.attachments.iter_mut().chain(
+            self.tool_results
+                .iter_mut()
+                .flat_map(|result| result.media.iter_mut().chain(&mut result.shown)),
+        )
     }
 
     /// Whether a participant hears anything of the message when someone else said it (issue 224):
@@ -605,6 +609,11 @@ pub(crate) mod tests {
             published.tool_results[1].media.is_empty()
                 && published.tool_results[1].shown.is_empty(),
             "withheld with the result"
+        );
+        assert_eq!(
+            results.carried().map(|content| content.name.as_str()).collect::<Vec<_>>(),
+            ["chart.png", "screen.png", "chart.png", "screen.png"],
+            "what each result gave and showed is carried, in their order"
         );
         let given = results.names_only(&Classification::PUBLIC).expect("results");
         assert!(

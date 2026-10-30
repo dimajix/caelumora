@@ -19,6 +19,7 @@ caelumora-store-postgres.workspace = true
 caelumora-workspace-tools.workspace = true
 caelumora-ollama.workspace = true
 caelumora-decision.workspace = true
+caelumora-comfyui.workspace = true
 caelumora-compaction.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["full"] }

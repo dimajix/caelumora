@@ -4,26 +4,19 @@
 use crate::{CompactionError, CompactionStrategy, Replacement, NAMESPACE, PROMPTS};
 use async_trait::async_trait;
 use caelumora_agents::llm::unlabelled_message;
-use caelumora_agents::prompt::{NAMESPACE as AGENTS, PROMPTS as AGENTS_PROMPTS};
+use caelumora_agents::testing;
 use caelumora_agents::turn::Turn;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
-use std::sync::{Arc, Mutex};
+use caelumora_model::prompt_catalogue::PromptTexts;
+use std::sync::Mutex;
 
 /// The texts of the core, of the agents and of compaction, as the runtime and the plugins add them,
 /// as a model of the default variant is given them - for what a test makes itself.
 pub(crate) fn prompts() -> PromptTexts {
-    let mut catalogue = PromptCatalogue::new();
-    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)]
-    {
-        catalogue
-            .add(namespace, texts)
-            .unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
-    }
-    PromptTexts::new(Arc::new(catalogue), None)
+    testing::prompts_with(NAMESPACE, PROMPTS)
 }
 
 /// The text the strategy puts in the place of a part, unless it fails.

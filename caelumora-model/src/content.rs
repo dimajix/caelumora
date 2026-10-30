@@ -79,7 +79,7 @@ impl ContentRef {
     /// Whether it is an image every model API takes and a browser shows without running anything:
     /// png, jpeg or webp (issue 282) - given along to a model that sees, downloaded inline.
     pub fn is_image(&self) -> bool {
-        matches!(self.media_type.as_str(), PNG | JPEG | WEBP)
+        is_image(&self.media_type)
     }
 
     /// Whether it is plain text, as its bytes say (`media_type`): what a model reads a page at a
@@ -110,6 +110,12 @@ pub fn media_type(head: &[u8]) -> &'static str {
         _ if is_text(head) => TEXT,
         _ => "application/octet-stream",
     }
+}
+
+/// Whether `media_type` is an image every model API takes and a browser shows without running
+/// anything (`ContentRef::is_image`): what a tool may give its model (issue 512).
+pub fn is_image(media_type: &str) -> bool {
+    matches!(media_type, PNG | JPEG | WEBP)
 }
 
 /// Whether `head` reads as text: UTF-8, but for a character cut off at its end, without a control

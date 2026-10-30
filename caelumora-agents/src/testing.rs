@@ -259,21 +259,37 @@ pub fn detached_actor_runtime() -> ActorRuntime {
 /// runtime and `AgentsPlugin` add them - for what resolves a context in a
 /// test.
 pub fn catalogue() -> Arc<PromptCatalogue> {
-    let mut catalogue = PromptCatalogue::new();
-    // The texts are compiled in; that they can be read is what this tests too.
-    catalogue
-        .add(CORE, CORE_PROMPTS)
-        .unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
-    catalogue
-        .add(NAMESPACE, PROMPTS)
-        .unwrap_or_else(|e| panic!("the agents' texts cannot be read: {e}"));
-    Arc::new(catalogue)
+    catalogue_of(&[])
 }
 
 /// Its texts as a model of the default variant is given them - for a
 /// provider a test makes itself.
 pub fn prompts() -> PromptTexts {
     PromptTexts::new(catalogue(), None)
+}
+
+/// The prompt catalogue with the core's texts, the agents' and a plugin's `texts` under
+/// `namespace`, as the runtime and the plugins add them - for what a plugin's test makes itself.
+pub fn catalogue_with(namespace: &str, texts: &str) -> Arc<PromptCatalogue> {
+    catalogue_of(&[(namespace, texts)])
+}
+
+/// The prompt catalogue with the core's texts, the agents' and `more`, each its namespace and
+/// its texts.
+fn catalogue_of(more: &[(&str, &str)]) -> Arc<PromptCatalogue> {
+    let mut catalogue = PromptCatalogue::new();
+    // The texts are compiled in; that they can be read is what this tests too.
+    for (namespace, texts) in [(CORE, CORE_PROMPTS), (NAMESPACE, PROMPTS)].iter().chain(more) {
+        catalogue
+            .add(namespace, texts)
+            .unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
+    }
+    Arc::new(catalogue)
+}
+
+/// Their texts as a model of the default variant is given them.
+pub fn prompts_with(namespace: &str, texts: &str) -> PromptTexts {
+    PromptTexts::new(catalogue_with(namespace, texts), None)
 }
 
 /// The component kinds a test of the agents builds components with that has no runtime, resolving

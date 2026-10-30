@@ -1,0 +1,10 @@
+# Z-Image Turbo, after ComfyUI's template "image_z_image_turbo" (issue 512): z_image_turbo_bf16,
+# qwen_3_4b and ae, eight steps without guidance - so it takes no negative prompt.
+description: fast and photorealistic, good at text in images
+parameters:
+  prompt: 27.text
+  width: 13.width
+  height: 13.height
+  seed: 3.seed
+size: { min: 512, max: 2048, multiple_of: 16 }
+output: 9

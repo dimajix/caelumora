@@ -1,6 +1,7 @@
 //! The `AttachmentManager`: what is uploaded or copied for a message - checked, kept and waiting
-//! for the message that claims it -, what a message may carry as its channel admits it, and the
-//! content of an attachment for a download or for a model given it along.
+//! for the message that claims it - or given a model by a tool, what a message may carry as its
+//! channel admits it, and the content of an attachment for a download or for a model given it
+//! along.
 
 use super::cache::ContentCache;
 use super::{AttachmentError, AttachmentResult};
@@ -21,6 +22,7 @@ use caelumora_model::digest;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::ChannelId;
+use caelumora_model::tool::ToolMedia;
 use caelumora_model::value::text::FileName;
 use futures::{stream, StreamExt};
 use std::collections::{HashMap, HashSet};
@@ -145,11 +147,93 @@ impl AttachmentManager {
         let by = uploader(ctx, channel)?;
         let name = FileName::new(name)?;
         let classification = classification.unwrap_or_else(|| channel.classification.clone());
+        let storage = self.storage_for(ctx, channel, &classification)?;
+        self.forget_expired().await;
+
+        let (head, content) = head_of(content).await;
+        let media_type = content::media_type(&head);
+        let content = self
+            .keep(storage, channel.id, name, classification, media_type, (size, content))
+            .await?;
+        self.wait(by, channel.id, content.clone());
+        debug!(attachment = %content.id, channel = %channel.id, by = %by, size, "Attachment uploaded");
+        Ok(content)
+    }
+
+    /// Keeps `media`, what a tool gave its model for the result of a call the caller of `ctx` makes
+    /// in `channel`, handed over as for `create` (issue 512): classified `classification`, as the
+    /// result, kept as an upload is, but waiting for no message - the result refers to them from
+    /// the moment they are kept, and the channel admits what lies in its key space (`lies_in`);
+    /// so it is a way of creating of its own, apart from `create`, whose uploads wait. Each is an
+    /// image a model can be given, as its first bytes say (`content::is_image`), and there are at
+    /// most as many as a message may carry attachments - all checked before any is kept. All are
+    /// kept or none: what was kept before one failed is removed again (`roll_back_media`).
+    ///
+    /// # Errors
+    /// As `create`; `TooMany` for more than a message may carry, `NotAnImage`.
+    pub async fn create_media(
+        &self,
+        ctx: &SecurityContext,
+        channel: &Channel,
+        classification: Classification,
+        media: Vec<ToolMedia>,
+    ) -> AttachmentResult<Vec<ContentRef>> {
+        let by = uploader(ctx, channel)?;
+        if media.len() > self.max_per_message {
+            return Err(AttachmentError::TooMany(self.max_per_message));
+        }
+        let media = media
+            .into_iter()
+            .map(|ToolMedia { name, content }| {
+                let name = FileName::new(&name)?;
+                let media_type = content::media_type(&content[..content.len().min(HEAD)]);
+                if !content::is_image(media_type) {
+                    return Err(AttachmentError::NotAnImage {
+                        name: name.to_string(),
+                        media_type: media_type.to_string(),
+                    });
+                }
+                Ok((name, media_type, content))
+            })
+            .collect::<AttachmentResult<Vec<_>>>()?;
+        let storage = self.storage_for(ctx, channel, &classification)?;
+
+        let mut kept = Vec::with_capacity(media.len());
+        for (name, media_type, content) in media {
+            let size = content.len() as u64;
+            let bytes: ByteStream = Box::pin(stream::iter([Ok(content)]));
+            let classification = classification.clone();
+            let given =
+                self.keep(storage, channel.id, name, classification, media_type, (size, bytes));
+            match given.await {
+                Ok(given) => kept.push(given),
+                Err(e) => {
+                    let (_, kept_in) = storage;
+                    self.roll_back_media(kept_in.as_ref(), &kept).await;
+                    return Err(e);
+                }
+            }
+        }
+        debug!(channel = %channel.id, by = %by, count = kept.len(), "Media of a tool kept");
+        Ok(kept)
+    }
+
+    /// The storage content classified `classification` is kept in for the caller of `ctx` in
+    /// `channel`, with its name: where it may flow into the channel and into the storage.
+    ///
+    /// # Errors
+    /// `ClassificationRefused`, `NotConfigured`, `StorageNotCleared`.
+    fn storage_for(
+        &self,
+        ctx: &SecurityContext,
+        channel: &Channel,
+        classification: &Classification,
+    ) -> AttachmentResult<(&str, &Arc<dyn ContentStorage>)> {
         self.confidentiality
-            .require_classifiable(&classification, || AttachmentError::ClassificationRefused)?;
+            .require_classifiable(classification, || AttachmentError::ClassificationRefused)?;
         self.confidentiality.require_publish(
             ctx,
-            &classification,
+            classification,
             &channel.classification,
             || AttachmentError::ClassificationRefused,
         )?;
@@ -157,19 +241,34 @@ impl AttachmentManager {
             self.keep_in.as_ref().ok_or(AttachmentError::NotConfigured)?;
         self.confidentiality.require_storable(
             ctx,
-            &classification,
+            classification,
             storage.destination(),
             || AttachmentError::StorageNotCleared(storage_name.to_string()),
         )?;
-        self.forget_expired().await;
+        Ok((storage_name, storage))
+    }
 
-        let (id, key) = new_key(channel.id);
-        let (head, content) = head_of(content).await;
+    /// Keeps `content` - its size and its bytes, of `media_type` as they say - as the file `name`
+    /// of channel `channel` in `storage`, classified `classification`, under an id and a key of its
+    /// own.
+    ///
+    /// # Errors
+    /// `Content` for content too large, other than said, or a storage that failed.
+    async fn keep(
+        &self,
+        (storage_name, storage): (&str, &Arc<dyn ContentStorage>),
+        channel: ChannelId,
+        name: FileName,
+        classification: Classification,
+        media_type: &str,
+        (size, content): (u64, ByteStream),
+    ) -> AttachmentResult<ContentRef> {
+        let (id, key) = new_key(channel);
         let digest = keep_digested(storage.as_ref(), &key, size, content, self.max_bytes).await?;
-        let content = ContentRef {
+        Ok(ContentRef {
             id,
             name,
-            media_type: content::media_type(&head).to_string(),
+            media_type: media_type.to_string(),
             size,
             digest,
             classification,
@@ -177,10 +276,18 @@ impl AttachmentManager {
             key,
             number: None,
             content: None,
-        };
-        self.wait(by, channel.id, content.clone());
-        debug!(attachment = %id, channel = %channel.id, by = %by, size, "Attachment uploaded");
-        Ok(content)
+        })
+    }
+
+    /// Removes `kept` from `storage` again, the media of a result that could not all be kept: in
+    /// the runtime's name, since keeping them was permitted. What cannot be removed is logged and
+    /// stays, until its channel is purged.
+    async fn roll_back_media(&self, storage: &dyn ContentStorage, kept: &[ContentRef]) {
+        for content in kept {
+            if let Err(e) = storage.delete(&content.key).await {
+                warn!(attachment = %content.id, "Media of a tool not removed again: {e}");
+            }
+        }
     }
 
     /// The attachments `ids` name, in their order, for a message `by` says in `channel`: each one
@@ -309,11 +416,11 @@ impl AttachmentManager {
             .insert(upload.content.id, upload);
     }
 
-    /// Puts their content on the attachments of `messages`, and on what their tool results showed,
-    /// that the model of `profile` is given along (issue 282) - held in memory, else read from its
-    /// storage and checked against its digest -, and answers how each is classified: what the
-    /// model is given of them. Asking nothing: what
-    /// lies in an agent's transcript, it heard (`ActorRuntime::load_attachments`).
+    /// Puts their content on the attachments of `messages`, and on what their tool results gave and
+    /// showed, that the model of `profile` is given along (issues 282, 512) - held in memory, else
+    /// read from its storage and checked against its digest -, and answers how each is classified:
+    /// what the model is given of them. Asking nothing: what lies in an agent's transcript, it
+    /// heard (`ActorRuntime::load_attachments`).
     ///
     /// # Errors
     /// `NotFound` if the storage has nothing under an attachment's key, `Altered` if its bytes are
@@ -440,8 +547,10 @@ mod tests {
     use caelumora_model::confidentiality::{Compartment, Confidentiality};
     use caelumora_model::digest;
     use caelumora_model::security::SecurityContext;
+    use caelumora_model::tool::{ToolCall, ToolCallResult};
+    use caelumora_model::user::UserId;
+    use serde_json::Value;
     use std::fs;
-    use std::path::{Path, PathBuf};
     use std::slice;
     use tokio::time;
 
@@ -458,6 +567,11 @@ mod tests {
             .into_iter()
             .flat_map(|chunk| chunk.unwrap().to_vec())
             .collect()
+    }
+
+    /// A png in memory, as a tool gives it, named `name`.
+    fn png(name: &str) -> ToolMedia {
+        ToolMedia { name: name.to_string(), content: Bytes::from_static(PNG) }
     }
 
     /// The channel "main" of `session` as it stands.
@@ -570,6 +684,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn what_a_tool_gave_is_kept_for_the_channel_as_images_all_or_none_waiting_for_nothing() {
+        let world = World::new().await;
+        let session = world.shared_session(&[], &[]).await;
+        let main = main_of(&session);
+        let hers = World::as_user(world.alice);
+        let alice = ActorId::User(world.alice);
+        let attachments = world.runtime.attachment_manager();
+        let classification = main.classification.clone();
+        let kept = || world.attachments_kept().len();
+
+        let drawn = attachments
+            .create_media(&hers, &main, classification.clone(), vec![png("a.png"), png("b.png")])
+            .await
+            .expect("hers, in a channel she takes part in");
+        assert_eq!(
+            drawn.iter().map(|d| (d.name.as_str(), d.media_type.as_str())).collect::<Vec<_>>(),
+            [("a.png", "image/png"), ("b.png", "image/png")]
+        );
+        assert!(drawn
+            .iter()
+            .all(|d| d.classification == classification && attachments.lies_in(main.id, d)));
+        assert_eq!(read(attachments.content_of(&drawn[0]).await.unwrap()).await, PNG, "kept");
+        assert!(
+            matches!(
+                attachments.named(alice, main.id, &[drawn[0].id], &[]),
+                Err(AttachmentError::NotFound(_))
+            ),
+            "waiting for no message: its result refers to it"
+        );
+        let before = kept();
+
+        let many = vec![png("a.png"); AttachmentsConfig::default().max_per_message + 1];
+        assert!(matches!(
+            attachments.create_media(&hers, &main, classification.clone(), many).await,
+            Err(AttachmentError::TooMany(_))
+        ));
+        let notes = ToolMedia { name: "notes.txt".to_string(), content: Bytes::from_static(b"n") };
+        let text = vec![png("a.png"), notes];
+        let refused = attachments.create_media(&hers, &main, classification.clone(), text).await;
+        assert!(
+            matches!(&refused, Err(AttachmentError::NotAnImage { name, media_type }) if name == "notes.txt" && media_type == "text/plain"),
+            "{refused:?}"
+        );
+        let mut huge = PNG.to_vec();
+        huge.resize(usize::try_from(AttachmentsConfig::default().max_bytes).unwrap() + 1, 0);
+        let huge = ToolMedia { name: "huge.png".to_string(), content: Bytes::from(huge) };
+        let too_large = vec![png("a.png"), huge];
+        assert!(matches!(
+            attachments.create_media(&hers, &main, classification.clone(), too_large).await,
+            Err(AttachmentError::Content(ContentError::TooLarge { .. }))
+        ));
+        assert_eq!(kept(), before, "all or none: what was kept before one failed is gone again");
+        let above = Classification::general(Confidentiality::StrictlyConfidential);
+        assert!(matches!(
+            attachments.create_media(&hers, &main, above, vec![png("a.png")]).await,
+            Err(AttachmentError::ClassificationRefused)
+        ));
+        let bobs = World::as_user(UserId::new());
+        assert!(matches!(
+            attachments.create_media(&bobs, &main, classification, vec![png("a.png")]).await,
+            Err(AttachmentError::NotAParticipant(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn an_upload_is_refused_unless_it_may_enter_the_channel() {
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
@@ -624,8 +803,7 @@ mod tests {
             ),
             "other than it was said to be"
         );
-        let kept = world.files.path().join("content").join("attachments");
-        assert!(!kept.exists() || walk(&kept).is_empty(), "nothing kept of any of them");
+        assert!(world.attachments_kept().is_empty(), "nothing kept of any of them");
         assert!(
             attachments
                 .create(&hers, &main, "a.txt", Some(Classification::PUBLIC), bytes(b"a"))
@@ -638,9 +816,6 @@ mod tests {
     #[tokio::test]
     async fn what_a_model_is_given_along_is_loaded_checked_and_held() {
         use caelumora_model::context::ModelProfile;
-        use caelumora_model::message::Message;
-        use caelumora_model::tool::{ToolCall, ToolCallResult};
-        use serde_json::Value;
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
         let main = main_of(&session);
@@ -649,7 +824,12 @@ mod tests {
         let image = attachments.create(&hers, &main, "chart.png", None, bytes(PNG)).await.unwrap();
         let text =
             attachments.create(&hers, &main, "notes.txt", None, bytes(b"notes")).await.unwrap();
+        let drawn = attachments
+            .create_media(&hers, &main, main.classification.clone(), vec![png("drawn.png")])
+            .await
+            .unwrap();
         let showing = ToolCallResult {
+            media: drawn,
             shown: vec![image.clone()],
             ..ToolCallResult::of(
                 &ToolCall {
@@ -701,10 +881,12 @@ mod tests {
             "and what a tool showed (issue 282, step 5)"
         );
         assert_eq!(
-            given,
-            [image.classification.clone(), image.classification.clone()],
-            "what was given, by its classification"
+            seeing[1].tool_results[0].media[0].content.as_deref(),
+            Some(PNG),
+            "and what a tool gave (issue 512)"
         );
+        assert_eq!(given.len(), 3, "what was given, by its classification: {given:?}");
+        assert!(given.iter().all(|given| *given == image.classification));
 
         let file = world.files.path().join("content").join(&image.key);
         fs::write(&file, b"another image").unwrap();
@@ -725,21 +907,6 @@ mod tests {
             matches!(changed, Err(AttachmentError::Altered(id)) if id == image.id),
             "read again once let go of, and refused as not what the message says: {changed:?}"
         );
-    }
-
-    /// The files below `dir`.
-    fn walk(dir: &Path) -> Vec<PathBuf> {
-        fs::read_dir(dir)
-            .unwrap()
-            .flat_map(|entry| {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    walk(&path)
-                } else {
-                    vec![path]
-                }
-            })
-            .collect()
     }
 
     #[tokio::test(start_paused = true)]

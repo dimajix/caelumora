@@ -16,6 +16,7 @@ use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
+use caelumora_model::content::ContentRef;
 use caelumora_model::context::ModelProfile;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::message::{Message, MessageId};
@@ -28,6 +29,7 @@ use caelumora_model::security::{
 use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
+use caelumora_model::tool::ToolMedia;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::workspace::Workspace;
 use std::sync::Arc;
@@ -107,6 +109,22 @@ impl ActorRuntime {
         profile: &ModelProfile,
     ) -> AttachmentResult<Vec<Classification>> {
         self.attachment_manager().load(messages, profile).await
+    }
+
+    /// Keeps `media`, what a tool gave its model for the result of a call `context` makes in the
+    /// actor's channel, classified `classification` as the
+    /// result (`AttachmentManager::create_media`, with the channel as it stands, issue 512).
+    ///
+    /// # Errors
+    /// As `AttachmentManager::create_media`.
+    pub async fn create_media(
+        &self,
+        context: &SecurityContext,
+        classification: Classification,
+        media: Vec<ToolMedia>,
+    ) -> AttachmentResult<Vec<ContentRef>> {
+        let channel = self.channel();
+        self.attachment_manager().create_media(context, &channel, classification, media).await
     }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {

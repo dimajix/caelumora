@@ -254,9 +254,9 @@ struct OllamaChatResponse {
 
 /// What of `given` the model is given along (issue 282), as Ollama takes images: base64; `None`
 /// for none.
-fn images_of(given: &[ContentRef]) -> Option<Vec<String>> {
+fn images_of<'a>(given: impl IntoIterator<Item = &'a ContentRef>) -> Option<Vec<String>> {
     let images: Vec<String> = given
-        .iter()
+        .into_iter()
         .filter_map(|content| content.content.as_deref())
         .map(|content| BASE64.encode(content))
         .collect();
@@ -313,7 +313,7 @@ impl OllamaChatMessage {
                 tool_name: Some(r.tool_name.clone()),
                 tool_calls: None,
                 tool_call_id: r.id.clone(),
-                images: images_of(&r.shown),
+                images: images_of(r.media.iter().chain(&r.shown)),
             })
         }
 
@@ -1505,6 +1505,7 @@ mod tests {
         let attachment = make_content_ref("a.png", b"png");
         let given = ContentRef { content: Some(Bytes::from_static(b"png")), ..attachment.clone() };
         let given_too = given.clone();
+        let drawn = ContentRef { content: Some(Bytes::from_static(b"gif")), ..attachment.clone() };
         let context = vec![
             Message {
                 role: MessageRole::User,
@@ -1521,6 +1522,7 @@ mod tests {
             Message {
                 role: MessageRole::Tool,
                 tool_results: vec![ToolCallResult {
+                    media: vec![drawn],
                     shown: vec![given_too],
                     ..ToolCallResult::of(
                         &ToolCall {
@@ -1544,8 +1546,8 @@ mod tests {
         assert!(sent[0]["messages"][1].get("images").is_none(), "nothing of what is only noted");
         assert_eq!(
             sent[0]["messages"][2]["images"],
-            json!(["cG5n"]),
-            "what a tool showed, with its result (issue 282, step 5)"
+            json!(["Z2lm", "cG5n"]),
+            "what a tool gave and showed, with its result (issues 512, 282)"
         );
     }
 

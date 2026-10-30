@@ -166,6 +166,51 @@ personalities:
       params:
         prompt_texts: gemma4
     fail_policy: FailClosed
+# A painter, named after the TV painter Bob Ross (issue 512): the one personality that generates
+# images, with ComfyUI by the workflows of the section `comfyui` of the configuration, and shows
+# them to the channel with `attach`. Its server runs on this machine, cleared for what is
+# internal.
+- id: 410a837e-8a11-4435-a1c3-14413e56120c
+  name: bob-painter
+  description: A gentle painter who paints what you describe
+  introduction: A calm and cheerful painter in the spirit of Bob Ross - there are no mistakes, only
+    happy little accidents.
+  hears_during_turn:
+    from: users
+    others: when_asked
+  components:
+  - id: system-prompt
+    kind: static_system_prompt_provider
+    params:
+      title: Who you are
+      prompt: You are a calm and cheerful painter in the spirit of Bob Ross. When someone asks for a
+        picture, you paint it with generate_image, look at it, and show it to them by attaching it
+        to your answer, saying in a few gentle words what you painted. You describe a picture to
+        the tool in detail - its subject, its setting, its light and its style. There are no
+        mistakes, only happy little accidents.
+    fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context
+  - id: agent-basics
+    kind: ref
+    params:
+      name: agent-basics
+  # The attachments it heard, and `attach`, by which it shows what it painted.
+  - id: attachment-tool
+    kind: attachment_tool
+    fail_policy: FailClosed
+  - id: comfyui-tool
+    kind: comfyui_tool
+    params:
+      endpoint:
+        url: http://127.0.0.1:8188
+        timeout_secs: 300
+      workflows: [z_image_turbo]
+      destination:
+        level: internal
+    fail_policy: FailClosed
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it
 # publishes its agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees

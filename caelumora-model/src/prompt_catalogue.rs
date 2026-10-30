@@ -26,6 +26,7 @@ pub use minijinja::context;
 
 use crate::config::parse_yaml;
 use crate::intern::intern;
+use crate::value::identifier::Identifier;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior};
 use serde::de::Error as _;
 use serde::de::{MapAccess, Visitor};
@@ -53,8 +54,8 @@ pub const CORE_PROMPTS: &str = include_str!("prompts.yaml");
 pub const DEFAULT_VARIANT: &str = "default";
 
 /// The name of a variant of the texts (issue 57), as a model's component
-/// names the one its model is given (`ModelProfile::prompt_texts`): lower
-/// case letters, digits, `_` and `-`. Kept once per name for the rest of
+/// names the one its model is given (`ModelProfile::prompt_texts`): an
+/// `Identifier`. Kept once per name for the rest of
 /// the process, so that a profile that names one stays `Copy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PromptVariant(&'static str);
@@ -65,13 +66,7 @@ impl PromptVariant {
     /// # Errors
     /// `PromptError::VariantNamed` for a name that is none.
     pub fn new(name: &str) -> Result<Self, PromptError> {
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
-        {
-            return Err(PromptError::VariantNamed(name.to_string()));
-        }
+        Identifier::new(name).map_err(|_| PromptError::VariantNamed(name.to_string()))?;
         Ok(Self(intern(name)))
     }
 

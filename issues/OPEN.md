@@ -38,7 +38,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [512](512-comfyui-image-tool.md) | open | high | feature | No tool can generate an image, and no tool can hand its model media at all: `ToolOutput` has no media and the channel refuses a tool result that carries some. |
 | [226](226-concurrent-tool-calls.md) | open | medium | feature | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
 
 ## User interaction

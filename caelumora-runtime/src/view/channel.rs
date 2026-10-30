@@ -407,8 +407,9 @@ impl ChannelView {
     }
 
     /// The attachment `id` of message `message` as it stands - one it carries, or one its tool
-    /// results showed (`Message::carried`) -, if the viewer sees the message and may read what it
-    /// carries (issue 282). What a result the viewer is not shown showed is not carried for them.
+    /// results gave or showed their model (`Message::carried`, issues 282, 512) -, if the viewer
+    /// sees the message and may read what it carries. What a result the viewer is not shown gave or
+    /// showed is not carried for them.
     ///
     /// # Errors
     /// As `message`; `Attachment` with `NotFound` if it carries no such attachment or one the

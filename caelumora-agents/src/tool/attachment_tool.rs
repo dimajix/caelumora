@@ -251,9 +251,8 @@ impl ToolProvider for AttachmentTool {
                     json!({ "ref": reference, "name": attachment.name.as_str(), "shown": true });
                 let classification = attachment.classification.clone();
                 Ok(ToolOutput {
-                    value,
-                    classification: Some(classification),
                     shown: vec![attachment],
+                    ..ToolOutput::classified(value, classification)
                 })
             }
             READ_ATTACHMENT => {

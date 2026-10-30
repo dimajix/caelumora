@@ -53,9 +53,9 @@ impl AttachmentIndex {
         self.numbered.get(number - 1).copied()
     }
 
-    /// Numbers the attachments of `message`, the transcript's copy, and what its tool results
-    /// showed: each the number it was given before - one a modification keeps, one shown again -,
-    /// else the next, with `message` as what carries it.
+    /// Numbers the attachments of `message`, the transcript's copy, and what its tool results gave
+    /// and showed their model (`Message::carried`): each the number it was given before - one a
+    /// modification keeps, one shown again -, else the next, with `message` as what carries it.
     pub(crate) fn number(&mut self, message: &mut Message) {
         let carrier = message.id;
         for attachment in message.carried_mut() {
@@ -142,5 +142,31 @@ mod tests {
                 "never given again, stored or replayed - twice"
             );
         }
+    }
+
+    /// Issue 512: what a tool gave its model is numbered as an attachment, with the message of its
+    /// result as what carries it, so that the agent can name it (`attach`).
+    #[test]
+    fn what_a_tool_gave_is_numbered_with_the_message_of_its_result() {
+        use crate::tool::{ToolCall, ToolCallResult};
+        let drawn = make_content_ref("drawn.png", b"d");
+        let call = ToolCall {
+            id: None,
+            function_name: "draw".to_string(),
+            arguments: serde_json::Value::Null,
+            visibility: Default::default(),
+            presentation: Default::default(),
+        };
+        let mut result = Message {
+            tool_results: vec![ToolCallResult {
+                media: vec![drawn.clone()],
+                ..ToolCallResult::of(&call, Default::default(), String::new(), Default::default())
+            }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let mut index = AttachmentIndex::default();
+        index.number(&mut result);
+        assert_eq!(result.tool_results[0].media[0].reference().as_deref(), Some("a1"));
+        assert_eq!(index.named("a1"), Some((result.id, drawn.id)));
     }
 }

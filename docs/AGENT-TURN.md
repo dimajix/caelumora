@@ -526,22 +526,23 @@ the agent's transcript.
 
 *   **The number** (`a3`) is how the model names an attachment; each agent numbers the attachments
     as they enter its transcript, so that the same image may be `a3` to one agent and `a1` to
-    another. What a tool's result showed again is numbered as it was. The number lies on the
+    another. What a tool's result gave its model is numbered as an attachment and noted after the
+    result's text, what it showed again keeps the number it had. The number lies on the
     transcript's copy (`ContentRef::number`), covered by its digest, and the translation in the
     agent's state (`AgentChannelState::attachments`, an `AttachmentIndex`) - each number with the
     message that carries the attachment, through which a tool reads it as it stands -, since a
     number has to resolve beyond the window of the transcript the actor holds and beyond a
-    compaction. A number is never given again: an attachment a modification
-    keeps keeps its number (`AgentChannelState::modify`), and one the transcript does not take is
-    given none. Without a number - the decision policy reads the channel's history - the note has
-    no `ref`.
+    compaction. A number is never given again: an attachment a modification keeps keeps its number
+    (`AgentChannelState::modify`), and one the transcript does not take is given none. Without a
+    number - the decision policy reads the channel's history - the note has no `ref`.
 *   **Given along** is an image, to a model that sees (`ModelProfile::images`,
     `ModelProfile::gives_along`): in the message it is attached to, or with the result of the tool
-    that showed it (`view_attachment`, see [TOOLS.md](TOOLS.md#attachments)), with its content, for
-    every call. Before each call the turn has the content put on what is given along
-    (`Turn::full_context`, `context_until`, through `ActorRuntime::load_attachments`), from a cache
-    of the process (`attachments.cache_bytes`) or the storage, checked against its digest. One that
-    cannot be read fails the call: a model told of an image it is not given makes one up.
+    that gave or showed it (see [TOOLS.md](TOOLS.md#media-a-tool-gives-its-model),
+    [attachments](TOOLS.md#attachments)), with its content, for every call. Before each call the
+    turn has the content put on what is given along (`Turn::full_context`, `context_until`, through
+    `ActorRuntime::load_attachments`), from a cache of the process (`attachments.cache_bytes`) or
+    the storage, checked against its digest. One that cannot be read fails the call: a model told
+    of an image it is not given makes one up.
 *   **Its label** counts for the turn as the model is given the attachment along - the turn sees it
     then -, not as it is heard: the note tells what its message says.
 *   An image given along counts as 768 tokens in how full a context is estimated.
