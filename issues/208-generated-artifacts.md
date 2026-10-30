@@ -4,7 +4,7 @@
 **Type:** feature
 **Priority:** high
 **Area:** User interaction
-**Summary:** Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded.
+**Summary:** The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all.
 
 ## The problem
 
@@ -150,3 +150,12 @@ A2A is the first producer, not the shape of the design.
   agent, classified as the result, into `ToolCallResult::media`, and the channel admitting `media`
   (refused until then, `ChannelLoop::require_parts`) and claiming it as it claims an upload. The
   model is given `media` along as 282 gives `shown`.
+- **2026-10-30** - What remains, as the code stands: `call_tool_result_to_value`
+  (`caelumora-mcp/src/tool.rs`) still keeps only an MCP result's text and puts a result without
+  text as JSON into the context; `ToolOutput` has no `media` yet, so the `ToolExecutor` keeps
+  nothing through `AttachmentManager::create`, and `ChannelLoop::require_parts` still refuses a
+  result with `media`; `WirePart` (`caelumora-a2a/src/agent/wire.rs`) still reads only `text`, so
+  an A2A answer's file parts become no attachments; and whether files given by URL are fetched, and
+  within which bounds, is neither decided nor documented. These four are what this issue is done
+  with; the summary says so now. The panel of a channel's attachments is split off as issue
+  [509](509-channel-attachments-panel.md).

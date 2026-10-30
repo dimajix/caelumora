@@ -280,7 +280,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [202](202-send-while-generating.md) | done | While an agent generates an answer, the web UI does not let the user send a message, though nothing in the runtime needs that. |
 | [203](203-concurrent-answers-in-view.md) | done | The chat view keeps one answer under way per channel, so the streamed answers of agents answering at once run into each other or vanish. |
 | [207](207-agent-history-in-ui.md) | done | An agent's history - all that was offered to it and what it said - cannot be shown; neither the views, the REST API nor the web UI hand it out. |
-| [208](208-generated-artifacts.md) | open | Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded. |
+| [208](208-generated-artifacts.md) | open | The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all. |
 | [216](216-show-reasoning.md) | done | The web UI shows an agent's reasoning nowhere - neither in the chat, while it streams or afterwards, nor in the context panel - although the server hands it out. |
 | [218](218-paged-histories.md) | done | A channel's history and an agent's history are returned whole over REST, though both grow without a limit and only their end is shown first. |
 | [219](219-usage-hover.md) | done | The token usage is shown in two hovers built differently - a box too narrow for lines that wrap, and the browser's plain tooltip - and neither looks good. |
