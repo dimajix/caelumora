@@ -10,6 +10,7 @@ use crate::user::UserId;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::iter;
 
 /// Who an entity belongs to and who else may reach it - what a policy
 /// decides by (issues 11, 23).
@@ -189,6 +190,20 @@ pub trait Secured {
     /// only a document that could not be stored (`Stored::validate`).
     fn owner(&self) -> Option<UserId> {
         self.security_attributes().owner_id.as_user_id()
+    }
+}
+
+/// An entity whose `SecurityAttributes` can be lent to be changed - which the user's, fixed
+/// (`SYSTEM_OWNED`), cannot.
+pub trait SecuredMut: Secured {
+    /// Its security attributes, to change.
+    fn security_attributes_mut(&mut self) -> &mut SecurityAttributes;
+
+    /// Every access list it keeps, to be changed alike - its own, and those of its parts that keep
+    /// one (an artifact's versions) - as entries naming a group that is gone are dropped (issue
+    /// 347).
+    fn access_lists_mut(&mut self) -> impl Iterator<Item = &mut Vec<AclEntry>> {
+        iter::once(&mut self.security_attributes_mut().acl)
     }
 }
 

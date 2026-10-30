@@ -39,6 +39,7 @@ impl ChannelController {
                 (channel.session_id, channel.id),
                 channel,
                 Arc::clone(&stores.channels),
+                Arc::clone(&stores.groups),
                 event_publisher,
             ),
             groups: Arc::clone(&stores.groups),

@@ -1,7 +1,7 @@
 //! `ProjectController`: the one writer of a live project in this instance (issue 467).
 
-use super::document::{LiveDocument, Writing};
-use crate::group::{gone_groups, keep_participants, prune_groups, require_nameable};
+use super::document::LiveDocument;
+use crate::group::{keep_participants, require_nameable};
 use crate::project::{store_error, ProjectError, ProjectResult};
 use arc_swap::Guard;
 use caelumora_model::actor::ActorId;
@@ -13,7 +13,7 @@ use caelumora_model::security::{
     AccessPolicy, AclEntry, ActionType, Enforcement, Grant, SecurityContext, Subject,
 };
 use caelumora_model::store::{
-    EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored, Updatable,
+    EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_model::user::{User, UserId};
 use std::slice;
@@ -53,6 +53,7 @@ impl ProjectController {
                 project.id,
                 project,
                 Arc::clone(&stores.projects),
+                Arc::clone(&stores.groups),
                 event_publisher,
             ),
             users: Arc::clone(&stores.users),
@@ -130,7 +131,7 @@ impl ProjectController {
             .map(|member| Subject::Actor(ActorId::User(*member)))
             .collect();
         let event = ProjectUpdateEvent::MembersChanged(wanted);
-        let project = self.change(ctx, &mut writing, |project| Ok(project.apply(&event)?)).await?;
+        let project = writing.apply(ctx, &event).await.map_err(store_error(self.id()))?;
         if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_project(&project)).await {
             error!(project = %project.id, "The group of the project's members does not follow them: {e}");
         }
@@ -159,7 +160,10 @@ impl ProjectController {
         let mut writing = self.project.write().await;
         let project = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         require_nameable(self.groups.as_ref(), ctx, &project.security_attributes.acl, &acl).await?;
-        self.change_access(ctx, &mut writing, |list| *list = acl.clone()).await
+        writing
+            .change_access(ctx, &ProjectUpdateEvent::AccessChanged, |list| *list = acl.clone())
+            .await
+            .map_err(store_error(self.id()))
     }
 
     /// Lets `subject` reach the project as far as `grant` reaches, on behalf of `ctx`: an entry
@@ -183,11 +187,13 @@ impl ProjectController {
         }
         let entry = AclEntry { subject, grant };
         require_nameable(self.groups.as_ref(), ctx, acl, slice::from_ref(&entry)).await?;
-        self.change_access(ctx, &mut writing, |list| {
-            list.retain(|entry| entry.subject != subject);
-            list.push(entry);
-        })
-        .await
+        writing
+            .change_access(ctx, &ProjectUpdateEvent::AccessChanged, |list| {
+                list.retain(|entry| entry.subject != subject);
+                list.push(entry);
+            })
+            .await
+            .map_err(store_error(self.id()))
     }
 
     /// Takes away the entry of `subject` from the project's access list, on behalf of `ctx`, if
@@ -201,8 +207,12 @@ impl ProjectController {
         if !project.security_attributes.acl.iter().any(|entry| entry.subject == subject) {
             return Ok(());
         }
-        self.change_access(ctx, &mut writing, |list| list.retain(|entry| entry.subject != subject))
+        writing
+            .change_access(ctx, &ProjectUpdateEvent::AccessChanged, |list| {
+                list.retain(|entry| entry.subject != subject)
+            })
             .await
+            .map_err(store_error(self.id()))
     }
 
     /// Lifts a session's own project into `scope` - its owner's or the global one - under `name`,
@@ -224,7 +234,7 @@ impl ProjectController {
             return Err(ProjectError::InvalidScope);
         }
         let event = ProjectUpdateEvent::Lifted { name: name.to_string(), scope };
-        let project = self.change(ctx, &mut writing, |project| Ok(project.apply(&event)?)).await?;
+        let project = writing.apply(ctx, &event).await.map_err(store_error(self.id()))?;
         writing.announce_update(&event, &project);
         Ok(())
     }
@@ -263,49 +273,8 @@ impl ProjectController {
     async fn update(&self, ctx: &SecurityContext, event: ProjectUpdateEvent) -> ProjectResult<()> {
         let mut writing = self.project.write().await;
         writing.reached(ctx).await.map_err(store_error(self.id()))?;
-        let project = self.change(ctx, &mut writing, |project| Ok(project.apply(&event)?)).await?;
+        let project = writing.apply(ctx, &event).await.map_err(store_error(self.id()))?;
         writing.announce_update(&event, &project);
         Ok(())
-    }
-
-    /// Changes the access list of the reached project under `writing` as `change` says, on
-    /// behalf of `ctx`, as `Self::change` changes it, and announces it without the list
-    /// (`ProjectUpdateEvent::AccessChanged`).
-    async fn change_access(
-        &self,
-        ctx: &SecurityContext,
-        writing: &mut Writing<'_, Project>,
-        mut change: impl FnMut(&mut Vec<AclEntry>),
-    ) -> ProjectResult<()> {
-        let project = self
-            .change(ctx, writing, |project| {
-                change(&mut project.security_attributes.acl);
-                Ok(())
-            })
-            .await?;
-        writing.announce_update(&ProjectUpdateEvent::AccessChanged, &project);
-        Ok(())
-    }
-
-    /// Changes the reached project under `writing` as `change` says, on behalf of `ctx`, and
-    /// takes it over live (`Writing::change`) - its access list without the entries naming a
-    /// group that is gone (issue 347), told apart from the list as the change begins.
-    async fn change(
-        &self,
-        ctx: &SecurityContext,
-        writing: &mut Writing<'_, Project>,
-        mut change: impl FnMut(&mut Project) -> StoreResult<()>,
-    ) -> ProjectResult<Arc<Project>> {
-        let begun = writing.current();
-        let gone = gone_groups(self.groups.as_ref(), [&begun.security_attributes.acl]).await;
-        writing
-            .change(ctx, |project| {
-                change(project)?;
-                prune_groups([&mut project.security_attributes.acl], &gone);
-                Ok(())
-            })
-            .await
-            .map(|((), project)| project)
-            .map_err(store_error(self.id()))
     }
 }

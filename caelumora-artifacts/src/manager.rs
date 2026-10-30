@@ -25,8 +25,8 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{
-    AccessPolicy, AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, Subject,
-    WRITE,
+    AccessPolicy, AclEntry, ActionType, Enforcement, SecuredMut, SecurityAttributes,
+    SecurityContext, Subject, WRITE,
 };
 use caelumora_model::store::{
     Address, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,

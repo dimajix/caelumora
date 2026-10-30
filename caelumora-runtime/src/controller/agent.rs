@@ -31,7 +31,13 @@ impl AgentController {
         stores: &EntityStores,
     ) -> Self {
         Self {
-            agent: LiveDocument::new(agent.id, agent, Arc::clone(&stores.agents), event_publisher),
+            agent: LiveDocument::new(
+                agent.id,
+                agent,
+                Arc::clone(&stores.agents),
+                Arc::clone(&stores.groups),
+                event_publisher,
+            ),
             owner,
         }
     }

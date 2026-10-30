@@ -116,20 +116,9 @@ pub async fn prune_gone_groups<'a>(
     store: &dyn EntityStore<Group>,
     lists: impl IntoIterator<Item = &'a mut Vec<AclEntry>>,
 ) {
-    let lists: Vec<&mut Vec<AclEntry>> = lists.into_iter().collect();
-    let gone = gone_groups(store, lists.iter().map(|list| &**list)).await;
-    prune_groups(lists, &gone);
-}
-
-/// The groups named by `lists` that are gone for certain (`is_gone`): what `prune_groups` drops
-/// from a list, told apart before a change that is written again when it was refused as outdated
-/// (issue 492).
-pub(crate) async fn gone_groups<'a>(
-    store: &dyn EntityStore<Group>,
-    lists: impl IntoIterator<Item = &'a Vec<AclEntry>>,
-) -> Vec<GroupId> {
+    let mut lists: Vec<&mut Vec<AclEntry>> = lists.into_iter().collect();
     let mut named = Vec::new();
-    for entry in lists.into_iter().flat_map(|list| list.iter()) {
+    for entry in lists.iter().flat_map(|list| list.iter()) {
         match entry.subject {
             Subject::Group(group) if !named.contains(&group) => named.push(group),
             _ => {}
@@ -141,18 +130,10 @@ pub(crate) async fn gone_groups<'a>(
             gone.push(group);
         }
     }
-    gone
-}
-
-/// Drops from `lists` every entry naming one of `gone`, the groups `gone_groups` told apart.
-pub(crate) fn prune_groups<'a>(
-    lists: impl IntoIterator<Item = &'a mut Vec<AclEntry>>,
-    gone: &[GroupId],
-) {
     if gone.is_empty() {
         return;
     }
-    for list in lists {
+    for list in &mut lists {
         list.retain(
             |entry| !matches!(entry.subject, Subject::Group(group) if gone.contains(&group)),
         );

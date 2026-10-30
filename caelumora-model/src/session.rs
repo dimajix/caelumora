@@ -9,7 +9,7 @@ use crate::group::GroupId;
 use crate::privacy::PrivacyConfig;
 use crate::project::{Project, ProjectId};
 use crate::removal::Removal;
-use crate::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
+use crate::security::{AclEntry, Grant, Secured, SecuredMut, SecurityAttributes, Subject};
 use crate::store::query::{Field, Filter};
 use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
 use crate::user::UserId;
@@ -281,6 +281,12 @@ impl Filter<SessionField> {
 impl Secured for Session {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
+    }
+}
+
+impl SecuredMut for Session {
+    fn security_attributes_mut(&mut self) -> &mut SecurityAttributes {
+        &mut self.security_attributes
     }
 }
 

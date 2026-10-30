@@ -14,7 +14,7 @@ use crate::actor::ActorId;
 use crate::group::GroupId;
 use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
-use crate::security::{Grant, Secured, SecurityAttributes, Subject};
+use crate::security::{Grant, Secured, SecuredMut, SecurityAttributes, Subject};
 use crate::session::SessionId;
 use crate::store::query::{FieldValue, Filter};
 use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
@@ -246,6 +246,12 @@ impl Updatable for Project {
 impl Secured for Project {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
+    }
+}
+
+impl SecuredMut for Project {
+    fn security_attributes_mut(&mut self) -> &mut SecurityAttributes {
+        &mut self.security_attributes
     }
 }
 

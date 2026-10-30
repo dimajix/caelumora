@@ -10,7 +10,7 @@ use crate::confidentiality::Classification;
 use crate::group::GroupId;
 use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
-use crate::security::{Grant, Secured, SecurityAttributes, Subject};
+use crate::security::{Grant, Secured, SecuredMut, SecurityAttributes, Subject};
 use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
 use crate::user::UserId;
 use crate::value::name::ScopedName;
@@ -197,6 +197,12 @@ impl Updatable for Workspace {
 impl Secured for Workspace {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
+    }
+}
+
+impl SecuredMut for Workspace {
+    fn security_attributes_mut(&mut self) -> &mut SecurityAttributes {
+        &mut self.security_attributes
     }
 }
 

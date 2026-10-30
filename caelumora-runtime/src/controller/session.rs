@@ -36,6 +36,7 @@ impl SessionController {
                 session.id,
                 session,
                 Arc::clone(&stores.sessions),
+                Arc::clone(&stores.groups),
                 event_publisher,
             ),
             groups: Arc::clone(&stores.groups),

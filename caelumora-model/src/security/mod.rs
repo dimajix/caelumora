@@ -33,7 +33,7 @@ pub use access::{AccessPolicy, AccessQuestions, AllowAllPolicy, Enforcement};
 pub use action::{ActionType, CustomVerb, Reclassified, Refused, Requirement, Verb, JOIN, WRITE};
 pub use admission::Admission;
 pub use attributes::{
-    AclEntry, Grant, Memberships, NoMemberships, Secured, SecurityAttributes, Subject,
+    AclEntry, Grant, Memberships, NoMemberships, Secured, SecuredMut, SecurityAttributes, Subject,
 };
 pub use context::SecurityContext;
 pub use ownership::OwnershipPolicy;
