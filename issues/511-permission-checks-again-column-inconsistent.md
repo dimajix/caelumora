@@ -37,6 +37,8 @@ is asked once.
 
 - The introduction of `docs/PERMISSION-CHECKS.md` says which repetitions the column records, and
   every row follows it.
+- The column *Refusal* names `NotFound` only where an operation refuses with it, not where it
+  answers `false`.
 
 ## History
 
