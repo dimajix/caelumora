@@ -155,6 +155,29 @@ fn read_as<T: Stored>(body: Value) -> StoreResult<T> {
         .map_err(|e| StoreError::Backend(format!("a stored {} cannot be read: {e}", T::KIND)))
 }
 
+/// Writes `value` by `write` as the revision after the one it carries (issues 492, 500) - a new
+/// one, never stored, as the one after the first -, handing `write` its document and the revision
+/// it carried. `value` then carries the revision it was written as, or the one it had if it was
+/// not written.
+///
+/// # Errors
+/// `StoreError::Backend` if `value` cannot be serialized, or whatever `write` reports.
+async fn written_as_next<T: Stored>(
+    value: &mut T,
+    write: impl AsyncFnOnce(Document, Revision) -> StoreResult<()>,
+) -> StoreResult<()> {
+    let read = value.revision();
+    value.set_revision(read.next());
+    let written = match Document::of(value) {
+        Ok(document) => write(document, read).await,
+        Err(e) => Err(e),
+    };
+    if written.is_err() {
+        value.set_revision(read);
+    }
+    written
+}
+
 /// The entities of one kind over the storage of a backend (issue 446):
 /// every operation of the `EntityStore`, checked as every kind is
 /// (`store::access`) - for every backend alike, so that no backend asks a
@@ -213,7 +236,7 @@ impl<T: Stored> CheckedStore<T> {
 
     async fn create(&self, ctx: &SecurityContext, value: &mut T) -> StoreResult<()> {
         self.access(ctx).create(value).await?;
-        self.storage.insert(Document::of(value)?).await
+        written_as_next(value, async |document, _| self.storage.insert(document).await).await
     }
 
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
@@ -236,13 +259,8 @@ impl<T: Stored> CheckedStore<T> {
     /// `StoreError::Outdated` if it was changed meanwhile, or whatever else
     /// the storage reports.
     async fn write(&self, value: &mut T) -> StoreResult<()> {
-        let read = value.revision();
-        value.set_revision(read.next());
-        let written = self.storage.replace(Document::of(value)?, read).await;
-        if written.is_err() {
-            value.set_revision(read);
-        }
-        written
+        written_as_next(value, async |document, read| self.storage.replace(document, read).await)
+            .await
     }
 
     /// The page `query` asks for, among the entities of `presence`: read

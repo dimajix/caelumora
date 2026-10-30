@@ -1867,19 +1867,39 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     );
 }
 
-/// Every write is judged on the revision it was read at (issue 492), in every storage: a write
-/// made on an outdated one is refused and leaves what was written since; what deletes, restores
-/// and purges reads what it writes and goes through, each a write that counts the revision up.
+/// Every write is judged on the revision it was read at (issue 492), in every storage, and writes
+/// the one after it: a copy never stored carries the first, and what is created is written as the
+/// one after it, so that such a copy is not written in place of one created meanwhile (issue 500);
+/// a write made on an outdated one is refused and leaves what was written since; what deletes,
+/// restores and purges reads what it writes and goes through, each a write that counts the
+/// revision up.
 pub async fn writes_are_judged_on_their_revision(stores: &EntityStores) {
     let system = SecurityContext::system();
     let mut first = session();
+    let never_stored = first.clone();
     assert_eq!(first.revision(), Revision::default(), "a new one carries the first revision");
     stores.sessions.create(&system, &mut first).await.expect("create");
+    let created = Revision::default().next();
+    assert_eq!(first.revision(), created, "created as the one after the first");
+    let stored = stores.sessions.get(&system, first.id).await.expect("get");
+    assert_eq!(stored.revision(), created, "as it is stored");
+
+    let mut taken = never_stored.clone();
+    let conflict = stores.sessions.create(&system, &mut taken).await;
+    assert!(matches!(conflict, Err(StoreError::Conflict(_))), "created once: {conflict:?}");
+    assert_eq!(taken.revision(), Revision::default(), "a creation refused leaves it as it was");
+    let mut copy = never_stored;
+    copy.name = Name::new("copy").unwrap();
+    let refused = stores.sessions.update(&system, &mut copy).await;
+    assert!(
+        matches!(refused, Err(StoreError::Outdated { entity: "session", .. })),
+        "a copy never stored is not written in place of one created meanwhile: {refused:?}"
+    );
     let mut second = first.clone();
 
     first.name = Name::new("first").unwrap();
     stores.sessions.update(&system, &mut first).await.expect("the first write");
-    assert_eq!(first.revision(), Revision::default().next(), "counted up by the write");
+    assert_eq!(first.revision(), created.next(), "counted up by the write");
     let stored = stores.sessions.get(&system, first.id).await.expect("get");
     assert_eq!(stored.revision(), first.revision(), "as it is stored");
 
@@ -1889,7 +1909,7 @@ pub async fn writes_are_judged_on_their_revision(stores: &EntityStores) {
         matches!(refused, Err(StoreError::Outdated { entity: "session", .. })),
         "a write on what was read before the first: {refused:?}"
     );
-    assert_eq!(second.revision(), Revision::default(), "left as it was");
+    assert_eq!(second.revision(), created, "left as it was");
     let stored = stores.sessions.get(&system, first.id).await.expect("get");
     assert_eq!(stored.name, first.name, "the first stands");
 

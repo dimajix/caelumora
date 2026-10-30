@@ -294,7 +294,7 @@ mod tests {
         let recorded = manager.get_user(alice.id).await.unwrap().expect("known");
         assert_eq!(recorded.username, "alicia");
         assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
-        assert_eq!(recorded.revision().number(), 1, "written once more");
+        assert_eq!(recorded.revision().number(), 2, "created, and written once more");
     }
 
     #[tokio::test]

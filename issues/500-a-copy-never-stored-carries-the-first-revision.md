@@ -1,6 +1,6 @@
 # 500 — A copy never stored carries the revision of one stored once
 
-**Status:** in progress
+**Status:** done
 **Type:** question
 **Priority:** low
 **Area:** Persistence
@@ -51,3 +51,12 @@ never stored - is written nowhere but in the one controller that keeps it.
   creates goes on with the value it gave the store - a manager announcing and returning it,
   `SessionManager::persist` its session, its own project and its channels (`establish` takes
   the project as it takes the session), the seeds a copy of each of their documents.
+- **2026-10-29** — Step 2 done: `CheckedStore::create` writes the entity as the revision after the
+  one it carries and leaves it in the value, as `update` does - both through one step that counts
+  the revision up and takes it back if the write fails, which also takes it back when the value
+  cannot be serialized. The store suite holds every backend to it: what is created is at the
+  revision after the first, a creation refused leaves the value as it was, and a copy never
+  stored is refused as outdated in place of one created meanwhile. The user's profile controller
+  holds an empty profile again while none is stored, changes the profile it holds, and creates it
+  where there is none, without telling the two apart itself. STORAGE.md states the rule.
+  Documents stored before at the first revision keep it until they are written again.

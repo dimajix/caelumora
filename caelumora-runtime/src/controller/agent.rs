@@ -138,13 +138,13 @@ mod tests {
     async fn an_agent_acts_with_its_owners_roles_as_they_are_now_and_its_limit() {
         use caelumora_model::event::GlobalEvent;
         use caelumora_model::role::RoleId;
-        use caelumora_model::user::{User, UserUpdateEvent};
+        use caelumora_model::user::{User, UserProfile, UserUpdateEvent};
         let (staff, hr) = (RoleId::new(), RoleId::new());
         let alice = User { roles: vec![staff], ..make_user("alice") };
         let store = Persistence::in_memory();
         let owner = Arc::new(UserController::new(
             alice.clone(),
-            None,
+            UserProfile::new(alice.id, None),
             Arc::new(()),
             &store.entity_stores().unwrap(),
             store.state_store(),

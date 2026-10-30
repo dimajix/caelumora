@@ -246,9 +246,14 @@ reads the document again as stored and applies the change to that alone; a manag
 entity again (`StoreResultExt::written` tells the refusal apart). A change is so written to no
 document it was applied to before. `delete`, `restore` and `purge` read what they write themselves,
 in the store, and do so again if it was changed meanwhile - what was restored while a purge was
-asked about is then not the caller's to purge, and stays. A new
-entity carries the first revision; none is needed in a document written by hand, as seeds are. The
-store suite holds every backend to it (`writes_are_judged_on_their_revision`).
+asked about is then not the caller's to purge, and stays. Every write writes the revision after
+the one read, `create` too: a new entity carries the first revision and is created as the one
+after it, which `create` leaves in it, as `update` does. No stored document is at the first
+revision, so that a copy never stored - one a writer made to create when there was none - is
+refused as outdated when it is written in place of one created meanwhile, instead of replacing
+it (issue [500](../issues/500-a-copy-never-stored-carries-the-first-revision.md)). A document
+written by hand, as seeds are, needs no revision. The store suite holds every backend to it
+(`writes_are_judged_on_their_revision`).
 
 **Values with rules.** A text whose content has rules - a `Name`, a `Language`, the free texts
 people write for others (`Text<R>`) - has a type made only through its constructor and checked again
