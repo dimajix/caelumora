@@ -307,7 +307,9 @@ impl SkillManager {
     /// `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
         let purged = self.skills.purge(ctx, id).await?;
-        info!(skill = %id, by = %ctx.caller_id, "Skill purged");
+        if purged {
+            info!(skill = %id, by = %ctx.caller_id, "Skill purged");
+        }
         Ok(purged)
     }
 }

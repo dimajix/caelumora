@@ -235,7 +235,9 @@ impl GroupManager {
             return Err(GroupError::NotATeam(id));
         }
         let purged = self.groups.purge(ctx, id).await?;
-        info!(group = %id, by = %ctx.caller_id, "Group purged");
+        if purged {
+            info!(group = %id, by = %ctx.caller_id, "Group purged");
+        }
         Ok(purged)
     }
 }
