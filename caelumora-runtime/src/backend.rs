@@ -13,7 +13,7 @@
 //! Unlike a component, a backend is made once for the process, from the
 //! configuration, before any container exists - which is why it is none.
 
-use crate::component::{config_of_params, service_of, ComponentError, ComponentResult};
+use crate::component::{config_of_params, service_of, ComponentError, ComponentResult, NoParams};
 use crate::plugin::Plugin;
 use crate::runtime::Services;
 use crate::{content, terminal};
@@ -29,7 +29,6 @@ use caelumora_model::user::User;
 use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
 use caelumora_model::user_provider::file::FileUserConfig;
 use caelumora_model::user_provider::UserProvider;
-use serde::Deserialize;
 use serde_json::Value;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
@@ -296,12 +295,6 @@ impl Backends {
     }
 }
 
-/// The parameters of a backend that takes none: an object without fields,
-/// so that a misspelt one is refused rather than ignored.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoParams {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +305,7 @@ mod tests {
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
+    use serde::Deserialize;
     use serde_json::json;
     use std::env;
     use std::fs;

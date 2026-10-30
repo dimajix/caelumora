@@ -98,6 +98,7 @@ pub struct SkillsComponent {
 
 /// What the component is configured with.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SkillsConfig {
     #[serde(default)]
     position: PromptPosition,
@@ -650,6 +651,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(SKILLS_KIND)
+                .params::<SkillsConfig>()
                 .provides::<dyn PromptProvider>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn AgentCommandProvider>()

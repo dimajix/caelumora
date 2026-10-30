@@ -338,12 +338,12 @@ impl ComponentContainer {
     /// secrets, connecting - and is refused before anything is built.
     ///
     /// # Errors
-    /// `ComponentError::DuplicateId` if two entries of `config` share an id,
-    /// or two of the components they stand for do - wrapped with the `ref`
-    /// that brings the second -; `ComponentError::InvalidConfig` if two
-    /// provide a facet of which there is one, or one provides no facet of
-    /// the closure, wrapped with its entry; whatever resolving a `ref` or
-    /// building a component reports, wrapped with its id and kind.
+    /// `ComponentError::DuplicateId` if two entries of `config` share an id, or two of the
+    /// components they stand for do - wrapped with the `ref` that brings the second -;
+    /// `ComponentError::InvalidConfig` if two provide a facet of which there is one, or - wrapped
+    /// with its entry - one provides no facet of the closure or has params its kind does not take,
+    /// refused before anything is built; whatever resolving a `ref` or building a component
+    /// reports, wrapped with its id and kind.
     pub async fn from_config(
         config: &ComponentConfig,
         asked: &[TypeKey],

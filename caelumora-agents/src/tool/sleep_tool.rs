@@ -34,7 +34,8 @@ pub const MAX_SECONDS: f64 = 60.0;
 
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
-struct SleepConfig {
+#[serde(deny_unknown_fields)]
+struct SleepToolConfig {
     #[serde(default = "default_seconds")]
     seconds: f64,
     #[serde(default)]
@@ -45,7 +46,7 @@ fn default_seconds() -> f64 {
     DEFAULT_SECONDS
 }
 
-impl SleepConfig {
+impl SleepToolConfig {
     /// The configuration `params` give.
     ///
     /// # Errors
@@ -160,10 +161,15 @@ impl ToolProvider for SleepToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(SLEEP_TOOL_KIND).provides::<dyn ToolProvider>()),
+        writing_for_the_model(
+            ComponentKind::new(SLEEP_TOOL_KIND)
+                .params::<SleepToolConfig>()
+                .provides::<dyn ToolProvider>(),
+        ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let SleepConfig { seconds, requires_approval } = SleepConfig::of(&descriptor.params)?;
+            let SleepToolConfig { seconds, requires_approval } =
+                SleepToolConfig::of(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(SleepToolProvider::new(
                 seconds,

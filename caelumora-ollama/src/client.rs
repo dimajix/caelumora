@@ -1022,6 +1022,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     let vision = Arc::new(ModelVision::default());
     registry.register_async(
         ComponentKind::new(OLLAMA_CLIENT_KIND)
+            .params::<OllamaClientConfig>()
             .provides::<dyn LLMClient>()
             .provides::<dyn ModelProfileProvider>()
             .uses::<PromptCatalogue>(),

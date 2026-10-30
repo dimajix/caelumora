@@ -24,7 +24,8 @@ pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provi
 
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
-struct StaticPromptConfig {
+#[serde(deny_unknown_fields)]
+struct StaticSystemPromptConfig {
     prompt: String,
     #[serde(default)]
     title: Option<String>,
@@ -68,7 +69,7 @@ impl StaticSystemPromptProvider {
     /// is not what it should be; `ComponentError::Prompt` if the form of a
     /// titled part cannot be had.
     fn of_params(params: &Value, prompts: &PromptTexts) -> Result<Self, ComponentError> {
-        let StaticPromptConfig { prompt, title, position, classification } =
+        let StaticSystemPromptConfig { prompt, title, position, classification } =
             config_of_params(params)?;
         let prompt = match title {
             // A part that says nothing is no part.
@@ -83,7 +84,9 @@ impl StaticSystemPromptProvider {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+            ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND)
+                .params::<StaticSystemPromptConfig>()
+                .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;

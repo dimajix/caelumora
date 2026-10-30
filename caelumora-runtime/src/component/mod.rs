@@ -34,6 +34,7 @@ use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::store::StoreError;
 use caelumora_model::type_map::TypeKey;
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +154,13 @@ pub fn config_of_params<T: DeserializeOwned>(params: &Value) -> ComponentResult<
     })
 }
 
+/// The parameters of what takes none - a component kind that declares none
+/// (`ComponentKind::params`), a backend: an object without fields, so that a misspelt one is
+/// refused rather than ignored.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NoParams {}
+
 /// Whether `T` is among the facets `declared` to be asked for.
 ///
 /// # Errors
@@ -169,7 +177,6 @@ fn require_declared<T: ?Sized + 'static>(declared: &[TypeKey]) -> ComponentResul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::Deserialize;
     use serde_json::json;
 
     #[test]

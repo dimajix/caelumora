@@ -197,7 +197,9 @@ component_defaults:
 | `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx`; left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
 | `vision` | Whether the model sees images, which it is then given along with their messages (see [AGENT-TURN.md](AGENT-TURN.md#attachments)); left out, it is asked of the server's `/api/show` as the agent is built - one that cannot say gives none, with a warning | left out |
 
-An unknown parameter is refused, and the agent does not start. Which values suit which model, as
+An unknown parameter is refused: in `component_defaults`, the runtime does not start; in a
+personality, a request that writes it is refused, and one stored before is not built - its agent
+does not start. Which values suit which model, as
 far as measured, is in [LLM-MODELS.md](LLM-MODELS.md).
 
 Before the first call to a model, the client reads the model's control tokens from the server and

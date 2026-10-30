@@ -194,6 +194,7 @@ impl ActivityProvider for CompactionComponent {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(COMPACTION_KIND)
+            .params::<CompactionConfig>()
             .provides::<dyn AgentCommandProvider>()
             .provides::<dyn ActivityProvider>()
             .needs::<dyn CompactionStrategy>()

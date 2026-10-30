@@ -48,10 +48,11 @@ use caelumora_runtime::command::help_command::HelpCommandProvider;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::ComponentKind;
-use caelumora_runtime::component::{ComponentFacets, ComponentRegistry};
+use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentRegistry};
 use caelumora_runtime::testing::TestRuntime;
 use futures::stream;
 use futures::stream::BoxStream;
+use serde::Deserialize;
 use serde_json::Value;
 use std::future;
 use std::sync::Arc;
@@ -502,12 +503,21 @@ async fn command_events(watch: &mut ChannelWatch) -> (Option<Envelope>, Vec<Acto
     .expect("the command is answered")
 }
 
+/// What `test_asking_tool` is configured with: whether its questions are sensitive.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AskingConfig {
+    #[serde(default)]
+    sensitive: bool,
+}
+
 fn register_asking_tool(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new("test_asking_tool").provides::<dyn ToolProvider>(),
+        ComponentKind::new("test_asking_tool")
+            .params::<AskingConfig>()
+            .provides::<dyn ToolProvider>(),
         |descriptor, _context| {
-            let sensitive =
-                descriptor.params.get("sensitive").and_then(Value::as_bool).unwrap_or(false);
+            let AskingConfig { sensitive } = config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(Asking { sensitive }));
             Ok(facets)

@@ -5,7 +5,7 @@
 //! singles (issue 445).
 
 use super::container::Planned;
-use super::{ComponentContext, ComponentError, ComponentResult};
+use super::{config_of_params, ComponentContext, ComponentError, ComponentResult, NoParams};
 use crate::{command, moderator};
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::scope::Scope;
@@ -14,8 +14,9 @@ use caelumora_model::store::EntityStore;
 use caelumora_model::type_map::{TypeKey, TypeMap};
 use caelumora_model::value::name::{Name, ScopedName};
 use futures::future::BoxFuture;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -27,24 +28,34 @@ use std::sync::Arc;
 /// The facets a component provides, by type.
 pub type ComponentFacets = TypeMap;
 
-/// A component kind as it is registered: its name, the facets it provides
-/// and those of others it needs, whatever its parameters - which is how
-/// components that provide a facet are found, and what a container accepts
-/// is known, before anything is built. The container checks that the
-/// factory kept to it.
+/// A component kind as it is registered: its name, the parameters it takes, the facets it provides
+/// and those of others it needs - which is how a component's params are checked, components that
+/// provide a facet are found, and what a container accepts is known, before anything is built. The
+/// container checks that the factory kept to it.
 #[derive(Debug, Clone)]
 pub struct ComponentKind {
     name: String,
+    params: ParamsCheck,
     provides: Vec<TypeKey>,
     uses: Vec<TypeKey>,
     needs: Vec<TypeKey>,
     operator_only: bool,
 }
 
+/// How the params of a component of a kind are checked: read as the configuration the kind
+/// declared (`ComponentKind::params`).
+type ParamsCheck = fn(&Value) -> ComponentResult<()>;
+
+/// Whether `params` are a `C`.
+fn check_params<C: DeserializeOwned>(params: &Value) -> ComponentResult<()> {
+    config_of_params::<C>(params).map(drop)
+}
+
 impl ComponentKind {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
+            params: check_params::<NoParams>,
             provides: Vec::new(),
             uses: Vec::new(),
             needs: Vec::new(),
@@ -60,6 +71,15 @@ impl ComponentKind {
     /// through a `ref` (`require_acceptable`).
     pub fn operator_only(mut self) -> Self {
         self.operator_only = true;
+        self
+    }
+
+    /// Declares that components of this kind take the parameters `C`, which their factory reads
+    /// with `config_of_params`: a struct `#[serde(deny_unknown_fields)]`, so that one it does not
+    /// know is refused. A kind that declares none takes none. The registry checks a component's
+    /// params as it plans its configuration, before anything is built.
+    pub fn params<C: DeserializeOwned>(mut self) -> Self {
+        self.params = check_params::<C>;
         self
     }
 
@@ -98,6 +118,7 @@ type ComponentFactory = Box<
 
 /// A registered kind.
 pub(super) struct Registration {
+    params: ParamsCheck,
     provides: Vec<TypeKey>,
     pub(super) uses: Vec<TypeKey>,
     pub(super) needs: Vec<TypeKey>,
@@ -107,8 +128,8 @@ pub(super) struct Registration {
 
 impl Registration {
     fn of(kind: ComponentKind, factory: ComponentFactory) -> (String, Self) {
-        let ComponentKind { name, provides, uses, needs, operator_only } = kind;
-        (name, Self { provides, uses, needs, operator_only, factory })
+        let ComponentKind { name, params, provides, uses, needs, operator_only } = kind;
+        (name, Self { params, provides, uses, needs, operator_only, factory })
     }
 }
 
@@ -276,10 +297,10 @@ impl ComponentRegistry {
     /// its profile alike, built once for both.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` naming the component if one is a
-    /// `ref` or builds on a default, has an id another of them has too, has
-    /// an unknown kind, provides no single, or provides one that another of
-    /// them provides too; nothing is taken then.
+    /// `ComponentError::InvalidConfig` naming the component if one is a `ref` or builds on a
+    /// default, has an id another of them has too, has an unknown kind or params its kind does not
+    /// take, provides no single, or provides one that another of them provides too; nothing is
+    /// taken then.
     pub fn set_defaults(&mut self, config: &ComponentConfig) -> ComponentResult<()> {
         self.defaults = self.defaults_of(config)?;
         Ok(())
@@ -320,6 +341,12 @@ impl ComponentRegistry {
             let registration = self.kinds.get(&node.kind).ok_or_else(|| {
                 ComponentError::InvalidConfig(format!(
                     "component default '{}' has the unknown kind '{}'",
+                    node.id, node.kind
+                ))
+            })?;
+            (registration.params)(&node.params).map_err(|cause| {
+                ComponentError::InvalidConfig(format!(
+                    "component default '{}' ({}): {cause}",
                     node.id, node.kind
                 ))
             })?;
@@ -414,13 +441,13 @@ impl ComponentRegistry {
     /// configures alone only through a `ref` (issue 403). Nothing is built.
     ///
     /// # Errors
-    /// As `ComponentContainer::from_config` before it builds anything:
-    /// `ComponentError::Bundle`, wrapped with the `ref`, for one `context`
-    /// may not read or whose store fails; `ComponentError::DuplicateId`,
-    /// `ComponentError::UnsupportedKind`, `ComponentError::InvalidConfig` for
-    /// two components of a single or one nobody asks for; and
-    /// `ComponentError::OperatorOnly`, wrapped with the component, for one
-    /// of a kind only an operator configures, written in `config` itself.
+    /// As `ComponentContainer::from_config` before it builds anything: `ComponentError::Bundle`,
+    /// wrapped with the `ref`, for one `context` may not read or whose store fails;
+    /// `ComponentError::DuplicateId`, `ComponentError::UnsupportedKind`,
+    /// `ComponentError::InvalidConfig` for two components of a single, one nobody asks for, or one
+    /// whose params its kind does not take - wrapped with it, and with the `ref` that brings it -;
+    /// and `ComponentError::OperatorOnly`, wrapped with the component, for one of a kind only an
+    /// operator configures, written in `config` itself.
     pub async fn require_acceptable(
         &self,
         config: &ComponentConfig,
@@ -445,12 +472,12 @@ impl ComponentRegistry {
     /// provide - checked, but not built.
     ///
     /// # Errors
-    /// `ComponentError::DuplicateId` if two entries of `config` share an id,
-    /// or two of the components they stand for do - wrapped with the `ref`
-    /// that brings the second -; `ComponentError::UnsupportedKind` for a kind
-    /// that is not registered, `ComponentError::InvalidConfig` if two provide
-    /// a facet of which there is one; whatever resolving an entry reports,
-    /// wrapped with it.
+    /// `ComponentError::DuplicateId` if two entries of `config` share an id, or two of the
+    /// components they stand for do - wrapped with the `ref` that brings the second -;
+    /// `ComponentError::UnsupportedKind` for a kind that is not registered,
+    /// `ComponentError::InvalidConfig` if two provide a facet of which there is one, or a
+    /// component's params are not those its kind takes (`ComponentKind::params`) - wrapped with it,
+    /// and with the `ref` that brings it -; whatever resolving an entry reports, wrapped with it.
     pub(super) async fn plan(
         &self,
         config: &ComponentConfig,
@@ -480,15 +507,20 @@ impl ComponentRegistry {
                         ComponentError::DuplicateId(descriptor.id),
                     ));
                 }
-                let provides = self
-                    .provides(&descriptor.kind)
-                    .ok_or_else(|| {
-                        ComponentError::of_component(
-                            node,
-                            ComponentError::UnsupportedKind(descriptor.kind.clone()),
-                        )
-                    })?
-                    .to_vec();
+                let registration = self.kinds.get(&descriptor.kind).ok_or_else(|| {
+                    ComponentError::of_component(
+                        node,
+                        ComponentError::UnsupportedKind(descriptor.kind.clone()),
+                    )
+                })?;
+                (registration.params)(&descriptor.params).map_err(|cause| {
+                    let failed = ComponentError::of_component(&descriptor, cause);
+                    match &brought_by {
+                        Some(reference) => ComponentError::of_component(reference, failed),
+                        None => failed,
+                    }
+                })?;
+                let provides = registration.provides.clone();
                 planned.push(Planned { descriptor, provides, brought_by: brought_by.clone() });
             }
         }
@@ -640,9 +672,8 @@ impl ComponentRegistry {
     /// tags and fail policy are its own.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` if its params are not of that form,
-    /// there is no default of that id, or the default's or its own params
-    /// are no object.
+    /// `ComponentError::InvalidConfig` if its params are not of that form, there is no default of
+    /// that id, or the params it gives over the default's are no object.
     fn on_default(
         &self,
         node: &ComponentDescriptor,
@@ -660,16 +691,8 @@ impl ComponentRegistry {
                     target.id
                 ))
             })?;
-        let mut params = match &base.params {
-            Value::Object(params) => params.clone(),
-            Value::Null => Map::new(),
-            _ => {
-                return Err(ComponentError::InvalidConfig(format!(
-                    "the params of component default '{}' are no object",
-                    base.id
-                )))
-            }
-        };
+        // A default's params are an object or left out, as `defaults_of` checked.
+        let mut params = base.params.as_object().cloned().unwrap_or_default();
         match target.params {
             Value::Object(own) => params.extend(own),
             Value::Null => {}
@@ -1087,6 +1110,48 @@ mod tests {
         assert!(error.to_string().contains("'inner'"), "names the ref within: {error}");
     }
 
+    /// Issue 515: a parameter a kind does not take is refused, naming the component and the
+    /// parameter, whether the kind takes parameters or not - before anything is built, and before a
+    /// configuration that names it is written; also one of a component a `ref` brings.
+    #[tokio::test]
+    async fn a_parameter_a_kind_does_not_take_is_refused_before_anything_is_built() {
+        let store = EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
+            .unwrap()
+            .component_bundles;
+        let shared = ComponentConfig {
+            component_nodes: vec![descriptor("within", "declared", json!({ "keep": 0.5 }))],
+        };
+        store.create(&SecurityContext::default(), &mut bundle("shared", shared)).await.unwrap();
+        let (choices, built) = choices();
+        let registry = Arc::new(ComponentRegistry { bundles: store, ..choices });
+        for (node, named) in [
+            (
+                descriptor("mine", "declared", json!({ "keep": 0.5 })),
+                ["'mine' (declared)", "invalid parameter", "'keep'"],
+            ),
+            (
+                descriptor("mine", "other", json!({ "modell": "big" })),
+                ["'mine' (other)", "invalid parameter", "'modell'"],
+            ),
+            (reference("ref", "shared"), ["'ref' (ref)", "'within' (declared)", "'keep'"]),
+        ] {
+            let config = ComponentConfig { component_nodes: vec![node] };
+            let built_from =
+                ComponentContainer::from_config(&config, ASKED, &registry, &test_context())
+                    .await
+                    .expect_err("not taken");
+            let written = registry
+                .require_acceptable(&config, ASKED, &SecurityContext::default())
+                .await
+                .expect_err("not written either");
+            for error in [built_from, written] {
+                let message = error.to_string();
+                assert!(named.iter().all(|name| message.contains(name)), "{message}");
+            }
+        }
+        assert_eq!(built.load(Ordering::SeqCst), 0, "nothing is built");
+    }
+
     /// A registry of `part`, providing `Named` and counting how often it is
     /// built; `stray`, providing `Other`; `picky`, providing `Named` and
     /// needing `Choice`; and the single `Choice`, whose default kind
@@ -1287,6 +1352,16 @@ mod tests {
             (config(&[("x", "other"), ("y", "declared")]), "'x' and 'y' both provide Choice"),
             (config(&[("x", COMPONENT_DEFAULT_KIND)]), "cannot build on a default"),
             (config(&[("x", "other"), ("x", "part")]), "two component defaults have the id 'x'"),
+            (
+                ComponentConfig {
+                    component_nodes: vec![descriptor("x", "other", json!({ "modell": "big" }))],
+                },
+                "invalid parameter 'modell'",
+            ),
+            (
+                ComponentConfig { component_nodes: vec![descriptor("x", "other", json!(["big"]))] },
+                "they must be an object",
+            ),
         ] {
             let message = registry.set_defaults(&nodes).expect_err(expected).to_string();
             assert!(message.contains(expected), "{message}");
@@ -1427,19 +1502,12 @@ mod tests {
     #[tokio::test]
     async fn a_component_built_on_a_default_that_cannot_be_had_is_refused_naming_it() {
         let (mut registry, _) = choices();
-        registry
-            .set_defaults(&ComponentConfig {
-                component_nodes: vec![descriptor("model", "other", json!(["listed"]))],
-            })
-            .unwrap();
+        registry.set_defaults(&config(&[("model", "other")])).unwrap();
         let registry = Arc::new(registry);
         for (params, expected) in [
             (json!({ "id": "missing" }), "there is no component default 'missing'"),
             (json!({ "id": "model", "parms": {} }), "unknown field `parms`"),
-            (
-                json!({ "id": "model", "params": { "model": "big" } }),
-                "the params of component default 'model' are no object",
-            ),
+            (json!({ "id": "model", "params": { "modell": "big" } }), "invalid parameter 'modell'"),
         ] {
             let config = ComponentConfig {
                 component_nodes: vec![descriptor("mine", COMPONENT_DEFAULT_KIND, params)],
@@ -1478,7 +1546,10 @@ mod tests {
     async fn a_request_cannot_change_the_params_of_a_default_only_an_operator_configures() {
         let (mut registry, _) = choices();
         registry.register(
-            ComponentKind::new("operated").provides::<dyn Choice>().operator_only(),
+            ComponentKind::new("operated")
+                .params::<ModelConfig>()
+                .provides::<dyn Choice>()
+                .operator_only(),
             |descriptor, _| {
                 let mut facets = ComponentFacets::empty();
                 facets.insert::<dyn Choice>(Arc::new(Name(descriptor.id.clone())));
@@ -1490,7 +1561,7 @@ mod tests {
             component_nodes: vec![on_default(
                 "mine",
                 "model",
-                json!({ "url": "http://elsewhere" }),
+                json!({ "endpoint": { "url": "http://elsewhere" } }),
             )],
         };
         let error = registry

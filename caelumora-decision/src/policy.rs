@@ -396,6 +396,7 @@ fn nouls(
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(DECISION_POLICY_KIND)
+            .params::<DecisionPolicyConfig>()
             .provides::<dyn ResponderPolicy>()
             .uses::<SecretManager>()
             .uses::<dyn ConfidentialityPolicy>()

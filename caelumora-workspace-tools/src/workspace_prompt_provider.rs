@@ -52,6 +52,7 @@ pub struct WorkspacePromptProvider {
 
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkspacePromptConfig {
     #[serde(default)]
     position: PromptPosition,
@@ -178,7 +179,9 @@ impl PromptProvider for WorkspacePromptProvider {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+            ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND)
+                .params::<WorkspacePromptConfig>()
+                .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;

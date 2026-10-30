@@ -14,9 +14,11 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
     they are handed out.
 *   **`ComponentDescriptor`** configures one component: its `id`, `kind`, `params`, `tags` and
     `fail_policy` - `FailOpen`, the default, skips a failing component, `FailClosed` fails the turn.
-    Params left out count as `{}`.
-*   **`ComponentRegistry`** holds a factory per kind, together with the facets that kind provides
-    and those of others it needs.
+    Params left out count as `{}`. They are an object, and a parameter is given a value or left out,
+    never `null`. A parameter its kind does not take is refused, naming the component and the
+    parameter, whether the kind takes parameters or not ([Parameters](#parameters)).
+*   **`ComponentRegistry`** holds a factory per kind, together with the parameters that kind takes,
+    the facets it provides and those of others it needs.
     The `RuntimeBuilder` makes the built-in registry of its own stores and applies
     `component_defaults`; a plugin registers its kinds in it (`RuntimeBuilder::components`), and a
     test its own before the plugins (`TestRuntime::components`). A test that builds components
@@ -267,6 +269,16 @@ personalities:                   # of the seed
     since what the operator decides are the params: a request that names it is refused as one that
     writes the kind (`ComponentError::OperatorOnly`).
 
+### Parameters
+
+A kind declares the parameters it takes as one struct (`ComponentKind::params`), which its factory
+reads with `config_of_params`; a kind that declares none takes none. The registry checks a
+component's params against its kind as it plans a configuration - of a component a `ref` brings
+too, and of one that builds on a default, with the default's params merged -, and the defaults of
+the singles as they are set: a parameter misspelt, set on the wrong component or moved to another
+kind is refused before anything is built, and a request that writes it is refused before the
+verb.
+
 ### Factories and tags
 
 *   **Factories may wait.** `register_async` takes a factory that returns a future - for a remote
@@ -343,6 +355,11 @@ They follow one convention:
     ([TOOLS.md](TOOLS.md)).
 *   **Construction:** the factory builds the struct literally; there is a `new` only where
     something is checked.
+*   **Configuration:** what a kind takes is a struct named after the kind, without `Provider`, with
+    `Config` (`CompactionConfig`, `WorkspacePromptConfig`), `#[serde(deny_unknown_fields)]`,
+    declared with `ComponentKind::params`; a check beyond its fields' types is a method of the
+    struct (`CompactionConfig::of`, which reads and checks). Prompt providers that take only their
+    position share `PositionConfig`, those that tell of their channel `ChannelPartConfig`.
 *   **Parameters:** the turn is always the parameter `turn`.
 
 What components share lives beside the facet: `tool::text_argument` and `id_argument` for tool

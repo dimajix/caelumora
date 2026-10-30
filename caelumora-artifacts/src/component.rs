@@ -221,6 +221,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(ARTIFACT_TOOL_KIND)
+                .params::<ArtifactToolConfig>()
                 .provides::<dyn ToolProvider>()
                 .uses::<ArtifactManager>(),
         ),

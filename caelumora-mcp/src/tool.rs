@@ -405,7 +405,10 @@ impl ToolProvider for McpToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(MCP_TOOL_KIND).provides::<dyn ToolProvider>().uses::<SecretManager>(),
+        ComponentKind::new(MCP_TOOL_KIND)
+            .params::<McpToolConfig>()
+            .provides::<dyn ToolProvider>()
+            .uses::<SecretManager>(),
         |descriptor, context| {
             let config: McpToolConfig = config_of_params(&descriptor.params)?;
             let secret_manager = Arc::clone(context.service::<SecretManager>()?);

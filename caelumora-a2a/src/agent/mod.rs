@@ -288,6 +288,7 @@ impl ModelProfileProvider for A2aAgentComponent {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(A2A_AGENT_KIND)
+            .params::<A2aAgentConfig>()
             .provides::<dyn ExternalAgent>()
             .provides::<dyn ModelProfileProvider>()
             .uses::<SecretManager>()

@@ -60,6 +60,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND)
+                .params::<PositionConfig>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {

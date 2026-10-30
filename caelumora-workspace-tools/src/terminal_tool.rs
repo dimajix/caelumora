@@ -266,6 +266,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(TERMINAL_TOOL_KIND)
+                .params::<TerminalToolConfig>()
                 .provides::<dyn ToolProvider>()
                 .uses::<WorkspaceManager>(),
         ),

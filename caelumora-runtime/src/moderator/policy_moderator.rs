@@ -85,6 +85,7 @@ enum OnUndecided {
 
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PolicyModeratorConfig {
     #[serde(default = "default_max_agent_hops")]
     max_agent_hops: u32,
@@ -511,6 +512,7 @@ impl ModeratorActors {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(POLICY_MODERATOR_KIND)
+            .params::<PolicyModeratorConfig>()
             .provides::<dyn Moderator>()
             .needs::<dyn ResponderPolicy>(),
         |descriptor, context| async move {
@@ -1215,6 +1217,21 @@ mod tests {
         )
         .await;
         assert!(invalid.is_err(), "a negative limit is refused");
+
+        let misspelt = ComponentContainer::from_config(
+            &ComponentConfig {
+                component_nodes: vec![ComponentDescriptor {
+                    params: serde_json::json!({ "max_agent_hop": 0 }),
+                    ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
+                }],
+            },
+            ChannelLoop::COMPONENT_FACETS,
+            &registry,
+            &context,
+        )
+        .await
+        .expect_err("not ignored (issue 515)");
+        assert!(misspelt.to_string().contains("invalid parameter 'max_agent_hop'"), "{misspelt}");
     }
 
     /// Issue 422: routing goes on without end only by asks, so the net

@@ -138,6 +138,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND)
+                .params::<ChannelPartConfig>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {

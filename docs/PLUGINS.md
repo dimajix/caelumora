@@ -101,8 +101,10 @@ too, and nothing else - there is no prelude that re-exports at large, so that it
 a plugin depends on:
 
 *   **To register it:** `ComponentRegistry::register` or `register_async`, `ComponentKind` with the
-    facets it `provides`, those of others it `needs` and the services it `uses`,
-    `ComponentFacets`, and `config_of_params` to read its `params`.
+    parameters it takes (`params`), the facets it `provides`, those of others it `needs` and the
+    services it `uses`, `ComponentFacets`, and `config_of_params` to read its `params`. A kind that
+    declares no parameters takes none: every one it is given is refused
+    ([COMPONENTS.md](COMPONENTS.md#parameters)).
 *   **While it is built:** the `ComponentContext` - `security_context`, in whose name it is built,
     `service::<T>()`, the services of the runtime it declared, and `all` and `one`, the facets of
     others it declared it needs. What a container accepts follows from these declarations

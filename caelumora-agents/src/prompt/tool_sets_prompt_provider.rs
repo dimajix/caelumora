@@ -67,7 +67,9 @@ fn one_line(text: &str) -> String {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+            ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND)
+                .params::<PositionConfig>()
+                .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;

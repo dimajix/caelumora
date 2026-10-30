@@ -92,3 +92,8 @@ personality, bundle or session that does no longer builds.
   order of the fields, past `deny_unknown_fields`. It refuses a parameter that is `null` as well,
   whether its field may be left out (`Option`) or not, so that `null` is no way of leaving one out
   for some kinds and a mistake for others.
+- **2026-10-30** — Step 2: a kind declares the struct of its parameters
+  (`ComponentKind::params`), and one that declares none takes none (`NoParams`, moved beside
+  `config_of_params`). `ComponentRegistry::plan` checks every component's params against its kind,
+  `defaults_of` those of the defaults; every struct of parameters is `deny_unknown_fields`. Since a
+  default's params are an object or left out once checked, `on_default` no longer looks for others.

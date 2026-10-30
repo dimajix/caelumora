@@ -9,6 +9,7 @@ use caelumora_model::security::{AccessPolicy, AllowAllPolicy, Policies, Security
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStores, Persistence};
 use caelumora_model::type_map::TypeKey;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -83,8 +84,22 @@ pub fn causes(error: &ComponentError) -> Vec<&ComponentError> {
 
 pub const NAMED: &[TypeKey] = &[TypeKey::of::<dyn Named>()];
 
-/// A registry with the single `Choice`, the kinds `declared` and `other`
-/// that provide it, and how often `declared` was built.
+/// What `other` is configured with, as a model is: for what builds on a default with params of its
+/// own.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "read only to be checked")]
+pub struct ModelConfig {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    endpoint: Option<Value>,
+    #[serde(default)]
+    prompt_texts: Option<String>,
+}
+
+/// A registry with the single `Choice`, the kinds `declared` and `other` that provide it - `other`
+/// configured with `ModelConfig` -, and how often `declared` was built.
 pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
     let mut registry = ComponentRegistry::new(
         EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
@@ -105,10 +120,10 @@ pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
             Ok(choice(&descriptor.id))
         },
     );
-    registry
-        .register(ComponentKind::new("other").provides::<dyn Choice>(), move |descriptor, _| {
-            Ok(choice(&descriptor.id))
-        });
+    registry.register(
+        ComponentKind::new("other").params::<ModelConfig>().provides::<dyn Choice>(),
+        move |descriptor, _| Ok(choice(&descriptor.id)),
+    );
     registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| {
         Ok(named(&descriptor.id))
     });

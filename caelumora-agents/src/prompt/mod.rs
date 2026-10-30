@@ -61,6 +61,7 @@ pub enum PromptPosition {
 /// What a prompt provider that takes its position alone is configured
 /// with: where its part goes, its kind's default if left out.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PositionConfig {
     #[serde(default)]
     position: Option<PromptPosition>,
@@ -85,6 +86,7 @@ impl PositionConfig {
 /// where its part goes, and whether it tells only what changed - for an
 /// external agent, which keeps what it was told.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ChannelPartConfig {
     #[serde(default)]
     pub(crate) position: PromptPosition,
