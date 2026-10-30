@@ -276,9 +276,9 @@ pub fn prompts() -> PromptTexts {
     PromptTexts::new(catalogue(), None)
 }
 
-/// The component kinds the tests of the agents build with, resolving the
-/// bundles a `ref` names in `store`: the runtime's
-/// (`testing::test_registry`) and an agent's (`with_agent_kinds`).
+/// The component kinds a test of the agents builds components with that has no runtime, resolving
+/// the bundles a `ref` names in `store`: the runtime's (`testing::test_registry`) and an agent's
+/// (`with_agent_kinds`).
 pub fn test_registry(store: &Persistence) -> ComponentRegistry {
     let mut registry = runtime_registry(store);
     with_agent_kinds(&mut registry);

@@ -21,12 +21,11 @@ two steps:
 1.  Each plugin registers its backends (`backends`, see
     [ARCHITECTURE.md](ARCHITECTURE.md#backends)) with the core's (`Backends::with_plugins`), before
     anything is made: what the core's services are made of has to be known first.
-2.  The policies, the stores, the secrets and the core's component kinds are made, then the
-    core's services and managers (`RuntimeBuilder::new`), with the backends the configuration
-    names; then each plugin registers the rest of what it brings (`register`) - the agents' plugin
-    the kinds of an agent's components and the kinds of agent (issue 370) -, and `build` makes
-    the runtime. The program names the default kinds of singles after its plugins registered
-    (`set_default_kind`).
+2.  The policies, the stores and the secrets are made, then the core's services, managers and
+    component kinds (`RuntimeBuilder::new`), with the backends the configuration names; then each
+    plugin registers the rest of what it brings (`register`) - the agents' plugin the kinds of an
+    agent's components and the kinds of agent (issue 370) -, and `build` makes the runtime. The
+    program names the default kinds of singles after its plugins registered (`set_default_kind`).
 
 A test builds the runtime with `testing::TestRuntime`, naming the plugins it needs (issue 375). A
 test of the agents' logic names the agents' plugin; the runtime's own tests name scripted agents

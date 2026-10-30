@@ -318,7 +318,6 @@ mod tests {
             access_policy,
             config.create_confidentiality_policy(),
             config,
-            ComponentRegistry::built_in(store.entity_stores().unwrap().component_bundles),
             Backends::with_plugins(&plugins),
         )
         .unwrap();

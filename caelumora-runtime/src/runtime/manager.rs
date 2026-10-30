@@ -1,17 +1,18 @@
-use super::{RuntimeBuilder, Services};
+//! `RuntimeManager`: the runtime of a process - the services and managers everything in it shares,
+//! made once by the `RuntimeBuilder`.
+
+use super::Services;
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
 use crate::agent::state::AgentStates;
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
-use crate::backend::Backends;
 use crate::channel::Participation;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
-use crate::plugin::Plugin;
 use crate::scoped::ScopedEntities;
 use crate::seed::{self, SeedSection};
 use crate::workspace::reaper::CommandReaper;
@@ -21,14 +22,13 @@ use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
-use caelumora_model::config::AppConfig;
 use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::session::Session;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::store::{EntityStores, Persistence, StateStore};
+use caelumora_model::store::{EntityStores, StateStore};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::user_provider::UserManager;
 use std::collections::BTreeMap;
@@ -91,39 +91,6 @@ pub struct RuntimeManager {
 }
 
 impl RuntimeManager {
-    /// The runtime of the core with `plugins`: as `RuntimeBuilder` builds it
-    /// from the same parts, with the core's backends. Without the agents'
-    /// plugin (`caelumora_agents::plugin::AgentsPlugin`, issue 370) it runs no
-    /// agent; the runtime's
-    /// own tests run scripted ones (`testing::ScriptedAgents`).
-    ///
-    /// # Errors
-    /// As `RuntimeBuilder::new`, `RuntimeBuilder::plugin` and
-    /// `RuntimeBuilder::build`.
-    pub fn new(
-        persistence: Persistence,
-        secret_manager: Arc<SecretManager>,
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
-        config: &AppConfig,
-        component_registry: ComponentRegistry,
-        plugins: &[&dyn Plugin],
-    ) -> Result<Self> {
-        let mut builder = RuntimeBuilder::new(
-            persistence,
-            secret_manager,
-            access_policy,
-            confidentiality,
-            config,
-            component_registry,
-            Backends::with_plugins(plugins),
-        )?;
-        for plugin in plugins {
-            builder.plugin(*plugin)?;
-        }
-        builder.build()
-    }
-
     /// Puts what the seed files `paths` hold into the stores (issue 105):
     /// the core's sections and those the plugins claimed.
     ///

@@ -44,7 +44,7 @@ use caelumora_runtime::command::CommandError;
 use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::ComponentKind;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry};
-use caelumora_runtime::testing::{test_registry, TestRuntime};
+use caelumora_runtime::testing::TestRuntime;
 use futures::stream;
 use futures::stream::BoxStream;
 use serde_json::Value;
@@ -190,24 +190,25 @@ async fn agent_channel_hearing(
     let (context, agent, alice) = alice_and_an_agent(&store, "helper", personality).await;
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
-    let mut registry = test_registry(&store);
-    registry.register(
-        ComponentKind::new("test_model")
-            .provides::<dyn LLMClient>()
-            .provides::<dyn ModelProfileProvider>(),
-        move |_descriptor, _context| {
-            let mut facets = ComponentFacets::empty();
-            let client: Arc<dyn LLMClient> = Arc::clone(&model) as _;
-            let profile: Arc<dyn ModelProfileProvider> = Arc::clone(&model) as _;
-            facets.insert::<dyn LLMClient>(client);
-            facets.insert::<dyn ModelProfileProvider>(profile);
-            Ok(facets)
-        },
-    );
-    register_no_secrets(&mut registry);
-    register_asking_tool(&mut registry);
-    register_marking_command(&mut registry);
-    register_activities(&mut registry);
+    let components = move |registry: &mut ComponentRegistry| {
+        registry.register(
+            ComponentKind::new("test_model")
+                .provides::<dyn LLMClient>()
+                .provides::<dyn ModelProfileProvider>(),
+            move |_descriptor, _context| {
+                let mut facets = ComponentFacets::empty();
+                let client: Arc<dyn LLMClient> = Arc::clone(&model) as _;
+                let profile: Arc<dyn ModelProfileProvider> = Arc::clone(&model) as _;
+                facets.insert::<dyn LLMClient>(client);
+                facets.insert::<dyn ModelProfileProvider>(profile);
+                Ok(facets)
+            },
+        );
+        register_no_secrets(registry);
+        register_asking_tool(registry);
+        register_marking_command(registry);
+        register_activities(registry);
+    };
     let defaults = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "model".to_string(),
@@ -222,7 +223,7 @@ async fn agent_channel_hearing(
         store,
         access_policy,
         config,
-        registry: Some(registry),
+        components: Box::new(components),
         plugins: vec![&AgentsPlugin],
         ..Default::default()
     }

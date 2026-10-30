@@ -4,7 +4,7 @@ use super::*;
 use crate::actor::Actor;
 use crate::component::{ComponentImpl, ComponentRegistry};
 use crate::runtime::ChannelRuntime;
-use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents, StandIn, TestRuntime};
+use crate::testing::{Script, ScriptedAgent, ScriptedAgents, StandIn, TestRuntime};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_model::channel::testing::make_channel;
 use caelumora_model::channel::{moderation_components, Channel, Participant};
@@ -52,27 +52,27 @@ async fn channel_of(
     participants: Vec<Participant>,
     access_policy: Arc<dyn AccessPolicy>,
 ) -> Arc<ChannelLoop> {
-    let registry = test_registry(&store);
     channel_built(
         store,
         participants,
         access_policy,
-        registry,
+        |_| {},
         moderation_components(None, Some("broadcast_policy")),
     )
     .await
 }
 
-/// A channel of `participants` with `components`, built by `registry`.
+/// A channel of `participants` with `components`, of the kinds `register` adds besides the
+/// built-in ones.
 async fn channel_built(
     store: Persistence,
     participants: Vec<Participant>,
     access_policy: Arc<dyn AccessPolicy>,
-    registry: ComponentRegistry,
+    register: impl FnOnce(&mut ComponentRegistry),
     components: ComponentConfig,
 ) -> Arc<ChannelLoop> {
     let runtime =
-        TestRuntime { store, access_policy, registry: Some(registry), ..Default::default() }
+        TestRuntime { store, access_policy, components: Box::new(register), ..Default::default() }
             .build();
     let channel = Channel { components, participants, ..make_channel(SessionId::new(), "main") };
     let builtin = |id: &str, facet: Arc<dyn ChannelCommandProvider>| ComponentImpl {
@@ -183,17 +183,18 @@ pub(super) async fn channel_moderated_by(
     use crate::component::{ComponentFacets, ComponentKind};
     let store = Persistence::in_memory();
     let participants = record_users(&store.entity_stores().unwrap(), users).await;
-    let mut registry = test_registry(&store);
-    registry.register(
-        ComponentKind::new("test_moderator").provides::<dyn Moderator>(),
-        move |_, _| {
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn Moderator>(Arc::clone(&moderator));
-            Ok(facets)
-        },
-    );
+    let register = move |registry: &mut ComponentRegistry| {
+        registry.register(
+            ComponentKind::new("test_moderator").provides::<dyn Moderator>(),
+            move |_, _| {
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn Moderator>(Arc::clone(&moderator));
+                Ok(facets)
+            },
+        );
+    };
     let components = moderation_components(Some("test_moderator"), None);
-    channel_built(store, participants, Arc::new(AllowAllPolicy::new()), registry, components).await
+    channel_built(store, participants, Arc::new(AllowAllPolicy::new()), register, components).await
 }
 
 /// An agent asleep (`StandIn`), that tells whether it was woken or

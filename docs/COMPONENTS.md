@@ -17,11 +17,12 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
     Params left out count as `{}`.
 *   **`ComponentRegistry`** holds a factory per kind, together with the facets that kind provides
     and those of others it needs.
-    The binaries hand the built-in registry to the `RuntimeManager`, which applies
-    `component_defaults`; a test registers kinds of its own in it first
-    (`caelumora_runtime::testing::test_registry`; the agents' tests
+    The `RuntimeBuilder` makes the built-in registry of its own stores and applies
+    `component_defaults`; a plugin registers its kinds in it (`RuntimeBuilder::components`), and a
+    test its own before the plugins (`TestRuntime::components`). A test that builds components
+    without a runtime starts from `caelumora_runtime::testing::test_registry`, or the agents'
     `caelumora_agents::testing::test_registry`, with a model that is not to be asked as the
-    default).
+    default.
 *   **`ComponentContainer`** builds the components of a `ComponentConfig` for an owner - an agent,
     an external agent, a channel, a session's commands - and hands out the facets that owner
     declared it asks for, and no other ([What a container accepts](#what-a-container-accepts)).

@@ -527,11 +527,12 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     parts all have defaults - a new memory store, no policy, the default rules, the default
     configuration, the runtime's component kinds and agents that answer "ok" - and names only those
     it differs in: `TestRuntime { plugins: vec![&AgentsPlugin], ..Default::default() }.build()`,
-    or `try_build()` for a test of what refuses to be built. Nobody else calls `RuntimeManager::new`
-    in a test, so that a change to it is a change to one place, and what a test differs in is what
-    it names. `session::testing::test_runtime()` and `owned_runtime(rules)` are the two runtimes
-    most tests share; the program's own test (`caelumora-app`) builds the runtime as the program
-    does.
+    or `try_build()` for a test of what refuses to be built. Nobody else calls `RuntimeBuilder::new`
+    in a test but the program's own (`caelumora-app`), which builds the runtime as the program does,
+    so that a change to it is a change to one place, and what a test differs in is what it names; a
+    test of building from a configuration goes through `RuntimeBuilder::from_config`, as the
+    programs do. `session::testing::test_runtime()` and `owned_runtime(rules)` are the two runtimes
+    most tests share.
 *   **Sessions in tests:** a test that needs a session makes it as the runtime does - running,
     with `SessionManager::create` (`session::testing::create`, `World::session_of`); stored and
     not started, with `session::testing::persist` -: the session with the groups of its

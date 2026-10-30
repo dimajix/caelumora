@@ -1,6 +1,6 @@
 # 449 — The runtime is given the policies twice, in its stores and beside them
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -37,10 +37,11 @@ What is tested there is a setup that does not exist in production.
   `access_policy()` and `confidentiality()`; the two parameters go. The difference cannot arise any
   more, but a service of the whole process would be taken, for its twenty users, from one of them:
   the stores would be the source of the policy they only check against.
-- **B - the runtime makes the `Persistence`** - chosen: `RuntimeBuilder::new` takes the backend of
-  the entities and the backend of the states, `Arc<dyn PersistenceBackend>` each, instead of a
-  `Persistence`, and makes it of them and the policies it is given and hands out. Who hands the
-  policy to everyone hands it to the stores, too, and there is one way it comes in.
+- **B - the runtime makes the `Persistence`** - chosen on 2026-10-22, replaced by D on 2026-10-30:
+  `RuntimeBuilder::new` takes the backend of the entities and the backend of the states,
+  `Arc<dyn PersistenceBackend>` each, instead of a `Persistence`, and makes it of them and the
+  policies it is given and hands out. Who hands the policy to everyone hands it to the stores, too,
+  and there is one way it comes in.
 - **C - the runtime checks** that the stores were made with the same instances
   (`Persistence::is_checked_by`, `ptr::addr_eq`) and refuses others. Tried on 2026-10-22: about 225
   tests failed - about 100 of them with alike but distinct instances (a store of
@@ -48,6 +49,23 @@ What is tested there is a setup that does not exist in production.
   difference (the runtime under `OwnershipPolicy` or a policy of the test, the stores under
   `AllowAllPolicy`). It guards the difference instead of removing it, and keeps the parameters
   twice; taken back.
+- **D - the stores know no policy; the runtime checks them by its own.** `Persistence` keeps the
+  entities and the states, and also checks them by the policies it was made with - two concerns.
+  It would keep only the first: `Persistence::new(entities, states)` and
+  `Persistence::in_memory()` take no policies, `in_memory_with` goes. A store is checked by the
+  policies given where it is opened, in one method: `Persistence::entity_store::<T>(&policies)`,
+  through which `EntityStores::open(&persistence, &policies)` opens the stores of the core's kinds
+  and `RuntimeBuilder::entity_store` those of a plugin's. `RuntimeBuilder::new` takes the
+  `Persistence` and the policies, as now, and opens its stores by its own. `Policies`, the pair of
+  the two, becomes a type of its own; `EntityStoreFactory`, whose one implementation is the
+  `Persistence`, goes. The policies come in at one place, and the stores have none of their own to
+  differ by. Unlike B, `from_config` keeps its order - policies, secrets, backends,
+  stores -, the runtime is still given a `Persistence`, and `TestRuntime` keeps its fields, which
+  cannot contradict one another any more. What B costs is mostly the same for D: the registry,
+  the memberships and the tests that write before the runtime exists get the stores otherwise (see
+  below). Its weak spot: whoever holds a `Persistence` can open stores checked by any policies - a
+  test its fixtures under `AllowAllPolicy` -, but says so where it opens them, and the runtime never
+  runs under other policies than its own.
 
 What B costs: whatever needs the stores before the runtime is made has to get them otherwise.
 
@@ -72,10 +90,30 @@ question.
 With the maintainer, on 2026-10-22: B. How the registry, the memberships and the tests get the
 stores is to be laid out before it is built.
 
+With the maintainer, on 2026-10-30: D instead of B, the policies given where a store is opened
+(`Persistence::entity_store`, `EntityStores::open`), without a type of checked stores beside the
+`Persistence`.
+
+In two steps:
+
+1. **The runtime makes its component registry** of its own stores, without a change of behaviour:
+   `RuntimeBuilder::new` is given no registry, but makes the built-in one of the store of the
+   bundles it opened; what a test adds to it, it adds through `RuntimeBuilder::components`, as a
+   plugin does (`TestRuntime::components`). `RuntimeManager::new`, whose one caller is
+   `TestRuntime`, goes; `TestRuntime` builds through the `RuntimeBuilder`.
+2. **D.** `Policies` a type of its own, which `RuntimeBuilder::new` takes in place of the two
+   policies; the memberships bound after `new`, to the builder's stores. A test that writes what it
+   needs before the runtime exists opens the stores by policies it names - those that permit
+   everything, `Policies::permitting_all()` of the model's `testing`, for most -, not through the
+   runtime: the change stays mechanical, and the runtime checks by its own all the same. Writing
+   them through the runtime would be one way into the stores, but means turning the helpers of
+   some seventy files around, and the tests of the model and of the backends, which have no
+   runtime, need the first way anyway.
+
 ## Done when
 
-- `RuntimeBuilder::new` and `RuntimeManager::new` take no `Persistence`, but the backends, and make
-  it with the policies they are given.
+- A `Persistence` holds no policies; every store opened of it is checked by the policies given
+  where it is opened, and the runtime opens its own by the policies it is given.
 - No test runs a runtime over stores checked by other policies than the runtime's.
 - `docs/STORAGE.md` and `docs/ARCHITECTURE.md` say so.
 
@@ -83,3 +121,12 @@ stores is to be laid out before it is built.
 
 - **2026-10-22** — Opened from the review of [448](448-persistence-inherits-the-state-stores.md).
   C was tried first and taken back, since about 225 tests failed by it; B is to be done instead.
+- **2026-10-30** — D proposed: the stores keep no policies, and the runtime checks them by its
+  own, so that only the checking moves into the runtime, not the making of the stores. Chosen
+  instead of B the same day, with the policies given where a store is opened rather than bound in a
+  type of checked stores.
+- **2026-10-30** — Step 1 done: `RuntimeBuilder::new` makes the built-in registry of the store of
+  the bundles it opened, a test adds its kinds through `TestRuntime::components`, and
+  `RuntimeManager::new` is gone. The tests of an external agent and of the texts of a model's
+  variant no longer register the agent's kinds themselves beside the plugin that registers them:
+  they run `TestAgents`.

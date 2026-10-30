@@ -268,7 +268,7 @@ mod tests {
     use super::*;
     use crate::llm::{LLMClient, LLMResult};
     use crate::prompt::current_time_prompt_provider::CURRENT_TIME_PROMPT_PROVIDER_KIND;
-    use crate::testing::{test_registry, TestAgents};
+    use crate::testing::TestAgents;
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -327,19 +327,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator_tool:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
         let store = Persistence::in_memory();
-        let mut registry = test_registry(&store);
-        registry.register(
-            ComponentKind::new("gemma")
-                .provides::<dyn LLMClient>()
-                .provides::<dyn ModelProfileProvider>(),
-            |_, _| {
-                let model = Arc::new(Gemma);
-                let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn LLMClient>(Arc::<Gemma>::clone(&model));
-                facets.insert::<dyn ModelProfileProvider>(model);
-                Ok(facets)
-            },
-        );
+        let components = |registry: &mut ComponentRegistry| {
+            registry.register(
+                ComponentKind::new("gemma")
+                    .provides::<dyn LLMClient>()
+                    .provides::<dyn ModelProfileProvider>(),
+                |_, _| {
+                    let model = Arc::new(Gemma);
+                    let mut facets = ComponentFacets::empty();
+                    facets.insert::<dyn LLMClient>(Arc::<Gemma>::clone(&model));
+                    facets.insert::<dyn ModelProfileProvider>(model);
+                    Ok(facets)
+                },
+            );
+        };
         let config = AppConfig {
             prompts: [("gemma4".to_string(), dir.path().to_path_buf())].into(),
             ..AppConfig::default()
@@ -347,7 +348,7 @@ mod tests {
         let runtime = TestRuntime {
             store,
             config,
-            registry: Some(registry),
+            components: Box::new(components),
             plugins: vec![&TestAgents],
             ..Default::default()
         }

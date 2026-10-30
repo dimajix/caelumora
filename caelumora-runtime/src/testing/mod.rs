@@ -23,13 +23,14 @@ pub(crate) use stand_in::StandIn;
 
 use crate::actor::user::ChannelWatch;
 use crate::agent::AgentError;
+use crate::backend::Backends;
 use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::controller::WorkspaceController;
 use crate::error::refusal;
 use crate::plugin::Plugin;
 use crate::project::{ProjectError, ProjectManager};
-use crate::runtime::{ActorRuntime, RuntimeManager};
+use crate::runtime::{ActorRuntime, RuntimeBuilder, RuntimeManager};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::terminal::{ByteStream, Terminal, WorkspacePath};
 use crate::view::Viewer;
@@ -243,9 +244,9 @@ pub fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttribut
     }
 }
 
-/// A runtime of a test, built from its parts as `RuntimeManager::new` builds
-/// one (issue 375): each part has a default, and a test names only those it
-/// differs in - `TestRuntime { plugins: vec![&Notes], ..Default::default() }`.
+/// A runtime of a test, built from its parts by the `RuntimeBuilder` (issue 375): each part has a
+/// default, and a test names only those it differs in -
+/// `TestRuntime { plugins: vec![&Notes], ..Default::default() }`.
 /// Its secrets are always none, under its access policy.
 pub struct TestRuntime<'a> {
     /// What the entities and the states are kept in: new, empty stores in
@@ -256,9 +257,9 @@ pub struct TestRuntime<'a> {
     /// The default rules.
     pub confidentiality: Arc<dyn ConfidentialityPolicy>,
     pub config: AppConfig,
-    /// The component kinds; if none, those of `test_registry`, resolving in
-    /// `store`.
-    pub registry: Option<ComponentRegistry>,
+    /// Registers the component kinds of the test beside the built-in ones, before the plugins
+    /// register theirs; none.
+    pub components: Box<dyn FnOnce(&mut ComponentRegistry) + 'a>,
     /// Agents that answer "ok" (`ScriptedAgents`).
     pub plugins: Vec<&'a dyn Plugin>,
 }
@@ -274,7 +275,7 @@ impl Default for TestRuntime<'_> {
             access_policy: Arc::new(AllowAllPolicy::new()),
             confidentiality: Arc::new(ConfidentialityRules::default()),
             config: AppConfig::default(),
-            registry: None,
+            components: Box::new(|_| {}),
             plugins: vec![&*ANSWERING_OK],
         }
     }
@@ -289,22 +290,22 @@ impl TestRuntime<'_> {
     /// The runtime, or why it could not be built - for a test of that.
     ///
     /// # Errors
-    /// As `RuntimeManager::new`.
+    /// As `RuntimeBuilder::new`, `RuntimeBuilder::plugin` and `RuntimeBuilder::build`.
     pub fn try_build(self) -> Result<RuntimeManager> {
-        let registry = match self.registry {
-            Some(registry) => registry,
-            None => test_registry(&self.store),
-        };
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
-        RuntimeManager::new(
+        let mut builder = RuntimeBuilder::new(
             self.store,
             secrets,
             self.access_policy,
             self.confidentiality,
             &self.config,
-            registry,
-            &self.plugins,
-        )
+            Backends::with_plugins(&self.plugins),
+        )?;
+        (self.components)(builder.components());
+        for plugin in self.plugins {
+            builder.plugin(plugin)?;
+        }
+        builder.build()
     }
 }
 
@@ -366,8 +367,6 @@ impl World {
             Arc::<Recorder>::clone(&recorder),
         );
         memberships.bind(&store.entity_stores().unwrap().groups);
-        let mut registry = test_registry(&store);
-        register(&mut registry);
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new(
             "local",
@@ -394,7 +393,7 @@ impl World {
             access_policy,
             confidentiality: Arc::<Recorder>::clone(&recorder),
             config,
-            registry: Some(registry),
+            components: Box::new(register),
             plugins: plugins.to_vec(),
         }
         .build();
@@ -711,10 +710,9 @@ pub async fn shown(watch: &mut ChannelWatch, wanted: &str) -> ActorEvent {
     .unwrap_or_else(|_| panic!("{wanted} is shown"))
 }
 
-/// The component kinds the tests build with, resolving the bundles a `ref`
-/// names in `store`: the runtime's own (`ComponentRegistry::built_in`).
-/// Those of an agent and a model are the agents' tests'
-/// (`caelumora_agents::testing::test_registry`, issue 370).
+/// The component kinds a test builds components with that has no runtime, resolving the bundles a
+/// `ref` names in `store`: the runtime's own (`ComponentRegistry::built_in`). Those of an agent and
+/// a model are the agents' tests' (`caelumora_agents::testing::test_registry`, issue 370).
 pub fn test_registry(store: &Persistence) -> ComponentRegistry {
     ComponentRegistry::built_in(store.entity_stores().unwrap().component_bundles)
 }

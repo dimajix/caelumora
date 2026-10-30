@@ -4,10 +4,9 @@
 use super::*;
 use crate::external::testing::ScriptedExternalAgent;
 use crate::external::ExternalAgent;
-use crate::plugin::AgentsPlugin;
 use crate::prompt::ModelProfileProvider;
 use crate::prompt::PromptProvider;
-use crate::testing::test_registry;
+use crate::testing::TestAgents;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Envelope};
@@ -86,25 +85,28 @@ async fn external_channel(
         Personality { kind: PersonalityKind::External, components, ..make_personality("remote") };
     let (context, agent_id, alice) = alice_and_an_agent(&store, "hermes", personality).await;
 
-    let mut registry = test_registry(&store);
-    registry.register(
-        ComponentKind::new("test_remote")
-            .provides::<dyn ExternalAgent>()
-            .provides::<dyn ModelProfileProvider>(),
-        move |_descriptor, _context| {
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
-            facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(&remote));
-            Ok(facets)
-        },
-    );
-    register_no_secrets(&mut registry);
-    register_heard(&mut registry);
-    register_marking_command(&mut registry);
+    let components = move |registry: &mut ComponentRegistry| {
+        registry.register(
+            ComponentKind::new("test_remote")
+                .provides::<dyn ExternalAgent>()
+                .provides::<dyn ModelProfileProvider>(),
+            move |_descriptor, _context| {
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
+                facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(
+                    &remote,
+                ));
+                Ok(facets)
+            },
+        );
+        register_no_secrets(registry);
+        register_heard(registry);
+        register_marking_command(registry);
+    };
     let runtime = TestRuntime {
         store,
-        registry: Some(registry),
-        plugins: vec![&AgentsPlugin],
+        components: Box::new(components),
+        plugins: vec![&TestAgents],
         ..Default::default()
     }
     .build();
@@ -1921,27 +1923,29 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         answer("Back."),
     ]));
     let store = Persistence::in_memory();
-    let mut registry = test_registry(&store);
-    registry.register(
-        ComponentKind::new("test_remote")
-            .provides::<dyn ExternalAgent>()
-            .provides::<dyn ModelProfileProvider>(),
-        {
-            let remote = Arc::clone(&remote);
-            move |_descriptor, _context| {
-                let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
-                facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(
-                    &remote,
-                ));
-                Ok(facets)
-            }
-        },
-    );
+    let components = {
+        let remote = Arc::clone(&remote);
+        move |registry: &mut ComponentRegistry| {
+            registry.register(
+                ComponentKind::new("test_remote")
+                    .provides::<dyn ExternalAgent>()
+                    .provides::<dyn ModelProfileProvider>(),
+                move |_descriptor, _context| {
+                    let mut facets = ComponentFacets::empty();
+                    facets
+                        .insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
+                    facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(
+                        &remote,
+                    ));
+                    Ok(facets)
+                },
+            );
+        }
+    };
     let runtime = TestRuntime {
         store: store.clone(),
-        registry: Some(registry),
-        plugins: vec![&AgentsPlugin],
+        components: Box::new(components),
+        plugins: vec![&TestAgents],
         ..Default::default()
     }
     .build();

@@ -1,3 +1,6 @@
+//! `RuntimeBuilder`: what makes the `RuntimeManager` of a process - the core's services and
+//! managers first, then what each plugin registers (issue 323).
+
 use super::{RuntimeManager, Services};
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
@@ -108,12 +111,11 @@ impl RuntimeBuilder {
     /// storages workspaces are made in (`workspaces`, issue 253), the
     /// storages of content (`content`, issue 282), what a message may carry
     /// (`attachments`, issue 282), the user providers
-    /// (`users`) and the sections of the plugins.
-    /// `component_registry` holds the component kinds agents and sessions are
-    /// built from - `ComponentRegistry::built_in`, to which a test may add
-    /// stand-ins, such as a model of its own (issue 130). `backends` makes
-    /// the storages and the user providers `config` names (issue 324):
-    /// `Backends::with_plugins` of the plugins registered afterwards.
+    /// (`users`) and the sections of the plugins. The component kinds agents and sessions are built
+    /// from are the built-in ones (`ComponentRegistry::built_in`), resolving the bundles in the
+    /// builder's stores; a plugin adds its own, and a test stand-ins, such as a model of its own
+    /// (issue 130), through `components`. `backends` makes the storages and the user providers
+    /// `config` names (issue 324): `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
     /// If a store of the core's kinds cannot be opened, or a storage of
@@ -125,7 +127,6 @@ impl RuntimeBuilder {
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
-        component_registry: ComponentRegistry,
         backends: Backends,
     ) -> Result<Self> {
         let state_store = persistence.state_store();
@@ -223,6 +224,8 @@ impl RuntimeBuilder {
         // The core's texts, before any plugin adds its own.
         let mut prompts = PromptCatalogue::new();
         prompts.add(CORE, CORE_PROMPTS)?;
+        let component_registry =
+            ComponentRegistry::built_in(Arc::clone(&entity_stores.component_bundles));
         Ok(Self {
             persistence,
             entity_stores,
@@ -301,16 +304,13 @@ impl RuntimeBuilder {
             Arc::clone(&confidentiality),
         )
         .context("Cannot make the state store")?;
-        let stores = persistence.entity_stores()?;
-        memberships.bind(&stores.groups);
-        let registry = ComponentRegistry::built_in(stores.component_bundles);
+        memberships.bind(&persistence.entity_stores()?.groups);
         let mut builder = Self::new(
             persistence.clone(),
             secret_manager,
             access_policy,
             confidentiality,
             config,
-            registry,
             backends,
         )?;
         for plugin in plugins {
