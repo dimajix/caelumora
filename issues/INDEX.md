@@ -201,6 +201,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [477](477-only-the-system-acts-as-the-system.md) | done | `OwnershipPolicy` allows everything to a context whose principal is the system, whoever its caller is, and `AgentManager::create` lets the system own an agent, which then acts with all the system's rights. |
 | [491](491-every-entity-has-an-owner.md) | done | `SecurityAttributes` defaults to the owner `ActorId::None`, which every seeded component bundle, personality and template without attributes gets, and which `unowned()` and the policies treat as the system's - though everything is to have an owner. |
 | [503](503-bus-asks-every-stream.md) | done | The event bus decides every event for every open stream of `GET /events` by a full policy check, reading a group from the store each time, so its cost grows with events times streams although an event reaches only a few of them. |
+| [511](511-permission-checks-again-column-inconsistent.md) | open | The column *Again* of the tables in `docs/PERMISSION-CHECKS.md` names `ReadDeleted` asked twice by the store in some rows - the restoring of a session, the purge of a project - and leaves it out in others where the code asks it as often - the restoring of a project, the purge of a session or a workspace -, so the column cannot be read as the list of what is asked again. |
 
 ## Audit
 
