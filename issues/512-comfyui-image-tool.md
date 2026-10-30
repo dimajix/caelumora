@@ -265,3 +265,6 @@ in a bundle, that ComfyUI can no longer open.
   example personality `jonathan-assistant` offers the tool, with `attachment_tool` to show what it
   generated; two runs against the ComfyUI of this machine generated images in 146 s (the model
   loaded first) and 20 s.
+- **2026-10-30** - The example's tool moved, as the maintainer asked: `jonathan-assistant` offers it
+  no more; a personality of its own does, `bob-painter`, named after the TV painter Bob Ross, with
+  `attachment_tool` to show what it painted.
