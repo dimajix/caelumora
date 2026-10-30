@@ -422,7 +422,7 @@ async fn the_owner_changes_and_ends_the_session() {
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All)
         .await
         .expect("and people to them");
-    session.delete_channel(&alice, side.id()).await.expect("and to delete them");
+    assert!(session.delete_channel(&alice, side.id()).await.expect("and to delete them"));
     assert!(world.manager.delete(&alice, session.id()).await.unwrap(), "and to delete it");
     assert!(not_found(&world.manager.open(&alice, session.id()).await.expect_err("gone")));
 }
@@ -2638,10 +2638,10 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
     bundles.update(&World::as_user(world.bob), &mut withdrawn).await.unwrap();
     world.manager.stop(&alice, session.id()).await.unwrap();
     let session = world.manager.open(&alice, session.id()).await.unwrap();
-    session
+    assert!(session
         .delete_channel(&alice, side)
         .await
-        .expect("its owner deletes it though it does not run");
+        .expect("its owner deletes it though it does not run"));
     assert!(
         world
             .manager
@@ -2800,7 +2800,7 @@ async fn deleting_a_channel_needs_owning_its_session() {
     assert!(session.channel(main).is_some(), "and the channel runs on");
     let (deleted, asked) =
         world.asked(session.delete_channel(&World::as_user(world.alice), main)).await;
-    assert!(deleted.is_ok());
+    assert!(deleted.unwrap(), "hers to delete");
     assert_eq!(
         asked,
         checks(&[
@@ -2926,7 +2926,7 @@ async fn deleted_channels_are_restored_only_by_who_may_change_their_session() {
     let mut his = stores.channels.get(&World::system(), main).await.unwrap();
     his.security_attributes.owner_id = ActorId::User(world.bob);
     stores.channels.update(&World::system(), &mut his).await.unwrap();
-    session.delete_channel(&World::system(), main).await.unwrap();
+    assert!(session.delete_channel(&World::system(), main).await.unwrap(), "deleted");
     let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
 
     let (listed, asked) = world
@@ -2992,7 +2992,7 @@ async fn restoring_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
-    session.delete_channel(&World::as_user(world.alice), main).await.unwrap();
+    assert!(session.delete_channel(&World::as_user(world.alice), main).await.unwrap(), "deleted");
     let (refused, asked) =
         world.asked(session.restore_channel(&World::as_user(world.carol), main)).await;
     assert!(

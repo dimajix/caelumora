@@ -232,6 +232,12 @@ Its methods are named by the verbs of the lifecycle, without the kind - the mana
 `create`, `delete`, `restore` and `purge`, and for what runs, `open` and `stop`
 (`SessionManager::open`, `AgentManager::delete`; issue 354).
 
+The verbs on one entity, found by its id, answer what is not there - or not the caller's to see -
+alike: `delete` and `purge` answer `false`, since for whoever wants it gone it is gone (how a REST
+handler answers that is in [REST-SERVER.md](REST-SERVER.md#errors)); `restore` fails with the
+`NotFound` of its kind, since it needs what it restores. This holds for whoever offers a kind's
+lifecycle, the running session for its channels too (`SessionLoop::delete_channel`).
+
 ### Small return values
 
 A function that returns two values, called from a few places close to it - inside its module or

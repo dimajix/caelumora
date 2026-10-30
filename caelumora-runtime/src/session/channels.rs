@@ -134,7 +134,10 @@ impl SessionLoop {
         context: &SecurityContext,
         channel_id: ChannelId,
     ) -> Result<Arc<ChannelLoop>> {
-        let (_, run) = self.listed_channel_for(context, channel_id).await?;
+        let (_, run) = self
+            .listed_channel_for(context, channel_id)
+            .await
+            .ok_or(SessionError::ChannelNotFound { session: self.id, channel: channel_id })?;
         self.running(channel_id, run)
     }
 
@@ -155,18 +158,14 @@ impl SessionLoop {
     }
 
     /// The channel `channel_id` with whether it runs, if `context` may read
-    /// it - asked as `channel_for` asks it.
-    ///
-    /// # Errors
-    /// `SessionError::ChannelNotFound` if there is no such channel, and
-    /// equally if `context` may not read it.
+    /// it - asked as `channel_for` asks it; `None` if there is no such
+    /// channel, and equally if `context` may not read it.
     async fn listed_channel_for(
         &self,
         context: &SecurityContext,
         channel_id: ChannelId,
-    ) -> Result<Listed> {
-        let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
-        let (channel, run) = self.listed_channel(channel_id).ok_or_else(not_found)?;
+    ) -> Option<Listed> {
+        let (channel, run) = self.listed_channel(channel_id)?;
         let at = Place::of(&channel, self.privacy());
         channel_reading(
             &self.policies,
@@ -176,9 +175,8 @@ impl SessionLoop {
             // Reached for a user alone, who reads by their clearance.
             ChannelReader::of(None),
         )
-        .await
-        .ok_or_else(not_found)?;
-        Ok((channel, run))
+        .await?;
+        Some((channel, run))
     }
 
     /// Nothing if every channel the session lists runs.
@@ -456,11 +454,11 @@ impl SessionLoop {
     /// as it is taken out of the session, change the session
     /// (`UpdateSession`, by the store) - so that a refused deletion leaves
     /// the channel running and listed. A channel that does not run, its
-    /// components unreadable (issue 463), is deleted alike.
+    /// components unreadable (issue 463), is deleted alike. `false` if the
+    /// session has no such channel, and equally if `context` may not read it
+    /// or is not cleared for it, as every deletion answers (issue 513).
     ///
     /// # Errors
-    /// - `SessionError::ChannelNotFound` if the session has no such channel,
-    ///   and equally if `context` may not read it or is not cleared for it.
     /// - `StoreError::PermissionDenied` if `context` may not delete the
     ///   channel or change the session; nothing is changed then.
     /// - `SessionError::ScopeNotEmpty` if something of its scope is left
@@ -473,9 +471,11 @@ impl SessionLoop {
         &self,
         context: &SecurityContext,
         channel_id: ChannelId,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Also one that does not run (issue 463): its owner removes it so.
-        let (channel, _) = self.listed_channel_for(context, channel_id).await?;
+        let Some((channel, _)) = self.listed_channel_for(context, channel_id).await else {
+            return Ok(false);
+        };
         self.policies
             .access_policy()
             .require(
@@ -493,20 +493,30 @@ impl SessionLoop {
         // group of its participants, in the runtime's name (issue 348). All of it carries the
         // channel's mark and comes back with it (`restore_channel`, issues 178, 469). If any of it
         // fails, the deletion is rolled back - in the runtime's name: its deletion was permitted -
-        // and runs on, without what was deleted but with its group.
+        // and runs on, without what was deleted but with its group. If the store finds nothing the
+        // caller could delete - gone meanwhile -, it is listed again, and nothing was deleted.
         let removal = Removal::now(context.caller_id);
         let deleted = async {
-            self.stores.channels.delete(context, channel_id, &removal).await?;
+            if !self.stores.channels.delete(context, channel_id, &removal).await? {
+                return Ok(false);
+            }
             let left =
                 self.scoped.delete_lying_in(context, slice::from_ref(&scope), &removal).await?;
             ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
             self.groups.delete_participants(slice::from_ref(&scope), &removal).await?;
-            Ok::<_, Error>(())
+            Ok::<_, Error>(true)
         }
         .await;
-        if let Err(error) = deleted {
-            self.roll_back_channel_deletion(channel_id).await;
-            return Err(error);
+        match deleted {
+            Ok(true) => {}
+            Ok(false) => {
+                self.roll_back_channel_deletion(channel_id).await;
+                return Ok(false);
+            }
+            Err(error) => {
+                self.roll_back_channel_deletion(channel_id).await;
+                return Err(error);
+            }
         }
 
         // Whether it runs as it is taken out, not as it was reached: it may
@@ -534,7 +544,7 @@ impl SessionLoop {
             "Channel {}/{} deleted from session {} by {}",
             channel.name, channel_id, self.id, context.caller_id
         );
-        Ok(())
+        Ok(true)
     }
 
     /// Restores the deleted channel `channel_id` of this session on behalf
@@ -1033,7 +1043,7 @@ mod tests {
         time::sleep(Duration::from_millis(50)).await;
         let mut rx = runtime.event_bus().subscribe_all();
 
-        session.delete_channel(&ctx, id).await.expect("the owner deletes it");
+        assert!(session.delete_channel(&ctx, id).await.expect("the owner deletes it"));
 
         assert!(session.channel(id).is_none());
         assert!(!runtime
@@ -1058,11 +1068,7 @@ mod tests {
             "stopped, then deleted: {events:?}"
         );
 
-        let missing = session.delete_channel(&ctx, id).await.expect_err("gone");
-        assert!(matches!(
-            missing.downcast_ref::<SessionError>(),
-            Some(SessionError::ChannelNotFound { .. })
-        ));
+        assert!(!session.delete_channel(&ctx, id).await.unwrap(), "gone (issue 513)");
 
         // Restored: listed and running again, from the state it kept.
         let taken = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
@@ -1074,7 +1080,7 @@ mod tests {
             ),
             "{refused}"
         );
-        session.delete_channel(&ctx, taken.id()).await.unwrap();
+        assert!(session.delete_channel(&ctx, taken.id()).await.unwrap(), "deleted");
         session.restore_channel(&ctx, id).await.expect("restored");
         assert!(session.channel(id).is_some());
         assert!(
@@ -1098,11 +1104,11 @@ mod tests {
             ),
             "{again}"
         );
-        session.delete_channel(&ctx, id).await.unwrap();
+        assert!(session.delete_channel(&ctx, id).await.unwrap(), "deleted");
 
         // The last channel may go too; the session keeps running without.
         let main = session.channel_named("main").unwrap().id();
-        session.delete_channel(&ctx, main).await.expect("the last channel may be deleted");
+        assert!(session.delete_channel(&ctx, main).await.expect("the last channel may be deleted"));
         assert!(session.channels().is_empty());
         session.create_channel(&ctx, spec("again", vec![])).await.expect("and a new one created");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
@@ -1124,7 +1130,7 @@ mod tests {
         let mut rx = runtime.event_bus().subscribe_all();
 
         // Queued to be started, but deleted before `run` gets to it.
-        session_loop.delete_channel(&ctx, channel_id).await.expect("deleted");
+        assert!(session_loop.delete_channel(&ctx, channel_id).await.expect("deleted"));
         let running = tokio::spawn({
             let session_loop = Arc::clone(&session_loop);
             async move { session_loop.run().await }
@@ -1208,6 +1214,11 @@ mod tests {
             "absent, not refused: {hidden}"
         );
         assert!(
+            !session.delete_channel(&as_user(bob.id), hers.id()).await.unwrap(),
+            "nor there for bob to delete (issue 513)"
+        );
+        assert!(session.channel(hers.id()).is_some(), "and kept");
+        assert!(
             session.channel_for(&as_user(alice.id), hers.id()).await.is_ok(),
             "the owner reads it"
         );
@@ -1233,7 +1244,7 @@ mod tests {
             SecurityAttributes::systems(),
         );
         stores.component_bundles.create(&system, &mut bundle).await.unwrap();
-        session.delete_channel(&ctx, side).await.unwrap();
+        assert!(session.delete_channel(&ctx, side).await.unwrap(), "deleted");
         let mark = stores.channels.get_deleted(&system, side).await.unwrap().removal;
 
         passing.store(0, Ordering::SeqCst);
