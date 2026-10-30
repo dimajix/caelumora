@@ -1,6 +1,6 @@
 # 496 — A session's purge removes its channels' documents before their states and attachments
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** Persistence
@@ -59,3 +59,8 @@ nothing that reaches them.
   looks for its project, which would otherwise take its own project, purged already, for a shared
   one deleted. Step 2 is the project's purge, which removes what lies behind it first but begins no
   purge, so that within one process only its lock keeps a restoring from coming between.
+- **2026-10-30** — Step 2 done: `ProjectManager::purge` goes through `purge_behind` too, what it
+  removed before the project's document - its deleted sessions, what lies in its scope, the group of
+  its members - its `remove_behind`. A project whose purge failed part of the way is no longer
+  restored without what went already, also by another instance. The manager asks `Purge` no longer
+  itself, the store does as the purge is begun, and holds no `AccessPolicy` any more.

@@ -14,10 +14,10 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{Session, SessionField};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{Deleted, EntityStores, StoreError, StoreResultExt, Stored};
+use caelumora_model::store::{purge_behind, Deleted, EntityStores, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use std::fmt;
@@ -36,7 +36,6 @@ pub struct ProjectManager {
     /// What deletes and restores the group of a project's members with it.
     groups: Arc<GroupManager>,
     events: Arc<EventBus>,
-    access_policy: Arc<dyn AccessPolicy>,
     /// What goes with a project deleted, restored or purged.
     scoped: Arc<ScopedEntities>,
     /// One lock per project id, held while that project is deleted, restored or purged, so that
@@ -60,7 +59,6 @@ impl ProjectManager {
             stores: runtime.entity_stores().clone(),
             groups: Arc::clone(runtime.group_manager()),
             events: Arc::clone(runtime.event_bus()),
-            access_policy: Arc::clone(runtime.access_policy()),
             scoped: Arc::clone(runtime.scoped_entities()),
             sessions,
             lifecycles: LocksById::new(),
@@ -208,14 +206,16 @@ impl ProjectManager {
         Ok(project)
     }
 
-    /// Removes the deleted project `id` for good on behalf of `ctx` (`Purge`, asked before
-    /// anything is removed): in the runtime's name, the sessions deleted that lie in it, what lies
-    /// in its scope and the group of its members; then the project. Announces nothing, as no purge
-    /// does. `false` if there was nothing deleted the caller could see.
+    /// Removes the deleted project `id` for good on behalf of `ctx`, in the order of every purge
+    /// of what has something behind it (`purge_behind`): its purge begun (`Purge`, asked before
+    /// anything is removed), then - in the runtime's name - what lies behind it (`remove_behind`),
+    /// then the project. A step that fails leaves it deleted, its purge begun, so that the next
+    /// purge removes what is left (issue 496). Announces nothing, as no purge does. `false` if
+    /// there was nothing deleted the caller could see.
     ///
     /// # Errors
     /// `InvalidScope` for a session's own, `PermissionDenied`, `Session` if purging a session
-    /// failed, or whatever the store reports; what was purged before stays purged.
+    /// failed, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
         let _lifecycle = self.lifecycles.lock(id).await;
         let Some(Deleted { entity: deleted, .. }) =
@@ -226,24 +226,30 @@ impl ProjectManager {
         if deleted.is_own() {
             return Err(ProjectError::InvalidScope);
         }
-        self.access_policy
-            .require(
-                ctx,
-                ActionType::purge(Project::KIND, &deleted.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
-        let system = SecurityContext::system();
-        for Deleted { entity: session, .. } in self.deleted_sessions_in(id).await? {
-            self.sessions.purge(&system, session.id).await.map_err(ProjectError::Session)?;
-        }
-        self.scoped.purge_lying_in(slice::from_ref(&deleted.holds())).await?;
-        purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(id)).await?;
-        let purged = self.stores.projects.purge(ctx, id).await?;
+        let purged = purge_behind(self.stores.projects.as_ref(), ctx, id, async |project| {
+            self.remove_behind(project).await
+        })
+        .await?;
         if purged {
             info!(project = %id, by = %ctx.caller_id, "Project purged");
         }
         Ok(purged)
+    }
+
+    /// Removes what lies behind `project` once its purge is begun, in the runtime's name: the
+    /// sessions deleted that lie in it, what lies in its scope and the group of its members. What a
+    /// purge that failed before removed already is passed over.
+    ///
+    /// # Errors
+    /// `Session` if purging a session failed, or whatever the store reports.
+    async fn remove_behind(&self, project: &Project) -> ProjectResult<()> {
+        let system = SecurityContext::system();
+        for Deleted { entity: session, .. } in self.deleted_sessions_in(project.id).await? {
+            self.sessions.purge(&system, session.id).await.map_err(ProjectError::Session)?;
+        }
+        self.scoped.purge_lying_in(slice::from_ref(&project.holds())).await?;
+        purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(project.id)).await?;
+        Ok(())
     }
 
     /// The sessions that lie in project `id`, read in the runtime's name: all of them are found,
@@ -303,6 +309,7 @@ fn in_project(id: ProjectId) -> Query<SessionField> {
 mod tests {
     use super::*;
     use crate::session::testing::{create, failing_runtime};
+    use caelumora_model::channel::Channel;
     use caelumora_model::component::ComponentBundle;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::testing::make_session;
@@ -354,6 +361,42 @@ mod tests {
         assert!(
             stores.component_bundles.get(&system, bundle.id).await.is_ok(),
             "and what lay in its scope"
+        );
+    }
+
+    /// Issue 496: a purge that fails part of the way - here as the channel of a session in the
+    /// project is marked - leaves the project deleted, its purge begun, so that it is not restored
+    /// without what went already, and the next purge removes what is left.
+    #[tokio::test]
+    async fn a_project_whose_purge_failed_is_finished_by_the_next() {
+        let (runtime, passing) = failing_runtime(Channel::KIND);
+        let stores = runtime.entity_stores().clone();
+        let manager = Arc::new(SessionManager::new(runtime));
+        let projects = ProjectManager::new(Arc::clone(&manager));
+        let owner = UserId::new();
+        let ctx =
+            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let system = SecurityContext::system();
+        let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
+        let project = projects
+            .create(&ctx, "report", Scope::UserScope { user_id: owner }, None)
+            .await
+            .unwrap();
+        session.update_project(&ctx, Some(project.id)).await.unwrap();
+        projects.delete(&ctx, project.id).await.unwrap();
+
+        passing.store(0, Ordering::SeqCst);
+        projects.purge(&system, project.id).await.expect_err("its session's channel cannot go");
+        let left = stores.projects.get_deleted(&system, project.id).await.expect("it is left");
+        assert!(left.entity.purging(), "its purge begun");
+        assert!(projects.restore(&ctx, project.id).await.is_err(), "not to be restored");
+
+        passing.store(usize::MAX, Ordering::SeqCst);
+        assert!(projects.purge(&system, project.id).await.expect("purged when tried again"));
+        assert!(stores.projects.get_deleted(&system, project.id).await.is_err(), "it is gone");
+        assert!(
+            stores.sessions.get_deleted(&system, session.id()).await.is_err(),
+            "with its session"
         );
     }
 }
