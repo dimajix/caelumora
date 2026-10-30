@@ -1,6 +1,6 @@
 # 497 — The purge of what has something behind it is written four times
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -42,3 +42,12 @@ wrong passes every test that does not provoke a failure between them.
 
 - **2026-10-29** — Opened from the review of the third step of issue
   [492](492-a-document-is-written-under-two-locks.md).
+- **2026-10-30** — Done by the second consideration: the order is written once, in
+  `caelumora_model::store::purge_behind`, given the store, the context and what removes the rest
+  as a closure answering the caller's error (as `written_as_next` takes what writes). The managers
+  of workspaces, artifacts and agents purge through it in their caller's name with their own
+  errors - `StorageGone` still reaches the REST API as itself -, `ScopedKind::purge_lying_in` and
+  `ScopeHolders::keep_made` in the runtime's name with `ScopeMember::remove_behind`; the runtime's
+  own `scoped::purge_behind` is gone. The agents' purge, which alone logged only what it purged,
+  set the pattern: the other managers' purges - of workspaces, artifacts, skills, groups and
+  projects - now log only a purge that removed something too.

@@ -29,7 +29,7 @@ use caelumora_model::security::{
     SecurityContext, Subject, WRITE,
 };
 use caelumora_model::store::{
-    Address, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
+    purge_behind, Address, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -563,22 +563,21 @@ impl ArtifactManager {
         Ok(artifact)
     }
 
-    /// Removes the deleted artifact `id` for good, its content first: its
-    /// purge begun (`Purge`, asked before anything is removed), so that no
-    /// restoring takes it back while its content goes (issue 492), then its
-    /// content, then the document. Content that cannot be removed leaves the
-    /// document, its purge begun, so that the next purge tries again.
-    /// `false` if there was nothing deleted the caller could see.
+    /// Removes the deleted artifact `id` for good, its content first, in the order of every purge
+    /// of what has something behind it (`purge_behind`); `Purge` is asked before anything is
+    /// removed. Content that cannot be removed leaves the artifact deleted, its purge begun, so
+    /// that the next purge tries again. `false` if there was nothing deleted the caller could see.
     ///
     /// # Errors
     /// `PermissionDenied`, `StorageGone`, `Content`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
-        let Some(artifact) = self.artifacts.begin_purge(ctx, id).await? else {
-            return Ok(false);
-        };
-        self.remove_content(&artifact).await?;
-        let purged = self.artifacts.purge(ctx, id).await?;
-        info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
+        let purged = purge_behind(self.artifacts.as_ref(), ctx, id, async |artifact| {
+            self.remove_content(artifact).await
+        })
+        .await?;
+        if purged {
+            info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
+        }
         Ok(purged)
     }
 

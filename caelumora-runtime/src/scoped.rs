@@ -47,8 +47,8 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
-    Deleted, EntityKind, EntityStore, EntityStores, NoEntity, StoreError, StoreResult,
-    StoreResultExt, Stored,
+    purge_behind, Deleted, EntityKind, EntityStore, EntityStores, NoEntity, StoreError,
+    StoreResult, StoreResultExt, Stored,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -121,9 +121,9 @@ pub trait ScopeMember: Send + Sync {
     }
 
     /// Removes what lies behind `entity` - an agent's state, a workspace's place, an artifact's
-    /// content -, whose purge is begun (`EntityStore::begin_purge`). It is removed before the
-    /// entity is purged, so that if it fails, the entity stays deleted and is purged when its
-    /// holder is purged again. Nothing, by default.
+    /// content -, whose purge is begun: `purge_behind` gives it the entity between
+    /// `EntityStore::begin_purge` and `EntityStore::purge`, so that if it fails, the entity stays
+    /// deleted and is purged when its holder is purged again. Nothing, by default.
     ///
     /// # Errors
     /// Whatever the store reports; as `StoreError::Backend` a failure to remove what lies behind
@@ -244,28 +244,13 @@ impl<M: ScopeMember> ScopedKind for M {
             .await?
             .items
         {
-            purge_behind(self, entity.id()).await?;
+            purge_behind(self.store(), &system, entity.id(), async |entity| {
+                self.remove_behind(entity).await
+            })
+            .await?;
         }
         Ok(())
     }
-}
-
-/// Purges the deleted entity `id` of `member`'s store in the runtime's name, what lies behind it
-/// first: its purge begun, so that no restoring takes it back while that goes (issue 492), then
-/// what lies behind it removed (`ScopeMember::remove_behind`), then the entity. `false` if there
-/// was none deleted - `keep_made` then removes what lies behind it alone.
-///
-/// # Errors
-/// Whatever `remove_behind` and the store report; the entity then stays deleted, its purge begun.
-async fn purge_behind<M: ScopeMember>(
-    member: &M,
-    id: <M::Entity as Stored>::Id,
-) -> StoreResult<bool> {
-    let system = SecurityContext::system();
-    let store = member.store();
-    let Some(entity) = store.begin_purge(&system, id.clone()).await? else { return Ok(false) };
-    member.remove_behind(&entity).await?;
-    store.purge(&system, id).await
 }
 
 /// Deletes, restores and purges what lies in a scope with what holds it
@@ -442,8 +427,11 @@ impl ScopeHolders {
         let Err(gone) = self.still_there(entity).await else { return Ok(()) };
         info!(kind = %M::Entity::KIND, id = %entity.id(), "Taken back: what holds its scope went while it was made");
         let system = SecurityContext::system();
-        member.store().delete(&system, entity.id(), &Removal::now(ActorId::System)).await?;
-        if !purge_behind(member, entity.id()).await? {
+        let store = member.store();
+        store.delete(&system, entity.id(), &Removal::now(ActorId::System)).await?;
+        if !purge_behind(store, &system, entity.id(), async |made| member.remove_behind(made).await)
+            .await?
+        {
             member.remove_behind(entity).await?;
         }
         Err(gone)

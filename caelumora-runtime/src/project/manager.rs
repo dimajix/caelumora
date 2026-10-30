@@ -240,7 +240,9 @@ impl ProjectManager {
         self.scoped.purge_lying_in(slice::from_ref(&deleted.holds())).await?;
         purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(id)).await?;
         let purged = self.stores.projects.purge(ctx, id).await?;
-        info!(project = %id, by = %ctx.caller_id, "Project purged");
+        if purged {
+            info!(project = %id, by = %ctx.caller_id, "Project purged");
+        }
         Ok(purged)
     }
 
