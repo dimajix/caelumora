@@ -2868,12 +2868,45 @@ async fn purging_a_session_is_not_its_owners() {
     assert!(refused.is_err());
     assert_eq!(
         asked,
+        checks(&["alice: ReadDeletedSession(alice's) yes", "alice: PurgeSession(alice's) no"]),
+        "only what was deleted, asked by the store as it begins the purge, before anything goes"
+    );
+}
+
+/// Purging a deleted project, as a session: the system's alone - its owner may read it as deleted,
+/// but not remove it for good -, asked by the store as it begins the purge, before anything goes:
+/// its sessions and the group of its members stay, and its purge is not begun (issue 496).
+#[tokio::test]
+async fn purging_a_project_is_not_its_owners() {
+    let world = World::new().await;
+    let (alice, system) = (World::as_user(world.alice), World::system());
+    let stores = world.runtime.entity_stores();
+    let session = world.shared_session(&[], &[]).await;
+    let project = world
+        .projects
+        .create(&alice, "report", Scope::UserScope { user_id: world.alice }, None)
+        .await
+        .unwrap();
+    session.update_project(&alice, Some(project.id)).await.unwrap();
+    world.projects.delete(&alice, project.id).await.unwrap();
+
+    let (refused, asked) = world.asked(world.projects.purge(&alice, project.id)).await;
+    assert!(refused.is_err());
+    assert_eq!(
+        asked,
         checks(&[
-            "alice: ReadDeletedSession(alice's) yes",
-            "alice: ReadDeletedSession(alice's) yes",
-            "alice: PurgeSession(alice's) no",
+            "alice: ReadDeletedProject(alice's) yes",
+            "alice: ReadDeletedProject(alice's) yes",
+            "alice: PurgeProject(alice's) no",
         ]),
-        "only what was deleted, asked by the agent manager and again by the store"
+        "read as deleted by the manager, then asked by the store as it begins the purge"
+    );
+    let left = stores.projects.get_deleted(&system, project.id).await.unwrap();
+    assert!(!left.entity.purging(), "its purge is not begun");
+    assert!(stores.sessions.get_deleted(&system, session.id()).await.is_ok(), "its session stays");
+    assert!(
+        stores.groups.get_deleted(&system, GroupId::of_project(project.id)).await.is_ok(),
+        "and the group of its members"
     );
 }
 

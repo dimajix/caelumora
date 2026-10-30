@@ -37,7 +37,8 @@ use caelumora_model::session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
-    Deleted, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored,
+    purge_behind, Deleted, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt,
+    Stored,
 };
 use caelumora_model::template::{
     ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate,
@@ -874,8 +875,9 @@ impl SessionManager {
     /// project is not restored while the project is deleted: it comes back with the project.
     ///
     /// # Errors
-    /// `SessionError::NotFound` if there is no such deleted session or `context` may not see it
-    /// (`ReadDeleted`, asked first, issue 304), `SessionError::ProjectDeleted` if the shared
+    /// `SessionError::NotFound` if there is no such deleted session, `context` may not see it
+    /// (`ReadDeleted`, asked first, issue 304) or its purge is begun (issue 496),
+    /// `SessionError::ProjectDeleted` if the shared
     /// project it lies in is deleted, `StoreError::PermissionDenied` if they may but not restore
     /// it, or whatever the store reports as the groups of its participants or its own project are
     /// restored - the session stays deleted then.
@@ -888,6 +890,12 @@ impl SessionManager {
         // 469), its own project among it.
         let Deleted { entity: deleted, removal } =
             self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
+        // One whose purge is begun is the store's to refuse, as it would; refused before anything
+        // else is asked, so that its own project, purged already, is not taken for a shared one
+        // deleted.
+        if deleted.purging() {
+            return Err(SessionError::NotFound(id).into());
+        }
         let own = self
             .stores
             .projects
@@ -1008,23 +1016,41 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Removes the deleted session `id` for good on behalf of `context` (issue 164): its document,
-    /// and - in the runtime's name, since the purge was permitted - the documents and the state of
-    /// its channels, those it listed and those deleted from it before, the content of their
-    /// attachments (issue 282), and its own project with what lies in its scope (issue 467). Only
-    /// what was deleted is purged; the store asks `Purge`. Under its lifecycle lock, which deleting
-    /// and restoring it hold as well, so that what is restored meanwhile is not purged.
+    /// Removes the deleted session `id` for good on behalf of `context` (issue 164), in the order
+    /// of every purge of what has something behind it (`purge_behind`): its purge begun, then -
+    /// in the runtime's name, since the purge was permitted - what lies behind it
+    /// (`remove_behind`), then its document. Only what was deleted is purged; the store asks
+    /// `Purge`. A step that fails leaves the session deleted, its purge begun, so that the next
+    /// purge removes what is left (issue 496). Under its lifecycle lock, which deleting and
+    /// restoring it hold as well, so that a purge never meets it half deleted or half restored.
     ///
     /// # Errors
     /// `SessionError::NotFound` if there is no such deleted session or `context` may not see it,
-    /// `StoreError::PermissionDenied` if they may but not purge it.
+    /// `StoreError::PermissionDenied` if they may but not purge it, or whatever the stores report.
     pub async fn purge(&self, context: &SecurityContext, id: SessionId) -> Result<()> {
         let _lifecycle = self.lifecycles.lock(id).await;
-        let Deleted { entity: session, .. } =
-            self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
-        if !self.stores.sessions.purge(context, id).await? {
+        let purged = purge_behind(self.stores.sessions.as_ref(), context, id, async |session| {
+            self.remove_behind(session).await
+        })
+        .await?;
+        if !purged {
             return Err(SessionError::NotFound(id).into());
         }
+        info!(session = %id, by = %context.caller_id, "Session purged");
+        Ok(())
+    }
+
+    /// Removes what lies behind `session` once its purge is begun, in the runtime's name: the
+    /// state of its channels, those it lists and those deleted from it before, the content of
+    /// their attachments (issue 282) and then their documents; what lay in its scope and in its
+    /// channels' (issue 178), the group of its participants (issue 348), and its own project with
+    /// what lies in its scope (issue 467). What a purge that failed before removed already is
+    /// passed over.
+    ///
+    /// # Errors
+    /// Whatever the stores report.
+    async fn remove_behind(&self, session: &Session) -> Result<()> {
+        let id = session.id;
         let mut channels = session.channels.clone();
         let of_it = Query::filtered(Filter::eq(ChannelField::Session, id));
         channels.extend(
@@ -1036,16 +1062,14 @@ impl SessionManager {
                 .into_iter()
                 .map(|c| c.entity.id),
         );
-        // The state lives in the `StateStore`, which may be another store
-        // than the session's; the attachments its history carries go with it.
+        // The state lives in the `StateStore`, which may be another store than the session's; the
+        // attachments its history carries go with it. Both before the document, which is what
+        // finds them.
         for channel_id in channels {
-            purge_channel_document(&self.stores, channel_id).await?;
             self.state_store.delete_channel_state(channel_id).await?;
             self.attachments.purge(channel_id).await?;
+            purge_channel_document(&self.stores, channel_id).await?;
         }
-        // And what lay in its scope and in its channels' (issue 178), the group of its
-        // participants, as a channel's (issue 348), and its own project with what lay in its scope
-        // (issue 467).
         let owns: Vec<Project> =
             self.deleted_own(id).await?.into_iter().map(|own| own.entity).collect();
         self.scoped.purge_lying_in(&held_by(id, &owns)).await?;
@@ -1053,7 +1077,6 @@ impl SessionManager {
         for own in &owns {
             self.purge_own(own).await?;
         }
-        info!(session = %id, by = %context.caller_id, "Session purged");
         Ok(())
     }
 
@@ -1976,6 +1999,38 @@ mod tests {
                 .any(|entry| entry.subject == Subject::Group(GroupId::of_session(session.id()))),
             "the share is taken back: {shared:?}"
         );
+    }
+
+    /// Issue 496: a purge that fails part of the way - here as the document of its channel is
+    /// marked - leaves the session deleted, its purge begun, and the next purge removes what is
+    /// left.
+    #[tokio::test]
+    async fn a_purge_that_fails_part_of_the_way_is_finished_by_the_next() {
+        let (runtime, passing) = failing_runtime(Channel::KIND);
+        let stores = runtime.entity_stores().clone();
+        let states = Arc::clone(runtime.state_store());
+        let manager = SessionManager::new(runtime);
+        let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
+        let session = make_session("purged", UserId::new());
+        let (id, channel_id) = (session.id, session.channels[0]);
+        create(&manager, &ctx, session).await.unwrap();
+        manager.delete(&ctx, id).await.unwrap();
+
+        passing.store(0, Ordering::SeqCst);
+        manager.purge(&ctx, id).await.expect_err("its channel cannot be marked");
+        let left = stores.sessions.get_deleted(&system, id).await.expect("the session is left");
+        assert!(left.entity.purging(), "its purge begun");
+        assert!(stores.channels.get(&system, channel_id).await.is_ok(), "with its channel");
+        assert!(
+            states.get_channel_state(channel_id).await.is_err(),
+            "whose state went before its document"
+        );
+        assert!(manager.restore(&ctx, id).await.is_err(), "not to be restored");
+
+        passing.store(usize::MAX, Ordering::SeqCst);
+        manager.purge(&ctx, id).await.expect("purged when tried again");
+        assert!(stores.sessions.get_deleted(&system, id).await.is_err(), "the session is gone");
+        assert!(stores.channels.get(&system, channel_id).await.is_err(), "and its channel");
     }
 
     #[tokio::test]

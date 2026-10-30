@@ -9,7 +9,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
-| [496](496-a-sessions-purge-removes-its-channels-documents-first.md) | open | low | bug | `SessionManager::purge` removes the documents of a session and its channels first and their states and attachments afterwards, so that a purge that fails between leaves states and attachments that nothing finds again. |
 
 ## Sessions and channels
 
