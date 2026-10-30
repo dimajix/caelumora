@@ -62,6 +62,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::fs;
+    use std::ops::Not;
     use std::sync::Arc;
 
     define_id!(NoteId);
@@ -77,6 +78,8 @@ mod tests {
         deleted: Option<Removal>,
         #[serde(default)]
         revision: Revision,
+        #[serde(default, skip_serializing_if = "Not::not")]
+        purging: bool,
     }
 
     impl Secured for Note {
@@ -109,6 +112,14 @@ mod tests {
 
         fn set_revision(&mut self, revision: Revision) {
             self.revision = revision;
+        }
+
+        fn purging(&self) -> bool {
+            self.purging
+        }
+
+        fn set_purging(&mut self) {
+            self.purging = true;
         }
     }
 
@@ -200,6 +211,14 @@ mod tests {
 
                 fn set_revision(&mut self, revision: Revision) {
                     self.0.set_revision(revision);
+                }
+
+                fn purging(&self) -> bool {
+                    self.0.purging()
+                }
+
+                fn set_purging(&mut self) {
+                    self.0.set_purging();
                 }
             }
             runtime.entity_store::<Groupie>()?;

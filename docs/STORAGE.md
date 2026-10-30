@@ -345,27 +345,29 @@ What a user deletes is kept, marked, and removed for good only by a purge - an a
 or a retention policy's. Every kind is marked so - sessions, channels, agents, users, user profiles,
 personalities, session templates, component bundles, workspaces, projects, groups and the kinds of
 the plugins -, and carries who deleted it and when: `Stored::deleted` reads the mark,
-`Stored::set_deleted` sets it, and a kind that is `Stored` implements both.
+`Stored::set_deleted` sets it, and a kind that is `Stored` implements both. Apart from the mark, a
+kind records whether its purge has begun (`Stored::purging`, `set_purging`; see below).
 
 A marked document is not there for the ordinary operations, before anything is asked: not read,
 listed, found by name, changed or deleted again - also not by the system, so that no caller has to
 remember to leave it out. Its id stays taken, so seeding does not bring back deleted demo data.
-Nothing created or changed may carry the mark: only deleting sets it. Deleting sets the mark it is
-given (`EntityStore::delete`): a deletion makes its mark once - its id, who, when - and gives it to
-everything that goes with what it deletes, so that what went with it is what carries its mark (issue
-469), told by the mark's id (`RemovalId`), not by its time, which not every backend keeps exactly:
-restoring takes back what carries the mark of what is restored, and a restoring that fails puts the
-mark back as it was, so that it can be tried again. The mark names the caller; only that of the
-system itself (`SecurityContext::is_system`) names another, as it deletes the groups that go with a
-session in the runtime's name, by whoever deleted the session (`Validation` otherwise). What was
-deleted is reached by operations of its own, each with a permission of its own:
+Nothing created or changed may carry the mark, nor have its purge begun: only deleting and
+`begin_purge` set them. Deleting sets the mark it is given (`EntityStore::delete`): a deletion makes
+its mark once - its id, who, when - and gives it to everything that goes with what it deletes, so
+that what went with it is what carries its mark (issue 469), told by the mark's id (`RemovalId`),
+not by its time, which not every backend keeps exactly: restoring takes back what carries the mark
+of what is restored, and a restoring that fails puts the mark back as it was, so that it can be
+tried again. The mark names the caller; only that of the system itself
+(`SecurityContext::is_system`) names another, as it deletes the groups that go with a session in the
+runtime's name, by whoever deleted the session (`Validation` otherwise). What was deleted is reached
+by operations of its own, each with a permission of its own:
 
 | Operation | asks | does |
 |---|---|---|
 | `get_deleted`, `list_deleted` | `ReadDeleted` | read the marked documents, each with its mark (`Deleted`); what is not marked is not found |
 | `list_deleted_with` | `ReadDeleted` | lists what was deleted with one deletion, by the id of its mark: what restoring takes back with what it restores |
 | `restore` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
-| `begin_purge` | `ReadDeleted`, then `Purge` | marks the purge begun (`Removal::purging`): no restoring takes it back from then on |
+| `begin_purge` | `ReadDeleted`, then `Purge` | marks the purge begun (`Stored::purging`): no restoring takes it back from then on |
 | `purge` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
 Which of a kind's entities an operation is about - those there, those deleted, or those deleted
@@ -382,20 +384,22 @@ its `AccessPolicy`.
 Purging only what is still marked keeps a purge from removing what was restored meanwhile. Where
 something lies behind an entity - an agent's state, a workspace's place, an artifact's content -,
 its purge is begun first (`begin_purge`, issue
-[492](../issues/492-a-document-is-written-under-two-locks.md)): its mark records it, and no
-restoring takes it back from then on; then what lies behind it is removed, then the document. A
-purge that fails between leaves it deleted with its purge begun, for the next purge to finish; the
-mark holds across every writer of the store, as no lock in one process could. A session's channels
-are the exception: restoring and purging a session are serialised by the `SessionManager`, under
-the lock it also deletes and starts a session with, and its purge removes the documents of its
-channels before their states and attachments. Deleting, restoring and purging a project are
-serialised by the `ProjectManager`, under one lock per project id, since each goes through the
-project's sessions, its scope and its group. Both tables of locks by id are a `LocksById`, which
-keeps an id's lock only while somebody holds it or waits for it. What the runtime removes for good
-that is not marked - the channels of a session being purged, a document whose creation failed - it
-marks first, in its own name. The state of what was deleted stays in the
-`StateStore` until it is purged (see [Deleting
-state](#deleting-state)).
+[492](../issues/492-a-document-is-written-under-two-locks.md)): the entity records it, apart from
+the mark of its deletion (`Stored::purging`) - deleting and purging are two acts, each with a
+permission of its own -, and no restoring takes it back from then on; then what lies behind it is
+removed, then the document. The order is written once, in `store::purge_behind`, which every such
+purge goes through: a manager's in its caller's name and in its own errors, what goes with the
+holder of its scope in the runtime's name. A purge that fails between leaves it deleted with its
+purge begun, for the next purge to finish; the record holds across every writer of the store, as no
+lock in one process could. A session's channels are the exception: restoring and purging a session
+are serialised by the `SessionManager`, under the lock it also deletes and starts a session with,
+and its purge removes the documents of its channels before their states and attachments. Deleting,
+restoring and purging a project are serialised by the `ProjectManager`, under one lock per project
+id, since each goes through the project's sessions, its scope and its group. Both tables of locks by
+id are a `LocksById`, which keeps an id's lock only while somebody holds it or waits for it. What
+the runtime removes for good that is not marked - the channels of a session being purged, a document
+whose creation failed - it marks first, in its own name. The state of what was deleted stays in the
+`StateStore` until it is purged (see [Deleting state](#deleting-state)).
 
 ### Demo data
 

@@ -27,6 +27,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::iter;
+use std::ops::Not;
 
 define_id!(ArtifactId);
 
@@ -119,6 +120,9 @@ pub struct Artifact {
     /// Its revision (issue 492), counted up by every write of it.
     #[serde(default)]
     pub revision: Revision,
+    /// Whether its purge has begun (issue 492): set by the store alone.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 /// One version of an artifact: what was published, where and by whom.
@@ -184,6 +188,7 @@ impl Artifact {
             updated_at: now,
             deleted: None,
             revision: Default::default(),
+            purging: false,
         }
     }
 
@@ -257,6 +262,14 @@ impl Stored for Artifact {
 
     fn set_revision(&mut self, revision: Revision) {
         self.revision = revision;
+    }
+
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
     }
 
     /// An artifact is a user's and lies in a project's scope (issue 467), and has its versions

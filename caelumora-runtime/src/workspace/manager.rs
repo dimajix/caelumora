@@ -15,7 +15,9 @@ use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, Stored};
+use caelumora_model::store::{
+    purge_behind, EntityStore, EntityStores, StoreError, StoreResult, Stored,
+};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
@@ -192,24 +194,23 @@ impl WorkspaceManager {
         Ok(workspace)
     }
 
-    /// Removes the deleted workspace `id` for good, its files first: its
-    /// purge begun (`Purge`, asked before anything is removed), so that no
-    /// restoring takes it back while its place goes (issue 492), then its
-    /// place, then the document. A place that cannot be removed leaves the
-    /// document, its purge begun, so that the next purge tries again.
-    /// Announces nothing, as no purge does. `false` if there was nothing
+    /// Removes the deleted workspace `id` for good, its place first, in the order of every purge of
+    /// what has something behind it (`purge_behind`); `Purge` is asked before anything is removed.
+    /// A place that cannot be removed leaves the workspace deleted, its purge begun, so that the
+    /// next purge tries again. Announces nothing, as no purge does. `false` if there was nothing
     /// deleted the caller could see.
     ///
     /// # Errors
     /// `PermissionDenied`, `StorageGone` if its storage is no longer configured, a `TerminalError`
     /// of removing the place, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
-        let Some(workspace) = self.workspaces.begin_purge(ctx, id).await? else {
-            return Ok(false);
-        };
-        self.remove_place(&workspace).await?;
-        let purged = self.workspaces.purge(ctx, id).await?;
-        info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
+        let purged = purge_behind(self.workspaces.as_ref(), ctx, id, async |workspace| {
+            self.remove_place(workspace).await
+        })
+        .await?;
+        if purged {
+            info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
+        }
         Ok(purged)
     }
 

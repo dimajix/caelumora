@@ -13,6 +13,7 @@ use crate::value::name::ScopedName;
 use crate::value::text::{Description, Introduction};
 use crate::work::Work;
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 
 /// What kind of agent a personality makes (issue 179), and so which actor
 /// runs it in a channel.
@@ -247,6 +248,9 @@ pub struct Personality {
     /// Its revision (issue 492), counted up by every write of it.
     #[serde(default)]
     pub revision: Revision,
+    /// Whether its purge has begun (issue 492): set by the store alone.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub purging: bool,
 }
 
 impl Personality {
@@ -290,6 +294,14 @@ impl Stored for Personality {
 
     fn set_revision(&mut self, revision: Revision) {
         self.revision = revision;
+    }
+
+    fn purging(&self) -> bool {
+        self.purging
+    }
+
+    fn set_purging(&mut self) {
+        self.purging = true;
     }
 
     fn unique_name(&self) -> Option<ScopedName> {

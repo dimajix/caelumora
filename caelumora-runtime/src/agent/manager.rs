@@ -24,7 +24,8 @@ use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use caelumora_model::store::{
-    EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored,
+    purge_behind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt,
+    Stored,
 };
 use caelumora_model::value::name::ScopedName;
 use std::fmt;
@@ -112,7 +113,7 @@ impl AgentManager {
         self.agents.create(context, &mut agent).await?;
         self.holders.keep_made(self, &agent).await?;
         self.events.announce(GlobalEvent::created::<Agent>(&agent.id), &agent);
-        info!("Agent {} created by {}", agent.id, context.caller_id);
+        info!(agent = %agent.id, by = %context.caller_id, "Agent created");
         Ok(agent)
     }
 
@@ -143,7 +144,7 @@ impl AgentManager {
             return Ok(false);
         }
         self.events.announce(GlobalEvent::deleted::<Agent>(&id), &agent);
-        info!("Agent {} deleted by {}", id, context.caller_id);
+        info!(agent = %id, by = %context.caller_id, "Agent deleted");
         Ok(true)
     }
 
@@ -162,34 +163,31 @@ impl AgentManager {
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> AgentResult<Agent> {
         let agent = self.holders.restore(self, context, id).await.map_err(store_error(id))?;
         self.events.announce(GlobalEvent::restored::<Agent>(&id), &agent);
-        info!("Agent {} restored by {}", id, context.caller_id);
+        info!(agent = %id, by = %context.caller_id, "Agent restored");
         Ok(agent)
     }
 
-    /// Removes the deleted agent `id` for good on behalf of `context` (issue
-    /// 164): its own state and its state in every channel, then its
-    /// document - its purge begun before, so that no restoring takes it back
-    /// without its state (issue 492). Only what was deleted is purged; the
-    /// store asks `Purge`. A state that cannot be removed leaves the
-    /// document, its purge begun, so that the next purge tries again. Announces
-    /// nothing, as no purge does. What it said stays in the channels'
-    /// histories, by an agent that no longer exists; the channels it rested
-    /// in show it as a former participant, without when it left. `false` if
-    /// there was nothing deleted the caller could see.
+    /// Removes the deleted agent `id` for good on behalf of `context` (issue 164), its state - its
+    /// own and in every channel - first, in the order of every purge of what has something behind
+    /// it (`purge_behind`). Only what was deleted is purged; the store asks `Purge`. A state that
+    /// cannot be removed leaves the agent deleted, its purge begun, so that the next purge tries
+    /// again. Announces nothing, as no purge does. What it said stays in the channels' histories,
+    /// by an agent that no longer exists; the channels it rested in show it as a former
+    /// participant, without when it left. `false` if there was nothing deleted the caller could
+    /// see.
     ///
     /// # Errors
-    /// `StoreError::PermissionDenied` if they may see it but not purge it,
-    /// or whatever else the stores report.
+    /// `StoreError::PermissionDenied` if they may see it but not purge it, or whatever else the
+    /// stores report.
     pub async fn purge(&self, context: &SecurityContext, id: AgentId) -> AgentResult<bool> {
-        if self.agents.begin_purge(context, id).await?.is_none() {
-            return Ok(false);
+        let purged = purge_behind(self.agents.as_ref(), context, id, async |agent| {
+            self.remove_behind(agent).await
+        })
+        .await?;
+        if purged {
+            info!(agent = %id, by = %context.caller_id, "Agent purged");
         }
-        self.states.delete_agent_state(id).await?;
-        if !self.agents.purge(context, id).await? {
-            return Ok(false);
-        }
-        info!("Agent {} purged by {}", id, context.caller_id);
-        Ok(true)
+        Ok(purged)
     }
 }
 
@@ -208,8 +206,7 @@ impl ScopeMember for AgentManager {
         Some(self.events.as_ref())
     }
 
-    /// Removes the state of `agent`, its own and in every channel, once its purge is begun - as
-    /// `purge` removes it.
+    /// Removes the state of `agent`, its own and in every channel, once its purge is begun.
     ///
     /// # Errors
     /// Whatever the state store reports.

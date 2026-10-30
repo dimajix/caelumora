@@ -927,7 +927,7 @@ impl SessionManager {
             );
         }
         self.events.announce(GlobalEvent::restored::<Session>(&id), &session);
-        info!("Session {} restored by {}", id, context.caller_id);
+        info!(session = %id, by = %context.caller_id, "Session restored");
         Ok(session)
     }
 
@@ -1047,7 +1047,7 @@ impl SessionManager {
         for own in &owns {
             self.purge_own(own).await?;
         }
-        info!("Session {} purged by {}", id, context.caller_id);
+        info!(session = %id, by = %context.caller_id, "Session purged");
         Ok(())
     }
 

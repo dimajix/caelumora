@@ -318,6 +318,14 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
     /// Sets its revision: the store's, as it writes it.
     fn set_revision(&mut self, revision: Revision);
 
+    /// Whether its purge has begun (issue 492): what lies behind it is being removed, and no
+    /// restoring takes it back any more. Begun today only for what was deleted, which then stays
+    /// deleted until it is purged.
+    fn purging(&self) -> bool;
+
+    /// Marks its purge begun: the store's, as it begins it (`EntityStore::begin_purge`).
+    fn set_purging(&mut self);
+
     /// Nothing if it may be stored as it is; why not otherwise, which the
     /// store answers as `StoreError::Validation` when it is created or
     /// changed.
@@ -500,7 +508,7 @@ impl<T: Stored> Deleted<T> {
 /// is marked, so that a purge never takes what was restored. Where something lies behind an
 /// entity - a workspace's place, an artifact's content -, its purge is begun first
 /// (`begin_purge`): from then on no restoring takes it back, while what lies behind it is removed
-/// before `purge` (issue 492).
+/// before `purge` (issue 492). Such a purge goes through `purge_behind`, which keeps that order.
 ///
 /// Every write is judged on the revision that was read (issue 492), and writes the one after it:
 /// `create` a new entity, which carries the first, as the one after it (issue 500); `update`
@@ -525,10 +533,11 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     ) -> StoreResult<bool>;
     async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
     async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
-    /// Begins the purge of the deleted entity `id`, asked as `purge` asks: its mark says so from
-    /// then on (`Removal::purging`), and `restore` refuses it, so that what lies behind it can be
+    /// Begins the purge of the deleted entity `id`, asked as `purge` asks: it says so from then
+    /// on (`Stored::purging`), and `restore` refuses it, so that what lies behind it can be
     /// removed before `purge` removes it - and again, if that failed, by a purge begun once more.
-    /// Answers the entity as marked; `None` if there is nothing deleted the caller could see.
+    /// Answers the entity with its purge begun; `None` if there is nothing deleted the caller could
+    /// see.
     async fn begin_purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Option<T>>;
     async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
     async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Deleted<T>>;
@@ -548,6 +557,26 @@ pub trait EntityStore<T: Stored>: Debug + Send + Sync {
     /// The one of `name`, in exactly that scope, among what the caller may
     /// read (issue 178).
     async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;
+}
+
+/// Purges the deleted entity `id` of `store` on behalf of `ctx`, what lies behind it first: its
+/// purge begun (`EntityStore::begin_purge`), so that no restoring takes it back while that goes
+/// (issue 492), then `remove_behind` given the entity, then the entity. The one order of every
+/// purge of what has something behind it (issue 497); each caller answers in its own errors.
+/// `false` if there was nothing deleted the caller could see.
+///
+/// # Errors
+/// What `remove_behind` reports, or whatever the store reports; if it fails once the purge is
+/// begun, the entity stays deleted, its purge begun, so that the next purge tries again.
+pub async fn purge_behind<T: Stored, E: From<StoreError>>(
+    store: &dyn EntityStore<T>,
+    ctx: &SecurityContext,
+    id: T::Id,
+    remove_behind: impl AsyncFnOnce(&T) -> Result<(), E>,
+) -> Result<bool, E> {
+    let Some(entity) = store.begin_purge(ctx, id.clone()).await? else { return Ok(false) };
+    remove_behind(&entity).await?;
+    Ok(store.purge(ctx, id).await?)
 }
 
 /// The stores of the entities (issue 323), one per kind of the core,
@@ -841,6 +870,7 @@ pub trait StateStore: Debug + Sync + Send {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::ActorId;
     use crate::removal::Removal;
     use crate::security::{OwnershipPolicy, SecurityAttributes, SecurityContext};
     use crate::session::testing::bare_session;
@@ -848,6 +878,7 @@ mod tests {
     use crate::store::memory::MemoryStore;
     use crate::store::query::NoField;
     use crate::value::name::Name;
+    use std::ops::Not;
     use std::sync::Arc;
 
     #[test]
@@ -891,6 +922,8 @@ mod tests {
         deleted: Option<Removal>,
         #[serde(default)]
         revision: Revision,
+        #[serde(default, skip_serializing_if = "Not::not")]
+        purging: bool,
     }
 
     impl Secured for Note {
@@ -924,6 +957,80 @@ mod tests {
         fn set_revision(&mut self, revision: Revision) {
             self.revision = revision;
         }
+
+        fn purging(&self) -> bool {
+            self.purging
+        }
+
+        fn set_purging(&mut self) {
+            self.purging = true;
+        }
+    }
+
+    /// A new note of the system's.
+    fn new_note() -> Note {
+        Note {
+            id: NoteId::new(),
+            security_attributes: SecurityAttributes::systems(),
+            deleted: None,
+            revision: Default::default(),
+            purging: false,
+        }
+    }
+
+    /// What a caller of `purge_behind` answers in: its own errors beside the store's.
+    #[derive(Debug)]
+    enum Behind {
+        Unremovable,
+        Store(
+            #[expect(dead_code, reason = "shown by `Debug` alone, when a test fails")] StoreError,
+        ),
+    }
+
+    impl From<StoreError> for Behind {
+        fn from(error: StoreError) -> Self {
+            Self::Store(error)
+        }
+    }
+
+    /// Issue 497: a purge with something behind it removes that between beginning the purge and
+    /// purging; if removing fails, the caller's error comes back as it was given, and the entity
+    /// stays deleted, its purge begun, so that no restoring takes it back.
+    #[tokio::test]
+    async fn what_lies_behind_goes_between_beginning_the_purge_and_purging() {
+        let notes = Persistence::in_memory()
+            .entity_store::<Note>(&Policies::permitting_all())
+            .expect("the store of notes opens");
+        let system = SecurityContext::system();
+        let mut note = new_note();
+        notes.create(&system, &mut note).await.unwrap();
+        let removed = Mutex::new(Vec::new());
+        let remove = async |behind: &Note| {
+            removed.lock().unwrap().push(behind.id);
+            Ok::<_, Behind>(())
+        };
+
+        assert!(!purge_behind(notes.as_ref(), &system, note.id, remove).await.unwrap());
+        assert!(removed.lock().unwrap().is_empty(), "nothing removed for what is not deleted");
+
+        notes.delete(&system, note.id, &Removal::now(ActorId::System)).await.unwrap();
+        let failed =
+            purge_behind(notes.as_ref(), &system, note.id, async |_| Err(Behind::Unremovable))
+                .await;
+        assert!(matches!(failed, Err(Behind::Unremovable)), "the caller's error: {failed:?}");
+        let left = notes.get_deleted(&system, note.id).await.expect("still deleted");
+        assert!(left.entity.purging(), "its purge begun");
+        assert!(notes.restore(&system, note.id).await.is_err(), "not to be restored");
+
+        let remove = async |behind: &Note| {
+            assert!(behind.purging(), "removed once its purge is begun");
+            removed.lock().unwrap().push(behind.id);
+            Ok::<_, Behind>(())
+        };
+        assert!(purge_behind(notes.as_ref(), &system, note.id, remove).await.unwrap());
+        assert_eq!(*removed.lock().unwrap(), vec![note.id], "what lies behind it, removed");
+        let gone = notes.get_deleted(&system, note.id).await;
+        assert!(matches!(gone, Err(StoreError::NotFound { .. })), "purged: {gone:?}");
     }
 
     /// A kind named as the core's groups are.
@@ -961,6 +1068,14 @@ mod tests {
         fn set_revision(&mut self, revision: Revision) {
             self.0.set_revision(revision);
         }
+
+        fn purging(&self) -> bool {
+            self.0.purging()
+        }
+
+        fn set_purging(&mut self) {
+            self.0.set_purging();
+        }
     }
 
     /// A kind is kept in one storage of its backend however it is opened, by whichever policies
@@ -970,12 +1085,7 @@ mod tests {
         let memory = Arc::new(MemoryStore::new());
         let backend = Persistence::over(Arc::<MemoryStore>::clone(&memory)).unwrap();
         let notes = backend.entity_store::<Note>(&Policies::permitting_all()).unwrap();
-        let mut note = Note {
-            id: NoteId::new(),
-            security_attributes: SecurityAttributes::systems(),
-            deleted: None,
-            revision: Default::default(),
-        };
+        let mut note = new_note();
         notes.create(&SecurityContext::system(), &mut note).await.unwrap();
         let owners = Policies::by_default_rules(Arc::new(OwnershipPolicy::new()));
         let again = backend.entity_store::<Note>(&owners).unwrap();

@@ -362,9 +362,8 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
         }
     }
 
-    /// Read, asked about as `purge` asks, and written with its mark saying
-    /// so - again if it was changed meanwhile (issue 492). One whose purge
-    /// was begun before is answered as it is.
+    /// Read, asked about as `purge` asks, and written saying so (`Stored::set_purging`) - again if
+    /// it was changed meanwhile (issue 492). One whose purge was begun before is answered as it is.
     async fn begin_purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<Option<T>> {
         loop {
             let stored = self.stored(&id).await?;
@@ -372,10 +371,10 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
                 return Ok(None);
             }
             let Some(mut marked) = stored else { return Ok(None) };
-            let Some(mark) = marked.deleted().filter(|mark| !mark.purging).cloned() else {
+            if marked.purging() {
                 return Ok(Some(marked));
-            };
-            marked.set_deleted(Some(Removal { purging: true, ..mark }));
+            }
+            marked.set_purging();
             if self.write(&mut marked).await.written()?.is_some() {
                 return Ok(Some(marked));
             }
