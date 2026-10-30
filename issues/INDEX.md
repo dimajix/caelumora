@@ -21,6 +21,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [336](336-errors-of-a-plugin-shown-as-a-failure.md) | done | The core turns an error into what a person is told by the error types it knows, so what a plugin's error says is shown as a failure wherever it travels inside an `anyhow`. |
 | [508](508-bus-queue-unbounded.md) | in progress | What is published waits for the event bus's dispatcher in a queue without a bound, so when the dispatcher falls behind, memory grows and every subscriber waits longer, and nothing tells. |
 | [514](514-calls-without-a-message-of-their-own.md) | open | The statistics of a model call - its tokens and durations - are recorded on the message it produced, so a call whose answer is no message of the transcript is counted with another message, or not at all, and `TokenUsage::calls` counts fewer calls than were made. |
+| [515](515-parameters-a-component-does-not-take-are-ignored.md) | open | A component kind without parameters builds whatever `params` its descriptor gives and ignores them, so a parameter misspelt, set on the wrong component or moved to another is lost without a word, while a kind with parameters refuses what it does not know. |
 
 ## Persistence
 
