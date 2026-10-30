@@ -107,7 +107,7 @@ facet trait lives next to the code that uses it, not among the implementations.
 | `EmitOutProcessor` | filtering of the messages an agent emits | `crate::message` |
 | `Moderator` | whom a channel's events go to, who is asked to respond, what it tells of its own | `crate::moderator` |
 | `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator` |
-| `CompactionStrategy` | how an agent's context is compacted | `caelumora_compaction` |
+| `CompactionStrategy` | what stands in the place of the older part of an agent's context when it is compacted | `caelumora_compaction` |
 | `KnowledgeRestorer` | what a component gave the agent - a skill loaded -, given again after a compaction | `caelumora_compaction` |
 
 `PerceiveInProcessor` and `EmitOutProcessor` have no built-in implementation; they are extension
@@ -183,8 +183,8 @@ it (issue 337):
 | a session's commands | `ChannelCommandProvider` | `RuntimeManager::new_command_executor` |
 
 An agent's closure thus holds the `PromptProvider`s its default `turn_context_provider` needs, and,
-if it lists `compaction`, the `CompactionStrategy` that component needs - its default
-`summary_compaction` - and the `LLMClient` and `KnowledgeRestorer`s that one needs in turn.
+if it lists `compaction`, the `CompactionStrategy` and the `KnowledgeRestorer`s that component
+needs - its default strategy `summary_compaction` - and the `LLMClient` that one needs in turn.
 
 ### Facets of which there is exactly one
 
@@ -420,8 +420,8 @@ query or fragment.
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `user_driven_policy` | `ResponderPolicy` | - | Asks every agent if a user wrote, nobody if an agent did. |
 | `decision_policy` | `ResponderPolicy` | `endpoint`, `model` (`nimble`), `keep_alive`, `threshold` (`0.3`), `max_responders` (`1`), `destination` (`public`) | Of the plugin `caelumora-decision`, registered where it is joined; configured by an operator alone. Asks a decision model whom to ask ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). |
-| `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size) | Of the plugin `caelumora-compaction`, registered where it is joined. Compaction of the agent's context by its `CompactionStrategy`: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. Its strategy's `keep` belongs below `threshold`, or every compaction frees too little. |
-| `summary_compaction` | `CompactionStrategy` | `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size) | Of the plugin `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its transcript, and the agent's `KnowledgeRestorer`s give again what it had been given there ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
+| `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the plugin `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it had been given there; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
+| `summary_compaction` | `CompactionStrategy` | - | Of the plugin `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
 | `help_command` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |

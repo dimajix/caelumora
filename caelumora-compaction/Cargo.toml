@@ -13,6 +13,7 @@ async-trait.workspace = true
 chrono.workspace = true
 futures.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
@@ -21,7 +22,6 @@ uuid.workspace = true
 caelumora-agents = { workspace = true, features = ["test-support"] }
 caelumora-runtime = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
-serde_json.workspace = true
 
 [lints]
 workspace = true

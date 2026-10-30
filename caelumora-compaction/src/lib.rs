@@ -4,37 +4,37 @@
 //! When a context is compacted and how are kept apart. The [`component`] - `compaction` -
 //! compacts the agent's context on its own, as an activity (`caelumora_agents::activity`, issue
 //! 284), once it fills a share of its model's size, and carries out `/compact @agent` for the
-//! agent's owners; an agent whose personality does not list it does not compact. How the context
-//! is compacted is left to the agent's [`CompactionStrategy`] in either case - by default the
-//! [`summary_compaction`], which has the agent's model summarise the older part of its
-//! transcript. Of strategies an agent has exactly one.
+//! agent's owners; an agent whose personality does not list it does not compact. What stands in
+//! the place of the older part of the context is left to the agent's [`CompactionStrategy`] in
+//! either case - by default the [`summary_compaction`], which has the agent's model summarise it.
+//! Of strategies an agent has exactly one.
 //!
-//! Whatever the strategy, the context is replaced, not rewritten: the
-//! transcript begins anew on a branch of its own (`Transcript::compact`),
-//! and what the agent saw before stays recorded and resolvable
+//! Whatever the strategy, the rules of a compaction are the same, and the component's (issue
+//! 413): where the transcript is cut, whose the replacement is and how it is classified, what is
+//! given again; the context is replaced, not rewritten: the transcript begins anew on a branch of
+//! its own (`Transcript::compact`), and what the agent saw before stays recorded and resolvable
 //! (`AgentChannelState::compact`).
 //!
 //! What a component gave the agent - a skill loaded - is given again after
-//! a compaction by that component, a [`KnowledgeRestorer`] (issue 323): a
-//! strategy asks the restorers of the agent's components, and knows no
+//! a compaction by that component, a [`KnowledgeRestorer`] (issue 323): the
+//! compaction asks the restorers of the agent's components, and knows no
 //! kind of knowledge itself.
 
+mod compactor;
 pub mod component;
+mod cut;
 pub mod plugin;
 pub mod summary_compaction;
+#[cfg(test)]
+mod testing;
 
 use async_trait::async_trait;
-#[cfg(test)]
-use caelumora_agents::prompt::{NAMESPACE as AGENTS, PROMPTS as AGENTS_PROMPTS};
 use caelumora_agents::turn::Turn;
 use caelumora_model::context::KnowledgeRef;
+use caelumora_model::message::Message;
 use caelumora_model::prompt_catalogue::PromptError;
-#[cfg(test)]
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
 use caelumora_model::store::EntityKind;
 use std::fmt::Debug;
-#[cfg(test)]
-use std::sync::Arc;
 use uuid::Uuid;
 
 /// The namespace of the texts of compaction in the prompt catalogue (issue 57).
@@ -43,29 +43,38 @@ pub const NAMESPACE: &str = "compaction";
 /// Their texts, added to the catalogue under `NAMESPACE` by the plugin.
 pub const PROMPTS: &str = include_str!("prompts.yaml");
 
-/// The texts of the core, of the agents and of compaction, as the runtime and the plugins add
-/// them, as a model of the default variant is given them - for what a test makes itself.
-#[cfg(test)]
-pub(crate) fn prompts() -> PromptTexts {
-    let mut catalogue = PromptCatalogue::new();
-    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)]
-    {
-        catalogue
-            .add(namespace, texts)
-            .unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
-    }
-    PromptTexts::new(Arc::new(catalogue), None)
-}
-
-/// How an agent's context is compacted: where it is cut and what replaces
-/// the part before the cut. An agent has exactly one; when it compacts on
-/// its own is its `compaction` component's.
+/// What stands in the place of the older part of an agent's context when it is compacted. An agent
+/// has exactly one; where the part ends, what was given in it, and how the context is replaced is
+/// its `compaction` component's, as is when it compacts.
 #[async_trait]
 pub trait CompactionStrategy: Send + Sync + Debug {
-    /// Compacts the context of `turn`'s agent, moving the turn's context to
-    /// the compacted one - or `None` if there is nothing to compact, and
-    /// nothing was changed. Nothing is changed either if it fails.
-    async fn compact(&self, turn: &mut Turn<'_>) -> Result<Option<Compaction>, CompactionError>;
+    /// What replaces `part` - the older part of `turn`'s context, as its model is given it - for
+    /// the agent to go on from. `given` names, by kind and name, what was given in the part and can
+    /// be given again after the replacement; what the agent still needs of it is given again
+    /// (issue 413).
+    ///
+    /// # Errors
+    /// `ModelUnreachable` if a model it asks cannot be asked, `NoSummary` if it answers nothing,
+    /// `Prompt` if a text it asks with cannot be had.
+    async fn replace(
+        &self,
+        turn: &Turn<'_>,
+        part: Vec<Message>,
+        given: &[String],
+    ) -> Result<Replacement, CompactionError>;
+}
+
+/// What a strategy puts in the place of the part of the context it replaces.
+#[derive(Debug)]
+pub struct Replacement {
+    /// The text that stands for the part, as the agent is given it.
+    pub text: String,
+    /// The message its model answered with, which carries the measures of the calls that wrote
+    /// the replacement - their tokens summed, the context size of the last.
+    pub call: Message,
+    /// Of what was given in the part, what the agent still needs for the work under way, by kind
+    /// and name; the rest is not given again.
+    pub still_needed: Vec<String>,
 }
 
 /// What a component gave the agent and gives again after a compaction
@@ -114,6 +123,9 @@ pub struct Compaction {
     /// What was given again, as it is now, each by its kind and name -
     /// `skill release-notes`.
     pub given_again: Vec<String>,
+    /// What could have been given again and was not, since the agent no
+    /// longer needs it, each by its kind and name (issue 413).
+    pub not_needed: Vec<String>,
     /// How much the agent had been given before that can no longer be
     /// given and was not given again.
     pub lost: usize,
@@ -130,6 +142,12 @@ impl Compaction {
         );
         if !self.given_again.is_empty() {
             text.push_str(&format!(" Given again: {}.", self.given_again.join(", ")));
+        }
+        if !self.not_needed.is_empty() {
+            text.push_str(&format!(
+                " No longer needed, not given again: {}.",
+                self.not_needed.join(", ")
+            ));
         }
         if self.lost > 0 {
             text.push_str(&format!(" {} of what it had been given can no longer be given here and was not given again.", self.lost));
@@ -156,4 +174,26 @@ pub enum CompactionError {
     /// A text it is given, or asks its model with, cannot be had (issue 57).
     #[error("{0}")]
     Prompt(#[from] PromptError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_compaction_tells_what_it_did() {
+        let compaction = Compaction {
+            replaced: 3,
+            kept: 1,
+            given_again: vec!["skill release-notes".to_string()],
+            not_needed: vec!["skill quiz-round".to_string()],
+            lost: 1,
+        };
+        assert_eq!(
+            compaction.describe("Jonathan"),
+            "Jonathan compacted its context: 3 messages replaced, 1 kept as they were. Given again: skill release-notes. \
+            No longer needed, not given again: skill quiz-round. \
+            1 of what it had been given can no longer be given here and was not given again."
+        );
+    }
 }

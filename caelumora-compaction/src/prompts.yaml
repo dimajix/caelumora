@@ -3,15 +3,26 @@
 # the agents' file (`caelumora-agents/src/prompts.yaml`).
 
 # `summary_compaction`: what its model is asked to summarise for - going on
-# from the summary alone -, leaving out what a restorer gives again, of the
-# `kinds` named.
+# from the summary alone -, leaving out what was `given` and can be given
+# again, each by its kind and name.
 instruction: >-
   Summarise the conversation above for yourself, so that you can go on from the summary alone: what
   the task is and who asked for it, what was decided and agreed, what was done - with which files,
   tools and results that still matter -, and what is still open. Keep names, numbers and identifiers
-  exact. Answer with the summary only.{{ " Leave out the text of anything given to you as a " ~ kinds|join(" or ") ~ ": it is given to you again." if kinds }}
+  exact. Answer with the summary only.{{ " Leave out the text of " ~ given|join(", ") ~ ": what you still need of it is given to you again." if given }}
 
 # The title of the summary, before `text`, the summary.
 summary: |-
   [Summary of the conversation so far]
   {{ text }}{{ "\n" if text is not endingwith "\n" }}
+
+# `summary_compaction`: asked after the summary, which of what was `given`
+# in the part summarised - each by its kind and name - the agent still needs
+# (issue 413). Its answer is read a line a name, or as `none`, the word that
+# says it needs nothing of it.
+still_needed: |-
+  Of what was given to you in the conversation above, what do you still need word for word for the work that is still open?
+  {% for name in given %}
+  - {{ name }}
+  {% endfor %}
+  Answer with the names of what you still need, as written above, one per line - or with "{{ none }}". What you name is given to you again after your summary; what you do not name is not, as what belongs to a task that is over.
