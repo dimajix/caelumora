@@ -79,10 +79,10 @@ participants who may not read the skill.
 Every load is recorded as knowledge, and the turn has seen the skill: what it writes afterwards is
 classified at least so.
 
-A compaction by summary gives again every skill loaded in the part of the transcript it summarises -
-given or loaded by the model, either way a `Given` entry - as it is now and only if the agent may
-still load it, unless the part kept still holds it. The compaction asks the `skills` component for
-it, as its `KnowledgeRestorer` (issue 323): it knows no skills itself.
+A compaction gives again every skill loaded in the part of the transcript it replaces - given or
+loaded by the model, either way a `Given` entry - as it is now and only if the agent may still load
+it, unless the part kept still holds it. The compaction asks the `skills` component for it, as its
+`KnowledgeRestorer` (issue 323): it knows no skills itself.
 
 ## Agents write skills
 

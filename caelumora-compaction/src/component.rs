@@ -3,9 +3,9 @@
 //!
 //! On its own, as an activity, once its context fills `threshold` of its model's context size;
 //! when asked, by `/compact @agent`, a command the agent carries out itself, for its owners alone.
-//! How the context is compacted is its [`CompactionStrategy`]'s in either case; the component
-//! asks for it and tells the channel what it did. An agent whose personality does not list it
-//! does not compact at all.
+//! Either way it keeps `keep` of the context size as it stands, below `threshold`, and has the
+//! rest replaced by what its [`CompactionStrategy`] puts there (`Compactor`); it tells the channel
+//! what it did. An agent whose personality does not list it does not compact at all.
 //!
 //! How full the context is, is measured by the calls made on it and estimated beyond them
 //! (`Situation::token_positions`); only once a call made on the active branch measured it, not
@@ -13,7 +13,8 @@
 //! size gives nothing to measure against: its agent does not compact on its own, which the
 //! component says once.
 
-use crate::{CompactionError, CompactionStrategy};
+use crate::compactor::Compactor;
+use crate::{CompactionError, CompactionStrategy, KnowledgeRestorer};
 use async_trait::async_trait;
 use caelumora_agents::activity::{ActivityError, ActivityProvider};
 use caelumora_agents::command::AgentCommandProvider;
@@ -25,6 +26,7 @@ use caelumora_runtime::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
 };
 use serde::Deserialize;
+use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::info;
@@ -41,12 +43,16 @@ const ACTIVITY: &str = "compacting its context";
 /// size, unless configured.
 const DEFAULT_THRESHOLD: f64 = 0.8;
 
-/// Compaction of an agent's context by its strategy: on its own, as an activity, once the context
-/// fills `threshold`, and by `/compact`.
+/// How much of the context a compaction keeps as it stands, as a share of its model's context
+/// size, unless configured.
+const DEFAULT_KEEP: f64 = 0.25;
+
+/// Compaction of an agent's context: on its own, as an activity, once the context fills
+/// `threshold`, and by `/compact`.
 #[derive(Debug)]
 pub struct CompactionComponent {
-    /// The agent's strategy, which compacts.
-    strategy: Arc<dyn CompactionStrategy>,
+    /// What carries out a compaction, with the agent's strategy.
+    compactor: Compactor,
     /// How full the context may be before the agent compacts it on its own, as a share of the
     /// context size.
     threshold: f64,
@@ -60,22 +66,45 @@ pub struct CompactionComponent {
 struct CompactionConfig {
     #[serde(default = "default_threshold")]
     threshold: f64,
+    #[serde(default = "default_keep")]
+    keep: f64,
 }
 
 fn default_threshold() -> f64 {
     DEFAULT_THRESHOLD
 }
 
+fn default_keep() -> f64 {
+    DEFAULT_KEEP
+}
+
+impl CompactionConfig {
+    /// The configuration `params` give.
+    ///
+    /// # Errors
+    /// `InvalidConfig` if they are not its parameters, or `keep` and `threshold` are no shares of
+    /// the context size with `keep` below `threshold`: kept as much as it compacts at, a compaction
+    /// would free too little.
+    fn of(params: &Value) -> Result<Self, ComponentError> {
+        let config: Self = config_of_params(params)?;
+        let Self { threshold, keep } = config;
+        if !(0.0 <= keep && keep < threshold && threshold <= 1.0) {
+            return Err(ComponentError::InvalidConfig(format!("'keep' and 'threshold' are shares of the context size, 'keep' at least 0 and less than 'threshold', 'threshold' at most 1, not {keep} and {threshold}")));
+        }
+        Ok(config)
+    }
+}
+
 impl CompactionComponent {
-    fn new(strategy: Arc<dyn CompactionStrategy>, threshold: f64) -> Self {
-        Self { strategy, threshold, told_no_size: AtomicBool::new(false) }
+    fn new(compactor: Compactor, threshold: f64) -> Self {
+        Self { compactor, threshold, told_no_size: AtomicBool::new(false) }
     }
 
-    /// Compacts the context of `turn`'s agent as its strategy does: what it did, in words for its
-    /// channel, or `None` if there was nothing to compact.
+    /// Compacts the context of `turn`'s agent: what it did, in words for its channel, or `None`
+    /// if there was nothing to compact.
     async fn compact(&self, turn: &mut Turn<'_>) -> Result<Option<String>, CompactionError> {
         Ok(self
-            .strategy
+            .compactor
             .compact(turn)
             .await?
             .map(|compaction| compaction.describe(turn.agent_name())))
@@ -164,16 +193,26 @@ impl ActivityProvider for CompactionComponent {
 /// Registers the kind `compaction` with `registry`.
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(COMPACTION_KIND).provides::<dyn AgentCommandProvider>().provides::<dyn ActivityProvider>().needs::<dyn CompactionStrategy>(),
+        ComponentKind::new(COMPACTION_KIND)
+            .provides::<dyn AgentCommandProvider>()
+            .provides::<dyn ActivityProvider>()
+            .needs::<dyn CompactionStrategy>()
+            .needs::<dyn KnowledgeRestorer>(),
         |descriptor, context| async move {
-            let CompactionConfig { threshold } = config_of_params(&descriptor.params)?;
-            if !(threshold > 0.0 && threshold <= 1.0) {
-                return Err(ComponentError::InvalidConfig(format!("'threshold' is a share of the context size, more than 0 and at most 1, not {threshold}")));
-            }
+            let CompactionConfig { threshold, keep } = CompactionConfig::of(&descriptor.params)?;
             let strategy = context.one::<dyn CompactionStrategy>().await?.facet;
-            let component = Arc::new(CompactionComponent::new(strategy, threshold));
+            // What the agent's components give again, each of its kind.
+            let restorers = context
+                .all::<dyn KnowledgeRestorer>()
+                .await?
+                .into_iter()
+                .map(|restorer| restorer.facet)
+                .collect();
+            let compactor = Compactor::new(strategy, restorers, keep);
+            let component = Arc::new(CompactionComponent::new(compactor, threshold));
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn AgentCommandProvider>(Arc::<CompactionComponent>::clone(&component));
+            facets
+                .insert::<dyn AgentCommandProvider>(Arc::<CompactionComponent>::clone(&component));
             facets.insert::<dyn ActivityProvider>(component);
             Ok(facets)
         },
@@ -183,90 +222,81 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Compaction;
+    use crate::testing::{two_calls, Scripted};
     use caelumora_agents::testing::workspace_turn;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
+    use caelumora_model::agent::AgentId;
     use caelumora_model::command::CommandVisibility;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId, MessageRole};
     use caelumora_runtime::workspace::testing::session_with_workspace;
-    use serde_json::Value;
-    use std::sync::atomic::AtomicUsize;
 
-    /// A strategy that answers with what `answer` returns, counting how
-    /// often it was asked.
-    #[derive(Debug)]
-    struct Answering {
-        answer: fn() -> Result<Option<Compaction>, CompactionError>,
-        asked: AtomicUsize,
+    /// The component with `strategy`, keeping a tenth of the context.
+    fn component(strategy: &Arc<Scripted>) -> CompactionComponent {
+        let compactor = Compactor::new(Arc::<Scripted>::clone(strategy), Vec::new(), 0.1);
+        CompactionComponent::new(compactor, DEFAULT_THRESHOLD)
     }
 
-    #[async_trait]
-    impl CompactionStrategy for Answering {
-        async fn compact(&self, _: &mut Turn<'_>) -> Result<Option<Compaction>, CompactionError> {
-            self.asked.fetch_add(1, Ordering::SeqCst);
-            (self.answer)()
-        }
-    }
+    /// What the turn of an agent that heard `u1` did before it compacts.
+    type Before = fn(&mut Turn<'_>, AgentId);
 
-    /// The component with a strategy that answers with what `answer` returns, and that strategy.
-    fn answering(
-        answer: fn() -> Result<Option<Compaction>, CompactionError>,
-    ) -> (CompactionComponent, Arc<Answering>) {
-        let strategy = Arc::new(Answering { answer, asked: AtomicUsize::new(0) });
-        (CompactionComponent::new(Arc::<Answering>::clone(&strategy), DEFAULT_THRESHOLD), strategy)
-    }
+    /// Nothing done in the turn: nothing to compact, beside `two_calls`.
+    fn nothing(_: &mut Turn<'_>, _: AgentId) {}
 
+    /// What `/compact` with `args` answers, after `before`, with `strategy`, and how often the
+    /// strategy was asked.
     async fn compact(
-        answer: fn() -> Result<Option<Compaction>, CompactionError>,
+        strategy: Scripted,
+        before: Before,
         args: &str,
     ) -> (CommandResult<CommandOutput>, usize) {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let (component, strategy) = answering(answer);
+        state.perceive(vec![heard("u1")]);
+        let strategy = Arc::new(strategy);
+        let component = component(&strategy);
         let mut turn = workspace_turn(&world, &mut state);
+        before(&mut turn, world.agent);
         let result = component.execute(COMPACT_COMMAND_NAME, args, &mut turn).await;
-        (result, strategy.asked.load(Ordering::SeqCst))
+        (result, strategy.times_asked())
     }
 
-    async fn carry_out(
-        answer: fn() -> Result<Option<Compaction>, CompactionError>,
-    ) -> Result<String, ActivityError> {
+    /// What compacting on its own tells, after `before`, with `strategy`.
+    async fn carry_out(strategy: Scripted, before: Before) -> Result<String, ActivityError> {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let (component, _) = answering(answer);
-        component.carry_out(&mut workspace_turn(&world, &mut state)).await
+        state.perceive(vec![heard("u1")]);
+        let component = component(&Arc::new(strategy));
+        let mut turn = workspace_turn(&world, &mut state);
+        before(&mut turn, world.agent);
+        component.carry_out(&mut turn).await
+    }
+
+    fn heard(text: &str) -> Message {
+        Message { content: Some(text.to_string()), ..Message::new(Classification::PUBLIC) }
     }
 
     #[tokio::test]
-    async fn compact_tells_the_channel_what_its_strategy_did() {
-        let (answer, _) = compact(
-            || {
-                Ok(Some(Compaction {
-                    replaced: 3,
-                    kept: 1,
-                    given_again: vec!["skill release-notes".to_string()],
-                    lost: 1,
-                }))
-            },
-            "",
-        )
-        .await;
+    async fn compact_tells_the_channel_what_it_did() {
+        let (answer, _) = compact(Scripted::default(), two_calls, "").await;
         let answer = answer.expect("compacted");
-        assert_eq!(answer.text, "Jonathan compacted its context: 3 messages replaced, 1 kept as they were. Given again: skill release-notes. \
-            1 of what it had been given can no longer be given here and was not given again.");
+        assert_eq!(
+            answer.text,
+            "Jonathan compacted its context: 3 messages replaced, 2 kept as they were."
+        );
         assert_eq!(answer.visibility, CommandVisibility::Channel, "everyone should know");
     }
 
     #[tokio::test]
-    async fn compact_refuses_what_its_strategy_cannot_shorten_and_takes_no_arguments() {
-        let (refused, _) = compact(|| Ok(None), "").await;
+    async fn compact_refuses_what_it_cannot_shorten_and_takes_no_arguments() {
+        let (refused, asked) = compact(Scripted::default(), nothing, "").await;
         assert!(
             matches!(refused, Err(CommandError::InvalidArguments { ref reason, .. }) if reason.contains("nothing to compact")),
             "{refused:?}"
         );
-        let (refused, asked) = compact(|| Ok(None), "hard").await;
+        assert_eq!(asked, 0, "its strategy was not asked");
+        let (refused, asked) = compact(Scripted::default(), two_calls, "hard").await;
         assert!(
             matches!(refused, Err(CommandError::InvalidArguments { ref reason, .. }) if reason.contains("no arguments")),
             "{refused:?}"
@@ -276,7 +306,8 @@ mod tests {
 
     #[tokio::test]
     async fn compact_fails_with_the_reason_its_strategy_failed() {
-        let (failed, _) = compact(|| Err(CompactionError::ModelUnreachable), "").await;
+        let failing = Scripted::failing(|| CompactionError::ModelUnreachable);
+        let (failed, _) = compact(failing, two_calls, "").await;
         assert!(
             matches!(failed, Err(CommandError::Failed { ref reason, .. }) if reason == "its model could not be asked"),
             "{failed:?}"
@@ -284,21 +315,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compacting_on_its_own_tells_what_its_strategy_did_and_why_it_failed() {
-        let compacted = carry_out(|| {
-            Ok(Some(Compaction { replaced: 2, kept: 3, given_again: Vec::new(), lost: 0 }))
-        })
-        .await;
+    async fn compacting_on_its_own_tells_what_it_did_and_why_it_failed() {
+        let compacted = carry_out(Scripted::default(), two_calls).await;
         assert_eq!(
             compacted.ok().as_deref(),
-            Some("Jonathan compacted its context: 2 messages replaced, 3 kept as they were.")
+            Some("Jonathan compacted its context: 3 messages replaced, 2 kept as they were.")
         );
-        let nothing = carry_out(|| Ok(None)).await;
+        let nothing = carry_out(Scripted::default(), nothing).await;
         assert!(
             matches!(nothing, Ok(ref said) if said.contains("found nothing to compact")),
             "{nothing:?}"
         );
-        let failed = carry_out(|| Err(CompactionError::ModelUnreachable)).await;
+        let failed =
+            carry_out(Scripted::failing(|| CompactionError::ModelUnreachable), two_calls).await;
         assert!(
             matches!(failed, Err(ActivityError::Failed(ref reason)) if reason == "Jonathan could not compact its context: its model could not be asked"),
             "{failed:?}"
@@ -308,11 +337,9 @@ mod tests {
     #[tokio::test]
     async fn it_is_due_once_a_call_measured_the_context_that_full() {
         let world = session_with_workspace().await;
-        let (component, _) = answering(|| Ok(None));
-        let heard =
-            Message { content: Some("hello".to_string()), ..Message::new(Classification::PUBLIC) };
+        let component = component(&Arc::new(Scripted::default()));
         let mut state = AgentChannelState::default();
-        state.perceive(vec![heard]);
+        state.perceive(vec![heard("hello")]);
         let mut turn = workspace_turn(&world, &mut state);
         assert!(!component.is_due(&turn.situation()), "nothing measured");
 
@@ -335,13 +362,22 @@ mod tests {
     }
 
     #[test]
-    fn its_threshold_is_a_share_of_the_context_size() {
-        let config = |params| config_of_params::<CompactionConfig>(&params).map(|c| c.threshold);
-        assert_eq!(config(Value::Null).ok(), Some(DEFAULT_THRESHOLD));
-        assert_eq!(config(serde_json::json!({ "threshold": 0.5 })).ok(), Some(0.5));
+    fn what_it_keeps_and_when_it_compacts_are_shares_of_the_context_size() {
+        let config = |params| CompactionConfig::of(&params).map(|c| (c.threshold, c.keep));
+        assert_eq!(config(Value::Null).ok(), Some((DEFAULT_THRESHOLD, DEFAULT_KEEP)));
+        assert_eq!(
+            config(serde_json::json!({ "threshold": 0.5, "keep": 0.2 })).ok(),
+            Some((0.5, 0.2))
+        );
         assert!(
-            config(serde_json::json!({ "keep": 0.5 })).is_err(),
-            "what it keeps is its strategy's"
+            config(serde_json::json!({ "threshold": 0.5, "keep": 0.5 })).is_err(),
+            "kept as much as it compacts at, it would free too little"
+        );
+        assert!(config(serde_json::json!({ "threshold": 1.5 })).is_err(), "at most all of it");
+        assert!(config(serde_json::json!({ "keep": -0.1 })).is_err(), "nothing less than nothing");
+        assert!(
+            config(serde_json::json!({ "keep_last": 10 })).is_err(),
+            "what it does not take is refused"
         );
     }
 }

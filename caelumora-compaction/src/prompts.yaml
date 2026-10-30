@@ -3,13 +3,13 @@
 # the agents' file (`caelumora-agents/src/prompts.yaml`).
 
 # `summary_compaction`: what its model is asked to summarise for - going on
-# from the summary alone -, leaving out what a restorer gives again, of the
-# `kinds` named.
+# from the summary alone -, leaving out what is `given` again, each by its
+# kind and name.
 instruction: >-
   Summarise the conversation above for yourself, so that you can go on from the summary alone: what
   the task is and who asked for it, what was decided and agreed, what was done - with which files,
   tools and results that still matter -, and what is still open. Keep names, numbers and identifiers
-  exact. Answer with the summary only.{{ " Leave out the text of anything given to you as a " ~ kinds|join(" or ") ~ ": it is given to you again." if kinds }}
+  exact. Answer with the summary only.{{ " Leave out the text of " ~ given|join(", ") ~ ": it is given to you again." if given }}
 
 # The title of the summary, before `text`, the summary.
 summary: |-

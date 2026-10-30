@@ -601,38 +601,44 @@ old one but does not continue it:
 *   **Counted once.** The tokens used count a message kept where it was first recorded.
 
 The mechanism takes the replacement and the first entry kept, and whose the replacement is;
-components decide the rest - those of the plugin `caelumora-compaction`. When the agent compacts is
-its `compaction` component's, how its one `CompactionStrategy`'s - asked by two triggers with the
-same code: the agent itself before a model call, as an activity of the component (issues 284,
-464), and `/compact`, which the component carries out as a command. An agent whose personality
-does not list `compaction` does not compact at all. Before every call of a turn - the first of the
-next turn as well, with what was heard since - the activity is due once the context fills
-`threshold` of the model's context size, as soon as a call made on the active branch measured it;
-a model that reports no context size gives nothing to measure against, which the component says
-once. The agent then compacts in the state `Busy` (see [In a turn](#in-a-turn)); the summary's
-call does not count against `MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call
-it was to make room for would not fit. `/compact` tells of itself as a command does.
+components decide the rest - those of the plugin `caelumora-compaction`. When the agent compacts,
+where its context is cut and what is given again is its `compaction` component's; what stands in
+the place of the part cut off, its one `CompactionStrategy`'s (issue 413), so that the rules every
+compaction keeps cannot be exchanged with the strategy. The component is asked by two triggers
+with the same code: the agent itself before a model call, as an activity of the component (issues
+284, 464), and `/compact`, which the component carries out as a command. An agent whose
+personality does not list `compaction` does not compact at all. Before every call of a turn - the
+first of the next turn as well, with what was heard since - the activity is due once the context
+fills `threshold` of the model's context size, as soon as a call made on the active branch
+measured it; a model that reports no context size gives nothing to measure against, which the
+component says once. The agent then compacts in the state `Busy` (see [In a turn](#in-a-turn));
+the strategy's call does not count against `MAX_MODEL_CALLS`. A compaction that fails gives the
+turn up: the call it was to make room for would not fit. `/compact` tells of itself as a command
+does.
 
-The default strategy, `summary_compaction`, keeps `keep` of the model's context size as it stands.
-It cuts only before a message, by the positions the resolver measured (`token_positions`): within
-the turn under way before a call of its model but the first - before that the turn's input would
-go and the turn stay -, before the turn before any message but a tool's result, up to the turn's
-input; never into a turn given up as `Lowered`. So a tool's result stays with its call, and the
-newest call with its results is never summarised. The agent's own model summarises the rest. A
-summary that holds messages of the turn under way is the turn's (`Message::turn_id`) and classified
-as the turn's label - it holds what the turn read, and goes with it if the turn is given up as
-`Lowered`; one of what precedes the turn alone is no turn's and classified by what it summarises,
-since its call was given the transcript alone.
+A compaction keeps `keep` of the model's context size as it stands, less than `threshold`, or it
+would free too little. It cuts only before a message, by the positions the resolver measured
+(`token_positions`): within the turn under way before a call of its model but the first - before
+that the turn's input would go and the turn stay -, before the turn before any message but a
+tool's result, up to the turn's input; never into a turn given up as `Lowered`. So a tool's result
+stays with its call, and the newest call with its results is never replaced. The strategy is given
+the rest as the agent's model would be, and answers what stands in its place - the default,
+`summary_compaction`, has the agent's own model summarise it. A replacement that holds messages of
+the turn under way is the turn's (`Message::turn_id`) and classified as the turn's label - it holds
+what the turn read, and goes with it if the turn is given up as `Lowered`; one of what precedes the
+turn alone is no turn's and classified by what it replaces, since its call was given the transcript
+alone.
 
-What the agent had been given in the part summarised and is not still there in the part kept is
-given again after the summary, as it is now, by the component that gave it: a `KnowledgeRestorer`
-(issue 323), a facet that names its kind and answers, of the entities of that kind given - each
-a `Given` entry of the transcript whose source is a `KnowledgeSource::Entity` (issue 389) -, which
-it gives again and as what text. What was given without a source - an earlier summary - is
-summarised with the rest. The `skills` component gives the skills the agent may still load there
-([SKILLS.md](SKILLS.md)); what no component gives again - a workspace's files - is not, and the
-strategy knows no kind itself. `/compact` tells the channel what was given again, by kind and name,
-and how much could no longer be given.
+What the agent had been given in the part replaced and is not still there in the part kept is
+given again after the replacement, as it is now, by the component that gave it: a
+`KnowledgeRestorer` (issue 323), a facet that names its kind and answers, of the entities of that
+kind given - each a `Given` entry of the transcript whose source is a `KnowledgeSource::Entity`
+(issue 389) -, which it gives again and as what text. The strategy is told what is given again, by
+kind and name, so that a summary leaves its text out. What was given without a source - an earlier
+summary - is replaced with the rest. The `skills` component gives the skills the agent may still
+load there ([SKILLS.md](SKILLS.md)); what no component gives again - a workspace's files - is not,
+and neither the compaction nor its strategy knows a kind itself. `/compact` tells the channel what
+was given again, by kind and name, and how much could no longer be given.
 
 ## Prompt parts
 

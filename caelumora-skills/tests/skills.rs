@@ -11,9 +11,13 @@
 
 use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::prompt::{PromptPosition, PromptProvider};
-use caelumora_agents::testing::{self as agent_testing, register_scripted, TestAgents};
+use caelumora_agents::testing::{
+    self as agent_testing, activities_until_the_turn_ends, register_scripted, saying, TestAgents,
+};
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
+use caelumora_compaction::component::COMPACTION_KIND;
+use caelumora_compaction::plugin::CompactionPlugin;
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
@@ -48,7 +52,7 @@ use caelumora_skills::manager::{SkillError, SkillManager};
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_skills::skill::{self, Skill, SkillBody};
 use caelumora_skills::view::SkillViews;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -384,6 +388,85 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
         "as it is now; not the deleted one"
     );
     drop(turn);
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 413: the `compaction` component asks the agent's `skills` for what it gives again - a
+/// skill given in the part of the context it replaces is given again after it, as `/compact`
+/// tells.
+#[tokio::test]
+async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces() {
+    // As a call of a model whose context holds 1000 tokens answered, given `prompt` tokens.
+    let measured = |prompt: u64, text: &str| Message {
+        prompt_tokens: Some(prompt),
+        completion_tokens: Some(10),
+        context_size: Some(1000),
+        ..saying(text)
+    };
+    let script = vec![measured(100, "Hi."), measured(300, "Fine."), measured(50, "They met.")];
+    let world = World::with(&[&TestAgents, &SkillsPlugin, &CompactionPlugin], |registry| {
+        register_scripted(registry, "scripted", script)
+    })
+    .await;
+    let mut skilled = Personality {
+        components: ComponentConfig {
+            component_nodes: vec![
+                ComponentDescriptor::new("model", "scripted"),
+                ComponentDescriptor::new("skills", SKILLS_KIND),
+                // Keeping no more than the newest answer.
+                ComponentDescriptor {
+                    params: json!({ "keep": 0.01 }),
+                    ..ComponentDescriptor::new("compaction", COMPACTION_KIND)
+                },
+            ],
+        },
+        ..world.personality("skilled", None, &[]).await
+    };
+    world
+        .runtime
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut skilled)
+        .await
+        .unwrap();
+    let helper = world.agent("helper", world.alice, &skilled).await;
+    manager(&world)
+        .create(
+            &World::as_user(world.alice),
+            "release-notes",
+            Scope::UserScope { user_id: world.alice },
+            "How we write a release note",
+            "1. Collect.",
+            Classification::general(Confidentiality::Internal),
+        )
+        .await
+        .expect("hers to make");
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let alice = main.user_actor(world.alice).unwrap();
+    let mut events = main.observe();
+    let mut hers = alice.watch();
+
+    alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
+    activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
+    alice.execute_command(SKILL_COMMAND_NAME, "@helper release-notes").await.expect("hers to give");
+    shown(&mut hers, "CommandExecuted").await;
+    alice.send_message(Some("@helper next".to_string()), None, Vec::new()).await.unwrap();
+    activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
+    alice.execute_command("compact", "@helper").await.expect("hers, as its owner");
+
+    let told = shown(&mut hers, "CommandExecuted").await;
+    assert!(
+        matches!(told, ActorEvent::CommandExecuted { ref output, .. } if output.contains("Given again: skill release-notes.")),
+        "{told:?}"
+    );
+    let state = world.store.state_store().get_agent_channel_state(helper, main.id()).await.unwrap();
+    let texts: Vec<_> = state.transcript.messages().into_iter().filter_map(|m| m.content).collect();
+    assert_eq!(
+        texts.get(1).map(String::as_str),
+        Some("[Skill: release-notes]\n1. Collect.\n"),
+        "after the summary: {texts:?}"
+    );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
