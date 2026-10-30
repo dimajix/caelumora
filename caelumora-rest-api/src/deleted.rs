@@ -39,9 +39,8 @@ impl<I> From<snapshot::DeletedSnapshot<I>> for DeletedResponse<I> {
 mod tests {
     use super::*;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::session::SessionId;
-
     use caelumora_model::removal::Removal;
+    use caelumora_model::session::SessionId;
     use caelumora_model::snapshot;
     use caelumora_model::user::UserId;
 

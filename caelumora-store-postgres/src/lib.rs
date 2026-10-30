@@ -23,6 +23,8 @@ mod filter;
 mod histories;
 pub mod plugin;
 mod states;
+#[cfg(test)]
+mod tests;
 mod transcripts;
 
 use crate::connection::Connection;
@@ -136,6 +138,3 @@ impl PersistenceBackend for PostgresStore {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -487,36 +487,33 @@ impl ChannelLoop {
 
 #[cfg(test)]
 mod tests {
+    use crate::actor::user::ChannelWatch;
+    use crate::actor::{Actor, Shown};
+    use crate::channel::tests::*;
+    use crate::channel::ChannelLoop;
+    use crate::error::is_forbidden;
+    use crate::session::testing::*;
+    use crate::session::{ChannelSpec, SessionError, SessionManager};
+    use crate::testing::Script;
+    use crate::view::Viewer;
+    use anyhow::Error;
     use caelumora_model::actor::ActorId;
+    use caelumora_model::actor::Envelope;
     use caelumora_model::chain::Position;
     use caelumora_model::channel::{Channel, HistoryAccess, JOINED, LEFT};
+    use caelumora_model::confidentiality::Classification;
     use caelumora_model::history::HistoryEntry;
+    use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::session::testing::make_session;
+    use caelumora_model::session::ChannelId;
     use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::UserId;
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio_util::task::TaskTracker;
-
-    use crate::channel::tests::*;
-    use crate::testing::Script;
-
-    use crate::actor::user::ChannelWatch;
-    use crate::actor::{Actor, Shown};
-    use crate::channel::ChannelLoop;
-    use crate::view::Viewer;
-    use caelumora_model::actor::Envelope;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::{Grant, SecurityContext, Subject};
-    use caelumora_model::session::ChannelId;
-
-    use crate::error::is_forbidden;
-    use crate::session::testing::*;
-    use crate::session::{ChannelSpec, SessionError, SessionManager};
-    use anyhow::Error;
-    use caelumora_model::user::UserId;
     use tokio::time;
+    use tokio_util::task::TaskTracker;
     #[tokio::test]
     async fn an_agent_is_found_by_its_name_or_its_handle_however_it_is_written() {
         let (channel, _, _) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who", "Zoë"]).await;

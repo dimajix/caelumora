@@ -16,15 +16,6 @@ pub mod suite;
 pub mod testing;
 pub mod transcript;
 
-use async_trait::async_trait;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::str::FromStr;
-use std::sync::Arc;
-use uuid::Uuid;
-
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentBundle;
@@ -48,11 +39,19 @@ use crate::user::{User, UserChannelState, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::value::ValueError;
 use crate::workspace::Workspace;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
 use std::ptr;
+use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::{Mutex, PoisonError};
+use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {

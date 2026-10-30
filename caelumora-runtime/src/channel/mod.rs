@@ -1,5 +1,19 @@
 //! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors.
 
+mod control;
+mod history;
+mod inbox;
+mod participants;
+mod participation;
+mod run;
+mod settings;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+#[cfg(test)]
+mod tests;
+
+pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
+
 use crate::actor::approval::ApproverActor;
 use crate::actor::user::UserActor;
 use crate::actor::Actor;
@@ -32,33 +46,19 @@ use caelumora_model::type_map::TypeKey;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
+use futures::future;
 use std::any::Any;
 use std::collections::HashMap;
+use std::sync;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(any(test, feature = "test-support"))]
 use tokio::sync::broadcast;
 use tokio::sync::{mpsc, Mutex};
+use tokio::time;
 use tokio_util::task::TaskTracker;
 use tracing::{info, warn};
-
-mod control;
-mod history;
-mod inbox;
-mod participants;
-mod participation;
-mod run;
-mod settings;
-#[cfg(any(test, feature = "test-support"))]
-pub mod testing;
-#[cfg(test)]
-mod tests;
-
-use futures::future;
-pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
-use std::sync;
-use tokio::time;
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]

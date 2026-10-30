@@ -1,3 +1,5 @@
+mod shell;
+
 use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::channel::ChannelId;
@@ -8,8 +10,6 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
-
-mod shell;
 
 define_id!(ApproverId);
 

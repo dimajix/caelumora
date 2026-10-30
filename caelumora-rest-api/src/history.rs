@@ -324,7 +324,6 @@ pub struct HistoryMessageResponse {
 mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
-
     use caelumora_model::digest;
     use caelumora_model::user::UserId;
 

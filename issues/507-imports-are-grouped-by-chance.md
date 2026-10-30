@@ -1,6 +1,6 @@
 # 507 — Imports are grouped by chance
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -74,3 +74,8 @@ merged, its re-exports and `mod` declarations moved before its imports.
   and its call in the pre-commit hook. The script finds 37 files out of order: 30 split blocks in
   21 files, re-exports after the imports in 11, and `mod` declarations after the imports in 14 -
   among them a `mod tests;` at the bottom of `caelumora-store-postgres/src/lib.rs`.
+- **2026-10-30** — Done: step 2 put the 37 modules in order, by a script that rearranged each run
+  of declarations and imports and by hand where an item stood between them - the re-exports of
+  `terminal_tool.rs` after a constant, the `mod` declarations of `caelumora-workspace-tools`'s
+  root after its imports, and the `mod tests;` at the bottom of `caelumora-store-postgres`'s.
+  `scripts/import-blocks.sh` finds none left.

@@ -344,12 +344,13 @@ impl ResolvedParticipant {
 
 #[cfg(test)]
 mod tests {
-    use caelumora_model::value::name::Name;
-
+    use crate::session::testing::*;
+    use crate::session::{ChannelSpec, SessionManager};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::Agent;
     use caelumora_model::channel::testing::main_channel;
+    use caelumora_model::channel::{Channel, HistoryAccess, Participant};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{Grant, SecurityContext, Subject};
@@ -357,12 +358,9 @@ mod tests {
     use caelumora_model::session::{ChannelId, SessionId};
     use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserId;
+    use caelumora_model::value::name::Name;
     use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;
-
-    use crate::session::testing::*;
-    use crate::session::{ChannelSpec, SessionManager};
-    use caelumora_model::channel::{Channel, HistoryAccess, Participant};
 
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]

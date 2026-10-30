@@ -150,19 +150,17 @@ impl ChannelLoop {
 mod tests {
 
     use crate::channel::ChannelLoop;
-
+    use crate::error::is_forbidden;
+    use crate::session::testing::*;
+    use crate::session::{ChannelSpec, SessionManager};
+    use caelumora_model::actor::Rejection;
     use caelumora_model::confidentiality::Classification;
+    use caelumora_model::message::{Message, MessageId};
     use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::store::StoreError;
     use caelumora_model::user::testing::{make_user, record_users};
     use std::sync::Arc;
-
-    use crate::error::is_forbidden;
-    use crate::session::testing::*;
-    use crate::session::{ChannelSpec, SessionManager};
-    use caelumora_model::actor::Rejection;
-    use caelumora_model::message::{Message, MessageId};
     use std::time::Duration;
     use tokio::time;
 

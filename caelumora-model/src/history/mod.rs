@@ -10,6 +10,9 @@
 //! given what of it they may see (`Recorded::as_seen_by`), and who stands
 //! somewhere in it (`Heard`).
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
 use crate::actor::{
     ActorEvent, ActorId, Envelope, EventContext, Rejection, RequestReason, RetryTarget,
 };
@@ -28,9 +31,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::{Not, Range};
-
-#[cfg(any(test, feature = "test-support"))]
-pub mod testing;
 
 /// What happened in a `History`; its node carries the digest of the
 /// history up to and including it.

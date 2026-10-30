@@ -3,6 +3,9 @@
 //! their routes under `/api` and - with the feature `web-ui` - the web UI at
 //! `/`, from the binary.
 
+#[cfg(feature = "web-ui")]
+mod web_ui;
+
 use anyhow::Result;
 use axum::http::Request;
 use axum::middleware;
@@ -48,9 +51,6 @@ use tokio::time;
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tracing::field::Empty;
-
-#[cfg(feature = "web-ui")]
-mod web_ui;
 
 /// Where the REST API is served: the web UI speaks to it there.
 const API_PATH: &str = "/api";

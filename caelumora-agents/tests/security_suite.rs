@@ -19,11 +19,6 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-use caelumora_agents::prompt::ModelProfileProvider;
-use caelumora_model::removal::Removal;
-use caelumora_model::store::query::Query;
-use std::sync::{Arc, Mutex};
-
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_agents::command::AgentCommandProvider;
@@ -32,6 +27,7 @@ use caelumora_agents::external::{
     ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage,
 };
 use caelumora_agents::llm::{LLMClient, LLMResult};
+use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_agents::testing as agent_testing;
 use caelumora_agents::testing::{
     about_agent_commands, calling, register_scripted, TestAgents, ONCE_MODEL_KIND,
@@ -57,11 +53,13 @@ use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::group::GroupId;
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
+use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{AclEntry, Grant, Secured, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::PersonalitySnapshot;
+use caelumora_model::store::query::Query;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::{
     ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate,
@@ -87,6 +85,7 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use serde_json::Value;
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::time;

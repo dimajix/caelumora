@@ -1017,12 +1017,11 @@ impl Debug for Views {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{Script, ScriptedAgents, TestRuntime};
-
     use crate::actor::user::ChannelWatch;
     use crate::channel::ChannelLoop;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
+    use crate::testing::{Script, ScriptedAgents, TestRuntime};
     use caelumora_model::actor::Rejection;
     use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityKind};

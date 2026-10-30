@@ -10,11 +10,6 @@
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
 
-use caelumora_model::removal::Removal;
-use caelumora_model::store::query::Query;
-use std::sync::Arc;
-use std::time::Duration;
-
 use caelumora_model::actor::{ActorId, Rejection};
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
@@ -25,12 +20,14 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::project::{Project, ProjectId, ProjectUpdateEvent};
+use caelumora_model::removal::Removal;
 use caelumora_model::role::RoleId;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::Detail;
+use caelumora_model::store::query::Query;
 use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::user::{UserId, UserProfile};
@@ -57,6 +54,8 @@ use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::testing::{shell_in, terminal_in};
 use caelumora_runtime::workspace::WorkspaceError;
 use serde_json::json;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::time;
 
 // --- Personalities and agents ---------------------------------------------

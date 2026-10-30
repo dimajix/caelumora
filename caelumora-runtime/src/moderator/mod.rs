@@ -14,15 +14,14 @@ pub mod random_policy;
 pub mod round_robin_policy;
 pub mod user_driven_policy;
 
-use async_trait::async_trait;
-use std::fmt::Debug;
-use std::sync::Arc;
-
 use crate::actor::Actor;
 use crate::component::ComponentRegistry;
+use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, Envelope, RequestReason};
 use caelumora_model::history::Audience;
 use caelumora_model::message::{Message, MessageId};
+use std::fmt::Debug;
+use std::sync::Arc;
 
 /// Decides whom the events of a channel are delivered to, who is asked to
 /// respond, and what it tells of its own - never what anyone is told of an

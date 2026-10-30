@@ -21,6 +21,9 @@
 //! `lstrip_blocks`); one that ends a line of text takes its line break with
 //! it, unless written `+%}`. A text ends in the line break its file gives it.
 
+/// The values a text is rendered with, by name: `context!{ name => "Sassy" }`.
+pub use minijinja::context;
+
 use crate::config::parse_yaml;
 use crate::intern::intern;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior};
@@ -35,9 +38,6 @@ use std::path::Path;
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::OnceLock;
-
-/// The values a text is rendered with, by name: `context!{ name => "Sassy" }`.
-pub use minijinja::context;
 
 /// The namespace of the core's texts: what `caelumora-model` writes for a
 /// model - the notices of a context as it is resolved, the explanation of

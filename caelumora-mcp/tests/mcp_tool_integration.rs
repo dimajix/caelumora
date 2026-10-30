@@ -5,10 +5,6 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
 use axum::Router;
 use caelumora_agents::testing::{offered_anywhere, TestAgents};
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -47,6 +43,9 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
