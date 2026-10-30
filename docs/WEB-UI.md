@@ -305,7 +305,10 @@ it is fetched anew as it starts.
     who sees it, its status and duration, the record of questions it asked - and leaves what is
     inside to the handler of the presentation (`PRESENTATIONS`); a call without one, or with one
     this client does not know, shows its arguments and result as they are. What each handler shows
-    is described with it in `ToolCallView.tsx`.
+    is described with it in `ToolCallView.tsx`. A call presented `quiet` is left out of the chat
+    while it runs and where it succeeded, and a message that held nothing else with it
+    (`withoutQuietCalls`): what it did shows elsewhere. The context and history panels show it as
+    any other.
 *   **While an agent answers**, its partial message is shown as it streams. Several agents answering
     at once each have an answer of their own, in the order they began, below every complete
     message: a message joins the history when it is complete, so an answer that ends first moves up

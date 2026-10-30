@@ -15,7 +15,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::tool::{Tool, ToolMedia, ToolParameters, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolMedia, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_model::value::identifier::Identifier;
 use caelumora_runtime::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
@@ -29,6 +29,10 @@ use std::sync::Arc;
 pub(crate) const COMFYUI_TOOL_KIND: &str = "comfyui_tool";
 /// The one tool of the component.
 pub(crate) const GENERATE_IMAGE: &str = "generate_image";
+/// An image generated: the `prompt` and `negative_prompt` it was described by, its `width` and
+/// `height` where the arguments name them, and the `workflow` and `seed` of its result - the
+/// arguments' where it has none.
+const IMAGE_PRESENTATION: ToolPresentation = ToolPresentation::new("image");
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -174,7 +178,7 @@ fn generate_image(
         requires_approval,
         visibility: ToolVisibility::SHOWN,
         classification: None,
-        presentation: Default::default(),
+        presentation: IMAGE_PRESENTATION,
     };
     described(prompts, NAMESPACE, COMFYUI_TOOL_KIND, tool, values)
 }
@@ -553,6 +557,7 @@ mod tests {
         let tool = tool("http://127.0.0.1:1", 10);
         let [generate] = tool.tools().try_into().unwrap();
         assert!(!generate.requires_approval, "asks nobody unless configured");
+        assert_eq!(generate.presentation, IMAGE_PRESENTATION);
         assert!(
             generate.description.ends_with(
                 "generated with:\n- z_image_turbo (the default): fast and photorealistic, good at \

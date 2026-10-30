@@ -38,6 +38,27 @@ export function mergeToolResults(messages: Message[]): Message[] {
 }
 
 /**
+ * `messages` as the chat shows them: without the calls presented `quiet` that did not fail - while
+ * they run, or done -, their results with them, and without a message that held nothing else. What
+ * they did shows elsewhere; one that failed, or was abandoned, is shown as any other.
+ */
+export function withoutQuietCalls(messages: Message[]): Message[] {
+  return messages.flatMap(msg => {
+    const calls = msg.tool_calls ?? [];
+    const quiet = calls.filter(call => {
+      const result = msg.tool_results?.find(r => r.id === call.id);
+      const failed = result ? !!result.status && result.status !== 'ok' : msg.abandoned;
+      return call.presentation === 'quiet' && !failed;
+    });
+    if (quiet.length === 0) return [msg];
+    const tool_calls = calls.filter(call => !quiet.includes(call));
+    const tool_results = (msg.tool_results ?? []).filter(result => !quiet.some(call => call.id !== undefined && call.id === result.id));
+    const empty = !msg.content && !msg.reasoning && (msg.attachments ?? []).length === 0 && tool_calls.length === 0;
+    return empty ? [] : [{...msg, tool_calls, tool_results}];
+  });
+}
+
+/**
  * `items` - messages among other rows - with their tool results merged as `mergeToolResults` merges
  * them, across the other rows: `messageOf` gives the message an item is, if it is one, and
  * `withMessage` the item with its message changed.

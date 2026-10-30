@@ -83,7 +83,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -271,10 +271,12 @@ interface ChatViewProps {
 export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, onSelectPage }) => {
   // The user's actor, whose messages are their own (issue 407).
   const me = useMemo(() => userActor(user.id), [user.id]);
-  // The messages as they came, and as the chat shows them: each tool result
-  // with the call it answers.
+  // The messages as they came; each tool result with the call it answers; and
+  // as the chat shows them, without the calls presented `quiet` that need not
+  // be shown.
   const [messages, setMessages] = useState<Message[]>([]);
   const merged = useMemo(() => mergeToolResults(messages), [messages]);
+  const shown = useMemo(() => withoutQuietCalls(merged), [merged]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
   const [sideTab, setSideTab] = useState<'channel' | 'notes' | 'workspace'>('channel');
@@ -619,7 +621,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    */
   const mayRetry = (msg: Message) => {
     if (!takesPart || answers.length > 0 || !msg.id || !msg.sender_id || !mayRetryOf(actorKey(msg.sender_id))) return false;
-    const last = merged.findLast(m => m.id && !m.revoked);
+    const last = shown.findLast(m => m.id && !m.revoked);
     return last?.id === msg.id && !msg.internal;
   };
 
@@ -1061,10 +1063,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // messages arrive and as the tab comes back. Never one of their own, which
   // is shown before the channel takes it in; nor a notice of the UI's, which
   // is in no history.
-  const newestOfOthers = useMemo(() => messages.findLast(m =>
+  const newestOfOthers = useMemo(() => shown.findLast(m =>
     m.id && (m.role === 'User' || m.role === 'Assistant') && isOthers(m, me)
     && !m.givenUp && !m.commandOutput && !m.activity && !m.chainCutOff && !m.nudged
-  )?.id ?? null, [messages, me]);
+  )?.id ?? null, [shown, me]);
   const marked = useRef<string | null>(null);
   useEffect(() => {
     if (!newestOfOthers) return;
@@ -1651,7 +1653,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     />
   );
 
-  const rows = chatRows(merged);
+  const rows = chatRows(shown);
   // The row of each turn's step that came last: the step it is in now, open
   // while the turn is under way (issue 263).
   const currentSteps = new Map(rows.flatMap((row, i) => row.kind === 'steps' ? [[row.turnId, i] as const] : []));

@@ -273,3 +273,10 @@ in a bundle, that ComfyUI can no longer open.
   TOOLS.md, COMPONENTS.md, CONFIGURATION.md, PLUGINS.md and ARCHITECTURE.md describing it, 208's
   history recording that how a tool hands over media moved here. `edit_image` and video and audio
   stay to be opened as issues of their own, as "What follows" says.
+- **2026-10-30** - After trying `bob-painter`, as the maintainer asked: `generate_image` is shown by
+  a presentation of its own, `image` - its description as prose, what it was to leave out, and its
+  workflow, size and seed -, and the calls of `attach` no longer clutter the chat, whose answer
+  shows what was attached. Decided with the maintainer: not by `ToolVisibility::HIDDEN`, which is
+  ownership, not display, but by a presentation any tool may take, `ToolPresentation::QUIET`: the
+  web UI leaves such a call out of the chat while it runs and where it succeeded, and shows it where
+  it failed or was abandoned; the context and history panels show it as any other.

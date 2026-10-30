@@ -291,7 +291,7 @@ export interface ToolVisibility {
  * How a tool's calls and their results are shown (issue 165), declared by the tool and stamped on
  * each call; absent means `default`. Display only.
  */
-export type ToolPresentation = 'default' | 'shell' | 'plan' | 'file_read' | 'file_write' | 'file_edit' | 'file_list' | 'file_search' | 'file_move' | 'questions' | 'file_publish' | 'artifact_publish' | 'skill' | 'skill_list' | 'note' | 'note_list';
+export type ToolPresentation = 'default' | 'shell' | 'plan' | 'file_read' | 'file_write' | 'file_edit' | 'file_list' | 'file_search' | 'file_move' | 'questions' | 'file_publish' | 'artifact_publish' | 'skill' | 'skill_list' | 'note' | 'note_list' | 'image' | 'quiet';
 
 export interface ToolCall {
   id?: string;

@@ -5,7 +5,7 @@
 // their record (`AnswersRecord`, issue 268), and what its result showed its model (issue 282).
 
 import React, {useEffect, useState} from 'react';
-import {BookOpen, CheckCircle2, Download, EyeOff, Package, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import {BookOpen, CheckCircle2, Download, EyeOff, ImageIcon, Package, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type ChannelAttachments, type WorkspaceFiles} from '../api';
 import type {Page} from '../page';
@@ -913,6 +913,43 @@ const NoteListToolCallContent: React.FC<ToolCallContentProps> = ({call, result})
 };
 
 /**
+ * An image generated (issue 512): the description it was generated from, as prose, what it was to
+ * leave out, and what it was generated with - the workflow, the size where the call names it, and
+ * the seed, by which it can be repeated or varied. The images are shown by the frame, as what any
+ * result gave its model.
+ */
+const ImageToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Description not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const answered = resultObject(result);
+  const negative = textOf(args, 'negative_prompt');
+  const width = numberOf(args, 'width');
+  const height = numberOf(args, 'height');
+  const seed = numberOf(answered, 'seed') ?? numberOf(args, 'seed');
+  const detail = [
+    textOf(answered, 'workflow') ?? textOf(args, 'workflow'),
+    width !== null && height !== null ? `${width} × ${height}` : width !== null ? `width ${width}` : height !== null ? `height ${height}` : null,
+    seed !== null ? `seed ${seed}` : null,
+  ].filter(Boolean).join(' · ');
+  return (
+    <>
+      <div className="flex items-start gap-1.5 text-xs">
+        <ImageIcon size={12} className="mt-0.5 opacity-60 shrink-0" />
+        <span className="min-w-0 italic whitespace-pre-wrap wrap-break-word">{textOf(args, 'prompt') ?? '?'}</span>
+      </div>
+      {negative && (
+        <div className="mt-1 pl-[18px] text-[11px] whitespace-pre-wrap wrap-break-word">
+          <span className="opacity-60">Without: </span>
+          {negative}
+        </div>
+      )}
+      {detail && <div className="mt-1 pl-[18px] text-[11px] font-mono opacity-60">{detail}</div>}
+      <FailedResult result={result} />
+    </>
+  );
+};
+
+/**
  * The handler of each presentation; one the server knows and this client does not falls back to the
  * default.
  */
@@ -933,6 +970,9 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   skill_list: SkillListToolCallContent,
   note: NoteToolCallContent,
   note_list: NoteListToolCallContent,
+  image: ImageToolCallContent,
+  // Left out of the chat while it runs and where it succeeded (`withoutQuietCalls`).
+  quiet: DefaultToolCallContent,
 };
 
 interface ToolCallViewProps {

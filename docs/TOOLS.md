@@ -269,8 +269,11 @@ and their approval defaults in [COMPONENTS.md](COMPONENTS.md#the-components); wh
 of each - its description and arguments - is the tool's own, in the code. How frontends show the
 calls of a tool is said by its `ToolPresentation`: a name, defined as a constant next to the tools
 shown so (`SHELL_PRESENTATION`, `SKILL_PRESENTATION`, …) with what it shows of their arguments and
-results; a frontend shows those it knows, and every other as `default` (issue 323). Notes, private
-notes and agent memory are described in [MEMORY.md](MEMORY.md), skills in [SKILLS.md](SKILLS.md).
+results; a frontend shows those it knows, and every other as `default` (issue 323). Two are any
+tool's, the type's own: `default`, and `quiet`, for a call that ends at once and whose effect shows
+elsewhere - not shown while it runs and where it succeeded, as `default` where it did not. Notes,
+private notes and agent memory are described in [MEMORY.md](MEMORY.md), skills in
+[SKILLS.md](SKILLS.md).
 
 `stop`, `bye` and `silence` end the turn with the current tool step: after `stop` and `bye` the
 agent sleeps, after `silence` it stays idle without an answer. `create_plan` submits a multi-step
@@ -352,7 +355,7 @@ They are offered where the transcript numbered any, `view_attachment` only to a 
 *   `attach` puts a copy aside for the turn's next answer (`Turn::put_aside`), under an id and a key
     of its own (`AttachmentManager::copy`), so that what an agent shows of what it heard is its
     message's own. What a turn put aside is not stored: a turn resumed after a restart has lost it,
-    not its answer.
+    not its answer. Its calls are presented `quiet`: the answer shows what was attached.
 
 Each result is classified as the attachment, `copy_attachment`'s as the workspace; nothing is
 recorded as knowledge besides - the result in the transcript is what was read.

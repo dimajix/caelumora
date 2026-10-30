@@ -228,15 +228,21 @@ impl Default for ToolVisibility {
 ///
 /// Open (issue 323): a name, defined as a constant next to the tools that
 /// are shown so (`SHELL_PRESENTATION`, `SKILL_PRESENTATION`, …), with what
-/// it shows of their arguments and results. A frontend shows those it
-/// knows and every other as `DEFAULT`. Written as its name, and read back
-/// as the presentation of that name.
+/// it shows of their arguments and results; those of any tool, `DEFAULT`
+/// and `QUIET`, are the type's own. A frontend shows those it knows and
+/// every other as `DEFAULT`. Written as its name, and read back as the
+/// presentation of that name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ToolPresentation(&'static str);
 
 impl ToolPresentation {
     /// As every call: its name, its arguments and its result.
     pub const DEFAULT: Self = Self::new("default");
+
+    /// Not at all while it runs and where it succeeded, as `DEFAULT` where it did not: what it did
+    /// shows elsewhere - an attachment in the answer -, and the call would only say so again. A
+    /// call so shown cannot be interrupted where it is not shown; for a call that ends at once.
+    pub const QUIET: Self = Self::new("quiet");
 
     /// The presentation of `name`, written in `snake_case`.
     pub const fn new(name: &'static str) -> Self {

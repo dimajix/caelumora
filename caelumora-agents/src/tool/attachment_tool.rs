@@ -137,7 +137,12 @@ impl AttachmentTool {
                 ),
                 true,
             )?,
-            tool(ATTACH, ToolParameters::object([reference()], ["ref"]), false)?,
+            // What it attaches is shown by the answer that carries it; the call would only say so
+            // again.
+            Tool {
+                presentation: ToolPresentation::QUIET,
+                ..tool(ATTACH, ToolParameters::object([reference()], ["ref"]), false)?
+            },
         ];
         let description = tool_text(&prompts, NAMESPACE, ATTACHMENT_TOOL_KIND, "description", ())?;
         Ok(Self { description, tools, prompts, attachments, workspaces })
@@ -550,6 +555,11 @@ mod tests {
         assert!(
             aside[0].id != notes.id && aside[0].key != notes.key && aside[0].digest == notes.digest,
             "a copy of its own: {aside:?}"
+        );
+        assert_eq!(
+            tool.tools().iter().find(|t| t.name == ATTACH).unwrap().presentation,
+            ToolPresentation::QUIET,
+            "the answer shows what was attached, not the call"
         );
         drop(turn);
 
