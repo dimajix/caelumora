@@ -1,7 +1,9 @@
 //! How ComfyUI is joined to the runtime (issue 512): the section `comfyui` of the configuration,
-//! and the workflows it names, as a service.
+//! the workflows it names as a service, the texts of its tool, and the component kind
+//! `comfyui_tool`.
 
 use crate::workflow::Workflows;
+use crate::{tool, NAMESPACE, PROMPTS};
 use anyhow::{Context, Result};
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
@@ -22,7 +24,8 @@ struct ComfyUiConfig {
     workflows: Option<PathBuf>,
 }
 
-/// ComfyUI, as a plugin: its section of the configuration, and the workflows it names as a service.
+/// ComfyUI, as a plugin: its section of the configuration, the workflows it names as a service,
+/// and the tool that generates images with them.
 #[derive(Debug, Default)]
 pub struct ComfyUiPlugin;
 
@@ -38,6 +41,8 @@ impl Plugin for ComfyUiPlugin {
             None => Workflows::default(),
         };
         runtime.provide(Arc::new(workflows));
+        runtime.prompts().add(NAMESPACE, PROMPTS)?;
+        tool::register(runtime.components());
         Ok(())
     }
 }

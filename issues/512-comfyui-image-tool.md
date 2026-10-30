@@ -243,3 +243,25 @@ in a bundle, that ComfyUI can no longer open.
   in the API format; it takes no negative prompt, being run without guidance. What the tool needs of
   a workflow to run it - its graph with the arguments, its output node - comes with step 3, its
   first caller; until then its fields are unread, said by `#[expect(dead_code)]`.
+- **2026-10-30** - Step 3 done: the tool. `comfyui_tool` offers `generate_image` over the workflows
+  it names (`ComfyUiTool`), the first the default, resolved as it is built; a workflow not
+  configured, none, or an endpoint with `auth` keep it from being built - ComfyUI knows no
+  authentication, decided with the maintainer. A call writes its arguments into its workflow's graph
+  (`Workflow::graph_with`), queues it, follows the history every half second, fetches the output
+  node's images and gives them as `ToolOutput::media` (`ComfyUiClient::generate`), the whole of it
+  bounded by the endpoint's `timeout_secs`. Its value names the workflow, the seed and the files,
+  classified as the turn's label - not the size, as "What the tool answers" planned: the model sees
+  the image, and the size taken is the call's or the workflow's. A prompt is given an id of its own,
+  a UUID, before it is queued - ComfyUI 0.32 takes it, refusing any other form, as a run against it
+  showed -, so that a call dropped while it is queued ends it too. A prompt not done in time, of a
+  call dropped, or whose history fails to answer, is ended in ComfyUI by `CancelOnDrop`, as
+  `terminal_tool` ends a command: the queue asked first, then taken from it where it waits,
+  interrupted by its id where it runs (decided with the maintainer), so that no other prompt is hit;
+  one failed request ends the call. What ComfyUI refused or failed with reaches the model and users
+  in its words, but for the absolute paths on its host, each written `<path>` (decided with the
+  maintainer, by the rule that messages name no file paths). TOOLS.md states that rule for both now.
+  The tool's texts are the catalogue's, namespace `comfyui`; the catalogue a plugin's test builds is
+  `caelumora_agents::testing::catalogue_with` now, for the three plugins that built it alike. The
+  example personality `jonathan-assistant` offers the tool, with `attachment_tool` to show what it
+  generated; two runs against the ComfyUI of this machine generated images in 146 s (the model
+  loaded first) and 20 s.

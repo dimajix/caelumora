@@ -119,8 +119,9 @@ by the variant, the namespace and the key.
 
 ## ComfyUI
 
-`comfyui.workflows` names the directory of the workflows of ComfyUI (issue 512), read as `seed`
-is, from where the program runs, when the runtime is built:
+`comfyui.workflows` names the directory of the workflows of ComfyUI (issue 512), which a
+`comfyui_tool` generates images with ([TOOLS.md](TOOLS.md#comfyui)), read as `seed` is, from where
+the program runs, when the runtime is built:
 
 ```yaml
 comfyui:

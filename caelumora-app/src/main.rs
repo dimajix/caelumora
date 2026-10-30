@@ -259,6 +259,7 @@ mod tests {
     use axum::routing::get;
     use caelumora_agents::testing::offered_anywhere;
     use caelumora_agents::tool::ToolProvider;
+    use caelumora_comfyui::plugin::COMFYUI;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::actor::ActorId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -290,18 +291,28 @@ mod tests {
     /// The runtime of the program, with its plugins, over `store`, with the
     /// policy of the example configuration, which knows the roles the
     /// example seed names, its component defaults, on which the example
-    /// seed's models build (issue 445), and its variants of the texts, which
-    /// they are given (issue 57) - read from where the program runs, the
-    /// root of the sources.
+    /// seed's models build (issue 445), its variants of the texts, which
+    /// they are given (issue 57), and the workflows of ComfyUI its agent
+    /// generates images with (issue 512) - read from where the program
+    /// runs, the root of the sources.
     fn runtime(store: &Persistence) -> RuntimeManager {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let prompts =
             config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
+        let workflows = root.join(config.plugins[COMFYUI]["workflows"].as_str().unwrap());
+        let plugins = [(COMFYUI.to_string(), json!({ "workflows": workflows }))].into();
         let AppConfig { compartments, roles, component_defaults, .. } = config;
         runtime_of(
             store,
-            &AppConfig { compartments, roles, component_defaults, prompts, ..AppConfig::default() },
+            &AppConfig {
+                compartments,
+                roles,
+                component_defaults,
+                prompts,
+                plugins,
+                ..AppConfig::default()
+            },
         )
     }
 

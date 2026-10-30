@@ -25,16 +25,14 @@ pub mod summary_compaction;
 
 use async_trait::async_trait;
 #[cfg(test)]
-use caelumora_agents::prompt::{NAMESPACE as AGENTS, PROMPTS as AGENTS_PROMPTS};
+use caelumora_agents::testing;
 use caelumora_agents::turn::Turn;
 use caelumora_model::context::KnowledgeRef;
 use caelumora_model::prompt_catalogue::PromptError;
 #[cfg(test)]
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
+use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::store::EntityKind;
 use std::fmt::Debug;
-#[cfg(test)]
-use std::sync::Arc;
 use uuid::Uuid;
 
 /// The namespace of the texts of compaction in the prompt catalogue (issue 57).
@@ -47,14 +45,7 @@ pub const PROMPTS: &str = include_str!("prompts.yaml");
 /// them, as a model of the default variant is given them - for what a test makes itself.
 #[cfg(test)]
 pub(crate) fn prompts() -> PromptTexts {
-    let mut catalogue = PromptCatalogue::new();
-    for (namespace, texts) in [(CORE, CORE_PROMPTS), (AGENTS, AGENTS_PROMPTS), (NAMESPACE, PROMPTS)]
-    {
-        catalogue
-            .add(namespace, texts)
-            .unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
-    }
-    PromptTexts::new(Arc::new(catalogue), None)
+    testing::prompts_with(NAMESPACE, PROMPTS)
 }
 
 /// How an agent's context is compacted: where it is cut and what replaces

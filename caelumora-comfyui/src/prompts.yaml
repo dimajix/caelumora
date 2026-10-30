@@ -1,0 +1,22 @@
+# The texts the tool of ComfyUI gives a model (issue 57), namespace `comfyui`: templates of
+# `minijinja`, rendered by `PromptCatalogue`; the conventions are those of the agents' file
+# (`caelumora-agents/src/prompts.yaml`).
+
+# The descriptions of the tools (`caelumora_agents::tool::described`): `workflows` the workflows
+# the component offers, each with its `name` and `description`, the first the default; `default`
+# its name.
+tools:
+  comfyui_tool:
+    description: >-
+      Generates images with ComfyUI, from a description.
+    generate_image: |-
+      Generate an image from a description, and see it with the result. The image is shown to you alone: to show it to the others, attach it to your answer. The workflows it can be generated with:
+      {% for workflow in workflows %}{{ "\n" if not loop.first }}- {{ workflow.name }}{{ " (the default)" if loop.first }}: {{ workflow.description }}{% endfor %}
+    generate_image.prompt: What the image shows, in detail - its subject, its setting, its style
+    generate_image.workflow: The workflow to generate it with; {{ default }} unless given
+    generate_image.negative_prompt: What the image is not to show, where the workflow takes it
+    generate_image.width: Its width in pixels; the workflow's own unless given
+    generate_image.height: Its height in pixels; the workflow's own unless given
+    generate_image.seed: >-
+      The seed of its noise: the same seed with the same arguments repeats an image, another varies
+      it. Chosen at random unless given; the result names the seed taken

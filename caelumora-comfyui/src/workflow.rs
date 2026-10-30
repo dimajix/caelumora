@@ -8,6 +8,7 @@
 //! within which bounds of size, and which node gives the images. What is not checked can only be
 //! told by a server - whether a node is one ComfyUI has, whether the one named gives images.
 
+use caelumora_agents::tool::{ToolError, ToolResult};
 use caelumora_model::config::parse_yaml;
 use caelumora_model::value::identifier::Identifier;
 use serde::de;
@@ -18,6 +19,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Why the workflows could not be read: naming the workflow or its file, never a path beyond it.
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +118,29 @@ impl<'de> Deserialize<'de> for Input {
     }
 }
 
+/// The seeds chosen at random lie below: exact as a number in JSON and in a browser's JavaScript.
+pub(crate) const MAX_SEED: u64 = 1 << 53;
+
+/// What a call asks of a workflow, as the tool's parameters say it: what it leaves out, the
+/// workflow's graph says - but the seed, which is chosen at random, so that another call gives
+/// another image.
+#[derive(Debug, Deserialize)]
+pub(crate) struct Arguments {
+    pub(crate) prompt: String,
+    #[serde(default)]
+    pub(crate) negative_prompt: Option<String>,
+    #[serde(default)]
+    pub(crate) width: Option<u64>,
+    #[serde(default)]
+    pub(crate) height: Option<u64>,
+    #[serde(default = "random_seed")]
+    pub(crate) seed: u64,
+}
+
+fn random_seed() -> u64 {
+    rand::random_range(0..MAX_SEED)
+}
+
 /// The sizes a workflow takes, in pixels per side: from `min` to `max`, a multiple of
 /// `multiple_of`. Left out, or in part, what most models take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -179,13 +204,9 @@ fn node_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>,
 pub struct Workflow {
     name: Identifier,
     description: String,
-    #[expect(dead_code, reason = "sent by the tool of issue 512, step 3")]
     graph: Map<String, Value>,
-    #[expect(dead_code, reason = "written by the tool of issue 512, step 3")]
     inputs: BTreeMap<Parameter, Input>,
-    #[expect(dead_code, reason = "checked by the tool of issue 512, step 3")]
     size: SizeBounds,
-    #[expect(dead_code, reason = "read by the tool of issue 512, step 3")]
     output: Option<String>,
 }
 
@@ -261,6 +282,44 @@ impl Workflow {
         })
     }
 
+    /// Its graph with `arguments` written into the inputs it maps, those it does not map left out:
+    /// what `POST /prompt` is given.
+    ///
+    /// # Errors
+    /// `InvalidParameter` for a width or height outside its bounds, which it names.
+    pub(crate) fn graph_with(&self, arguments: &Arguments) -> ToolResult<Map<String, Value>> {
+        let SizeBounds { min, max, multiple_of } = self.size;
+        for (side, value) in [("width", arguments.width), ("height", arguments.height)] {
+            if let Some(value) = value.filter(|value| !self.size.takes(*value)) {
+                return Err(ToolError::InvalidParameter(format!(
+                    "{side} {value}: the workflow '{}' takes {min} to {max}, a multiple of \
+                     {multiple_of}",
+                    self.name
+                )));
+            }
+        }
+        let mut graph = self.graph.clone();
+        for (parameter, input) in &self.inputs {
+            let value = match parameter {
+                Parameter::Prompt => Some(Value::from(arguments.prompt.clone())),
+                Parameter::NegativePrompt => arguments.negative_prompt.clone().map(Value::from),
+                Parameter::Width => arguments.width.map(Value::from),
+                Parameter::Height => arguments.height.map(Value::from),
+                Parameter::Seed => Some(Value::from(arguments.seed)),
+            };
+            let inputs = graph.get_mut(&input.node).and_then(|node| node.get_mut("inputs"));
+            if let (Some(value), Some(Value::Object(inputs))) = (value, inputs) {
+                inputs.insert(input.input.clone(), value);
+            }
+        }
+        Ok(graph)
+    }
+
+    /// The node whose images are the result, if it names one; else every node's are.
+    pub(crate) fn output(&self) -> Option<&str> {
+        self.output.as_deref()
+    }
+
     /// How it is named: by its files, and to a model.
     pub fn name(&self) -> &Identifier {
         &self.name
@@ -276,7 +335,7 @@ impl Workflow {
 /// name.
 #[derive(Debug, Default)]
 pub struct Workflows {
-    by_name: BTreeMap<Identifier, Workflow>,
+    by_name: BTreeMap<Identifier, Arc<Workflow>>,
 }
 
 impl Workflows {
@@ -310,7 +369,7 @@ impl Workflows {
                 return Err(WorkflowError::Unpaired { name: name.to_string(), missing });
             }
             let workflow = Self::read_one(dir, &name)?;
-            by_name.insert(name, workflow);
+            by_name.insert(name, Arc::new(workflow));
         }
         Ok(Self { by_name })
     }
@@ -334,7 +393,7 @@ impl Workflows {
     }
 
     /// The workflow named `name`, if one is.
-    pub fn named(&self, name: &str) -> Option<&Workflow> {
+    pub fn named(&self, name: &str) -> Option<&Arc<Workflow>> {
         self.by_name.get(name)
     }
 }

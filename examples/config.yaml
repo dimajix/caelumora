@@ -109,10 +109,11 @@ attachments:
 artifacts:
   max_bytes: 52428800
 
-# ComfyUI (issue 512): the directory of its workflows - each `<name>.json`,
-# exported from ComfyUI with "Export (API)", with `<name>.yaml` beside it,
-# which says what it is for and where the parameters of a call go. Read and
-# checked when the runtime is built.
+# ComfyUI (issue 512): the directory of the workflows a `comfyui_tool`
+# generates images with - each `<name>.json`, exported from ComfyUI with
+# "Export (API)", with `<name>.yaml` beside it, which says what it is for and
+# where the parameters of a call go. Read and checked when the runtime is
+# built.
 comfyui:
   workflows: examples/comfyui/workflows
 

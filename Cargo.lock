@@ -476,12 +476,22 @@ name = "caelumora-comfyui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "axum",
+ "bytes",
+ "caelumora-agents",
  "caelumora-model",
  "caelumora-runtime",
+ "rand 0.10.3",
+ "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

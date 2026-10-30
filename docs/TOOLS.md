@@ -126,13 +126,16 @@ at, and what the future holds is released. A tool therefore:
 *   expects to be dropped at any `await`, and never leaves the turn half changed across one;
 *   binds whatever it starts to its own future: a task it spawns is aborted on drop (a plain
     `JoinHandle` only detaches it), a child process is killed on drop, and work on a thread of its
-    own cannot be interrupted at all - the one exception is `terminal_tool`, whose commands live
-    with the storage;
+    own cannot be interrupted at all;
+*   ends on drop what it started outside the process and that would go on without it, in a task
+    of its own, bounded and logged, which the drop does not await: the commands of
+    `terminal_tool`, which live with the storage, and the prompts of `comfyui_tool`, which hold its
+    server;
 *   does not block: code that never reaches an `await` cannot be interrupted, and holds up the
     agent's whole task, which even the abort after the stop's grace does not end.
 
 What happened outside the process - a request the remote side already received - is not undone,
-and whether the remote side stops depends on it.
+and whether the remote side stops depends on it, unless the tool ends it as above.
 
 ### Results
 
@@ -217,6 +220,48 @@ as before. What such a component kind may use of the runtime is said in
 *   **Calls.** Each call opens a connection, and so an MCP session, of its own. An interrupted call
     drops it, which ends the session; whether the remote tool stops is up to the server.
 
+## ComfyUI
+
+A `comfyui_tool` component (issue 512, plugin `caelumora-comfyui`) generates images on one ComfyUI
+server with the workflows it names, of those the section `comfyui` of the configuration holds (see
+[CONFIGURATION.md](CONFIGURATION.md#comfyui)):
+
+```yaml
+- id: comfyui-tool
+  kind: comfyui_tool
+  params:
+    endpoint: { url: http://127.0.0.1:8188, timeout_secs: 300 }
+    workflows: [z_image_turbo]
+    destination: { level: internal }
+```
+
+*   **One tool.** `generate_image` makes an image from a description: `prompt`, and optionally
+    `workflow` - one the component names, the first unless given -, `negative_prompt`, `width`,
+    `height` and `seed`. The parameters are the tool's; a workflow maps those it takes to the
+    inputs of its nodes and leaves the others out, and its description lists the workflows with
+    what each says of itself. A workflow not named, or a size outside the workflow's bounds, is the
+    model's to correct.
+*   **A seed** left out is chosen at random, below 2^53, so that another call gives another
+    image; the result names the seed taken, so that the model can repeat or vary one.
+*   **A call** queues the workflow (`POST /prompt`), follows it in the server's history, fetches
+    the images of its output node (`GET /view`) and gives them to the model
+    ([Media a tool gives its model](#media-a-tool-gives-its-model)); its value names the workflow,
+    the seed and the files. What ComfyUI refused or failed with is the call's failure, in its
+    words - but for the absolute paths on its host they name, each written `<path>`. The
+    endpoint's `timeout_secs` bounds the whole call - its queue, its run and its fetch, 300 seconds
+    unless given.
+*   **A call given up** - its turn cancelled or stopped, its time run out, its server no longer
+    answering - ends its prompt in ComfyUI (see [Running tool calls](#running-tool-calls)): taken
+    from the queue where it waits, interrupted by its id where it runs, so that no other prompt is
+    hit. The prompt is given its id before it is queued, so that a call dropped meanwhile ends it
+    too.
+*   **Parameters.** `endpoint` (required, without `auth`: ComfyUI knows no authentication),
+    `workflows` (required, at least one), `requires_approval` (`false` unless given: a call
+    changes nothing but the server's time), `destination` (`public` unless given - what the server
+    is cleared for, where the arguments go and stay, in its history and in what it saves) and
+    `description`. The result is classified as the turn's label: it follows from the arguments
+    alone.
+
 ## Built-in tools
 
 The tools that come with Caelumora are listed with the components that offer them, their parameters
@@ -278,10 +323,10 @@ beginning with its first two words, however long a call waits. Following and end
 no approval, since only a command that was approved is followed or ended.
 
 A call dropped while it waits for its command - the turn cancelled or stopped - kills the command,
-in a task of its own, bounded and logged, that the drop does not await. It is the deliberate
-exception to "a tool binds whatever it starts to its own future": a command lives with the storage,
-so that one handed back as running outlives the call, and one left running by a dropped call would
-go on writing into the workspace after the turn that started it.
+in a task of its own, bounded and logged, that the drop does not await, as a tool ends what it
+started outside the process (see [Running tool calls](#running-tool-calls)): a command lives with
+the storage, so that one handed back as running outlives the call, and one left running by a
+dropped call would go on writing into the workspace after the turn that started it.
 
 A command handed back as running is ended by the model, or by a user who may change the workspace's
 files in the channel; the agent sees `killed` the next time it follows the command. How long a

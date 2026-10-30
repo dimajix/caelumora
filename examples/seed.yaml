@@ -121,6 +121,22 @@ personalities:
   - id: artifact-tool
     kind: artifact_tool
     fail_policy: FailClosed
+  # The attachments it heard, and `attach`, by which it shows what it saw.
+  - id: attachment-tool
+    kind: attachment_tool
+    fail_policy: FailClosed
+  # Images generated with ComfyUI (issue 512), by the workflows of the section `comfyui` of the
+  # configuration; its server on this machine, cleared for what is internal.
+  - id: comfyui-tool
+    kind: comfyui_tool
+    params:
+      endpoint:
+        url: http://127.0.0.1:8188
+        timeout_secs: 300
+      workflows: [z_image_turbo]
+      destination:
+        level: internal
+    fail_policy: FailClosed
 - id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   name: sassy-assistant
   description: A sassy and witty assistant
