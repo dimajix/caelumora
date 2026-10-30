@@ -1,6 +1,6 @@
 # 511 — PERMISSION-CHECKS.md records a question the store asks twice in some rows and not in others
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Identity and access management
@@ -50,3 +50,21 @@ is asked once.
   `NotFound` for the deletion of an agent and of a project, though both answer `false` where there
   is nothing the caller could see, and refuse with no `NotFound`; the rows of a session's deletion
   and of every purge name it no longer. To be put right with the column *Again*.
+- **2026-10-30** — Decided for the first option and done. The notation of the map says what the
+  column *Again* names: where a question of the operation is asked once more on the way, *(pair)*
+  for the operation's own and the store's, *(store)* for the store asking what was asked before - by
+  the operation, a reach or the store -, anything else in words, in another context or by another
+  act too; a write made again after `Outdated` counts once. *(both store)* went into *(store)*,
+  which said the same. Going through every row showed more than the issue named: the store asks
+  `Get…` - and `cleared_for` for what is classified - before every change and deletion, so the
+  deletion of a session, an agent, a project, a skill and a group asked a read twice unnoticed, and
+  the channel's deletion named its read as a pair, without `cleared_for`; the purges through
+  `store::purge_behind` asked `ReadDeleted` + `Purge` twice; attaching a workspace, taking someone
+  into a channel, setting a project's members and restoring and purging a project asked more than
+  they said. The table of the groups has the column now. *Refusal* names `NotFound` no longer for
+  the deletion of an agent and of a project. Joining is no pair: it stores in S, and asks
+  `JoinSession`, and with a channel `JoinChannel`, a personality and the clearance, twice by itself.
+  Where a participant is taken in or joins as a founder, its personality and clearance are asked by
+  the session and again by the channel. Creating a session asks no personality since issue 420,
+  which makes its channels empty, so its row and opening's no longer say so. The finding on pairs
+  names sharing and purging no longer, which no manager asks itself.
