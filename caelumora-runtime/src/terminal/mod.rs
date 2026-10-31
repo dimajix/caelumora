@@ -17,14 +17,12 @@
 //! that may still run and ends one when told, and none runs longer than the
 //! storage's `max_run`.
 //!
-//! A storage is a backend (issue 324): its provider is made by the factory
-//! registered for its type - `local` here (`register_backends`), others by a
-//! plugin, such as the Open Terminal storages of `caelumora-open-terminal`
-//! (issue 327) -, from its parameters, which that factory reads and checks.
-//! What a provider outside the core has to offer is this module's public
-//! API: a `TerminalProvider` with its `Terminal` and `Shell`, the commands
-//! of its storage kept in `Commands`, and its `max_run_secs` read as
-//! `max_run` reads it.
+//! A storage is a backend (issue 324): its provider is made by the factory registered for its
+//! type - `local` here (`register_backends`), others by a plugin, such as the Open Terminal
+//! storages of `caelumora-open-terminal` (issue 327) -, from its parameters, which that factory
+//! reads and checks. What a provider outside the core has to offer is this module's public API: a
+//! `TerminalProvider` with its `Terminal` and `Shell`, the commands of its storage kept in
+//! `Commands`, and its `max_run_secs` checked as `check_max_run_secs` checks it.
 
 mod commands;
 mod local;
@@ -296,16 +294,16 @@ pub fn default_max_run_secs() -> u64 {
     DEFAULT_MAX_RUN_SECS
 }
 
-/// `secs`, a storage's `max_run_secs`, as how long a command in one of its
-/// workspaces may run (issue 254).
+/// Checks `secs`, a storage's `max_run_secs` - how long a command in one of its workspaces may run
+/// (issue 254) -, for the `Params::check` of its parameters.
 ///
 /// # Errors
 /// `ComponentError::InvalidConfig` for none at all.
-pub fn max_run(secs: u64) -> ComponentResult<Duration> {
+pub fn check_max_run_secs(secs: u64) -> ComponentResult<()> {
     if secs == 0 {
         return Err(ComponentError::InvalidConfig("max_run_secs must be more than 0".to_string()));
     }
-    Ok(Duration::from_secs(secs))
+    Ok(())
 }
 
 /// Registers the storage of workspaces the core brings with `backends`:

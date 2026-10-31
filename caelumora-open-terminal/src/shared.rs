@@ -16,8 +16,8 @@ use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::component::{service_of, ComponentError, ComponentResult, Params};
 use caelumora_runtime::terminal::{
-    default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider,
-    TerminalResult, WorkspacePath,
+    check_max_run_secs, default_max_run_secs, CommandKey, Terminal, TerminalError,
+    TerminalProvider, TerminalResult, WorkspacePath,
 };
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
@@ -43,14 +43,11 @@ struct SharedStorageConfig {
     max_run_secs: u64,
 }
 
-impl Params for SharedStorageConfig {}
-
-impl SharedStorageConfig {
-    /// Its `mount`, if it is absolute and stays where it says.
-    ///
+impl Params for SharedStorageConfig {
     /// # Errors
-    /// `ComponentError::InvalidConfig` if it does not.
-    fn mount(&self) -> ComponentResult<&str> {
+    /// `InvalidConfig` if `mount` is not absolute or does not stay where it says, or if
+    /// `max_run_secs` is no time a command may run.
+    fn check(&self) -> ComponentResult<()> {
         let mount = &self.mount;
         if !mount.starts_with('/')
             || mount.contains('\0')
@@ -60,7 +57,7 @@ impl SharedStorageConfig {
                 "the mount '{mount}' is not an absolute path that stays where it says"
             )));
         }
-        Ok(mount)
+        check_max_run_secs(self.max_run_secs)
     }
 }
 
@@ -73,8 +70,8 @@ pub(crate) fn register_backend(backends: &mut Backends) {
             let secrets = Arc::clone(service_of::<SecretManager>(services)?);
             let provider = SharedProvider::new(
                 config.endpoint.clone(),
-                config.mount()?,
-                max_run(config.max_run_secs)?,
+                &config.mount,
+                Duration::from_secs(config.max_run_secs),
                 config.destination.clone(),
                 secrets,
             )
@@ -97,11 +94,10 @@ pub(crate) struct SharedProvider {
 }
 
 impl SharedProvider {
-    /// The provider of a storage at `mount` in the instance at `endpoint`,
-    /// whose key is resolved through `secrets`, whose commands run for
-    /// `max_run` at most; what may be put into it at most `destination`,
-    /// `public` unless given - a command may send anything anywhere. `mount`
-    /// is as its parameters checked it (`SharedStorageConfig::mount`).
+    /// The provider of a storage at `mount` in the instance at `endpoint`, whose key is resolved
+    /// through `secrets`, whose commands run for `max_run` at most; what may be put into it at most
+    /// `destination`, `public` unless given - a command may send anything anywhere. `mount` is as
+    /// its parameters checked it (`SharedStorageConfig`).
     ///
     /// # Errors
     /// `Unavailable` for an endpoint that is no URL.
@@ -608,17 +604,21 @@ mod tests {
         assert_eq!(
             (
                 config.endpoint.url.as_str(),
-                config.mount().unwrap(),
+                config.mount.as_str(),
                 &config.destination,
                 config.max_run_secs
             ),
             ("http://open-terminal:8000", "/workspaces", &None, DEFAULT_MAX_RUN_SECS)
         );
         for mount in ["workspaces", "/a/../b"] {
-            let config: SharedStorageConfig = config_of_params(&params(mount)).unwrap();
-            let refused = config.mount().unwrap_err().to_string();
+            let refused =
+                config_of_params::<SharedStorageConfig>(&params(mount)).unwrap_err().to_string();
             assert!(refused.contains("mount"), "{refused}");
         }
+        let mut never = params("/workspaces");
+        never["max_run_secs"] = json!(0);
+        let refused = config_of_params::<SharedStorageConfig>(&never).unwrap_err().to_string();
+        assert!(refused.contains("max_run_secs"), "{refused}");
         let without = json!({ "endpoint": { "url": "http://open-terminal:8000" } });
         assert!(config_of_params::<SharedStorageConfig>(&without).is_err(), "a mount is needed");
     }

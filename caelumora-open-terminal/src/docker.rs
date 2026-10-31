@@ -39,8 +39,8 @@ use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::component::{ComponentError, ComponentResult, Params};
 use caelumora_runtime::terminal::{
-    default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider,
-    TerminalResult,
+    check_max_run_secs, default_max_run_secs, CommandKey, Terminal, TerminalError,
+    TerminalProvider, TerminalResult,
 };
 use futures::StreamExt;
 use reqwest::Method;
@@ -104,7 +104,8 @@ fn default_idle_stop_secs() -> u64 {
 impl Params for DockerStorageConfig {
     /// # Errors
     /// `ComponentError::InvalidConfig` naming what does not fit: no image is named, the network
-    /// gives a container no address of its own, or a container may not stay unused a while.
+    /// gives a container no address of its own, a container may not stay unused a while, or a
+    /// command may not run at all.
     fn check(&self) -> ComponentResult<()> {
         let invalid = |why: String| Err(ComponentError::InvalidConfig(why));
         if self.image.trim().is_empty() {
@@ -119,7 +120,7 @@ impl Params for DockerStorageConfig {
         if self.idle_stop_secs == 0 {
             return invalid("idle_stop_secs must be more than 0".to_string());
         }
-        Ok(())
+        check_max_run_secs(self.max_run_secs)
     }
 }
 
@@ -129,13 +130,12 @@ pub(crate) fn register_backend(backends: &mut Backends) {
     backends.register::<dyn TerminalProvider, _, _>(
         "open_terminal_docker",
         |storage, config: DockerStorageConfig, _| {
-            let max_run = max_run(config.max_run_secs)?;
             let provider = DockerProvider::new(
                 storage,
                 &config.image,
                 &config.network,
                 Duration::from_secs(config.idle_stop_secs),
-                max_run,
+                Duration::from_secs(config.max_run_secs),
                 config.destination,
             )
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;

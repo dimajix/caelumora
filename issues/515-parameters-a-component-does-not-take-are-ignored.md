@@ -111,3 +111,10 @@ personality, bundle or session that does no longer builds.
   `check` - what the values must meet beyond their types - `config_of_params` runs: one way in
   place of the `of` and `check` methods of some structs, and the values are checked where the
   names are, before anything is built and before a request writes them.
+- **2026-10-31** — The checks left in factories are in `Params::check` too: the `mount` of
+  `open_terminal_shared`, the `max_run_secs` of every storage (`check_max_run_secs` in place of
+  `max_run`, the factories only convert it) and the `instruction_files` of
+  `workspace_prompt_provider`, so that a request is refused a wrong name before it writes it. What
+  needs a service to be checked stays in the factories, and so, for now, does whether the endpoint
+  of `open_terminal_shared` is a URL (`Client::new`): the other kinds with an endpoint do not check
+  it at all, which is a question of `RemoteEndpoint` of its own.

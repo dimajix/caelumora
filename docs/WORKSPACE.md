@@ -99,8 +99,9 @@ What a provider has to offer is the public API of `caelumora_runtime::terminal`:
     as a provider is told to;
 *   the commands of its storage, kept in `Commands` by what its shells keep of each (`Kept`), so
     that they are listed and forgotten as the core's are;
-*   its parameter `max_run_secs`, read with `default_max_run_secs` and checked with `max_run`, so
-    that every storage bounds its commands alike.
+*   its parameter `max_run_secs`, read with `default_max_run_secs` and checked with
+    `check_max_run_secs` in the `Params::check` of its parameters, so that every storage bounds its
+    commands alike.
 
 A storage bounds what may be put into it: its `destination`, the classification a workspace in it
 may have at most - where its files go, and for a storage with a shell where what a command reads can

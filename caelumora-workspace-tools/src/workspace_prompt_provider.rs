@@ -60,25 +60,13 @@ struct WorkspacePromptConfig {
     instruction_files: Vec<String>,
 }
 
-impl Params for WorkspacePromptConfig {}
-
-fn default_instruction_files() -> Vec<String> {
-    vec!["AGENTS.md".to_string(), "CLAUDE.md".to_string()]
-}
-
-impl WorkspacePromptProvider {
-    /// It with `instruction_files`, each the name of a file at a
-    /// workspace's root, its texts from `prompts`.
+impl WorkspacePromptConfig {
+    /// Its `instruction_files`, each as a file at a workspace's root.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` for a name that is not one of a file
-    /// at the root.
-    fn new(
-        position: PromptPosition,
-        instruction_files: &[String],
-        prompts: PromptTexts,
-    ) -> ComponentResult<Self> {
-        let instruction_files = instruction_files
+    /// `ComponentError::InvalidConfig` for a name that is not one of a file at the root.
+    fn instruction_files(&self) -> ComponentResult<Vec<WorkspacePath>> {
+        self.instruction_files
             .iter()
             .map(|name| match WorkspacePath::parse(name) {
                 Ok(path) if !path.is_root() && path.parent().is_root() => Ok(path),
@@ -86,10 +74,23 @@ impl WorkspacePromptProvider {
                     "instruction file '{name}' is not the name of a file at the workspace's root"
                 ))),
             })
-            .collect::<ComponentResult<_>>()?;
-        Ok(Self { position, instruction_files, prompts })
+            .collect()
     }
+}
 
+impl Params for WorkspacePromptConfig {
+    /// # Errors
+    /// `InvalidConfig` for an instruction file that is not one at a workspace's root.
+    fn check(&self) -> ComponentResult<()> {
+        self.instruction_files().map(drop)
+    }
+}
+
+fn default_instruction_files() -> Vec<String> {
+    vec!["AGENTS.md".to_string(), "CLAUDE.md".to_string()]
+}
+
+impl WorkspacePromptProvider {
     /// Those of the instruction files that lie at the root of `workspace`,
     /// the one `situation` may use in its channel; none if its storage cannot be
     /// reached, which must not cost the turn.
@@ -187,14 +188,13 @@ pub fn register(registry: &mut ComponentRegistry) {
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let WorkspacePromptConfig { position, instruction_files } =
-                config_of_params(&descriptor.params)?;
+            let config: WorkspacePromptConfig = config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(WorkspacePromptProvider::new(
-                position,
-                &instruction_files,
-                texts,
-            )?));
+            facets.insert::<dyn PromptProvider>(Arc::new(WorkspacePromptProvider {
+                position: config.position,
+                instruction_files: config.instruction_files()?,
+                prompts: texts,
+            }));
             Ok(facets)
         },
     );
@@ -208,14 +208,21 @@ mod tests {
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::security::SecurityContext;
     use caelumora_runtime::workspace::testing::session_with_workspace;
+    use serde_json::{json, Value};
     use std::fs;
 
     fn provider() -> WorkspacePromptProvider {
-        provider_of(&default_instruction_files())
+        provider_of(json!({}))
     }
 
-    fn provider_of(instruction_files: &[String]) -> WorkspacePromptProvider {
-        WorkspacePromptProvider::new(PromptPosition::Start, instruction_files, prompts()).unwrap()
+    /// It with `params`.
+    fn provider_of(params: Value) -> WorkspacePromptProvider {
+        let config: WorkspacePromptConfig = config_of_params(&params).unwrap();
+        WorkspacePromptProvider {
+            position: PromptPosition::Start,
+            instruction_files: config.instruction_files().unwrap(),
+            prompts: prompts(),
+        }
     }
 
     #[tokio::test]
@@ -300,7 +307,7 @@ mod tests {
         let world = session_with_workspace().await;
         fs::write(world.dir().join("AGENTS.md"), "").unwrap();
         fs::write(world.dir().join("GUIDE.md"), "").unwrap();
-        let provider = provider_of(&["GUIDE.md".to_string()]);
+        let provider = provider_of(json!({ "instruction_files": ["GUIDE.md"] }));
         let mut state = AgentChannelState::default();
         let prompt =
             provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
@@ -311,7 +318,7 @@ mod tests {
             prompt.text
         );
 
-        let none = provider_of(&[]);
+        let none = provider_of(json!({ "instruction_files": [] }));
         let mut state = AgentChannelState::default();
         let prompt =
             none.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
@@ -322,13 +329,10 @@ mod tests {
         );
 
         for invalid in ["", "docs/AGENTS.md", "../AGENTS.md", "/AGENTS.md"] {
+            let params = json!({ "instruction_files": [invalid] });
             assert!(
                 matches!(
-                    WorkspacePromptProvider::new(
-                        PromptPosition::Start,
-                        &[invalid.to_string()],
-                        prompts()
-                    ),
+                    config_of_params::<WorkspacePromptConfig>(&params),
                     Err(ComponentError::InvalidConfig(_))
                 ),
                 "{invalid:?}"

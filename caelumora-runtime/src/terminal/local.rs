@@ -7,11 +7,11 @@
 
 use super::local_shell::{LocalCommands, LocalShell};
 use super::{
-    default_max_run_secs, max_run, ByteStream, CommandKey, FileEntry, Shell, Terminal,
+    check_max_run_secs, default_max_run_secs, ByteStream, CommandKey, FileEntry, Shell, Terminal,
     TerminalError, TerminalProvider, TerminalResult, WorkspacePath,
 };
 use crate::backend::Backends;
-use crate::component::Params;
+use crate::component::{ComponentResult, Params};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
@@ -51,7 +51,13 @@ struct LocalStorageConfig {
     max_run_secs: u64,
 }
 
-impl Params for LocalStorageConfig {}
+impl Params for LocalStorageConfig {
+    /// # Errors
+    /// `InvalidConfig` if `max_run_secs` is no time a command may run.
+    fn check(&self) -> ComponentResult<()> {
+        check_max_run_secs(self.max_run_secs)
+    }
+}
 
 /// Registers the storage `local` with `backends`.
 pub(super) fn register_backend(backends: &mut Backends) {
@@ -59,7 +65,7 @@ pub(super) fn register_backend(backends: &mut Backends) {
         Ok(Arc::new(LocalProvider::new(
             config.root,
             config.shell,
-            max_run(config.max_run_secs)?,
+            Duration::from_secs(config.max_run_secs),
             config.destination,
         )))
     });
