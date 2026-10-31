@@ -22,7 +22,7 @@ use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibili
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
-use caelumora_runtime::view::ChannelView;
+use caelumora_runtime::view::ChannelReader;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -160,7 +160,7 @@ impl AttachmentTool {
 async fn place_of(
     turn: &Turn<'_>,
     reference: &str,
-) -> ToolResult<((MessageId, ContentId), ChannelView)> {
+) -> ToolResult<((MessageId, ContentId), Box<dyn ChannelReader>)> {
     let place =
         turn.situation().agent_channel_state().attachments.named(reference).ok_or_else(|| {
             ToolError::InvalidParameter(format!(

@@ -8,7 +8,7 @@
 //! completes, like public notes (`notes`). Its prompt part gives the model
 //! its private notes from this channel and from every other channel of the
 //! session it takes or took part in, as far as they may be copied into
-//! this one (`SessionView::own_private_notes`,
+//! this one (`SessionReader::own_private_notes`,
 //! `ConfidentialityQuestions::may_copy_information`, issues 133, 264): a note
 //! carries the classification of the channel it was written in, checked
 //! when it is read; whoever may read that channel now does not matter, the

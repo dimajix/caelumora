@@ -1,7 +1,7 @@
 //! A session as its viewer reached it: its document, and its loop if it
 //! runs.
 
-use super::{channel_reading, ChannelReader};
+use super::{channel_reading, ReadingBasis};
 use super::{ChannelView, ViewError, ViewResult, Views};
 use crate::channel::ChannelError;
 use crate::session::{ChannelRun, Found, SessionLoop};
@@ -299,13 +299,13 @@ impl SessionView {
     /// (`GetChannel`).
     pub(super) async fn reading(&self, channel: &Channel) -> Option<Reading> {
         let at = Place::of(channel, self.privacy());
-        let reader = ChannelReader::of(self.views.viewer().place());
+        let basis = ReadingBasis::of(self.views.viewer().place());
         channel_reading(
             self.views.policies(),
             self.views.context(),
             &channel.security_attributes,
             &at,
-            reader,
+            basis,
         )
         .await
     }

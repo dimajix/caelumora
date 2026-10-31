@@ -8,7 +8,7 @@ use crate::channel::ChannelLoop;
 use crate::component::ComponentError;
 use crate::group::keep_participants;
 use crate::scoped::ScopeNotEmpty;
-use crate::view::{channel_reading, ChannelReader};
+use crate::view::{channel_reading, ReadingBasis};
 use anyhow::{Error, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
@@ -173,7 +173,7 @@ impl SessionLoop {
             &channel.security_attributes,
             &at,
             // Reached for a user alone, who reads by their clearance.
-            ChannelReader::of(None),
+            ReadingBasis::of(None),
         )
         .await?;
         Some((channel, run))

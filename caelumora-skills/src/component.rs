@@ -2,7 +2,7 @@
 //! procedures written down for it to follow - and how a skill reaches it.
 //!
 //! - **The catalogue**, a prompt part: name and description of every skill
-//!   the agent may load where it is (`Views::usable_skills`), in the system
+//!   the agent may load where it is (`SkillCatalogue::usable_skills`), in the system
 //!   prompt by default (parameter `position`) - it changes rarely, and the
 //!   model has to know what it could load. Classified as the join of the
 //!   skills it lists.
@@ -31,9 +31,9 @@
 //! compaction summarises is given again, as it is now - where it may still
 //! be loaded (`KnowledgeRestorer`, issue 323).
 
-use crate::manager::SkillError;
+use crate::catalogue::SkillCatalogue;
+use crate::manager::{SkillError, SkillResult};
 use crate::skill::{Skill, SkillId};
-use crate::view::{SkillView, SkillViews};
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::command::AgentCommandProvider;
@@ -59,7 +59,7 @@ use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::{
     config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
-use caelumora_runtime::view::SessionView;
+use caelumora_runtime::view::SessionReader;
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::Value;
@@ -110,18 +110,27 @@ impl Params for SkillsConfig {}
 
 /// The classification of what `skills` hold together, within `bound` -
 /// the turn's: their join where it surely flows there, else the bound.
-fn joined(skills: &[SkillView], bound: &Classification) -> Classification {
+fn joined(skills: &[Skill], bound: &Classification) -> Classification {
     skills.iter().fold(Classification::PUBLIC, |joined, skill| {
-        joined.join_within(skill.classification(), bound)
+        joined.join_within(&skill.classification, bound)
     })
 }
 
-/// The session `turn` reads from (`Situation::session_view`); a turn that
-/// reaches none has no skills.
-async fn session_of(turn: &Turn<'_>) -> Result<SessionView, ToolError> {
-    turn.situation().session_view().await?.ok_or_else(|| {
+/// The skills of `session`, as the plugin bound them to its reading (issue 516).
+///
+/// # Errors
+/// `NotJoined` if the runtime was built without the plugin.
+fn catalogue_of(session: &dyn SessionReader) -> SkillResult<Arc<dyn SkillCatalogue>> {
+    session.extension::<dyn SkillCatalogue>().ok_or(SkillError::NotJoined)
+}
+
+/// The skills `turn` reaches from its session (`Situation::session_view`); a turn that reaches
+/// none has no skills.
+async fn skills_of(turn: &Turn<'_>) -> Result<Arc<dyn SkillCatalogue>, ToolError> {
+    let session = turn.situation().session_view().await?.ok_or_else(|| {
         ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string())
-    })
+    })?;
+    Ok(catalogue_of(session.as_ref())?)
 }
 
 /// What `create_skill` is called with.
@@ -288,11 +297,11 @@ impl SkillsComponent {
 
     /// The catalogue of `skills`: a line each, its name and what it is for;
     /// empty if there are none.
-    fn catalogue(&self, skills: &[SkillView]) -> Result<String, PromptError> {
+    fn catalogue(&self, skills: &[Skill]) -> Result<String, PromptError> {
         if skills.is_empty() {
             return Ok(String::new());
         }
-        let skills: Vec<_> = skills.iter().map(|skill| context! { name => skill.name().to_string(), description => skill.description().to_string() }).collect();
+        let skills: Vec<_> = skills.iter().map(|skill| context! { name => skill.name.name.to_string(), description => skill.description.to_string() }).collect();
         self.prompts.render(
             &format!("{NAMESPACE}.catalogue"),
             context! { skills, load_skill => LOAD_SKILL_TOOL_NAME },
@@ -303,10 +312,10 @@ impl SkillsComponent {
     /// the one rendering of every way it reaches a model - loaded by the
     /// model, given with `/skill`, given again after a compaction (issues
     /// 16, 22).
-    fn given(&self, skill: &SkillView) -> Result<String, PromptError> {
+    fn given(&self, skill: &Skill) -> Result<String, PromptError> {
         self.prompts.render(
             &format!("{NAMESPACE}.skill"),
-            context! { name => skill.name().to_string(), body => skill.body().as_str() },
+            context! { name => skill.name.name.to_string(), body => skill.body.as_str() },
         )
     }
 }
@@ -321,7 +330,7 @@ impl PromptProvider for SkillsComponent {
         let Some(session) = situation.session_view().await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
-        let skills = session.views().usable_skills().await?;
+        let skills = catalogue_of(session.as_ref())?.usable_skills().await?;
         let classification = joined(&skills, &situation.classification());
         Ok(Prompt::classified(self.catalogue(&skills)?, classification))
     }
@@ -372,7 +381,6 @@ impl ToolProvider for SkillsComponent {
         }
     }
 
-    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn execute(
         &self,
         name: &str,
@@ -382,8 +390,8 @@ impl ToolProvider for SkillsComponent {
     ) -> ToolResult<ToolOutput> {
         match name {
             LIST_SKILLS_TOOL_NAME => {
-                let skills = session_of(turn).await?.views().usable_skills().await?;
-                let listed: Vec<Value> = skills.iter().map(|s| serde_json::json!({ "name": s.name(), "description": s.description().as_str(), "skill_id": s.id() })).collect();
+                let skills = skills_of(turn).await?.usable_skills().await?;
+                let listed: Vec<Value> = skills.iter().map(|s| serde_json::json!({ "name": s.name.name.as_str(), "description": s.description.as_str(), "skill_id": s.id })).collect();
                 Ok(ToolOutput::classified(
                     serde_json::json!({ "skills": listed }),
                     joined(&skills, &turn.situation().classification()),
@@ -395,7 +403,7 @@ impl ToolProvider for SkillsComponent {
                     name: String,
                 }
                 let Load { name } = arguments(params)?;
-                let skill = session_of(turn).await?.views().usable_skill_named(name.trim()).await?;
+                let skill = skills_of(turn).await?.usable_skill_named(name.trim()).await?;
                 // Its text is given after the step's results, as a skill a
                 // user loads is (issue 389): the transcript holds every skill
                 // as what it is, for a compaction to give it again. The
@@ -411,45 +419,31 @@ impl ToolProvider for SkillsComponent {
                             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?,
                     ),
                     timestamp: Utc::now(),
-                    ..Message::new(skill.classification().clone())
+                    ..Message::new(skill.classification.clone())
                 };
                 let knowledge =
                     skill.knowledge(turn.situation().channel_id(), turn.situation().session_id());
                 turn.give(given, Some(knowledge));
                 Ok(ToolOutput::classified(
-                    serde_json::json!({ "status": "loaded", "name": skill.name(), "skill_id": skill.id() }),
-                    skill.classification().clone(),
+                    serde_json::json!({ "status": "loaded", "name": skill.name.name.as_str(), "skill_id": skill.id }),
+                    skill.classification.clone(),
                 ))
             }
             CREATE_SKILL_TOOL_NAME => {
                 let Create { name, description, body, scope } = arguments(params)?;
-                let session = session_of(turn).await?;
-                // In the name the core reads the session in for the turn (issue 516).
-                let context = session.views().context().clone();
+                let skills = skills_of(turn).await?;
                 let scope = match SkillScope::of(&scope)? {
                     SkillScope::Session => {
                         Scope::SessionScope { session_id: turn.situation().session_id() }
                     }
-                    SkillScope::User => match context.principal_id.as_user_id() {
-                        Some(user_id) => Scope::UserScope { user_id },
-                        None => {
-                            return Err(ToolError::InvalidParameter(
-                                "your owner is no user: write a skill of this session".to_string(),
-                            ))
-                        }
-                    },
+                    SkillScope::User => skills.owner_scope().ok_or_else(|| {
+                        ToolError::InvalidParameter(
+                            "your owner is no user: write a skill of this session".to_string(),
+                        )
+                    })?,
                 };
-                let made = session
-                    .views()
-                    .skill_manager()?
-                    .create(
-                        &context,
-                        name.trim(),
-                        scope,
-                        &description,
-                        &body,
-                        turn.situation().label(),
-                    )
+                let made = skills
+                    .create(name.trim(), scope, &description, &body, turn.situation().label())
                     .await?;
                 Ok(ToolOutput::classified(
                     serde_json::json!({ "status": "created", "name": made.name.name.as_str(), "skill_id": made.id }),
@@ -463,27 +457,24 @@ impl ToolProvider for SkillsComponent {
                         "give a new description, new steps, or both".to_string(),
                     ));
                 }
-                let session = session_of(turn).await?;
-                let skill = session.views().usable_skill_named(name.trim()).await?;
-                let context = session.views().context().clone();
-                let views = session.views();
-                let manager = views.skill_manager()?;
+                let skills = skills_of(turn).await?;
+                let skill = skills.usable_skill_named(name.trim()).await?;
                 // What the turn saw goes into the skill: raised to it first,
                 // so that nothing of it is ever held lower.
                 let raised = skill
-                    .classification()
+                    .classification
                     .join_within(&turn.situation().label(), &turn.situation().classification());
-                if raised != *skill.classification() {
-                    manager.reclassify(&context, skill.id(), raised.clone()).await?;
+                if raised != skill.classification {
+                    skills.reclassify(skill.id, raised.clone()).await?;
                 }
                 if let Some(description) = description {
-                    manager.describe(&context, skill.id(), &description).await?;
+                    skills.describe(skill.id, &description).await?;
                 }
                 if let Some(body) = body {
-                    manager.rewrite(&context, skill.id(), &body).await?;
+                    skills.rewrite(skill.id, &body).await?;
                 }
                 Ok(ToolOutput::classified(
-                    serde_json::json!({ "status": "updated", "name": skill.name(), "skill_id": skill.id(), "classification": raised.to_string() }),
+                    serde_json::json!({ "status": "updated", "name": skill.name.name.as_str(), "skill_id": skill.id, "classification": raised.to_string() }),
                     turn.situation().label(),
                 ))
             }
@@ -553,13 +544,16 @@ impl AgentCommandProvider for SkillsComponent {
             .ok_or_else(|| failed("the agent is in no session"))?;
         match name {
             SKILLS_COMMAND_NAME => {
-                let skills =
-                    session.views().usable_skills().await.map_err(|e| command_error(name, e))?;
+                let skills = catalogue_of(session.as_ref())
+                    .map_err(|e| command_error(name, e))?
+                    .usable_skills()
+                    .await
+                    .map_err(|e| command_error(name, e))?;
                 let text = match skills.is_empty() {
                     true => format!("{} can load no skills here.", turn.agent_name()),
                     false => skills.iter().fold(
                         format!("Skills {} can load here:\n\n", turn.agent_name()),
-                        |text, s| text + &format!("- `{}` — {}\n", s.name(), s.description()),
+                        |text, s| text + &format!("- `{}` — {}\n", s.name.name, s.description),
                     ),
                 };
                 Ok(CommandOutput::private(text))
@@ -572,8 +566,8 @@ impl AgentCommandProvider for SkillsComponent {
                         reason: "name the skill".to_string(),
                     });
                 }
-                let skill = session
-                    .views()
+                let skill = catalogue_of(session.as_ref())
+                    .map_err(|e| command_error(name, e))?
                     .usable_skill_named(wanted)
                     .await
                     .map_err(|e| command_error(name, e))?;
@@ -594,7 +588,7 @@ impl AgentCommandProvider for SkillsComponent {
                     role: MessageRole::User,
                     content: Some(self.given(&skill).map_err(|e| failed(&e.to_string()))?),
                     timestamp: Utc::now(),
-                    ..Message::new(skill.classification().clone())
+                    ..Message::new(skill.classification.clone())
                 };
                 // Nothing can fail from here on: what is given is written at once.
                 let knowledge =
@@ -603,7 +597,7 @@ impl AgentCommandProvider for SkillsComponent {
                 Ok(CommandOutput::private(format!(
                     "{} has the skill '{}' now.",
                     turn.agent_name(),
-                    skill.name()
+                    skill.name.name
                 )))
             }
             _ => Err(CommandError::Unknown(name.to_string())),
@@ -634,13 +628,17 @@ impl KnowledgeRestorer for SkillsComponent {
             .await
             .map_err(|e| unreadable(&e))?
             .ok_or(CompactionError::NoSession)?;
-        let usable = session.views().usable_skills().await.map_err(|e| unreadable(&e))?;
+        let usable = catalogue_of(session.as_ref())
+            .map_err(|e| unreadable(&e))?
+            .usable_skills()
+            .await
+            .map_err(|e| unreadable(&e))?;
         given
             .iter()
-            .filter_map(|id| usable.iter().find(|skill| skill.id() == SkillId::from(*id)))
+            .filter_map(|id| usable.iter().find(|skill| skill.id == SkillId::from(*id)))
             .map(|skill| {
                 Ok(GivenAgain {
-                    name: skill.name().to_string(),
+                    name: skill.name.name.to_string(),
                     text: self.given(skill)?,
                     knowledge: skill
                         .knowledge(turn.situation().channel_id(), turn.situation().session_id()),

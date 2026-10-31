@@ -44,6 +44,7 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::testing::{asked_for, shown, TestRuntime, World, STAFF};
 use caelumora_runtime::view::Viewer;
+use caelumora_skills::catalogue::SkillCatalogue;
 use caelumora_skills::component::{
     SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME,
     SKILLS_KIND, SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME,
@@ -51,7 +52,6 @@ use caelumora_skills::component::{
 use caelumora_skills::manager::{SkillError, SkillManager};
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_skills::skill::{self, Skill, SkillBody};
-use caelumora_skills::view::SkillViews;
 use serde_json::{json, Value};
 use std::fs;
 use std::sync::atomic::Ordering;
@@ -550,7 +550,7 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
         .await
         .unwrap()
         .iter()
-        .map(|s| (s.name().to_string(), s.scope().clone()))
+        .map(|s| (s.name.name.to_string(), s.name.scope.clone()))
         .collect();
     assert_eq!(usable, [
         ("deploy".to_string(), Scope::UserScope { user_id: bob }),
@@ -558,7 +558,7 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
         ("review".to_string(), Scope::GlobalScope),
     ], "its owner's, the session's before the global one of a name, one shared with him; not one above the channel, not another's, not another session's");
     assert_eq!(
-        views.usable_skill_named("Notes").await.unwrap().body().as_str(),
+        views.usable_skill_named("Notes").await.unwrap().body.as_str(),
         "notes: how it is done",
         "found as names are compared"
     );

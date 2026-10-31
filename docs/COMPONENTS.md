@@ -304,13 +304,12 @@ A container is built with a `ComponentContext`, which holds:
     the act it serves - a tool in its turn's, a moderator in the event's it routes -, one context
     per piece of work;
 *   the services of the runtime its kind declares it uses - for a component of the core the
-    policies, the `SecretManager`; the prompt catalogue; the manager a plugin provides (the
-    `ArtifactManager`, say) - by type, not as fields of the context, so that a new service needs no
-    new field and no component is given one it does not declare. They are the runtime's `Services`,
-    which the views and a plugin's routes reach as well. A component of an application declares no
-    policy and no manager of the core: what it needs decided, or a secret, it asks of the core
-    through the `Turn` and the `Situation` it is called with (issue 516, see
-    [PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-core-may-use));
+    policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
+    that a new service needs no new field and no component is given one it does not declare. They
+    are the runtime's `Services`, which the views and a plugin's routes reach as well. A component
+    of an application declares no policy and no manager of the core: what it needs decided, or a
+    secret, it asks of the core through the `Turn` and the `Situation` it is called with (issue 516,
+    see [PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-core-may-use));
 *   nothing of the session: what a component reads of it - other channels, their notes and
     histories, what its agent may recall - it reads through the `Turn` it is called with (see
     [MEMORY.md](MEMORY.md#reading-other-channels));

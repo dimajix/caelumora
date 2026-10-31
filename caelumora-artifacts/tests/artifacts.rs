@@ -144,12 +144,9 @@ async fn with_the_tool(
         .unwrap();
     let session = world.shared_session(&[helper], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let tool = ArtifactTool::new(
-        &params,
-        manager(world),
-        &PromptTexts::new(Arc::clone(world.runtime.prompts()), None),
-    )
-    .expect("parameters it takes");
+    let tool =
+        ArtifactTool::new(&params, &PromptTexts::new(Arc::clone(world.runtime.prompts()), None))
+            .expect("parameters it takes");
     (session, helper, docs, tool)
 }
 
@@ -270,12 +267,8 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
 async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     let world = world().await;
     let tool = |params: Value| {
-        ArtifactTool::new(
-            &params,
-            manager(&world),
-            &PromptTexts::new(Arc::clone(world.runtime.prompts()), None),
-        )
-        .unwrap()
+        ArtifactTool::new(&params, &PromptTexts::new(Arc::clone(world.runtime.prompts()), None))
+            .unwrap()
     };
     let asks =
         |mode: Value| tool(json!({ "requires_approval": mode })).tools()[0].requires_approval;
@@ -292,7 +285,6 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     assert!(
         ArtifactTool::new(
             &json!({ "requires": true }),
-            manager(&world),
             &PromptTexts::new(Arc::clone(world.runtime.prompts()), None)
         )
         .is_err(),

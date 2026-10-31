@@ -32,7 +32,7 @@ use caelumora_runtime::component::{
     ComponentResult, Params,
 };
 use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
-use caelumora_runtime::view::WorkspaceView;
+use caelumora_runtime::view::WorkspaceReader;
 use futures::future;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -96,7 +96,7 @@ impl WorkspacePromptProvider {
     /// reached, which must not cost the turn.
     async fn instruction_files_in(
         &self,
-        workspace: &WorkspaceView,
+        workspace: &dyn WorkspaceReader,
         situation: &Situation<'_>,
     ) -> Vec<&WorkspacePath> {
         if self.instruction_files.is_empty() {
@@ -132,7 +132,7 @@ impl WorkspacePromptProvider {
 /// 23), worded by `prompts`.
 fn told(
     prompts: &PromptTexts,
-    workspace: &WorkspaceView,
+    workspace: &dyn WorkspaceReader,
     writable: bool,
     names: &[WorkspacePath],
     found: &[&WorkspacePath],
@@ -164,10 +164,16 @@ impl PromptProvider for WorkspacePromptProvider {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         Ok(match situation.workspace_view().await? {
             Some(workspace) => {
-                let found = self.instruction_files_in(&workspace, situation).await;
+                let found = self.instruction_files_in(workspace.as_ref(), situation).await;
                 let writable = workspace.may_write().await;
                 Prompt::classified(
-                    told(&self.prompts, &workspace, writable, &self.instruction_files, &found)?,
+                    told(
+                        &self.prompts,
+                        workspace.as_ref(),
+                        writable,
+                        &self.instruction_files,
+                        &found,
+                    )?,
                     workspace.classification().clone(),
                 )
             }

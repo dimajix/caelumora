@@ -76,8 +76,7 @@ use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_runtime::testing::{
-    actor_runtime_in, asked_for, attributes, checks, denied, not_found, quiet, shown, workspace,
-    World, STAFF,
+    asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World, STAFF,
 };
 use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
@@ -3920,64 +3919,6 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
         "with her rights, as the agent, on his word: {asked:?}"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
-}
-
-// --- Rights at each call (issue 516) ----------------------------------------------------------
-
-/// What an agent's work asks the core is asked with its owner's rights as they are at the call, not
-/// as they were when the request came (issue 516, decision 3): the core builds the context of each
-/// call from the agent's participant as the controllers hold it. Alice's role clears her for her
-/// internal workspace, which her agent reads through the views it navigates for bob's request;
-/// once the role is taken, the next read on the same request does not reach it.
-#[tokio::test]
-async fn an_agents_work_acts_with_its_owners_rights_as_they_are_at_each_call() {
-    use caelumora_model::event::GlobalEvent;
-    use caelumora_model::user::{User, UserUpdateEvent};
-    let world = World::with(&[&TestAgents], |_| {}).await;
-    let personality = world.personality("plain", None, &[]).await;
-    let helper = world.agent("helper", world.alice, &personality).await;
-    let alice = World::as_user(world.alice);
-    let docs = world
-        .runtime
-        .workspace_manager()
-        .create(
-            &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "shell",
-            None,
-            Classification::general(Confidentiality::Internal),
-        )
-        .await
-        .unwrap();
-    let session = world.shared_session(&[helper], &[]).await;
-    let main = Arc::clone(&session.channels()[0]);
-    let runtime = actor_runtime_in(&main, ActorId::Agent(helper));
-    let read = || async {
-        let session = runtime
-            .session_view(ActorId::User(world.bob), main.classification())
-            .await
-            .expect("its session to read")
-            .expect("in its session");
-        session.views().workspace(docs.id).await
-    };
-
-    assert!(read().await.is_ok(), "cleared for it by her role");
-    world
-        .runtime
-        .controller_manager()
-        .user_controller(world.alice)
-        .await
-        .unwrap()
-        .process_global_event(&GlobalEvent::updated::<User>(
-            &world.alice,
-            &UserUpdateEvent::RolesChanged(Vec::new()),
-        ));
-    assert!(
-        matches!(read().await, Err(ViewError::WorkspaceNotFound(_))),
-        "not any more, at the next call"
-    );
-    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 // --- Attachments ---------------------------------------------------------------

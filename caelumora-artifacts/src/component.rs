@@ -7,14 +7,15 @@
 //!
 //! The workspace is reached as `terminal_tool` reaches it, through the
 //! turn's channel (`Turn::workspace_terminal`, issue 344), for
-//! reading; the file read is handed to the `ArtifactManager` (issue 296),
-//! the service its kind uses. Its tool is offered where a file can be
+//! reading; the file read is handed to the `ArtifactPublisher` the plugin
+//! bound to the turn's reading (issue 516). Its tool is offered where a file can be
 //! published (issue 290): where the turn may use a workspace in its
 //! channel, and a storage of content is configured; a call is checked again
 //! all the same, and fails and says so. The result is classified as the
 //! artifact, which is classified as the workspace.
 
-use crate::manager::{ArtifactError, ArtifactManager};
+use crate::manager::ArtifactError;
+use crate::publisher::ArtifactPublisher;
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
@@ -67,7 +68,6 @@ impl Params for ArtifactToolConfig {}
 
 #[derive(Debug)]
 pub struct ArtifactTool {
-    artifacts: Arc<ArtifactManager>,
     /// What its tool set is for and its tool, as the configuration or the
     /// prompt catalogue words them (issue 57).
     description: String,
@@ -86,16 +86,12 @@ struct Publish {
 
 impl ArtifactTool {
     /// The tool of a component configured with `params`, publishing a file
-    /// of the turn's workspace through `artifacts`, its texts from `prompts`.
+    /// of the turn's workspace, its texts from `prompts`.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` for parameters it does not take;
     /// `ComponentError::Prompt` if a text cannot be had.
-    pub fn new(
-        params: &Value,
-        artifacts: Arc<ArtifactManager>,
-        prompts: &PromptTexts,
-    ) -> ComponentResult<Self> {
+    pub fn new(params: &Value, prompts: &PromptTexts) -> ComponentResult<Self> {
         let config: ArtifactToolConfig = config_of_params(params)?;
         let string = ToolParameters::string;
         let tool = Tool {
@@ -115,7 +111,7 @@ impl ArtifactTool {
             Some(description) => description.clone(),
             None => tool_text(prompts, NAMESPACE, ARTIFACT_TOOL_KIND, "description", ())?,
         };
-        Ok(Self { artifacts, description, tools })
+        Ok(Self { description, tools })
     }
 }
 
@@ -150,8 +146,11 @@ impl ToolProvider for ArtifactTool {
     /// workspace in its channel, and a storage of content is configured
     /// (issues 290, 282).
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
-        if !self.artifacts.is_configured() {
-            return Err("no storage of content is configured".to_string());
+        if let Ok(Some(session)) = situation.session_view().await {
+            let publisher = session.extension::<dyn ArtifactPublisher>();
+            if !publisher.is_some_and(|publisher| publisher.is_configured()) {
+                return Err("no storage of content is configured".to_string());
+            }
         }
         usable_workspace(situation).await?;
         Ok(self.tools())
@@ -195,17 +194,10 @@ impl ToolProvider for ArtifactTool {
             .map_err(ArtifactError::from)?;
         let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await?;
         let content = terminal.read(&at).await?;
-        let (artifact, number) = self
-            .artifacts
-            // In the name the core reads the session in for the turn (issue 516).
-            .publish(
-                session.views().context(),
-                channel,
-                content,
-                &workspace.classification,
-                &name,
-                description,
-            )
+        let publisher =
+            session.extension::<dyn ArtifactPublisher>().ok_or(ArtifactError::NotJoined)?;
+        let (artifact, number) = publisher
+            .publish(channel, content, &workspace.classification, &name, description)
             .await?;
         let version = artifact.version(number).ok_or_else(|| {
             ToolError::ExecutionFailed(format!("version {number} of the artifact is missing"))
@@ -231,16 +223,13 @@ pub fn register(registry: &mut ComponentRegistry) {
         writing_for_the_model(
             ComponentKind::new(ARTIFACT_TOOL_KIND)
                 .params::<ArtifactToolConfig>()
-                .provides::<dyn ToolProvider>()
-                .uses::<ArtifactManager>(),
+                .provides::<dyn ToolProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let artifacts = Arc::clone(context.service::<ArtifactManager>()?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(
                 &descriptor.params,
-                artifacts,
                 &texts,
             )?));
             Ok(facets)

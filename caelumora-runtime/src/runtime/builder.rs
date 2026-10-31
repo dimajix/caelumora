@@ -18,6 +18,7 @@ use crate::plugin::Plugin;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
+use crate::view::{ReaderExtensions, Views};
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::{bail, Context, Result};
@@ -72,6 +73,8 @@ pub struct RuntimeBuilder {
     scope_members: Vec<Arc<dyn ScopedKind>>,
     scope_holders: Arc<ScopeHolders>,
     services: Services,
+    /// What the plugins bind to an application's reading (issue 516).
+    reader_extensions: ReaderExtensions,
     /// The texts given to models, to which the plugins add theirs (issue
     /// 57); a service once the runtime is built.
     prompts: PromptCatalogue,
@@ -245,6 +248,7 @@ impl RuntimeBuilder {
             scope_members,
             scope_holders,
             services,
+            reader_extensions: ReaderExtensions::default(),
             prompts,
             prompt_variants: config.prompts.clone(),
             sections: config.plugins.clone(),
@@ -390,6 +394,17 @@ impl RuntimeBuilder {
         self.services.insert(service);
     }
 
+    /// Binds `T` to every reading of an application (`SessionReader::extension`, issue 516): a
+    /// plugin's service, made by `bind` from the views the reading stands on, so that it acts in
+    /// the reader's name. A `T` bound before is replaced.
+    pub fn extend_readers<T, F>(&mut self, bind: F)
+    where
+        T: ?Sized + Send + Sync + 'static,
+        F: Fn(&Views) -> Arc<T> + Send + Sync + 'static,
+    {
+        self.reader_extensions.insert(bind);
+    }
+
     /// The service `T`, if the core or a plugin registered before provides
     /// it.
     pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
@@ -482,6 +497,7 @@ impl RuntimeBuilder {
             actors: Arc::new(ActorManager::new()),
             scoped,
             services: self.services,
+            reader_extensions: Arc::new(self.reader_extensions),
             prompts,
             seed_sections: self.seed_sections,
         })

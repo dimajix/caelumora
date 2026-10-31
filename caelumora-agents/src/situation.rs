@@ -27,7 +27,7 @@ use caelumora_model::workspace::Workspace;
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::terminal::Terminal;
-use caelumora_runtime::view::{ChannelView, SessionView, ViewResult, WorkspaceView};
+use caelumora_runtime::view::{ChannelReader, SessionReader, ViewResult, WorkspaceReader};
 use caelumora_runtime::workspace::WorkspaceResult;
 use std::sync::Arc;
 
@@ -106,29 +106,29 @@ impl<'a> Situation<'a> {
     /// # Errors
     /// As `ActorRuntime::session_view`: the agent may not read it, or reading
     /// it failed.
-    pub async fn session_view(&self) -> ViewResult<Option<SessionView>> {
+    pub async fn session_view(&self) -> ViewResult<Option<Box<dyn SessionReader>>> {
         self.runtime.session_view(self.initiator(), self.work.classification.clone()).await
     }
 
     /// The agent's channel as the work reads it from there (`session`,
-    /// `SessionView::channel`, issue 399): its participants, its notes, its
+    /// `SessionReader::channel`, issue 399): its participants, its notes, its
     /// workspace. `None` where the work reaches no session.
     ///
     /// # Errors
     /// What following the views to it reports.
-    pub async fn channel_view(&self) -> ViewResult<Option<ChannelView>> {
+    pub async fn channel_view(&self) -> ViewResult<Option<Box<dyn ChannelReader>>> {
         let Some(session) = self.session_view().await? else { return Ok(None) };
         session.channel(self.channel_id()).await.map(Some)
     }
 
     /// The workspace of the agent's session the work may use in its channel,
-    /// as its views see it (`ChannelView::workspace`, issue 290): what a
+    /// as its views see it (`ChannelReader::workspace`, issue 290): what a
     /// component tells of it, or offers to do on it. `None` where there is
     /// none it may use - also where the work reaches no session.
     ///
     /// # Errors
     /// What following the views to it reports.
-    pub async fn workspace_view(&self) -> ViewResult<Option<WorkspaceView>> {
+    pub async fn workspace_view(&self) -> ViewResult<Option<Box<dyn WorkspaceReader>>> {
         let Some(channel) = self.channel_view().await? else { return Ok(None) };
         channel.workspace().await
     }

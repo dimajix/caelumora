@@ -5,7 +5,8 @@
 //! (`api`), which a client reads; `runtime` adds the one owner of artifacts
 //! and their content (`manager`), kept in the storages of content of the
 //! core (issue 282), how a viewer reaches them
-//! (`view`), the questions of who may change, read and add to one
+//! (`view`), what an agent's work publishes through (`publisher`, issue
+//! 516), the questions of who may change, read and add to one
 //! (`access`), the `artifact_tool` component and the plugin that joins all
 //! of it to the runtime (`plugin`); `server` adds the routes.
 
@@ -29,6 +30,8 @@ pub mod component;
 pub mod manager;
 #[cfg(feature = "runtime")]
 pub mod plugin;
+#[cfg(feature = "runtime")]
+pub mod publisher;
 #[cfg(feature = "runtime")]
 pub mod view;
 

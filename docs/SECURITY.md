@@ -648,6 +648,15 @@ own permission when it acts. Where it acts in a channel, it asks first whether t
 the channel, as the views reach one: `view::channel_reading`, the one place that decides how a
 channel is read.
 
+An application reads through **readers** (`SessionReader`, `ChannelReader`, `ParticipantReader`,
+`WorkspaceReader`, issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): the
+part of the views an agent's work reads through, which the views implement. A turn is handed a
+reader of its session (`ActorRuntime::session_view`), never a view, so that it reaches no policy, no
+manager and no context through what it reads. What a plugin offers an agent's work of its kind it
+binds to every reading (`RuntimeBuilder::extend_readers`): a trait of the plugin's, made from the
+views the reading stands on, and so acting in the reader's name, which the application asks the
+reader for (`extension`) - the skills' `SkillCatalogue`, the artifacts' `ArtifactPublisher`.
+
 ## Users
 
 Where users come from and how their credentials are verified is pluggable, in the same way as

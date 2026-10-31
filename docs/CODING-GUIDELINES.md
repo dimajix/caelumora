@@ -47,9 +47,9 @@ against this list, rule by rule, before it is reported (the self-review of
     extension traits of its own - its questions on `AccessQuestions`, its views on `Views` - and
     adds nothing about its kind to the core (see [PLUGINS.md](PLUGINS.md)).
 *   An application - `caelumora-agents`, a crate that brings an agent's components - names no
-    `SecurityContext`, policy or manager of the core: it asks the core through `ActorRuntime`,
-    `Situation` and `Turn` ([ARCHITECTURE.md](ARCHITECTURE.md#principles);
-    `scripts/application-names.sh` checks it).
+    `SecurityContext`, policy, view or manager of the core or of a plugin: it asks the core through
+    `ActorRuntime`, `Situation` and `Turn`, and reads through the readers
+    ([ARCHITECTURE.md](ARCHITECTURE.md#principles); `scripts/application-names.sh` checks it).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
     test in the security suite (`caelumora-runtime/tests/security_suite.rs`, an agent's in
     `caelumora-agents/tests/security_suite.rs`, see

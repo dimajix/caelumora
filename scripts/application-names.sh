@@ -1,8 +1,8 @@
 #!/bin/sh
 # Finds what an application names that only the core may hold, against the rule of
 # docs/ARCHITECTURE.md, "The core decides, applications ask" (issue 516): an application builds no
-# `SecurityContext`, asks no policy and holds no manager of the core, but asks the core through the
-# interface it is given.
+# `SecurityContext`, asks no policy, holds no manager of the core or of a plugin and reads through
+# the readers, not the views, but asks the core through the interface it is given.
 #
 #   application-names.sh [file...]
 #
@@ -23,7 +23,8 @@ names='SecurityContext|ActionType|AccessPolicy|AccessQuestions|Enforcement|Owner
 names="$names|AllowAllPolicy|ConfidentialityPolicy|ConfidentialityQuestions|ConfidentialityRules"
 names="$names|PrivacyPolicy|Policies|SecretManager|RuntimeManager|ControllerManager"
 names="$names|SessionManager|AgentManager|UserManager|GroupManager|ProjectManager|ActorManager"
-names="$names|WorkspaceManager|AttachmentManager"
+names="$names|WorkspaceManager|AttachmentManager|SkillManager|ArtifactManager"
+names="$names|Views|Viewer|SessionView|ChannelView|WorkspaceView|ParticipantView|SkillViews|SkillView"
 
 if [ $# -eq 0 ]; then
     cd "$(git rev-parse --show-toplevel)"

@@ -1,8 +1,11 @@
 //! How skills are joined to the runtime (issue 323): the store of their
-//! kind, the `SkillManager` as a service - what the component, the views
-//! and the routes reach it by - and as a member of a scope, the `skills`
-//! component, and the section `skills` of the seed files.
+//! kind, the `SkillManager` as a service - what the views and the routes
+//! reach it by - and as a member of a scope, the `SkillCatalogue` bound to
+//! every reading of an application - what the component reaches skills by
+//! (issue 516) -, the `skills` component, and the section `skills` of the
+//! seed files.
 
+use crate::catalogue::SkillCatalogue;
 use crate::component;
 use crate::manager::SkillManager;
 use crate::skill::Skill;
@@ -40,6 +43,7 @@ impl Plugin for SkillsPlugin {
         ));
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);
+        runtime.extend_readers::<dyn SkillCatalogue, _>(|views| Arc::new(views.clone()));
         runtime.seed_section(SKILLS, Arc::new(SeededSkills(skills)))?;
         runtime.prompts().add(NAMESPACE, PROMPTS)?;
         component::register(runtime.components());

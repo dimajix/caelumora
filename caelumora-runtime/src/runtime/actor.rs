@@ -8,7 +8,7 @@ use crate::component::{ComponentContext, ComponentRegistry};
 use crate::controller::{ChannelController, SessionController, WorkspaceController};
 use crate::event::EventSubscription;
 use crate::terminal::{Shell, Terminal};
-use crate::view::{SessionView, ViewResult, Viewer};
+use crate::view::{SessionReader, ViewResult, Viewer};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
@@ -337,12 +337,12 @@ impl ActorRuntime {
     /// session is gone.
     ///
     /// # Errors
-    /// As `Views::session`: `context` may not read it, or reading it failed.
+    /// As `Views::session`: the actor may not read it, or reading it failed.
     pub async fn session_view(
         &self,
         initiator: ActorId,
         classification: Classification,
-    ) -> ViewResult<Option<SessionView>> {
+    ) -> ViewResult<Option<Box<dyn SessionReader>>> {
         let context = &self.acting_for(initiator);
         let Some(session_loop) = self.channel_loop().and_then(|channel| channel.session_loop())
         else {
@@ -351,7 +351,8 @@ impl ActorRuntime {
         let from =
             Place { channel: self.channel_id, classification, session: session_loop.privacy() };
         let views = session_loop.views(Viewer::from_place(context.clone(), from));
-        views.session(session_loop.id()).await.map(Some)
+        let session = views.session(session_loop.id()).await?;
+        Ok(Some(Box::new(session)))
     }
 
     /// The classification of the actor's channel as it is now, which what
@@ -571,9 +572,11 @@ impl ActorRuntime {
 mod tests {
     use super::*;
     use crate::session::testing::test_runtime;
+    use crate::testing::{actor_runtime_in, Script, ScriptedAgents, World, STAFF};
     use caelumora_model::channel::testing::bare_channel;
+    use caelumora_model::event::GlobalEvent;
     use caelumora_model::session::testing::bare_session;
-    use caelumora_model::user::UserId;
+    use caelumora_model::user::{User, UserId, UserUpdateEvent};
 
     fn channel_runtime() -> ChannelRuntime {
         let session = bare_session(SessionId::new());
@@ -597,5 +600,39 @@ mod tests {
             .await
             .expect("its own state in its channel");
         its.load_channel_state().await.expect("and back");
+    }
+
+    /// Decision 3 of issue 516: an agent's runtime acts with its owner's rights as they are at
+    /// each call, not as they were when it was made - a role taken from her between two calls of
+    /// one piece of work is gone for the second.
+    #[tokio::test]
+    async fn an_agent_s_runtime_acts_with_its_owner_s_roles_as_they_are_at_each_call() {
+        let world = World::with(&[&ScriptedAgents(Script::Hangs)], |_| {}).await;
+        let personality = world.personality("plain", None, &[]).await;
+        let helper = world.agent("helper", world.alice, &personality).await;
+        let session = world.shared_session(&[helper], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let runtime = actor_runtime_in(&main, ActorId::Agent(helper));
+        let bob = ActorId::User(world.bob);
+
+        let context = runtime.acting_for(bob);
+        assert_eq!(
+            (context.caller_id, context.principal_id, context.initiator_id),
+            (ActorId::Agent(helper), ActorId::User(world.alice), bob),
+            "as its owner's agent, for who asked"
+        );
+        assert_eq!(context.roles, [*STAFF], "with her roles");
+        world
+            .runtime
+            .controller_manager()
+            .user_controller(world.alice)
+            .await
+            .unwrap()
+            .process_global_event(&GlobalEvent::updated::<User>(
+                &world.alice,
+                &UserUpdateEvent::RolesChanged(Vec::new()),
+            ));
+        assert!(runtime.acting_for(bob).roles.is_empty(), "not any more, at the next call");
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

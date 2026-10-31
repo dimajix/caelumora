@@ -35,7 +35,7 @@ use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentRe
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::runtime::{ActorRuntime, CallPermit};
 use caelumora_runtime::terminal::TerminalError;
-use caelumora_runtime::view::{ViewError, WorkspaceView};
+use caelumora_runtime::view::{ViewError, WorkspaceReader};
 use caelumora_runtime::workspace::WorkspaceError;
 use chrono::Utc;
 use providers::ToolProviders;
@@ -599,7 +599,9 @@ pub trait ToolProvider: Send + Sync + Debug {
 /// channel (`Situation::workspace_view`). `Err` with why the set is unavailable,
 /// in general terms: there is none, or it cannot be read now - which is
 /// logged.
-pub async fn usable_workspace(situation: &Situation<'_>) -> Result<WorkspaceView, String> {
+pub async fn usable_workspace(
+    situation: &Situation<'_>,
+) -> Result<Box<dyn WorkspaceReader>, String> {
     match situation.workspace_view().await {
         Ok(Some(workspace)) => Ok(workspace),
         Ok(None) => Err(WorkspaceError::NotUsableInChannel.to_string()),

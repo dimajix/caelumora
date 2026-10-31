@@ -15,6 +15,7 @@ use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::scoped::ScopedEntities;
 use crate::seed::{self, SeedSection};
+use crate::view::ReaderExtensions;
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
@@ -82,6 +83,8 @@ pub struct RuntimeManager {
     /// The services components may use (issue 296), each given to the
     /// kinds that declare it (`ComponentKind::uses`), and the views.
     pub(super) services: Services,
+    /// What the plugins bound to an application's reading (issue 516).
+    pub(super) reader_extensions: Arc<ReaderExtensions>,
     /// The texts given to models (issue 57), also among the `services`:
     /// what the runtime itself words for a model - what an agent saw, as
     /// its context is resolved again.
@@ -182,6 +185,11 @@ impl RuntimeManager {
 
     pub fn services(&self) -> &Services {
         &self.services
+    }
+
+    /// What the plugins bound to an application's reading (issue 516), which the views hand on.
+    pub(crate) fn reader_extensions(&self) -> &Arc<ReaderExtensions> {
+        &self.reader_extensions
     }
 
     /// The texts given to models (issue 57).

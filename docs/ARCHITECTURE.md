@@ -91,8 +91,9 @@ A subject that is not the core's - a kind of entity with its manager, its compon
 its routes - can be a **plugin**: a crate linked into the program, not loaded at run time (issue
 323). It implements `Plugin` and registers what it brings with the `RuntimeBuilder` when the runtime
 is built: its component kinds, the store of its kind, which the configured backend opens for any
-kind, its manager as a service of the runtime, which its components, its views and its routes reach,
-the members of a scope, and its sections of the configuration and of the seed. On the REST side,
+kind, its manager as a service of the runtime, which its views and its routes reach, what an
+application's work does with its kind, bound to every reading (`extend_readers`, issue 516), the
+members of a scope, and its sections of the configuration and of the seed. On the REST side,
 `RestPlugin` adds its routes, served behind the same login as the core's. A plugin's views are an
 extension trait on the runtime's `Views`, built from what they open, and what a channel's view lists
 of its kind one on `ChannelView`. Which plugins are in is the program's choice:
@@ -324,7 +325,9 @@ and stopped sessions are read alike and reading starts nothing.
 Two kinds of viewer walk the same steps: a user, who reads what they may read and are cleared for,
 and an agent, which reads from its channel by the confidentiality rules, through the `Turn` its
 components are called with. The REST server reads through the views and answers with their
-snapshots; the components read through them; neither asks the policy itself.
+snapshots; the components read through readers of them (`SessionReader`, issue 516), which offer
+what an agent's work reads and nothing of the views' policies, managers or context; neither asks
+the policy itself.
 
 Details: [SECURITY.md](SECURITY.md#views), [MEMORY.md](MEMORY.md#reading-other-channels).
 
@@ -435,11 +438,10 @@ The design repeats a few decisions; new code follows them.
     the system runs if the application runs it, and an agent's own record - its transcript - is
     the application's; the core's record of a conversation is the channel's history, taken at its
     door. Today the code keeps part of this as a rule, not by the compiler: an application holds
-    controllers, could reach the policies through the views and the core's services through its
-    components' context, and the components of skills and artifacts hand their managers the
-    context the views were opened in (issue
+    controllers and could reach the core's services through its components' context (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)); that it names no
-    context, policy or manager of the core `scripts/application-names.sh` checks.
+    context, policy, view or manager of the core or of a plugin `scripts/application-names.sh`
+    checks.
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to

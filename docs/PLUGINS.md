@@ -58,9 +58,9 @@ a plugin
     configured backend keeps any kind in one storage - whoever asks for the kind again is given a
     store over the same storage - and a kind whose name another kind has is refused;
 *   reaches the core's services it needs for its manager - the event bus, the policies, the
-    secrets, the controllers - and offers its manager as a service (`provide`), which its component
-    kinds use (`ComponentKind::uses`), its views read through (`Views::service`) and its routes
-    take when they are built;
+    secrets, the controllers - and offers its manager as a service (`provide`), which its views
+    read through (`Views::service`) and its routes take when they are built; what an agent's work
+    does with its kind it binds to every reading of an application (`extend_readers`, below);
 *   registers its component kinds (`components()`), as `register_all` does for the core's;
 *   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
     namespace of its own, from a file it compiles in - the agents' `agents`, from
@@ -91,7 +91,11 @@ the `access_policy` and `confidentiality` policies, its manager as a `service`, 
 What a channel's view lists of its kind - the artifacts published in it, say - is an extension trait
 on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`): whether the
 viewer reads the channel stays the channel's to decide (issue 328). What lies in a project is listed
-the same way, by an extension trait on `ProjectView` (issue 467).
+the same way, by an extension trait on `ProjectView` (issue 467). What an agent's work does with its
+kind - loads a skill, publishes an artifact - the plugin offers as a trait of its own, which it
+binds to every reading of an application (`RuntimeBuilder::extend_readers`), made from the views the
+reading stands on, so that it acts in the reader's name; the application asks the reader of its
+session for it (`SessionReader::extension`) and names neither the views nor the manager (issue 516).
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
 plugin that brings component kinds alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`
@@ -132,11 +136,11 @@ a plugin depends on:
     core - a policy, one of the core's managers, a store - is the core's, and a component of an
     application does not declare it: what it needs decided it asks of the core, through the
     `Turn` and the `Situation` it is called with (`may_reclassify`, `may_copy_information`,
-    `copy_attachment`, `max_file_bytes`; the executor's `admit_tool_call`, issue 516); what it
-    needs of another plugin it declares as the trait that plugin offers for it. Today the
-    artifacts' component still declares the `ArtifactManager` itself, and the components of skills
-    and artifacts hand their managers the context the views were opened in (`Views::context`,
-    issue 516).
+    `copy_attachment`, `max_file_bytes`; the executor's `admit_tool_call`, issue 516), and what it
+    reads it reads through the readers (`Situation::session_view`, `SessionReader`). What it
+    needs of another plugin it declares as the trait that plugin offers for it, or, of a plugin
+    of the core, asks the reader for, as the trait the plugin bound to it
+    (`SessionReader::extension`).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,

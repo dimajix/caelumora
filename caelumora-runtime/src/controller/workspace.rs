@@ -4,7 +4,7 @@ use super::document::LiveDocument;
 use crate::backend::StorageGone;
 use crate::group::require_nameable;
 use crate::terminal::{Shell, Terminal, TerminalProvider};
-use crate::view::{channel_reading, ChannelReader};
+use crate::view::{channel_reading, ReadingBasis};
 use crate::workspace::reaper::scope_of;
 use crate::workspace::{
     require_classification, require_write, store_error, WorkspaceError, WorkspaceResult,
@@ -230,8 +230,8 @@ impl WorkspaceController {
         // An agent uses the workspace only in the channel it acts in (`ActorRuntime`), and so reads
         // it from there.
         let agent = matches!(ctx.caller_id, ActorId::Agent(_));
-        let reader = ChannelReader::of(agent.then_some(&at));
-        if channel_reading(&self.policies, ctx, &channel.security_attributes, &at, reader)
+        let basis = ReadingBasis::of(agent.then_some(&at));
+        if channel_reading(&self.policies, ctx, &channel.security_attributes, &at, basis)
             .await
             .is_none()
         {

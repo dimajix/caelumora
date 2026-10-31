@@ -21,6 +21,11 @@
 //! session, reached through its situation (`Situation::session_view`); a
 //! frontend's root is [`SessionManager::views`].
 //!
+//! An application is handed readers of the views (`reader`, issue 516): what
+//! of them an agent's work reads, and what a plugin of the core bound to the
+//! reading (`ReaderExtensions`) - never a view, through which it would reach
+//! the policies, the managers and the viewer's context.
+//!
 //! A node answers with a snapshot (`caelumora_model::snapshot`, issue 80)
 //! for a client that lists and offers: the node's data with its questions
 //! answered at one moment.
@@ -31,6 +36,7 @@ mod context;
 mod group;
 mod participant;
 mod project;
+mod reader;
 mod session;
 mod workspace;
 
@@ -39,6 +45,8 @@ pub use channel::{ChannelView, ParticipantView};
 pub use context::{AgentContextError, AgentContextView};
 pub use group::GroupView;
 pub use project::ProjectView;
+pub(crate) use reader::ReaderExtensions;
+pub use reader::{ChannelReader, ParticipantReader, SessionReader, WorkspaceReader};
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
 
@@ -232,6 +240,8 @@ pub struct Views {
     actors: Arc<ActorManager>,
     /// Where the attachments of messages are read (issue 282).
     attachments: Arc<AttachmentManager>,
+    /// What the plugins bound to an application's reading (issue 516).
+    extensions: Arc<ReaderExtensions>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -255,6 +265,7 @@ impl Views {
             controllers: Arc::clone(runtime.controller_manager()),
             actors: Arc::clone(runtime.actor_manager()),
             attachments: Arc::clone(runtime.attachment_manager()),
+            extensions: Arc::clone(runtime.reader_extensions()),
             running,
             viewer,
         }
@@ -298,6 +309,11 @@ impl Views {
     /// which its views read through.
     pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
         self.services.get::<T>()
+    }
+
+    /// What the plugins bound to an application's reading (issue 516).
+    pub(crate) fn extensions(&self) -> &ReaderExtensions {
+        &self.extensions
     }
 
     /// The stores of the entities, one per kind (issue 323).
@@ -959,14 +975,14 @@ impl Views {
 /// its channel, the classification it reads at, its session's privacy -,
 /// a user by what the roles of their context clear them for.
 #[derive(Debug, Clone, Copy)]
-pub enum ChannelReader<'a> {
+pub enum ReadingBasis<'a> {
     From(&'a Place),
     Cleared,
 }
 
-impl<'a> ChannelReader<'a> {
-    /// The reader who reads from `from`, if it reads from a place as an agent does, and by its
-    /// clearance otherwise: the one rule by which a reader is chosen.
+impl<'a> ReadingBasis<'a> {
+    /// Reading from `from`, for whoever reads from a place as an agent does, and by clearance
+    /// otherwise: the one rule by which the basis of a reading is chosen.
     pub fn of(from: Option<&'a Place>) -> Self {
         from.map_or(Self::Cleared, Self::From)
     }
@@ -986,13 +1002,13 @@ pub async fn channel_reading(
     context: &SecurityContext,
     channel: &SecurityAttributes,
     at: &Place,
-    reader: ChannelReader<'_>,
+    basis: ReadingBasis<'_>,
 ) -> Option<Reading> {
     if !policies.access_policy().may_read_channel(context, channel).await {
         return None;
     }
-    match reader {
-        ChannelReader::From(from) => Some(
+    match basis {
+        ReadingBasis::From(from) => Some(
             match policies.confidentiality().copyable_information(
                 context,
                 at.channel,
@@ -1008,7 +1024,7 @@ pub async fn channel_reading(
                 reading => reading,
             },
         ),
-        ChannelReader::Cleared => policies
+        ReadingBasis::Cleared => policies
             .confidentiality()
             .cleared_for(context, &at.classification)
             .then_some(Reading::Whole),
@@ -1077,8 +1093,8 @@ mod tests {
     use tokio::time;
 
     /// All of the history `view` shows, as one page.
-    async fn whole(view: &ChannelView) -> ViewResult<HistoryPage> {
-        view.history_page(None, 10_000).await
+    async fn whole(view: &dyn ChannelReader) -> ViewResult<HistoryPage> {
+        view.history_page_of(None, 10_000, None).await
     }
 
     /// The messages of `page`.
@@ -2951,20 +2967,16 @@ mod tests {
             "reached by who may read it alone (issue 304)"
         );
 
-        let own = session.privacy();
+        let own = &session.place().expect("read from its channel").session;
         assert_eq!((own.policy, own.owner), (PrivacyConfig::SameOwner, alice_id));
         assert_eq!(own.people, [alice.id].into_iter().collect(), "its users and its owner");
-        let other =
-            session.views().privacy_of(theirs.id).await.unwrap().expect("stored, running or not");
+        let other = session.privacy_of(theirs.id).await.unwrap().expect("stored, running or not");
         assert_eq!(
             (other.policy, other.owner),
             (PrivacyConfig::Private, carol_id),
             "even a session the reader may not read"
         );
-        assert!(
-            session.views().privacy_of(SessionId::new()).await.unwrap().is_none(),
-            "one that is gone"
-        );
+        assert!(session.privacy_of(SessionId::new()).await.unwrap().is_none(), "one that is gone");
         manager.stop(&SecurityContext::system(), hers.id()).await.unwrap();
     }
 
@@ -3054,20 +3066,22 @@ mod tests {
             }
         };
         let read = whole(
-            &reading_from(&finance)
+            reading_from(&finance)
                 .await
                 .channel_named("hr")
                 .await
-                .expect("reachable for what was released"),
+                .expect("reachable for what was released")
+                .as_ref(),
         )
         .await
         .expect("what was released to finance");
         let texts: Vec<_> =
             messages(&read).iter().map(|m| m.content.clone().unwrap_or_default()).collect();
         assert_eq!(texts, ["for finance too"], "only what was released");
-        let nothing =
-            whole(&reading_from(&team).await.channel_named("hr").await.expect("reachable, but"))
-                .await;
+        let nothing = whole(
+            reading_from(&team).await.channel_named("hr").await.expect("reachable, but").as_ref(),
+        )
+        .await;
         assert!(
             matches!(nothing, Err(ViewError::NoChannelNamed(_))),
             "nothing was released to a general channel"

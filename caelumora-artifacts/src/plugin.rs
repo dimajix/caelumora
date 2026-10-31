@@ -1,12 +1,15 @@
 //! How artifacts are joined to the runtime (issue 328): the store of their
 //! kind, the `ArtifactManager` with the storages of content (issue 282) and
 //! the section `artifacts` of the configuration, as a service - what the
-//! component, the views and the routes reach it by - and as a member of a
-//! scope, and the `artifact_tool` component.
+//! views and the routes reach it by - and as a member of a scope, the
+//! `ArtifactPublisher` bound to every reading of an application - what the
+//! component publishes through (issue 516) -, and the `artifact_tool`
+//! component.
 
 use crate::artifact::Artifact;
 use crate::component;
 use crate::manager::{ArtifactManager, ArtifactsConfig};
+use crate::publisher::ArtifactPublisher;
 use crate::{NAMESPACE, PROMPTS};
 use anyhow::Result;
 use caelumora_runtime::plugin::Plugin;
@@ -32,6 +35,7 @@ impl Plugin for ArtifactsPlugin {
         let manager = Arc::new(manager);
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);
+        runtime.extend_readers::<dyn ArtifactPublisher, _>(|views| Arc::new(views.clone()));
         runtime.prompts().add(NAMESPACE, PROMPTS)?;
         component::register(runtime.components());
         Ok(())

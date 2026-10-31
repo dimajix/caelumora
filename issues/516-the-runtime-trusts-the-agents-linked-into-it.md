@@ -506,6 +506,121 @@ needs the one before:
 What each step costs is in its list; what it buys is said above. Steps 2 to 4 improve the code
 whether or not 5 and 6 follow.
 
+## Step 5, measured after step 4
+
+Read from the code on 2026-10-31, after step 4 was committed. What an application still names of
+the core, outside its tests: `ActorRuntime` (the struct), `AgentController` and
+`PersonalityController` (the factory of a kind of agent hands them, `AgentBody` reads `id`, `name`
+and `load` of them and never writes), `AgentStateHandle` (`Situation` holds it; `current`,
+`reserve_memory_id`, and `apply` at the commit of a turn), the views (`SessionView`, `ChannelView`,
+`WorkspaceView`, `Views`, `Viewer`, `PrivateNotesElsewhere`), `ComponentRegistry` and
+`ComponentContext` (`AgentBody` builds its container), `ActorRuntime::command_executor` (an agent's
+command that shadows a session command), `channel_controller` (the two actors read the channel's
+id and document), `RuntimeBuilder` and `Plugin` (every application registers through them), and
+the logging spans. The plan's list above is older than steps 3 and 4; this section replaces it
+for step 5. Step 5 is four steps of its own, each reviewed and committed on its own:
+
+**5a. The readers.** Three traits, implemented by the views, which keep their full surface for
+the REST server; `Situation::session_view` answers the first. Exactly what the applications call:
+
+```rust
+#[async_trait]
+pub trait SessionReader: Send + Sync {
+    /// The session read.
+    fn id(&self) -> SessionId;
+    /// The project its results go to (issue 467).
+    fn project(&self) -> ProjectId;
+    /// Where the reading stands: the actor's channel and its classification.
+    fn place(&self) -> Option<&Place>;
+    /// Channel `id`, if the reader may read it.
+    async fn channel(&self, id: ChannelId) -> ViewResult<Box<dyn ChannelReader>>;
+    /// The channel called `name`, if the reader may read it.
+    async fn channel_named(&self, name: &str) -> ViewResult<Box<dyn ChannelReader>>;
+    /// The channels the reader may read.
+    async fn channels(&self) -> Vec<Box<dyn ChannelReader>>;
+    /// The reader's private notes in the session's other channels.
+    async fn own_private_notes(&self) -> Vec<PrivateNotesElsewhere>;
+    /// How session `id` stands for the flow rule now, `None` if it is gone.
+    async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>>;
+    /// The extension of type `key` a plugin of the core bound to this reading (5d), if one is.
+    fn extension_of(&self, key: TypeKey) -> Option<Arc<dyn Any + Send + Sync>>;
+}
+
+impl dyn SessionReader {
+    /// The extension of type `T` a plugin of the core bound to this reading, if one is.
+    pub fn extension<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>>;
+}
+```
+
+`ChannelReader`: `id`, `name`, `classification`, `notes`, `history_page_of`, `message`,
+`attachment`, `attachment_content`, `participants`, `participant`, `visible_from`,
+`workspace() -> ViewResult<Option<Box<dyn WorkspaceReader>>>`. `WorkspaceReader`: `id`, `name`,
+`description`, `classification`, `may_write`, `has_shell`. A trait object takes no generic
+method, so `extension` is the `dyn SessionReader`'s, over `extension_of`, as
+`ComponentContext::service` is over `Services`. `Views::service`, `access_policy`,
+`confidentiality`, `context` and `viewer` are on no reader. Cost: the views' signatures twice,
+some twenty methods, and a `Box` per reader handed out. Files: `caelumora-runtime/src/view/
+{mod,session,channel,workspace}.rs`, `caelumora-agents/src/{situation,memory}.rs`, the components
+and prompt parts that read, `caelumora-workspace-tools/src/workspace_prompt_provider.rs`.
+
+**5b. `ActorRuntime` the trait.** The struct of today implements it and is renamed
+`ParticipantRuntime` (its one way to be made outside the tests is a participant's); the factory of
+a kind of agent is given an `Arc<dyn ActorRuntime>` alone (`AgentKinds::register`), in place of
+the two controllers and the struct. The methods, every one with a caller today:
+
+| Group | Methods |
+|---|---|
+| who | `actor_id`, `session_id`, `channel_id`; `agent() -> Arc<Agent>`, `personality() -> Arc<Personality>` as they are now |
+| the channel | `channel() -> Arc<Channel>`, `channel_classification`, `session_time_zone`, `announce_channel_state_changed` |
+| its state | `load_channel_state`, `store_channel_state`, `transcript_message`; `agent_state() -> Arc<AgentState>`, `reserve_memory_id`, `apply_agent_state(changes, anchor)` |
+| reading | `session_view(initiator, classification) -> ViewResult<Option<Box<dyn SessionReader>>>` |
+| the workspace | `workspace_terminal(initiator, grant)`, `workspace_shell(initiator)`, `max_file_bytes` |
+| attachments | `load_attachments`, `create_media`, `copy_attachment` |
+| decisions | `admit_tool_call`, `rule_denying`, `address_questions`, `may_publish`, `may_copy_information`, `may_reclassify` |
+| secrets, texts | `secrets(initiator) -> Arc<dyn Secrets>`, `prompts() -> &Arc<PromptCatalogue>` |
+| components | `build_components(config, facets) -> ComponentResult<ComponentContainer>` |
+
+Gone from the applications' sight: `services`, `component_registry`, `component_context` (the
+core builds an agent's components, `build_components`), `session_controller`,
+`channel_controller`, `command_executor` (the core leaves out an agent's command that shadows a
+session command where it collects an agent's commands, `Participants::agent_commands` and the
+door), `AgentStateHandle`. `acting_as` stays on `ParticipantRuntime`, behind `test-support`.
+Cost: an `async_trait` of some thirty methods, which every call pays a `Box` for; the tests of
+the applications keep building runtimes through the core's `test-support`, which in step 6 is a
+dev-dependency. Files: `caelumora-runtime/src/runtime/{actor,channel,mod}.rs`,
+`runtime/src/actor/kinds.rs`, `runtime/src/channel/participants.rs`, `caelumora-agents/src/actor/
+{body,agent,external_agent,commands}.rs`, `situation.rs`, `turn/*.rs`, the tests that build a
+`Turn`.
+
+**5c. Applications register as applications.** A trait `Application`, beside `Plugin`, with one
+method, `register(&self, application: &mut ApplicationBuilder) -> Result<()>`; the
+`ApplicationBuilder` offers what the applications register today and nothing else:
+`components()`, `agent_kinds()`, `prompts()`, `config::<C>(name)`, and `provide(service)` for a
+service of its own to its own kinds (`caelumora-comfyui`'s workflows). `RuntimeBuilder::
+application(&dyn Application)` registers one; the binaries list plugins and applications apart.
+A `Plugin` keeps the `RuntimeBuilder`. Files: `caelumora-runtime/src/{plugin,runtime/builder}.rs`,
+the `plugin.rs` of `caelumora-agents`, `-mcp`, `-a2a`, `-ollama`, `-comfyui`,
+`-workspace-tools`, `-compaction`, `caelumora-app/src/main.rs`, `caelumora-tui`.
+
+**5d. Skills and artifacts cut in two.** The plugin of each (store, manager, views, routes, scope
+member) stays a `Plugin`; its component becomes an `Application` of the same crate, behind a
+feature of its own, and reaches the manager only through a trait of the crate's API layer, which
+the plugin binds to a reading (`RuntimeBuilder::extend_readers::<dyn T>(fn(&Views) -> Arc<T>)`)
+and the component asks of the reader (`session.extension::<dyn T>()`):
+
+- `SkillCatalogue`: `usable_skills`, `usable_skill_named(name)`, `create(name, scope, description,
+  body, classification)` with a scope of `Session` or `Owner` - whose owner the plugin knows -,
+  `reclassify`, `describe`, `rewrite`. The `SkillViews` the routes use stay as they are.
+- `ArtifactPublisher`: `publish(channel, content, classification, name, description)`.
+
+`Views::context` leaves with it (step 4's interim). Files: `caelumora-skills/src/{api,view,
+component,plugin}.rs`, the same of artifacts, `Cargo.toml` of both, `caelumora-runtime/src/view/
+mod.rs`.
+
+Step 5 buys nothing a test sees: it is the shape step 6 needs, where the trait, the readers, the
+`Application` and the API layers move into `caelumora-api`. Done without step 6, it costs the
+`Box`es and the trait beside the struct and enforces nothing the script of step 4 does not.
+
 ## Decisions for the maintainer
 
 1. The three words - kernel, module, program - and the crate's name, `caelumora-api`. Taken on
@@ -523,6 +638,12 @@ whether or not 5 and 6 follow.
 7. Where `SecurityContext` and the policies go, since the store traits name the context (found in
    step 4): with the store traits into the runtime, the model keeping the entities and values
    alone (recommended for step 6); or both into a crate of the core's own beside the model.
+8. Step 5 as four steps, 5a to 5d, in that order (recommended); or 5 and 6 together, so that
+   what step 5 builds is enforced by the time it is committed.
+9. The names of step 5: `ParticipantRuntime` for the struct, `ActorRuntime` staying the
+   applications' word for the trait (recommended); `Application` and `ApplicationBuilder`;
+   `SkillCatalogue`, `ArtifactPublisher`; `extension` and `extend_readers` for what a plugin binds
+   to a reading.
 
 ## Done when
 
@@ -641,3 +762,33 @@ whether or not 5 and 6 follow.
   turn, unnamed (`views().context()`) -, which their service traits take over in step 5. Stored
   data: none - a `Work` stored with a context reads as one without.
 
+- **2026-10-31** — Decisions 8 and 9 taken as recommended: step 5 as 5a to 5d, and the names
+  `ParticipantRuntime`, `Application`, `ApplicationBuilder`, `SkillCatalogue`,
+  `ArtifactPublisher`, `extension` and `extend_readers`. Step 5a done on the branch: an
+  application reads through readers. `SessionReader`, `ChannelReader`, `ParticipantReader` and
+  `WorkspaceReader` (`caelumora_runtime::view`) are what of the views an agent's work reads, and
+  the views implement them; `ActorRuntime::session_view` answers a `SessionReader`, and `Situation`
+  hands out readers alone. A plugin binds a service of its own to every reading
+  (`RuntimeBuilder::extend_readers`, kept in `ReaderExtensions`), made from the views the reading
+  stands on and so acting in the reader's name; an application asks the reader for it
+  (`SessionReader::extension`). `scripts/application-names.sh` finds the views and the plugins'
+  managers in an application's code too. Differs from the plan:
+  - Four readers, not three: the participants a channel lists are read through a
+    `ParticipantReader`. The readers carry what the components call beyond the measured list:
+    a session's and a channel's summary and briefing, a channel's language, its session and one
+    participant by id.
+  - The binding and the two services of the plugins come in 5a, not 5d: without them the
+    components of skills and artifacts could not read past their reader. 5d is the cut into
+    features alone. `SkillCatalogue` answers the `Skill` itself rather than a `SkillView`, and
+    takes over `usable_skills` and `usable_skill_named` from `SkillViews`, whose one caller the
+    component was; a skill's `knowledge` is the `Skill`'s. Where a skill of the owner lies it
+    answers itself (`owner_scope`), in place of a scope of `Session` or `Owner`. Both services
+    are implemented on `Views` itself, as the plugins' views are; what of `SkillView` only the
+    component read - its id, scope, description and classification - is gone with it.
+  - The core's enum of how a channel is read - from a place, or by clearance - was called
+    `view::ChannelReader`; it is `ReadingBasis`, so that the name is the trait's.
+  - Decision 3 is checked where the context is built, by a test of `ActorRuntime::acting_for` with
+    an agent of alice's, not by the security suite of the agents any more: its test read alice's
+    internal workspace through `Views::workspace`, which a reader does not offer, and an agent reads
+    from its place, where its owner's clearance is not asked.
+  Stored data: none.

@@ -24,7 +24,7 @@ use caelumora_model::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOr
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::session::SessionId;
 use caelumora_runtime::runtime::OwnRecord;
-use caelumora_runtime::view::{SessionView, Views};
+use caelumora_runtime::view::SessionReader;
 use tracing::warn;
 
 /// An agent's memory as a turn sees it: every function takes the turn.
@@ -46,7 +46,7 @@ impl AgentMemory {
     /// recalls nothing. A turn in no session recalls nothing.
     pub(crate) async fn recalled(situation: &Situation<'_>) -> Vec<Memory> {
         let Some(own) = Self::own_session(situation).await else { return Vec::new() };
-        let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
+        let Some(here) = own.place().cloned() else { return Vec::new() };
         let memory = situation.agent_state().current().memory.current();
         let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
         let mut decided: Vec<(MemoryOrigin, Classification, bool)> = Vec::new();
@@ -60,7 +60,7 @@ impl AgentMemory {
                 Some(readable) => readable,
                 None => {
                     let readable =
-                        Self::may_recall(&entry, &here, own.views(), &mut sessions, situation)
+                        Self::may_recall(&entry, &here, own.as_ref(), &mut sessions, situation)
                             .await;
                     decided.push((entry.origin.clone(), entry.classification.clone(), readable));
                     readable
@@ -79,7 +79,7 @@ impl AgentMemory {
     async fn may_recall(
         entry: &Memory,
         here: &Place,
-        views: &Views,
+        session: &dyn SessionReader,
         sessions: &mut Vec<(SessionId, Option<SessionPrivacy>)>,
         situation: &Situation<'_>,
     ) -> bool {
@@ -99,7 +99,7 @@ impl AgentMemory {
         let id = origin.session.id;
         let current = match sessions.iter().find(|(known, _)| *known == id) {
             Some((_, current)) => current.clone(),
-            None => match views.privacy_of(id).await {
+            None => match session.privacy_of(id).await {
                 Ok(current) => {
                     sessions.push((id, current.clone()));
                     current
@@ -167,8 +167,8 @@ impl AgentMemory {
         };
         let situation = turn.situation();
         let own = Self::own_session(&situation).await?;
-        let here = own.views().viewer().place()?.clone();
-        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), &situation)
+        let here = own.place()?.clone();
+        Self::may_recall(&stored, &here, own.as_ref(), &mut Vec::new(), &situation)
             .await
             .then_some(entry)
     }
@@ -233,10 +233,11 @@ impl AgentMemory {
     /// Where a change made in `turn` is made: its channel, and the privacy
     /// its session has now (issue 134) - private, for a turn in no session.
     async fn origin(turn: &Turn<'_>) -> MemoryOrigin {
-        let session =
-            Self::own_session(&turn.situation()).await.map(|s| s.privacy()).unwrap_or_else(|| {
-                SessionPrivacy { id: turn.situation().session_id(), ..SessionPrivacy::default() }
-            });
+        let own = Self::own_session(&turn.situation()).await;
+        let session = own.as_deref().and_then(SessionReader::place).map_or_else(
+            || SessionPrivacy { id: turn.situation().session_id(), ..SessionPrivacy::default() },
+            |place| place.session.clone(),
+        );
         MemoryOrigin { channel: turn.situation().channel_id(), session }
     }
 
@@ -244,7 +245,7 @@ impl AgentMemory {
     /// through which what it remembers is recalled and placed; `None` if it
     /// reaches none, or reading it failed - which is logged, since the turn
     /// goes on as one in no session.
-    async fn own_session(situation: &Situation<'_>) -> Option<SessionView> {
+    async fn own_session(situation: &Situation<'_>) -> Option<Box<dyn SessionReader>> {
         situation.session_view().await.unwrap_or_else(|e| {
             warn!(
                 "Agent {}: its session could not be read for its memory: {e}",
