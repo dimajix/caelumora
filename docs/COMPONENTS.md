@@ -400,8 +400,9 @@ endpoint:
 `refresh_secs`: how long what it reads of its remote side - an MCP server's tools, an A2A agent's
 card - is kept before it is read again. That is read when it is first needed, in the name of whoever
 needs it, never while the component is built, and a read that fails is not kept (`ExpiringCache`,
-issue 126). An unknown field is refused. In messages the endpoint is shown without credentials,
-query or fragment.
+issue 126). An unknown field is refused, and so is a `url` that is no `http` or `https` URL, as the
+`params` are read and without naming it. In messages the endpoint is shown without
+credentials, query or fragment.
 
 ### The components
 

@@ -96,11 +96,12 @@ pub(crate) struct SharedProvider {
 impl SharedProvider {
     /// The provider of a storage at `mount` in the instance at `endpoint`, whose key is resolved
     /// through `secrets`, whose commands run for `max_run` at most; what may be put into it at most
-    /// `destination`, `public` unless given - a command may send anything anywhere. `mount` is as
-    /// its parameters checked it (`SharedStorageConfig`).
+    /// `destination`, `public` unless given - a command may send anything anywhere. `endpoint` and
+    /// `mount` are as its parameters checked them (`SharedStorageConfig`).
     ///
     /// # Errors
-    /// `Unavailable` for an endpoint that is no URL.
+    /// `Unavailable` for a client that cannot be made, or for an endpoint that is no URL, which
+    /// only one not read as parameters can be.
     pub(crate) fn new(
         endpoint: RemoteEndpoint,
         mount: &str,
@@ -619,6 +620,13 @@ mod tests {
         never["max_run_secs"] = json!(0);
         let refused = config_of_params::<SharedStorageConfig>(&never).unwrap_err().to_string();
         assert!(refused.contains("max_run_secs"), "{refused}");
+        let mut nowhere = params("/workspaces");
+        nowhere["endpoint"]["url"] = json!("open-terminal?key=secret");
+        let refused = config_of_params::<SharedStorageConfig>(&nowhere).unwrap_err().to_string();
+        assert!(
+            refused.contains("'endpoint.url'") && !refused.contains("secret"),
+            "named, without what it says: {refused}"
+        );
         let without = json!({ "endpoint": { "url": "http://open-terminal:8000" } });
         assert!(config_of_params::<SharedStorageConfig>(&without).is_err(), "a mount is needed");
     }

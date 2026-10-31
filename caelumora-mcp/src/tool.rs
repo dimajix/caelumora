@@ -471,7 +471,7 @@ mod tests {
         );
         assert!(
             serde_json::from_value::<McpToolConfig>(
-                json!({ "endpoint": { "url": "x" }, "requires_aproval": true })
+                json!({ "endpoint": { "url": "http://mcp.example" }, "requires_aproval": true })
             )
             .is_err(),
             "nothing unknown"
@@ -482,7 +482,7 @@ mod tests {
     fn approval_is_configured_for_all_none_or_all_but_the_read_only_tools() {
         let configured = |approval: Value| {
             serde_json::from_value::<McpToolConfig>(
-                json!({ "endpoint": { "url": "x" }, "requires_approval": approval }),
+                json!({ "endpoint": { "url": "http://mcp.example" }, "requires_approval": approval }),
             )
             .map(|c| c.requires_approval)
         };
@@ -535,7 +535,7 @@ mod tests {
         );
         assert_eq!(cleared.destination(), Some(internal));
         let configured: McpToolConfig = serde_json::from_value(
-            json!({ "endpoint": { "url": "x" }, "destination": { "level": "confidential" } }),
+            json!({ "endpoint": { "url": "http://mcp.example" }, "destination": { "level": "confidential" } }),
         )
         .unwrap();
         assert!(configured.destination.is_some(), "read from the params");

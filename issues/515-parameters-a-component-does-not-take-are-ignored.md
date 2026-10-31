@@ -118,3 +118,9 @@ personality, bundle or session that does no longer builds.
   needs a service to be checked stays in the factories, and so, for now, does whether the endpoint
   of `open_terminal_shared` is a URL (`Client::new`): the other kinds with an endpoint do not check
   it at all, which is a question of `RemoteEndpoint` of its own.
+- **2026-10-31** — The `url` of a `RemoteEndpoint` is refused as it is read unless it is an `http`
+  or `https` URL, without being named, since it may carry a credential: of every kind with an
+  `endpoint` alike, before anything is built and before a request writes it, where before only
+  `open_terminal_shared` refused one, when it was built, and the others failed at their first
+  request. It is checked as it is read rather than in the `check` of each struct that has an
+  endpoint, so that none can leave it out.

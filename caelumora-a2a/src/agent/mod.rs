@@ -456,21 +456,21 @@ mod tests {
             "told who said what (issue 135)"
         );
         assert!(config.message_times, "and when (issue 424)");
-        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "sender_format": "none", "sender_style": "name", "message_times": false })).unwrap();
+        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "http://agent.example" }, "sender_format": "none", "sender_style": "name", "message_times": false })).unwrap();
         assert_eq!(
             (config.sender_format, config.sender_style, config.message_times),
             (SenderFormat::None, SenderStyle::Name, false)
         );
         assert!(
             serde_json::from_value::<A2aAgentConfig>(
-                json!({ "endpoint": { "url": "x" }, "roles": [] })
+                json!({ "endpoint": { "url": "http://agent.example" }, "roles": [] })
             )
             .is_err(),
             "nothing unknown"
         );
         assert!(
             serde_json::from_value::<A2aAgentConfig>(
-                json!({ "endpoint": { "url": "x", "timeout": 3 } })
+                json!({ "endpoint": { "url": "http://agent.example", "timeout": 3 } })
             )
             .is_err(),
             "nothing unknown in the endpoint"

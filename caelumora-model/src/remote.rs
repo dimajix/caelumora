@@ -1,12 +1,16 @@
-//! Where a remote system is reached and how one authenticates there - the
-//! `endpoint` that `ollama_client`, `mcp_tool` and `a2a_agent` are given in
-//! their `params` and a storage of workspaces in its configuration (issues
-//! 179, 188, 251) - and how it is shown in messages: without what may carry
-//! a credential.
+//! Where a remote system is reached and how one authenticates there - the `endpoint` that
+//! `ollama_client`, `mcp_tool`, `a2a_agent` and `decision_policy` are given in their `params` and a
+//! storage of workspaces in its configuration (issues 179, 188, 251) - and how it is shown in
+//! messages: without what may carry a credential.
+//!
+//! What is read as an endpoint has a URL a request can be sent to: one that is no `http` or
+//! `https` URL is refused as it is read (issue 515), before anything is built of it and before a
+//! request writes it, and without being named, since it may carry a credential.
 
 use crate::secret::{SecretManager, SecretResult};
 use crate::security::SecurityContext;
-use serde::Deserialize;
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer};
 use std::cmp::Reverse;
 use std::time::Duration;
 use url::Url;
@@ -16,6 +20,8 @@ use url::Url;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteEndpoint {
+    /// An `http` or `https` URL, refused as it is read unless it is one.
+    #[serde(deserialize_with = "http_url")]
     pub url: String,
     #[serde(default)]
     pub auth: Option<RemoteAuthConfig>,
@@ -90,6 +96,18 @@ impl RemoteEndpoint {
     }
 }
 
+/// The `url` of a `RemoteEndpoint` read by `deserializer`.
+///
+/// # Errors
+/// The deserializer's error for a URL that is no `http` or `https` one, without naming it.
+fn http_url<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let url = String::deserialize(deserializer)?;
+    match Url::parse(&url) {
+        Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => Ok(url),
+        _ => Err(D::Error::custom("it is no http or https URL")),
+    }
+}
+
 /// How a component authenticates at its remote side, written in its
 /// `endpoint` as `auth`. A secret is named by its key, resolved through the
 /// `SecretManager` in the context of whoever acts, on every use - never
@@ -120,6 +138,7 @@ pub fn redact_endpoint(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn an_endpoint_is_shown_without_what_may_carry_a_credential() {
@@ -129,6 +148,21 @@ mod tests {
         );
         assert_eq!(redact_endpoint("http://127.0.0.1:11434"), "http://127.0.0.1:11434");
         assert!(!redact_endpoint("not a url with secret").contains("secret"));
+    }
+
+    #[test]
+    fn an_endpoint_whose_url_is_no_http_one_is_refused_without_naming_it() {
+        let read = |url: &str| serde_json::from_value::<RemoteEndpoint>(json!({ "url": url }));
+        for url in ["http://127.0.0.1:11434", "https://user:secret@agent.example/a2a?key=secret"] {
+            assert_eq!(read(url).unwrap().url, url, "as written");
+        }
+        for url in ["", "secret", "agent.example", "file:///secret", "mailto:secret@example"] {
+            let refused = read(url).unwrap_err().to_string();
+            assert!(
+                refused.contains("no http or https URL") && !refused.contains("secret"),
+                "{url:?}: {refused}"
+            );
+        }
     }
 
     #[test]
