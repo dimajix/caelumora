@@ -268,10 +268,10 @@ The server has two server-sent event streams:
 
 *   the **global stream**, `GET /events`, carrying `GlobalEvent`s from the event bus (see
     [EVENTS.md](EVENTS.md));
-*   a **channel's stream**, `GET /sessions/{id}/channels/{cid}/events`, carrying `Envelope`s
-    as a client is shown them (`ShownEnvelope`, issue 432): their time, their `EventContext` and
-    their event - never the `SecurityContext` they were sent in, which names the sender's owner
-    and roles and is the server's to check by alone.
+*   a **channel's stream**, `GET /sessions/{id}/channels/{cid}/events`, carrying `Envelope`s as
+    they are: their time, their `EventContext` and their event. An envelope carries no
+    `SecurityContext` (issues 432, 516): in whose name it was checked the channel built as it
+    admitted it, and no client sees it.
 
 Both are built of the same parts in `sse`: snapshot, resync on lag, and the end at the token's
 expiry. The global stream is one `sse::stream`; a channel's follows the user's actor across its

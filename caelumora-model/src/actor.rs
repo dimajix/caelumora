@@ -8,7 +8,6 @@ use crate::history::{HistoryEntry, Recipients};
 use crate::mention::handle_of;
 use crate::message::{Message, MessageId};
 use crate::question::{QuestionId, QuestionRequest, Response};
-use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::store::query::FieldValue;
 use crate::turn::GivenUpReason;
@@ -797,28 +796,25 @@ pub enum Pick {
     Stop,
 }
 
+/// An event in a channel, with when it was sent and where it happens and in which chain
+/// (`EventContext`). It carries no security context: in whose name it is checked the channel
+/// builds itself, as it admits it, from the sender it names (issue 516).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {
     pub timestamp: DateTime<Utc>,
-    pub security: SecurityContext,
     pub context: EventContext,
     pub event: ActorEvent,
 }
 
 impl Envelope {
-    pub fn new(security: SecurityContext, context: EventContext, event: ActorEvent) -> Self {
-        Self { timestamp: Utc::now(), security, context, event }
+    pub fn new(context: EventContext, event: ActorEvent) -> Self {
+        Self { timestamp: Utc::now(), context, event }
     }
 
-    /// The same envelope - sender, contexts - with `event` instead, e.g. a
+    /// The same envelope - sender, context - with `event` instead, e.g. a
     /// moderator passing an answer on.
     pub fn forward(&self, event: ActorEvent) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security: self.security.clone(),
-            context: self.context.clone(),
-            event,
-        }
+        Self { timestamp: Utc::now(), context: self.context.clone(), event }
     }
 
     /// What the channel's history records of this envelope if it is an
@@ -1527,11 +1523,8 @@ mod tests {
 
         /// Whom of them `event` of `sender` goes to (`Envelope::recipients`).
         fn concerned(&self, sender: ActorId, event: ActorEvent) -> HashSet<ActorId> {
-            let envelope = Envelope::new(
-                SecurityContext::default(),
-                EventContext { sender_id: sender, ..EventContext::default() },
-                event,
-            );
+            let envelope =
+                Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event);
             let recipients = envelope.recipients();
             self.agents
                 .iter()

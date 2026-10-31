@@ -394,9 +394,10 @@ rights. In three parts:
     when nobody asked (`Agent::security_context`) and the one of a turn, the request's continued as
     the agent. The core builds the context it decides by, at every check, from the agent's record
     and its owner's roles as its controllers hold them; the agent, an application (see
-    [ARCHITECTURE.md](ARCHITECTURE.md#principles)), holds none and names none. Today the agent's
-    actor asks its controller for it, naming its own place, and sets it on what it sends, which
-    the channel's door takes on trust (issue
+    [ARCHITECTURE.md](ARCHITECTURE.md#principles)), holds none and names none. The channel's
+    door builds the context it admits an envelope in (see
+    [What enters a channel](#what-enters-a-channel)); today the agent's actor still asks its
+    controller for its own, naming its own place, for the work it begins (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). A piece of work has one
     context: the views a turn navigates and the components it calls ask in the turn's; a
     component's own is only for what it reads while it is built. So what
@@ -549,12 +550,15 @@ secret, the workspace, what is kept - is checked once more where it is touched, 
 
 The channel decides what enters it: every event an actor sends is admitted or refused by the
 channel's loop, in order, as it takes it in (see [CHANNELS.md](CHANNELS.md)) - against the channel
-as it is then, so that nothing changes between the check and the entry. The actor that sends asks
-nothing of the policy. So a message, a change of one, a reclassification, a request to answer
-again, an answer to questions and an answer to an approval request are each asked once, in the
-sender's name - first whether it may act so, then the flow of what it carries -, and what is refused
-is answered to its sender alone (`MessageRejected`), recorded to it alone; what was refused entered
-nothing and is not recorded (issue 417).
+as it is then, so that nothing changes between the check and the entry, and in a context the
+channel builds for the sender itself, from its participants as the controllers hold them now,
+with the initiator the event names (issue 516): an envelope carries none, and an actor's word on
+its rights is never taken. The actor that sends asks nothing of the policy. So a message, a change
+of one, a reclassification, a request to answer again, an answer to questions and an answer to an
+approval request are each asked once, in the sender's name - first whether it may act so, then the
+flow of what it carries -, and what is refused is answered to its sender alone
+(`MessageRejected`), recorded to it alone; what was refused entered nothing and is not recorded
+(issue 417).
 
 ## The security suite
 

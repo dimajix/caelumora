@@ -559,3 +559,22 @@ whether or not 5 and 6 follow.
   register on their own (step 5). Found while writing: an application may offer a service of its
   own to its own kinds (`caelumora-comfyui` provides its workflows), so `Program` registers such a
   service too, which the plan's list of what it registers lacks.
+- **2026-10-31** — Step 2 done on the branch: the door builds "E". `Envelope` carries no
+  `SecurityContext` any more (432's B, taken up again under the principle); the channel builds the
+  sender's context as it knows it now - from its participants as the controllers hold them, the
+  approver's answered for by the channel's owner - with the initiator the event names, and admits,
+  routes and rejects in it (`ChannelLoop::security_context_of`, `admitted_in`); only who takes part
+  is let in anything. `Actor::security_context` is gone; `Answering::to` continues a request from
+  its `EventContext`. The moderator and the `ResponderPolicy` are handed the context with the event.
+  An agent's command is admitted at the door - `ShowAgentCommand`, `ExecuteAgentCommand` with the
+  agent's and the channel's attributes - and again when it is read back from the history for the
+  agent; `AgentCommandAccess` is gone, the agent carries out what reached it. The commands one set
+  of providers contributes are a `CommandSet`, generic; the `CommandExecutor` runs the channel's
+  alone and asks for them, so the agent holds no policy for its commands. `ShownEnvelope` is gone:
+  an envelope shows nothing a client may not see. Two things differ from the plan's words: a
+  command read back and not admitted again is left out without a word to the issuer, who was
+  answered when it entered; and the refusal of an agent's command that shadows a session command
+  stays where it was (`AgentBody::command_set`, through `ActorRuntime::command_executor`) - it is a
+  check of the configuration, not of a right, and leaves with the service in step 5. Stored data:
+  none.
+

@@ -29,7 +29,7 @@ use caelumora_model::value::name::Name;
 use caelumora_model::work::Work;
 use caelumora_runtime::actor::Answering;
 use caelumora_runtime::agent::state::AgentStateHandle;
-use caelumora_runtime::command::CommandExecutor;
+use caelumora_runtime::command::CommandSet;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use caelumora_runtime::controller::{AgentController, PersonalityController};
 use caelumora_runtime::runtime::ActorRuntime;
@@ -81,9 +81,9 @@ pub(super) struct AgentBody {
     /// for an external one (issue 236).
     pub(super) hand_over: HandOver,
     /// The commands it carries out itself (issue 269), from its
-    /// personality's components, behind the executor that checks who may
-    /// see and ask for them.
-    pub(super) commands: CommandExecutor<dyn AgentCommandProvider>,
+    /// personality's components; who may see and ask for them is the
+    /// channel's to decide (issue 516).
+    pub(super) commands: CommandSet<dyn AgentCommandProvider>,
     /// How its model is given its context, kept with every turn of it - its
     /// model's, or its remote agent's (`ModelProfileProvider`).
     pub(super) profile: ModelProfile,
@@ -112,7 +112,7 @@ impl AgentBody {
     ///
     /// # Errors
     /// If its components cannot be built, its commands collide
-    /// (`command_executor`), or its state cannot be loaded.
+    /// (`command_set`), or its state cannot be loaded.
     pub(super) async fn build(
         agent: Arc<AgentController>,
         personality: Arc<PersonalityController>,
@@ -144,7 +144,7 @@ impl AgentBody {
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
         let profile = components.one::<dyn ModelProfileProvider>().await?.profile();
-        let commands = Self::command_executor(&components, &runtime)?;
+        let commands = Self::command_set(&components, &runtime)?;
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
         let control =
@@ -432,7 +432,7 @@ mod testing {
             );
             let agent =
                 Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));
-            let commands = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
+            let commands = CommandSet::empty();
             let session = bare_session(SessionId::new());
             let channel = bare_channel(session.id);
             let (session_id, channel_id) = (session.id, channel.id);

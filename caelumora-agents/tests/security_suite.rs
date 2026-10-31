@@ -843,8 +843,9 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
 /// M4: nudging an agent (issue 278) asks it to respond without a message,
 /// as an `@`-mention in a message would: whoever takes part may - bob as
 /// well as alice -, and nothing is asked in his name; someone who does not
-/// take part has no actor to nudge it through. The agent responds for its
-/// owner, on the word of whoever nudged it.
+/// take part has no actor to nudge it through. The agent responds on the
+/// word of whoever nudged it; that it acts for its owner is its turn's
+/// (`an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked`).
 #[tokio::test]
 async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_word() {
     let world = World::with(&[&TestAgents], |registry| {
@@ -884,16 +885,10 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
     })
     .await
     .expect("the agent responds");
-    let turn = finished.security;
     assert_eq!(
-        (turn.caller_id, turn.owner_id, turn.principal_id, turn.initiator_id),
-        (
-            ActorId::Agent(helper),
-            ActorId::User(world.alice),
-            ActorId::User(world.alice),
-            ActorId::User(world.bob)
-        ),
-        "alice's, for alice, on his word"
+        (finished.context.sender_id, finished.context.initiator_id),
+        (ActorId::Agent(helper), ActorId::User(world.bob)),
+        "the agent's answer, on his word"
     );
     assert!(
         main.user_actor(world.carol).is_none(),
@@ -3801,8 +3796,8 @@ async fn with_a_commanded_agent(
 /// write in the channel - bob, taking part -, unless it is for the agent's
 /// owners alone: `/seal` bob neither sees nor asks for, alice, the agent's
 /// owner, does. Bob's actor finds whom he names among the agents by what he
-/// sees, and asks nothing more; the agent asks, once, in the context the
-/// request came with, as it carries it out (issue 304).
+/// sees, and asks nothing more; the channel asks, once, as it admits the
+/// request - in the context it builds for him, never the agent (issue 516).
 #[tokio::test]
 async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners() {
     let (world, session, main, _, mut his) = with_a_commanded_agent().await;
@@ -3827,7 +3822,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
             "bob: ShowAgentCommand(alice's) yes",
             "bob: ExecuteAgentCommand(alice's) yes",
         ],
-        "what he sees, then the agent asking whether he may ask for it"
+        "what he sees, then the door asking whether he may ask for it"
     );
 
     let refused = bob.execute_command("seal", "@helper").await.expect_err("not his");

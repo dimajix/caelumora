@@ -64,7 +64,7 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 | **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for what was deleted) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
 | **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ProjectController`, `ArtifactManager`, `AttachmentManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
-| **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the agent carrying out a command, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, `CommandFailed`, a left-out answer |
+| **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, a left-out answer |
 | **Views** (`caelumora-runtime/src/view`), rule 5 and reach | reaching (concept 4) and the flags of a snapshot | `may_*`; `require` for reading a participant's tools, components and context | `*NotFound`, a flag false, `Forbidden` |
 | **Filters** (event bus, command lists, store lists), rule 5 | the read question per item | `check` | silently left out |
 
@@ -77,13 +77,15 @@ views, and maps refusals to `403`, every `*NotFound` to `404`.
 
 Notation for whose name: **U** the user's own context; **T** a turn's (the agent as caller, its
 owner as owner and principal, whoever asked as initiator); **A** the agent's own (the agent itself
-as initiator); **E** an envelope's, as its sender's actor set it - or, for an envelope an actor's
-inbox read from the channel's history because its queue fell short (issue 223), the sender's context
-as it is now, with the recorded initiator, and one without rights if the sender takes no part any
-more; the one check it reaches is an agent's of a command; **V** a viewer's (U, or T with the place
-the agent reads from); **C** the owner's of a channel or session, with their roles as they are when
-it is built (its components, its commands - only while they are built); **S** the system's, which
-asks nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
+as initiator); **E** an envelope's, built by the channel as it admits it (issue 516): the sender's
+context as the channel knows it then - a user's own, an agent's with its owner's rights and roles as
+the controllers hold them, limited by its personality, the approver's answered for by the channel's
+owner -, with the initiator the event names, and one without rights if the sender takes no part;
+never what the sender set. An envelope read back from the history (issue 223) carries the recorded
+initiator and is admitted again only as a command asked of an agent; **V** a viewer's (U, or T with
+the place the agent reads from); **C** the owner's of a channel or session, with their roles as they
+are when it is built (its components, its commands - only while they are built); **S** the system's,
+which asks nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
 SECURITY.md); "store" is the store layer, in the context the caller passes. Every Read of the store
 of what is classified - a channel, a workspace, a skill, an artifact - is followed by `cleared_for`
 in the same context (issue 322), named in the rows where it is the reason of a refusal.
@@ -141,7 +143,7 @@ permission first, then the flow of what it carries.
 
 | Event | Questions in order | `Rejection` |
 |---|---|---|
-| any event carrying messages | the sender is the caller (structural) | `Invalid` |
+| any event | its sender is E's caller by construction; a sender that takes no part has no rights | - |
 | a message, a turn's messages | per part - the message, each attachment and each tool result - `require_publish` (E,2) | `ClassificationRefused` |
 | a message, a turn's messages | what a result gave (`media`, issue 512) and `shown` (issue 282) lies in the channel's key space (`AttachmentManager::lies_in`, structural) and may flow into the channel as every part | `Invalid`, `ClassificationRefused` |
 | a message said (`CompleteMessageGenerated`, `IntermediateMessageGenerated`), last | its attachments uploaded by the caller for the channel, as uploaded and not claimed, at most as many as configured, none twice - checked and claimed at once (`AttachmentManager::claim`, structural) | `Invalid` |
@@ -150,7 +152,8 @@ permission first, then the flow of what it carries.
 | `MessageReclassified` | there; `Reclassify` of the message (E,1 or 3); `require_publish` of the new classification (E,2); changeable | as above |
 | `RetryRequested` | `RetryMessage` (E,1); a message, not taken back, or a turn, of an agent taking part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `Invalid` |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` (E,1); whether its sender was asked is the agent's | `Forbidden` |
-| `CommandRequested`, `NudgeRequested` | form only: from a user, naming someone taking part; a command is the agent's to admit | `Invalid` |
+| `CommandRequested` | from a user (structural); the agent named takes part and carries the command out (structural); `ShowAgentCommand`, `ExecuteAgentCommand` (E,3) with the agent's attributes and the channel's - asked again, with the issuer's rights as they are then, when the request is read back from the history for the agent (issue 516) | `Invalid`, `Forbidden` |
+| `NudgeRequested` | form only: from a user, naming someone taking part | `Invalid` |
 | `ApprovalGranted`, `ApprovalDenied` from a user | structural: it says the sender's own part alone (`decisions`, issue 419); the agent it names read in S; `ApproveToolCall` (E,3); whether that agent asked is the approver's (issue 312) | `Invalid`, `Forbidden` |
 | `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` from anyone else | from an approver alone (structural) | `Invalid` |
 | everything else | nothing | - |
@@ -170,9 +173,9 @@ actor can send (issue 228) -, an attachment that is none of the user's uploads f
 | An approval by click (`ApproverActor::handle_response`) | admitted by the channel (*What enters a channel*); the approver checks only that it names the agent that asked | R3 | `approvers_of` for the strategy (R5) | `MessageRejected` to its sender; an answer for another agent left out |
 | An approval by a person's rule (`UserActor::answer_by_rule`) | `may_approve` (U,3), then as a click | R5 | three times per answer: whether the rule answers, the admission, whom to wait for | the rule does not answer |
 | A command of the session (`CommandExecutor::execute`) | `ShowCommand`, `ExecuteCommand` with the channel (U,3) | R4 | `/wakeup` asks `WakeChannel` itself | `Unknown`, `Forbidden` |
-| Commands shown (`visible_by`, `/help`, completion) | per command `ShowCommand` (U,3) | R5 | - | left out |
-| A command of an agent asked for (`UserActor::request_command`) | whom it names: the agents' commands as the issuer sees them (`ShowAgentCommand`, U,3) | R5 | by the agent | `Unknown`, `InvalidArguments` |
-| An agent carries a command out (`AgentBody::carry_out`) | `ShowAgentCommand`, `ExecuteAgentCommand` (E,3) | R4 | - | `CommandFailed` |
+| Commands shown (`CommandExecutor::visible`, `/help`, completion) | per command `ShowCommand` (U,3) | R5 | - | left out |
+| A command of an agent asked for (`UserActor::request_command`) | whom it names: the agents' commands as the issuer sees them (`ChannelLoop::commands_of`: `ShowAgentCommand`, U,3) | R5 | at the door (*What enters a channel*) | `Unknown`, `InvalidArguments` |
+| An agent carries a command out (`AgentBody::carry_out`) | nothing: admitted at the door (issue 516) | - | - | `CommandFailed` for one it does not carry out |
 | A secret (`SecretManager::resolve`) | `ReadSecret` (3) - T at a call, A or C as a component is built, S for a storage | R4 | - | `SecretError::PermissionDenied` |
 
 ### What an agent reads beyond its channel

@@ -35,6 +35,7 @@ use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason,
 };
 use caelumora_model::message::Message;
+use caelumora_model::security::SecurityContext;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::slice;
@@ -235,7 +236,12 @@ impl PolicyModerator {
     /// Whom to ask to respond to the answer `messages` of `event` - a turn that finished, or a
     /// message said outside of any turn (issue 258) - and, at the limit of a chain or when nobody
     /// is asked since the policy could not choose, the notice that nobody is.
-    async fn ask(&self, event: &Envelope, messages: &[Message]) -> Routing {
+    async fn ask(
+        &self,
+        event: &Envelope,
+        context: &SecurityContext,
+        messages: &[Message],
+    ) -> Routing {
         // What there is to hear of it, by the rule every agent hears by
         // (issue 224): nothing, e.g. of a response of tool calls only or of
         // a turn cancelled before it said anything.
@@ -282,7 +288,7 @@ impl PolicyModerator {
             Some(mentioned) => (mentioned, RequestReason::Mentioned),
             None => {
                 let candidate_ids = candidates.iter().map(|candidate| candidate.id).collect();
-                match self.policy.choose(event, &conversation, candidates).await {
+                match self.policy.choose(event, context, &conversation, candidates).await {
                     Ok(chosen) => (chosen, RequestReason::Chosen),
                     Err(undecided) => {
                         return self.undecided(
@@ -352,11 +358,11 @@ impl PolicyModerator {
 impl Moderator for PolicyModerator {
     /// Every event goes where every channel delivers it; what is decided
     /// here is whom to ask to respond, and what to tell when a chain ends.
-    async fn route(&self, event: &Envelope) -> Routing {
+    async fn route(&self, event: &Envelope, context: &SecurityContext) -> Routing {
         match &event.event {
             // The end of a turn: whoever is to respond is asked (issue 258).
             ActorEvent::TurnFinished { messages, .. } => {
-                let routing = self.ask(event, messages).await;
+                let routing = self.ask(event, context, messages).await;
                 self.hear(messages);
                 routing
             }
@@ -365,7 +371,7 @@ impl Moderator for PolicyModerator {
             // sender does not matter.
             ActorEvent::CompleteMessageGenerated(message) if message.turn_id.is_none() => {
                 let messages = slice::from_ref(message);
-                let routing = self.ask(event, messages).await;
+                let routing = self.ask(event, context, messages).await;
                 self.hear(messages);
                 routing
             }
@@ -565,7 +571,7 @@ mod tests {
             sender_id,
             "test".to_string(),
         );
-        Envelope::new(SecurityContext::default(), context, event)
+        Envelope::new(context, event)
     }
 
     /// Three agents, the middle one asleep, registered with `moderator`.
@@ -641,6 +647,7 @@ mod tests {
         async fn choose(
             &self,
             _event: &Envelope,
+            _context: &SecurityContext,
             messages: &[Message],
             candidates: Vec<ActorDescription>,
         ) -> Result<Vec<ActorId>, Undecided> {
@@ -670,7 +677,9 @@ mod tests {
         );
         let agents = add_agents(&moderator);
 
-        moderator.route(&message_from(agents[0], "who knows?", vec![])).await;
+        moderator
+            .route(&message_from(agents[0], "who knows?", vec![]), &SecurityContext::default())
+            .await;
 
         let told = recording.0.lock().unwrap().clone();
         let [(said, candidates)] = told.as_slice() else { panic!("asked once: {told:?}") };
@@ -703,32 +712,38 @@ mod tests {
             )
         };
 
-        moderator.route(&said("one")).await;
+        moderator.route(&said("one"), &SecurityContext::default()).await;
         let in_turn = Message {
             id: MessageId::new(),
             turn_id: Some(TurnId::new()),
             ..text_from(agents[0], "two", vec![])
         };
         moderator
-            .route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone())))
+            .route(
+                &envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone())),
+                &SecurityContext::default(),
+            )
             .await;
-        moderator.route(&said("three")).await;
+        moderator.route(&said("three"), &SecurityContext::default()).await;
         assert_eq!(recording.last_told().0, ["one", "three"], "the turn has not ended yet");
 
         let tool_calls_only =
             Message { id: MessageId::new(), content: None, ..text_from(agents[0], "", vec![]) };
         moderator
-            .route(&envelope(
-                agents[0],
-                ActorEvent::TurnFinished {
-                    turn_id: TurnId::new(),
-                    messages: vec![in_turn.clone(), tool_calls_only],
-                },
-            ))
+            .route(
+                &envelope(
+                    agents[0],
+                    ActorEvent::TurnFinished {
+                        turn_id: TurnId::new(),
+                        messages: vec![in_turn.clone(), tool_calls_only],
+                    },
+                ),
+                &SecurityContext::default(),
+            )
             .await;
         assert_eq!(recording.last_told().0, ["one", "three", "two"], "what the turn said, last");
 
-        moderator.route(&said("four")).await;
+        moderator.route(&said("four"), &SecurityContext::default()).await;
         assert_eq!(
             recording.last_told().0,
             ["one", "three", "two", "four"],
@@ -736,7 +751,7 @@ mod tests {
         );
 
         let five = said("five");
-        moderator.route(&five).await;
+        moderator.route(&five, &SecurityContext::default()).await;
         assert_eq!(
             recording.last_told().0,
             ["three", "two", "four", "five"],
@@ -745,18 +760,27 @@ mod tests {
 
         let ActorEvent::CompleteMessageGenerated(five) = five.event else { unreachable!() };
         moderator
-            .route(&envelope(
-                user,
-                ActorEvent::MessageModified(Message { content: Some("FIVE".to_string()), ..five }),
-            ))
+            .route(
+                &envelope(
+                    user,
+                    ActorEvent::MessageModified(Message {
+                        content: Some("FIVE".to_string()),
+                        ..five
+                    }),
+                ),
+                &SecurityContext::default(),
+            )
             .await;
         moderator
-            .route(&envelope(
-                agents[0],
-                ActorEvent::MessageRevoked { message: in_turn.id, at: Utc::now() },
-            ))
+            .route(
+                &envelope(
+                    agents[0],
+                    ActorEvent::MessageRevoked { message: in_turn.id, at: Utc::now() },
+                ),
+                &SecurityContext::default(),
+            )
             .await;
-        moderator.route(&said("six")).await;
+        moderator.route(&said("six"), &SecurityContext::default()).await;
         assert_eq!(
             recording.last_told().0,
             ["four", "FIVE", "six"],
@@ -833,7 +857,10 @@ mod tests {
 
         let broadcast = built(&[("responders", broadcast_policy::BROADCAST_POLICY_KIND)]).await;
         let agents = add_agents(broadcast.as_ref());
-        let asked = broadcast.route(&message_from(user, "hello", Vec::new())).await.ask;
+        let asked = broadcast
+            .route(&message_from(user, "hello", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
         assert_eq!(
             asked.into_iter().collect::<HashSet<_>>(),
             HashSet::from([agents[0], agents[2]]),
@@ -842,8 +869,14 @@ mod tests {
 
         let default = built(&[]).await;
         let agents = add_agents(default.as_ref());
-        let first = default.route(&message_from(user, "one", Vec::new())).await.ask;
-        let second = default.route(&message_from(user, "two", Vec::new())).await.ask;
+        let first = default
+            .route(&message_from(user, "one", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
+        let second = default
+            .route(&message_from(user, "two", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
         assert_eq!(first.len(), 1, "one agent at a time");
         assert_ne!(first, second, "round robin by default");
         assert!(
@@ -859,7 +892,7 @@ mod tests {
             let user = ActorId::User(UserId::new());
             let event = message_from(user, "@b and @c, please", vec![agents[1], agents[2]]);
 
-            let routing = moderator.route(&event).await;
+            let routing = moderator.route(&event, &SecurityContext::default()).await;
 
             assert_eq!(
                 routing.ask,
@@ -879,7 +912,10 @@ mod tests {
                 moderator
             );
             let said = moderator
-                .route(&said_from(user, "@b and @c, please", vec![agents[1], agents[2]]))
+                .route(
+                    &said_from(user, "@b and @c, please", vec![agents[1], agents[2]]),
+                    &SecurityContext::default(),
+                )
                 .await;
             assert!(
                 said.audience == Audience::Everybody,
@@ -897,7 +933,7 @@ mod tests {
             let other_user = ActorId::User(UserId::new());
             let event = message_from(user, "@other", vec![other_user]);
 
-            let routing = moderator.route(&event).await;
+            let routing = moderator.route(&event, &SecurityContext::default()).await;
 
             assert!(!routing.ask.is_empty(), "{:?} must apply its own policy", moderator);
             assert!(
@@ -926,14 +962,22 @@ mod tests {
             moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
             moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
 
-            let to_her = moderator.route(&message_from(user, "@other, look", vec![other])).await;
+            let to_her = moderator
+                .route(
+                    &message_from(user, "@other, look", vec![other]),
+                    &SecurityContext::default(),
+                )
+                .await;
             assert!(
                 to_her.ask.is_empty(),
                 "{:?} must ask nobody for a message to a person",
                 moderator
             );
             let to_both = moderator
-                .route(&message_from(user, "@other and @c, look", vec![other, agents[2]]))
+                .route(
+                    &message_from(user, "@other and @c, look", vec![other, agents[2]]),
+                    &SecurityContext::default(),
+                )
                 .await;
             assert_eq!(
                 to_both.ask,
@@ -942,8 +986,12 @@ mod tests {
                 moderator
             );
             assert_eq!(to_both.reason, RequestReason::Mentioned);
-            let to_himself =
-                moderator.route(&message_from(user, "@user, note to self", vec![user])).await;
+            let to_himself = moderator
+                .route(
+                    &message_from(user, "@user, note to self", vec![user]),
+                    &SecurityContext::default(),
+                )
+                .await;
             assert!(
                 !to_himself.ask.is_empty(),
                 "{:?} must apply its policy to a mention of the sender alone",
@@ -956,7 +1004,12 @@ mod tests {
             let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
             moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
 
-            let to_her = moderator.route(&message_from(user, "@other, look", vec![other])).await;
+            let to_her = moderator
+                .route(
+                    &message_from(user, "@other, look", vec![other]),
+                    &SecurityContext::default(),
+                )
+                .await;
             assert!(
                 !to_her.ask.is_empty() && !to_her.ask.contains(&agents[1]),
                 "{:?} must apply its policy, with only agents replacing it",
@@ -989,7 +1042,7 @@ mod tests {
             let agents = add_agents(&moderator);
             let event = message_from(agents[0], "@b, your turn", vec![agents[1]]);
 
-            let routing = moderator.route(&event).await;
+            let routing = moderator.route(&event, &SecurityContext::default()).await;
 
             assert_eq!(
                 routing.ask,
@@ -1014,7 +1067,7 @@ mod tests {
                 vec![user, agents[0], agents[1], agents[2]],
             );
 
-            let routing = moderator.route(&event).await;
+            let routing = moderator.route(&event, &SecurityContext::default()).await;
 
             assert_eq!(
                 routing.ask,
@@ -1049,20 +1102,27 @@ mod tests {
         let agents = add_agents(&moderator);
         let asked = |routing: &Routing| (routing.ask.len(), routing.agent_hops);
 
-        let routing = moderator.route(&hops_from(agents[0], 1, Vec::new())).await;
+        let routing = moderator
+            .route(&hops_from(agents[0], 1, Vec::new()), &SecurityContext::default())
+            .await;
         assert_eq!(asked(&routing), (1, 2), "the policy's choice is a hop, too");
 
-        let routing = moderator.route(&hops_from(agents[0], 2, vec![agents[2]])).await;
+        let routing = moderator
+            .route(&hops_from(agents[0], 2, vec![agents[2]]), &SecurityContext::default())
+            .await;
         assert!(routing.ask.is_empty(), "beyond the limit nobody is asked, mentioned or not");
         assert!(
             routing.audience == Audience::Everybody,
             "but the end of the turn is delivered as ever"
         );
-        let said = moderator.route(&said_from(agents[0], "and you?", vec![agents[2]])).await;
+        let said = moderator
+            .route(&said_from(agents[0], "and you?", vec![agents[2]]), &SecurityContext::default())
+            .await;
         assert!(said.audience == Audience::Everybody, "and so is the message");
 
         let user = ActorId::User(UserId::new());
-        let routing = moderator.route(&hops_from(user, 2, Vec::new())).await;
+        let routing =
+            moderator.route(&hops_from(user, 2, Vec::new()), &SecurityContext::default()).await;
         assert_eq!(asked(&routing), (2, 0), "a user's message starts a new chain");
     }
 
@@ -1086,7 +1146,9 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let routing = moderator.route(&hops_from(agents[0], 1, vec![agents[2]])).await;
+        let routing = moderator
+            .route(&hops_from(agents[0], 1, vec![agents[2]]), &SecurityContext::default())
+            .await;
         assert!(routing.notices.is_empty(), "below the limit, nothing is cut off");
 
         let event = hops_from(agents[0], 2, vec![agents[2]]);
@@ -1096,7 +1158,7 @@ mod tests {
             max_agent_hops: 2,
             not_asked: vec![agents[2]],
         };
-        assert_eq!(told(&moderator.route(&event).await), [(HashSet::from([user, agents[0], agents[2]]), cut_off)],
+        assert_eq!(told(&moderator.route(&event, &SecurityContext::default()).await), [(HashSet::from([user, agents[0], agents[2]]), cut_off)],
             "the users, the sender and whom it mentioned - not agents[1] -, naming the message cut off");
 
         let event = hops_from(agents[0], 2, Vec::new());
@@ -1107,7 +1169,7 @@ mod tests {
             not_asked: Vec::new(),
         };
         assert_eq!(
-            told(&moderator.route(&event).await),
+            told(&moderator.route(&event, &SecurityContext::default()).await),
             [(HashSet::from([user, agents[0]]), cut_off)],
             "told even when nobody was mentioned"
         );
@@ -1122,6 +1184,7 @@ mod tests {
         async fn choose(
             &self,
             _event: &Envelope,
+            _context: &SecurityContext,
             _messages: &[Message],
             _candidates: Vec<ActorDescription>,
         ) -> Result<Vec<ActorId>, Undecided> {
@@ -1143,7 +1206,7 @@ mod tests {
         for sender in [user, agents[0]] {
             let event = message_from(sender, "who knows?", Vec::new());
             let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
-            let routing = moderator.route(&event).await;
+            let routing = moderator.route(&event, &SecurityContext::default()).await;
             assert!(routing.ask.is_empty(), "nobody by default");
             assert_eq!(
                 routing.notices,
@@ -1157,7 +1220,9 @@ mod tests {
                 .with_on_undecided(OnUndecided::All);
         let agents = add_agents(&moderator);
         moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
-        let routing = moderator.route(&message_from(user, "who knows?", Vec::new())).await;
+        let routing = moderator
+            .route(&message_from(user, "who knows?", Vec::new()), &SecurityContext::default())
+            .await;
         assert_eq!(
             routing.ask.into_iter().collect::<HashSet<_>>(),
             HashSet::from([agents[0], agents[2]]),
@@ -1205,7 +1270,10 @@ mod tests {
         .unwrap();
         let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
         let agents = add_agents(moderator.as_ref());
-        let asked = moderator.route(&message_from(agents[0], "@c", vec![agents[2]])).await.ask;
+        let asked = moderator
+            .route(&message_from(agents[0], "@c", vec![agents[2]]), &SecurityContext::default())
+            .await
+            .ask;
         assert!(asked.is_empty(), "with no hops allowed, agents answer only users");
 
         let invalid = ComponentContainer::from_config(
@@ -1253,15 +1321,20 @@ mod tests {
         };
 
         assert_eq!(
-            moderator.route(&at_depth(4, vec![agents[1]])).await.ask,
+            moderator.route(&at_depth(4, vec![agents[1]]), &SecurityContext::default()).await.ask,
             vec![agents[1]],
             "beneath the bound, as ever"
         );
-        let deep = moderator.route(&at_depth(5, vec![agents[1]])).await;
+        let deep =
+            moderator.route(&at_depth(5, vec![agents[1]]), &SecurityContext::default()).await;
         assert!(deep.ask.is_empty(), "at the bound nobody is asked, mentioned or not");
         assert!(deep.audience == Audience::Everybody, "but what was said is delivered");
         assert!(
-            moderator.route(&at_depth(5, Vec::new())).await.ask.is_empty(),
+            moderator
+                .route(&at_depth(5, Vec::new()), &SecurityContext::default())
+                .await
+                .ask
+                .is_empty(),
             "nor whom the policy would choose"
         );
     }
@@ -1292,7 +1365,10 @@ mod tests {
         let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
         let agents = add_agents(moderator.as_ref());
         let asked = moderator
-            .route(&message_from(ActorId::User(UserId::new()), "@b", vec![agents[1]]))
+            .route(
+                &message_from(ActorId::User(UserId::new()), "@b", vec![agents[1]]),
+                &SecurityContext::default(),
+            )
             .await
             .ask;
         assert!(asked.is_empty(), "with no depth allowed, nobody is asked");
@@ -1317,15 +1393,23 @@ mod tests {
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
-        let asked = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await.ask;
+        let asked = moderator
+            .route(&message_from(user, "hello, everyone", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
         assert!(asked.is_empty(), "nobody was mentioned, so nobody answers");
-        let said = moderator.route(&said_from(user, "hello, everyone", Vec::new())).await;
+        let said = moderator
+            .route(&said_from(user, "hello, everyone", Vec::new()), &SecurityContext::default())
+            .await;
         assert!(
             said.audience == Audience::Everybody,
             "the message is still delivered as every channel does"
         );
 
-        let asked = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await.ask;
+        let asked = moderator
+            .route(&message_from(agents[0], "my answer", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
         assert!(asked.is_empty(), "nor does anybody answer an agent without a mention");
     }
 
@@ -1339,19 +1423,30 @@ mod tests {
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
-        let asked = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await.ask;
+        let asked = moderator
+            .route(&message_from(user, "hello, everyone", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
         assert_eq!(
             asked.into_iter().collect::<HashSet<_>>(),
             HashSet::from([agents[0], agents[2]]),
             "every awake agent answers a user"
         );
 
-        let asked = moderator.route(&message_from(user, "@b", vec![agents[1]])).await.ask;
+        let asked = moderator
+            .route(&message_from(user, "@b", vec![agents[1]]), &SecurityContext::default())
+            .await
+            .ask;
         assert_eq!(asked, vec![agents[1]], "a user's mention asks only the mentioned agent");
 
-        let asked = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await.ask;
+        let asked = moderator
+            .route(&message_from(agents[0], "my answer", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
         assert!(asked.is_empty(), "an agent's message asks nobody");
-        let said = moderator.route(&said_from(agents[0], "my answer", Vec::new())).await;
+        let said = moderator
+            .route(&said_from(agents[0], "my answer", Vec::new()), &SecurityContext::default())
+            .await;
         assert!(said.audience == Audience::Everybody, "but is delivered as every channel does");
     }
 
@@ -1367,10 +1462,22 @@ mod tests {
         let mut awake = [agents[0], agents[2]];
         awake.sort_unstable_by_key(|id| id.id());
 
-        let first = moderator.route(&message_from(user, "one", Vec::new())).await.ask;
-        let mentioned = moderator.route(&message_from(user, "@b", vec![agents[1]])).await.ask;
-        let second = moderator.route(&message_from(user, "two", Vec::new())).await.ask;
-        let third = moderator.route(&message_from(user, "three", Vec::new())).await.ask;
+        let first = moderator
+            .route(&message_from(user, "one", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
+        let mentioned = moderator
+            .route(&message_from(user, "@b", vec![agents[1]]), &SecurityContext::default())
+            .await
+            .ask;
+        let second = moderator
+            .route(&message_from(user, "two", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
+        let third = moderator
+            .route(&message_from(user, "three", Vec::new()), &SecurityContext::default())
+            .await
+            .ask;
 
         assert_eq!(first, vec![awake[0]]);
         assert_eq!(mentioned, vec![agents[1]]);
@@ -1459,7 +1566,11 @@ mod tests {
             for (sender, event) in events {
                 let kind = event.kind();
                 assert!(
-                    as_every_channel(&moderator.route(&envelope(sender, event)).await),
+                    as_every_channel(
+                        &moderator
+                            .route(&envelope(sender, event), &SecurityContext::default())
+                            .await
+                    ),
                     "{:?}: {kind}",
                     moderator
                 );
@@ -1479,7 +1590,10 @@ mod tests {
             // and a user as well as an agent.
             for nudged in [agents[1], other] {
                 let routing = moderator
-                    .route(&envelope(user, ActorEvent::NudgeRequested { participant: nudged }))
+                    .route(
+                        &envelope(user, ActorEvent::NudgeRequested { participant: nudged }),
+                        &SecurityContext::default(),
+                    )
                     .await;
                 assert_eq!(
                     routing.ask,
@@ -1501,7 +1615,10 @@ mod tests {
             }
             let stranger = ActorId::Agent(AgentId::new());
             let routing = moderator
-                .route(&envelope(user, ActorEvent::NudgeRequested { participant: stranger }))
+                .route(
+                    &envelope(user, ActorEvent::NudgeRequested { participant: stranger }),
+                    &SecurityContext::default(),
+                )
                 .await;
             assert!(routing.ask.is_empty(), "{:?} must ask nobody it does not know", moderator);
         }
@@ -1517,7 +1634,10 @@ mod tests {
             // Whoever said it - a user, or an agent speaking unasked - a
             // message of no turn asks whom it mentions (issue 258).
             for sender in [user, agents[0]] {
-                let asked = moderator.route(&said_from(sender, "@c?", mention())).await.ask;
+                let asked = moderator
+                    .route(&said_from(sender, "@c?", mention()), &SecurityContext::default())
+                    .await
+                    .ask;
                 assert_eq!(
                     asked,
                     vec![agents[2]],
@@ -1530,15 +1650,21 @@ mod tests {
             let turn = TurnId::new();
             let in_turn = Message { turn_id: Some(turn), ..text_from(agents[0], "@c?", mention()) };
             let asked = moderator
-                .route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone())))
+                .route(
+                    &envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone())),
+                    &SecurityContext::default(),
+                )
                 .await
                 .ask;
             assert!(asked.is_empty(), "{:?}: not before the turn ended", moderator);
             let asked = moderator
-                .route(&envelope(
-                    agents[0],
-                    ActorEvent::TurnFinished { turn_id: turn, messages: vec![in_turn] },
-                ))
+                .route(
+                    &envelope(
+                        agents[0],
+                        ActorEvent::TurnFinished { turn_id: turn, messages: vec![in_turn] },
+                    ),
+                    &SecurityContext::default(),
+                )
                 .await
                 .ask;
             assert_eq!(asked, vec![agents[2]], "{:?}: at its end", moderator);
@@ -1584,7 +1710,9 @@ mod tests {
             // said anything: nobody is asked.
             for nothing in [vec![calling.clone(), tool.clone()], Vec::new()] {
                 assert!(
-                    as_every_channel(&moderator.route(&ended(nothing)).await),
+                    as_every_channel(
+                        &moderator.route(&ended(nothing), &SecurityContext::default()).await
+                    ),
                     "{:?}: nobody is asked",
                     moderator
                 );

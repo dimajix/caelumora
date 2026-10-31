@@ -1564,7 +1564,6 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     };
     let sent = |event: ActorEvent| {
         Envelope::new(
-            SecurityContext::default(),
             EventContext {
                 sender_id: speaker,
                 initiator_id: user,

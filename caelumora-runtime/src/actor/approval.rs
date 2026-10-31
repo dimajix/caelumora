@@ -367,18 +367,18 @@ impl ApproverActor {
     }
 }
 
+impl ApproverActor {
+    /// The context it acts in, here: its own, answered for by the owner of
+    /// its channel (issue 341) - what its work continues a request in; what
+    /// it sends is admitted in the context the channel builds for it, the
+    /// same (issue 516).
+    fn security_context(&self) -> SecurityContext {
+        self.approver.security_context(&self.channel.load())
+    }
+}
+
 #[async_trait]
 impl Actor for ApproverActor {
-    /// The context it acts in, here: its own, answered for by the owner of
-    /// its channel (issue 341).
-    fn security_context(&self) -> SecurityContext {
-        let channel = self.channel.load();
-        SecurityContext {
-            owner_id: channel.security_attributes.owner_id,
-            ..SecurityContext::new(self.id, channel.session_id, channel.id)
-        }
-    }
-
     fn id(&self) -> ActorId {
         self.id
     }
@@ -615,11 +615,7 @@ mod tests {
         /// `event` from `actor`, in its own context, as its actor sends it.
         fn from(&self, actor: ActorId, event: ActorEvent) -> Envelope {
             let (session, channel) = (self.channel.session_id(), self.channel.id());
-            Envelope::new(
-                SecurityContext::new(actor, session, channel),
-                EventContext::new(session, channel, actor, actor.to_string()),
-                event,
-            )
+            Envelope::new(EventContext::new(session, channel, actor, actor.to_string()), event)
         }
 
         /// The agent asks for `request`, and it is put to the users.
@@ -637,22 +633,11 @@ mod tests {
                 "put to the users: {:?}",
                 asked.event
             );
-            assert_eq!(asked.context.sender_id, ActorId::Approver(self.approver.approver.id));
             assert_eq!(
-                self.speaker(&asked),
-                (asked.context.sender_id, ActorId::User(self.users[0])),
-                "in its own name, answered for by whose channel it is"
+                (asked.context.sender_id, asked.context.initiator_id),
+                (ActorId::Approver(self.approver.approver.id), ActorId::Agent(self.agent)),
+                "in its own name, for the agent that asked"
             );
-        }
-
-        /// Who `said` it, and who answers for them: the approver, the
-        /// owner of its channel (issue 341).
-        fn speaker(&self, said: &Envelope) -> (ActorId, ActorId) {
-            assert_eq!(
-                said.security.principal_id, said.security.caller_id,
-                "the approver speaks in its own name"
-            );
-            (said.security.caller_id, said.security.owner_id)
         }
 
         /// The `n`th user answers `request`, saying it is theirs (issue 419).
@@ -723,11 +708,6 @@ mod tests {
             decided.event
         );
         assert_eq!(
-            approving.speaker(&decided).1,
-            ActorId::User(approving.users[0]),
-            "decided, answered for by whose channel it is"
-        );
-        assert_eq!(
             decided_by(&decided),
             [ActorId::User(approving.users[0])],
             "naming who approved (issue 419)"
@@ -756,11 +736,6 @@ mod tests {
             matches!(told.event, ActorEvent::ApprovalRequestWithdrawn { id } if id == withdrawn.id),
             "not the user's withdrawal: {:?}",
             told.event
-        );
-        assert_eq!(
-            approving.speaker(&told).1,
-            ActorId::User(approving.users[0]),
-            "told, answered for by whose channel it is"
         );
         approving.answer(0, &withdrawn, true).await;
         approving.nothing().await;

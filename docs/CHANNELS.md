@@ -330,8 +330,9 @@ in one step; so their positions in the history order them as the user sees them.
 ## Acting in a channel
 
 Whoever writes or approves does so in their own name. `ChannelLoop::user_actor(UserId)` returns
-*that user's* actor, and every envelope is built by the actor itself, so sender, name and
-`SecurityContext` follow from it. There is deliberately no way to reach "some" user actor. Someone
+*that user's* actor, and every envelope is built by the actor itself, so sender and name follow
+from it, and the channel builds the context it is checked in from the sender. There is
+deliberately no way to reach "some" user actor. Someone
 who is not a participant of a channel has no actor in it and is refused.
 
 A frontend talks to the user's actor, never to the channel. The actor queues what its user writes,
@@ -346,11 +347,12 @@ also while the channel does not run, without starting it. Each run of the actor 
 it (`Shown::Started`, `Shown::Ended`): what a run showed comes after its start and before its end,
 and an actor ended before it ran shows its end alone.
 
-The channel does not take an actor's word for whose name it speaks in. Each actor is given an
-`OriginEventSender`, which passes on only an envelope that speaks as the actor: as its sender, as
-the caller of its `SecurityContext`, and as the sender of every message it carries. Anything else
-is refused and logged as an error - a bug of the actor. Whose rights the actor has and who asked it
-may be someone else: an agent acts with its owner's rights and answers whoever asked it (see
+The channel does not take an actor's word for whose name it speaks in, nor for its rights. Each
+actor is given an `OriginEventSender`, which passes on only an envelope that speaks as the actor:
+as its sender, and as the sender of every message it carries. Anything else is refused and logged
+as an error - a bug of the actor. Whose rights the actor has, the channel knows itself and builds
+as it admits the envelope (issue 516); who asked it may be someone else: an agent acts with its
+owner's rights and answers whoever asked it (see
 [SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). What the channel says itself - a
 moderator's notice, a removal - does not come through an actor's sender.
 
@@ -789,10 +791,14 @@ An **actor** is anything that sends and receives events in a channel.
     queue takes over again. An overflow, a restart and a join are one case. What is not recorded is
     transient and may be lost while the inbox is behind (`ActorEvent::is_transient`) - streamed
     chunks, where an actor stands, the start of what ends recorded -, except the answers to
-    questions, which the history never holds (issue 165) and the inbox queues regardless. A live
-    envelope carries the security context its sender set as it sent it; one read from the history
-    carries the recorded initiator and the sender's context as it is now (`Actor::security_context`,
-    see [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)) - less exact, and the fallback alone. The
+    questions, which the history never holds (issue 165) and the inbox queues regardless. An
+    envelope carries no security context, live or read from the history: the channel builds the
+    sender's as it knows it when it admits the envelope (issue 516, see
+    [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)), and an actor reads back from the history the
+    event as it was recorded, with its initiator. A command asked of an agent is admitted again as
+    it is read back, with the issuer's rights as they are then: one not admitted is left out, and
+    nobody is told - the issuer was answered when it entered, and what is read back enters nothing.
+    The
     actor's half (`EventReceiver`) takes from one sequence, queue then history, nothing twice: it
     can wait for the next envelope of a kind, taking it ahead of the others, which stay where they
     are - as an agent waiting for approvals does -, and says where the actor stands (`heard`),
@@ -821,19 +827,21 @@ An **actor** is anything that sends and receives events in a channel.
     the same way; an external agent tells the begin and end of an answer at once.
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     runtime itself, set only deliberately.
-*   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`
-    and the `ActorEvent` itself. The `SecurityContext` is what it is checked by, as its sender's
-    actor set it, at the time it was sent; the `EventContext` where it happens and in which chain -
-    its span, its depth, its hops between agents and the chain's initiator (issue 432), which what
-    reads the chain goes by. A client is never shown the `SecurityContext` (`ShownEnvelope`, see
-    [REST-SERVER.md](REST-SERVER.md)). Every envelope the runtime sends is built through `Answering`
-    (issue 352): the contexts of a request continued in the actor's name (`to`) - an agent's, an
-    external agent's, the approver's -, an actor's own (`own`) - a user's -, or, for what the
-    channel says itself, its place in someone's name (`in_channel`): a removal in the name of who
-    removed, a refusal in its own. Whose name an envelope carries is what the `OriginEventSender`
-    and the admission check, so it is decided in one place. Every envelope is an event of its own,
-    with an `event_id` of its own, even where many are sent in the same contexts - the events of a
-    turn share its span and what it answers (`correlation_id`), not their id.
+*   **`Envelope`** is the unit of communication: a timestamp, an `EventContext` and the
+    `ActorEvent` itself. The `EventContext` says where it happens and in which chain - its span,
+    its depth, its hops between agents and the chain's initiator (issue 432), which what reads the
+    chain goes by. It carries no `SecurityContext`: in whose name it is checked the channel builds
+    itself as it admits it, from the sender it names - the sender's context as the channel knows
+    it then, with the initiator the event names (issue 516, see
+    [SECURITY.md](SECURITY.md#operations-that-check-themselves)) -, so a client is shown an
+    envelope as it is. Every envelope the runtime sends is built through `Answering` (issue 352):
+    the contexts of a request continued in the actor's name (`to`) - an agent's, an external
+    agent's, the approver's -, an actor's own (`own`) - a user's -, or, for what the channel says
+    itself, its place in someone's name (`in_channel`): a removal in the name of who removed, a
+    refusal in its own. Whose name an envelope carries is what the `OriginEventSender` checks, so
+    it is decided in one place. Every envelope is an event of its own, with an `event_id` of its
+    own, even where many are sent in the same contexts - the events of a turn share its span and
+    what it answers (`correlation_id`), not their id.
 
 ### External agents
 

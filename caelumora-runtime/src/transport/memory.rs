@@ -130,13 +130,11 @@ impl OriginEventSender {
     }
 
     /// Whether `event` speaks as the actor: it names the actor as its
-    /// sender and as the caller of its security context, and so does every
-    /// message it carries. Whose rights it has, the context's principal,
-    /// and who asked it, the initiator, may be someone else: an agent acts
-    /// with its owner's rights for whoever asked it (issue 255).
+    /// sender, and so does every message it carries. Who asked it, the
+    /// initiator, may be someone else: an agent answers whoever asked it
+    /// (issue 255).
     fn speaks_as(&self, event: &Envelope) -> bool {
         event.context.sender_id == self.origin
-            && event.security.caller_id == self.origin
             && event.event.messages().iter().all(|m| m.sender_id == self.origin)
     }
 
@@ -166,17 +164,15 @@ mod tests {
     use super::*;
     use caelumora_model::actor::{ActorEvent, EventContext, RequestReason};
     use caelumora_model::chain::Position;
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::work::TurnId;
 
     fn envelope(event: ActorEvent) -> Envelope {
-        Envelope::new(SecurityContext::default(), EventContext::default(), event)
+        Envelope::new(EventContext::default(), event)
     }
 
     /// `event`, delivered as the entry at the position `seq`.
     fn at(seq: u64, event: ActorEvent) -> Envelope {
         Envelope::new(
-            SecurityContext::default(),
             EventContext { position: Some(Position::new(seq)), ..EventContext::default() },
             event,
         )
@@ -309,9 +305,8 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let agent = ActorId::Agent(AgentId::new());
         let sender = OriginEventSender::new(agent, Box::new(InMemoryEventSender::new(tx)));
-        let as_actor = |sender_id: ActorId, caller: ActorId| {
+        let as_actor = |sender_id: ActorId| {
             Envelope::new(
-                SecurityContext::default().next(caller, ActorId::None, ActorId::None),
                 EventContext { sender_id, ..EventContext::default() },
                 ActorEvent::ResponseStarted { turn_id: TurnId::new() },
             )
@@ -319,17 +314,10 @@ mod tests {
         let someone = ActorId::System;
 
         assert!(
-            matches!(sender.send(as_actor(someone, agent)).await, Err(TransportError::Refused { origin }) if origin == agent),
+            matches!(sender.send(as_actor(someone)).await, Err(TransportError::Refused { origin }) if origin == agent),
             "another's envelope"
         );
-        assert!(
-            matches!(
-                sender.send(as_actor(agent, someone)).await,
-                Err(TransportError::Refused { .. })
-            ),
-            "another's context"
-        );
-        sender.send(as_actor(agent, agent)).await.expect("its own");
+        sender.send(as_actor(agent)).await.expect("its own");
         assert_eq!(
             rx.try_recv().map(|e| e.context.sender_id).ok(),
             Some(agent),

@@ -4,12 +4,12 @@
 //! restart and a join are one case: the inbox is behind, and reads on from
 //! where its actor stands (`Heard`) until it has caught up.
 //!
-//! A live envelope carries the security context its sender set as it sent
-//! it - what was true as the request was given. One read from the history
-//! carries the sender's context as it is now (`Behind::recorded_for`): less
-//! exact, and the fallback alone. Nothing important is lost, since
-//! everything important is recorded; what is not recorded, and so may be
-//! lost while the inbox is behind, is transient (`ActorEvent::is_transient`).
+//! An envelope carries no security context, live or read from the history
+//! (issue 516): the channel builds the sender's as it admits it, and a
+//! command read back from the history is admitted again for its agent
+//! (`Behind::recorded_for`). Nothing important is lost, since everything
+//! important is recorded; what is not recorded, and so may be lost while
+//! the inbox is behind, is transient (`ActorEvent::is_transient`).
 
 use crate::transport::{EventPick, EventPredicate, EventReceiver};
 use anyhow::Result;
@@ -416,7 +416,6 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::Message;
     use caelumora_model::question::QuestionId;
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::work::TurnId;
     use std::ops::Range;
     use std::time::Duration;
@@ -432,7 +431,6 @@ mod tests {
         fn record(&self, event: ActorEvent) -> Envelope {
             let mut all = self.0.lock().unwrap();
             let envelope = Envelope::new(
-                SecurityContext::default(),
                 EventContext {
                     position: Some(Position::new(all.len() as u64)),
                     ..EventContext::default()
@@ -537,8 +535,7 @@ mod tests {
         let history = Arc::new(History::default());
         history.record(said(0));
         let (inbox, mut rx) = open(&history, Heard::default());
-        let live =
-            |event| Envelope::new(SecurityContext::default(), EventContext::default(), event);
+        let live = |event| Envelope::new(EventContext::default(), event);
         inbox.deliver(live(ActorEvent::ResponseStarted { turn_id: TurnId::new() }));
         inbox.deliver(live(ActorEvent::QuestionDeclined {
             id: QuestionId::new(),

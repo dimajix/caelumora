@@ -57,15 +57,6 @@ pub trait Actor: Any + Debug + Send + Sync {
 
     async fn run(&self, rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()>;
 
-    /// Its security context as it is now (issue 223): what an envelope it
-    /// sent is delivered with when it is read from the channel's history -
-    /// the sender's context as it is then, rather than as it was when it
-    /// was sent, which the history does not record. By default its id
-    /// alone, without roles.
-    fn security_context(&self) -> SecurityContext {
-        SecurityContext::new(self.id(), SessionId::default(), ChannelId::default())
-    }
-
     /// Where it stands in its channel's history, as its state stores it
     /// (issue 223, `EventReceiver::heard`): where its inbox opens when it
     /// runs again, and when it joins again with what it kept. `None` for an
@@ -93,10 +84,11 @@ pub trait Actor: Any + Debug + Send + Sync {
         ComponentConfig::default()
     }
 
-    /// The commands it carries out itself that `issuer` may see (issue
-    /// 269), sorted by name. None for an actor that carries out none - a
-    /// user, an approver, an agent whose personality provides none.
-    async fn commands(&self, _issuer: &SecurityContext) -> Vec<Command> {
+    /// The commands it carries out itself (issue 269), all of them, sorted
+    /// by name: who may see which is the channel's to decide
+    /// (`ShowAgentCommand`, issue 516). None for an actor that carries out
+    /// none - a user, an approver, an agent whose personality provides none.
+    fn commands(&self) -> Vec<Command> {
         Vec::new()
     }
 
@@ -162,16 +154,18 @@ pub trait Actor: Any + Debug + Send + Sync {
     fn leave(&self);
 }
 
-/// The contexts an actor publishes in when it answers: those of the
-/// request, continued in its name - for an agent's turn those it began with
+/// The contexts an actor acts in when it answers: those of the request,
+/// continued in its name - for an agent's turn those it began with
 /// (`TurnState`), for an external agent's answer those of the request it
 /// answers or of the task it speaks of, for the approver those of the call
-/// it decides. Every envelope the runtime sends is built here (issue 352):
-/// whose name it carries and what it continues is what the channel checks
-/// at the door (`OriginEventSender`, the admission). Public with what the
-/// actors of a kind of agent build their envelopes with (`to`,
-/// `continuing`, `own`, `send`, `send_all`), so that they build them here
-/// too, wherever they are built (issue 370).
+/// it decides. Every envelope the runtime sends is built here (issue 352),
+/// of the event context alone: whose name it carries and what it continues
+/// is what the channel checks at the door (`OriginEventSender`, the
+/// admission), in a context the channel builds for the sender itself (issue
+/// 516). The security context is the actor's own work's - what it acts in
+/// while it answers. Public with what the actors of a kind of agent build
+/// their envelopes with (`to`, `continuing`, `own`, `send`, `send_all`), so
+/// that they build them here too, wherever they are built (issue 370).
 #[derive(Debug, Clone)]
 pub struct Answering {
     pub event_context: EventContext,
@@ -183,17 +177,21 @@ impl Answering {
     /// called `name`, answered for and with the rights its `own` context
     /// gives it - an agent's owner, with their roles as they are now and its
     /// limit (issues 255, 304, 341). The request's initiator stays the
-    /// initiator - the root of the chain - and lends nothing.
+    /// initiator - the root of the chain - and lends nothing: the security
+    /// context is `own`, in the request's place and for its initiator.
     pub fn to(
         request: &Envelope,
         id: ActorId,
         name: impl Into<String>,
         own: &SecurityContext,
     ) -> Self {
-        let security_context = request
-            .security
-            .next(id, own.owner_id, own.principal_id)
-            .with_roles(own.roles.clone(), own.limiting_roles.clone());
+        let security_context = SecurityContext {
+            caller_id: id,
+            initiator_id: request.context.initiator_id,
+            session_id: request.context.session_id,
+            channel_id: request.context.channel_id,
+            ..own.clone()
+        };
         Self { event_context: request.context.next(id, name), security_context }
     }
 
@@ -260,7 +258,7 @@ impl Answering {
     /// what it answers (issue 352).
     pub(crate) fn envelope(&self, event: ActorEvent) -> Envelope {
         let context = EventContext { event_id: Uuid::new_v4(), ..self.event_context.clone() };
-        Envelope::new(self.security_context.clone(), context, event)
+        Envelope::new(context, event)
     }
 
     /// Sends `event` as it is, what only its owner sees included: the

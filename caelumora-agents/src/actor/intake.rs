@@ -323,7 +323,7 @@ mod tests {
     }
 
     fn envelope(event: ActorEvent) -> Envelope {
-        Envelope::new(SecurityContext::default(), EventContext::default(), event)
+        Envelope::new(EventContext::default(), event)
     }
 
     #[tokio::test]
@@ -368,7 +368,7 @@ mod tests {
 
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
         let mut last = envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned });
-        last.security.caller_id = ActorId::System;
+        last.context.initiator_id = ActorId::System;
         for event in [
             envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
             heard("two"),
@@ -386,7 +386,7 @@ mod tests {
             "all of it, in order, also what came after the last request"
         );
         assert_eq!(
-            request.map(|r| r.security.caller_id),
+            request.map(|r| r.context.initiator_id),
             Some(ActorId::System),
             "the last request"
         );
@@ -413,11 +413,11 @@ mod tests {
         };
 
         let mut last = asked(RequestReason::Chosen);
-        last.security.caller_id = ActorId::System;
+        last.context.initiator_id = ActorId::System;
         tx.try_send(last).expect("room");
         let taken = body.take_in(&mut state, asked(RequestReason::Mentioned), &mut rx).await;
         assert_eq!(
-            taken.request.as_ref().map(|r| r.security.caller_id),
+            taken.request.as_ref().map(|r| r.context.initiator_id),
             Some(ActorId::System),
             "the last request"
         );
@@ -465,11 +465,7 @@ mod tests {
         let body = AgentBody::detached(Vec::new())
             .hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
         let in_her_authority = |event: ActorEvent| {
-            Envelope::new(
-                SecurityContext::default(),
-                EventContext { initiator_id: alice, ..EventContext::default() },
-                event,
-            )
+            Envelope::new(EventContext { initiator_id: alice, ..EventContext::default() }, event)
         };
         let of_alice = |text: &str| {
             in_her_authority(ActorEvent::CompleteMessageGenerated(Message {
@@ -521,7 +517,6 @@ mod tests {
     fn bob_then_alice_then_bob(alice: ActorId, bob: ActorId) -> Vec<Envelope> {
         let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
             Envelope::new(
-                SecurityContext::default(),
                 EventContext {
                     initiator_id: initiator,
                     position: Some(Position::new(seq)),
@@ -643,11 +638,7 @@ mod tests {
         };
         said.insert(
             2,
-            Envelope::new(
-                SecurityContext::default(),
-                EventContext { initiator_id: alice, ..EventContext::default() },
-                command,
-            ),
+            Envelope::new(EventContext { initiator_id: alice, ..EventContext::default() }, command),
         );
         for event in said {
             tx.try_send(event).expect("room");

@@ -198,7 +198,7 @@ async fn a_nudged_agent_responds_in_the_name_of_who_nudged_it_and_the_history_ke
         "it responds without being told anything new"
     );
     assert_eq!(
-        (finished.security.caller_id, finished.security.initiator_id),
+        (finished.context.sender_id, finished.context.initiator_id),
         (ActorId::Agent(agent), ActorId::User(alice)),
         "by the agent, on her word"
     );

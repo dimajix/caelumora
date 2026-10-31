@@ -2,7 +2,7 @@ use super::{ActorRuntime, RuntimeManager, Services};
 use crate::actor::AgentKinds;
 use crate::attachment::AttachmentManager;
 use crate::channel::{ChannelLoop, Participation};
-use crate::command::{ChannelCommandProvider, CommandExecutor};
+use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
 use crate::session::SessionLoop;
@@ -28,7 +28,7 @@ use std::sync::{Arc, OnceLock, Weak};
 #[derive(Debug, Clone)]
 pub struct ChannelRuntime {
     pub(super) runtime_manager: Arc<RuntimeManager>,
-    pub(super) command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
+    pub(super) command_executor: Arc<CommandExecutor>,
     /// The session the channel belongs to, live: what its agents' tool
     /// calls are guarded by (`ToolExecutor`). Held, not reached through
     /// `session_loop`: the guard must not lapse.
@@ -65,7 +65,7 @@ impl ChannelRuntime {
     /// `session_loop` runs, whose user commands are `command_executor`.
     pub fn new(
         runtime_manager: Arc<RuntimeManager>,
-        command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
+        command_executor: Arc<CommandExecutor>,
         session: Arc<SessionController>,
         channel: Arc<ChannelController>,
         session_loop: Weak<SessionLoop>,

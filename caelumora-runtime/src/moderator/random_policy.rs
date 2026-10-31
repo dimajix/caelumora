@@ -6,6 +6,7 @@ use crate::moderator::{ResponderPolicy, Undecided};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
+use caelumora_model::security::SecurityContext;
 use rand::prelude::StdRng;
 use rand::seq::IndexedRandom;
 use std::sync::{Arc, Mutex};
@@ -35,6 +36,7 @@ impl ResponderPolicy for RandomPolicy {
     async fn choose(
         &self,
         _event: &Envelope,
+        _context: &SecurityContext,
         _messages: &[Message],
         candidates: Vec<ActorDescription>,
     ) -> Result<Vec<ActorId>, Undecided> {

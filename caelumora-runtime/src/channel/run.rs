@@ -2,7 +2,7 @@
 //! appending to the history what they send.
 
 use super::inbox::{Behind, Inbox, InboxReceiver, CAPACITY};
-use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
+use super::{stopped, ActorChange, ChannelActor, ChannelLoop, ResolvedKind};
 use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::moderator::Routing;
@@ -242,9 +242,10 @@ impl ChannelLoop {
         running: &HashMap<ActorId, RunningActor>,
     ) {
         let name = self.name_of(by.caller_id).await;
-        let envelope = Answering::in_channel(self.session_id, self.id, name, by).envelope(event);
+        let envelope =
+            Answering::in_channel(self.session_id, self.id, name, by.clone()).envelope(event);
         debug!("Announcing {}", envelope.describe());
-        self.enter(envelope, running).await;
+        self.enter(envelope, &by, running).await;
     }
 
     async fn handle_actor_event(
@@ -282,15 +283,19 @@ impl ChannelLoop {
         }
         // The full envelope carries message content: trace level only.
         trace!("Envelope: {:?}", event);
-        if let Err(reason) = self.admission(&event).await {
+        let context = self.admitted_in(&event);
+        if let Err(reason) = self.admission(&event, &context).await {
             self.reject(&event, reason, running).await;
             return;
         }
-        self.enter(event, running).await;
+        self.enter(event, &context, running).await;
     }
 
-    /// Lets `event` enter the channel, admitted or the channel's own: its
-    /// mentions resolved, appended to the history and routed.
+    /// Lets `event` enter the channel, admitted or the channel's own, in
+    /// `context` - its sender's, as the channel built it to admit the event,
+    /// or the one the channel speaks in (issue 516), which the moderator
+    /// routes it by -: its mentions resolved, appended to the history and
+    /// routed.
     /// What its sender's owner alone sees is recorded with it, and given to
     /// nobody else (issue 417): the moderator decides on what everybody may
     /// see of it, and that is what is delivered; of an event with nothing
@@ -304,7 +309,12 @@ impl ChannelLoop {
     /// dropped, unrecorded: its sender asked before, its users see the
     /// answer end, and what is not delivered is not recorded, so that the
     /// history never delivers it either (issue 223).
-    async fn enter(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
+    async fn enter(
+        &self,
+        event: Envelope,
+        context: &SecurityContext,
+        running: &HashMap<ActorId, RunningActor>,
+    ) {
         if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), author } = &event.event
         {
             let interrupted = self.actor(*author).is_some_and(|actor| actor.retry_turn(*turn));
@@ -316,7 +326,7 @@ impl ChannelLoop {
         let event = self.resolve_mentions(event);
         let shown = event.published();
         let routing = match &shown {
-            Some(shown) => Some(self.moderator.route(shown).await),
+            Some(shown) => Some(self.moderator.route(shown, context).await),
             None => None,
         };
         let audience = routing
@@ -390,13 +400,24 @@ impl ChannelLoop {
         envelope.context.span_depth += 1;
     }
 
-    /// The security context of `sender`, whose envelope with the initiator `initiator` is read from
-    /// the history (issue 223): its actor's as it is now; one without rights if it takes no part
-    /// any more, or is none - the channel, the system. The initiator is the one recorded.
+    /// The security context of `sender` as the channel knows it now, for the initiator
+    /// `initiator` (issue 516): what its envelopes are admitted and routed in, live and read back
+    /// from the history alike (issue 223) - never what the sender says of itself. A user's own; an
+    /// agent's with its owner's rights and roles as the controllers hold them, limited by its
+    /// personality (`ResolvedParticipant::context`); the approver's its own, answered for by the
+    /// owner of its channel (issue 341); one without rights if the sender takes no part, or is
+    /// none - the channel, the system. The initiator is the one the event names.
     fn security_context_of(&self, sender: ActorId, initiator: ActorId) -> SecurityContext {
-        let now = match self.actor(sender) {
-            Some(actor) => actor.security_context(),
-            None => SecurityContext::new(ActorId::None, self.session_id, self.id),
+        let nobody = || SecurityContext::new(ActorId::None, self.session_id, self.id);
+        let now = match self.actors.load().get(&sender).map(|actor| &actor.participant) {
+            Some(participant) => match participant.kind() {
+                // An internal actor of the channel, no participant (issue 420).
+                ResolvedKind::Approver(approver) => approver.security_context(&self.channel.load()),
+                ResolvedKind::User(_) | ResolvedKind::Agent(..) => {
+                    participant.context().unwrap_or_else(nobody)
+                }
+            },
+            None => nobody(),
         };
         SecurityContext {
             initiator_id: initiator,
@@ -404,6 +425,44 @@ impl ChannelLoop {
             channel_id: self.id,
             ..now
         }
+    }
+
+    /// The context `event` is admitted in: its sender's, as the channel knows it now, for the
+    /// initiator the event names (`security_context_of`).
+    fn admitted_in(&self, event: &Envelope) -> SecurityContext {
+        self.security_context_of(event.context.sender_id, event.context.initiator_id)
+    }
+
+    /// Nothing if `issuer` may ask the agent `agent` of this channel for its command `command`
+    /// (issue 516); why not otherwise. The agent takes part and carries the command out, and the
+    /// issuer may see it (`ShowAgentCommand`) and ask for it (`ExecuteAgentCommand`) - asked here,
+    /// at the door, with the attributes of the agent and of the channel, never by the agent. A
+    /// command the issuer may not see does not fit the channel as they see it; one they may see
+    /// but not ask for is forbidden.
+    async fn admit_command(
+        &self,
+        issuer: &SecurityContext,
+        agent: ActorId,
+        command: &str,
+    ) -> Result<(), Rejection> {
+        let (commands, agent) = self.commands_held(agent).await.ok_or(Rejection::Invalid)?;
+        let command = commands.iter().find(|c| c.name == command).ok_or(Rejection::Invalid)?;
+        let channel = self.security_attributes();
+        let policy = self.policies.access_policy();
+        policy
+            .require(
+                issuer,
+                ActionType::ShowAgentCommand { command, agent: &agent, channel: &channel },
+                |_| Rejection::Invalid,
+            )
+            .await?;
+        policy
+            .require(
+                issuer,
+                ActionType::ExecuteAgentCommand { command, agent: &agent, channel: &channel },
+                |_| Rejection::Forbidden,
+            )
+            .await
     }
 
     /// Nothing if `event` may enter the channel; why not otherwise (issue 304) - the channel's one
@@ -428,9 +487,9 @@ impl ChannelLoop {
     /// - a user's answer to an approval request, by whoever may approve the calls of the agent it
     ///   names (`ApproveToolCall`, issues 14, 312) - whether that agent asked is the approver's to
     ///   check; a decision comes from an approver alone;
-    /// - a command for an agent (issue 269) comes from a user and names an agent taking part -
-    ///   whether the issuer may ask for it, its actor asked of the agent's commands, and the agent
-    ///   asks again; a nudge (issue 278) comes from a user and names someone else taking part;
+    /// - a command for an agent (issue 269) comes from a user, names an agent taking part that
+    ///   carries it out, and is one the issuer may see and ask for (`admit_command`, issue 516);
+    ///   a nudge (issue 278) comes from a user and names someone else taking part;
     /// - what the channel records of a turn besides its messages - where a step of its plan began,
     ///   a command or an activity it carried out, how it ended - and the start of an activity come
     ///   from an agent in its own name (issue 284): nobody else has turns; so does what an agent
@@ -443,12 +502,12 @@ impl ChannelLoop {
     ///   message streamed, or repeated as its turn ends, claims nothing - it is not what the
     ///   history keeps.
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
-    async fn admission(&self, event: &Envelope) -> Result<(), Rejection> {
-        let context = &event.security;
+    async fn admission(
+        &self,
+        event: &Envelope,
+        context: &SecurityContext,
+    ) -> Result<(), Rejection> {
         let messages = event.event.messages();
-        if !messages.is_empty() && context.caller_id != event.context.sender_id {
-            return Err(Rejection::Invalid);
-        }
         let classification = self.classification();
         let channel = self.security_attributes();
         let forbidden = |_| Rejection::Forbidden;
@@ -557,11 +616,9 @@ impl ChannelLoop {
                     .then_some(())
                     .ok_or(Rejection::Invalid)
             }
-            ActorEvent::CommandRequested { agent, .. } => {
-                (event.context.sender_id.as_user_id().is_some()
-                    && self.agent_actor(*agent).is_some())
-                .then_some(())
-                .ok_or(Rejection::Invalid)
+            ActorEvent::CommandRequested { agent, command, .. } => {
+                event.context.sender_id.as_user_id().ok_or(Rejection::Invalid)?;
+                self.admit_command(context, *agent, command).await
             }
             // It asks nothing of the policy beyond what a message does - an
             // `@`-mention asks the same.
@@ -573,10 +630,7 @@ impl ChannelLoop {
                 .ok_or(Rejection::Invalid)
             }
             ActorEvent::MessageGiven { message } => {
-                let sender = event.context.sender_id;
-                (sender.as_agent_id().is_some() && context.caller_id == sender)
-                    .then_some(())
-                    .ok_or(Rejection::Invalid)?;
+                event.context.sender_id.as_agent_id().ok_or(Rejection::Invalid)?;
                 self.policies.confidentiality().require_publish(
                     context,
                     &message.classification,
@@ -591,10 +645,7 @@ impl ChannelLoop {
             | ActorEvent::ActivityFinished { .. }
             | ActorEvent::TurnFinished { .. }
             | ActorEvent::TurnGivenUp { .. } => {
-                let sender = event.context.sender_id;
-                (sender.as_agent_id().is_some() && context.caller_id == sender)
-                    .then_some(())
-                    .ok_or(Rejection::Invalid)
+                event.context.sender_id.as_agent_id().map(drop).ok_or(Rejection::Invalid)
             }
             event if event.is_announcement() => Err(Rejection::Invalid),
             _ => Ok(()),
@@ -899,8 +950,9 @@ impl ChannelLoop {
 /// short (issue 223): read as the actor, so that it is given what went to
 /// it, as it went to it; without what it sent itself, as `route_event_impl`
 /// delivers nothing back to its sender but what the channel announced in its
-/// name; each envelope with its sender's security context as it is now, a
-/// turn's end with its answer, stamped as what is delivered live.
+/// name; a command asked of the actor admitted again, with the issuer's
+/// rights as they are now (issue 516), a turn's end with its answer, stamped
+/// as what is delivered live.
 #[async_trait]
 impl Behind for ChannelLoop {
     async fn recorded_for(
@@ -916,11 +968,19 @@ impl Behind for ChannelLoop {
         let reader = Reader::Participant(actor);
         let mut delivered = Vec::new();
         for node in self.history_store.entries(self.id, &reader, from..to).await? {
-            let context = &node.entry.context;
-            let security = self.security_context_of(context.sender_id, context.initiator_id);
-            let Some(mut envelope) = node.entry.envelope(node.seq, security) else { continue };
+            let Some(mut envelope) = node.entry.envelope(node.seq) else { continue };
             if envelope.context.sender_id == actor && !envelope.event.is_announcement() {
                 continue;
+            }
+            // A command asked of this agent is admitted again, with the
+            // issuer's rights as they are now (issue 516): whoever lost a
+            // role meanwhile has no command carried out that the role allowed.
+            if let ActorEvent::CommandRequested { agent, command, .. } = &envelope.event {
+                let issuer = self.admitted_in(&envelope);
+                if *agent == actor && self.admit_command(&issuer, actor, command).await.is_err() {
+                    debug!("Left out {}: not admitted again", envelope.describe());
+                    continue;
+                }
             }
             if let ActorEvent::TurnFinished { messages, .. } = &mut envelope.event {
                 *messages = self.history_store.answer(self.id, &reader, node.seq).await?;
@@ -973,6 +1033,19 @@ mod tests {
     use tokio::time;
     use uuid::Uuid;
 
+    impl ChannelLoop {
+        /// `event` admitted in the context the channel builds for its sender, as it is live.
+        async fn admit(&self, event: &Envelope) -> Result<(), Rejection> {
+            self.admission(event, &self.admitted_in(event)).await
+        }
+
+        /// `event` let in, in the context the channel builds for its sender, as it is live.
+        async fn let_in(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
+            let context = self.admitted_in(&event);
+            self.enter(event, &context, running).await;
+        }
+    }
+
     /// An inbox the test reads what the channel delivers from, with nothing
     /// behind it.
     fn opened() -> (Inbox, InboxReceiver) {
@@ -992,7 +1065,7 @@ mod tests {
         running: &HashMap<ActorId, RunningActor>,
         event: Envelope,
     ) {
-        let routing = channel.moderator.route(&event).await;
+        let routing = channel.moderator.route(&event, &channel.admitted_in(&event)).await;
         channel.route_event(running, event, Some(routing), None).await;
     }
 
@@ -1031,7 +1104,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Moderator for TellsTheSender {
-        async fn route(&self, event: &Envelope) -> Routing {
+        async fn route(&self, event: &Envelope, _context: &SecurityContext) -> Routing {
             let sender = event.context.sender_id;
             let notice = Notice::ChainCutOff {
                 message: MessageId::new(),
@@ -1066,7 +1139,6 @@ mod tests {
             },
         )]);
         let said = Envelope::new(
-            SecurityContext::default(),
             EventContext { sender_id: bob, ..EventContext::default() },
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
@@ -1155,7 +1227,6 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let answer = Envelope::new(
-            SecurityContext::default().next(talker, ActorId::None, ActorId::None),
             context,
             ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![said] },
         );
@@ -1188,13 +1259,74 @@ mod tests {
         running.abort();
     }
 
+    /// The context the channel admits an envelope in is its sender's as the
+    /// channel knows it (issue 516): a user's own; an agent's with its
+    /// owner's rights, for whoever asked; one without rights for whoever
+    /// takes no part. Never what the sender says of itself: an envelope
+    /// carries none.
+    #[tokio::test]
+    async fn an_envelope_is_admitted_in_the_context_the_channel_builds_for_its_sender() {
+        let (channel, _, agent, alice) = scripted_channel(Script::Hangs).await;
+        let (her, its) = (ActorId::User(alice), ActorId::Agent(agent));
+        let hers = channel.security_context_of(her, her);
+        assert_eq!(
+            (hers.caller_id, hers.owner_id, hers.principal_id, hers.initiator_id),
+            (her, her, her, her),
+            "her own"
+        );
+        assert_eq!((hers.session_id, hers.channel_id), (channel.session_id, channel.id));
+        let its_own = channel.security_context_of(its, her);
+        assert_eq!(
+            (its_own.caller_id, its_own.owner_id, its_own.principal_id, its_own.initiator_id),
+            (its, her, her, her),
+            "the agent's, with its owner's rights, on her word"
+        );
+        let stranger = ActorId::User(UserId::new());
+        let nobody = channel.security_context_of(stranger, stranger);
+        assert_eq!(nobody.caller_id, ActorId::None, "takes no part: no rights");
+    }
+
+    /// A command asked of an agent is admitted again as the agent reads it
+    /// back from the history (issue 516): one it may not be asked for any
+    /// more - here, one it does not carry out - is left out, and what else
+    /// went to it is delivered.
+    #[tokio::test]
+    async fn a_command_read_back_from_the_history_is_admitted_again_for_its_agent() {
+        let (channel, _, agent, alice) = scripted_channel(Script::Hangs).await;
+        let (her, its) = (ActorId::User(alice), ActorId::Agent(agent));
+        let from_her = |event| {
+            Envelope::new(EventContext { sender_id: her, ..EventContext::default() }, event)
+        };
+        let command = ActorEvent::CommandRequested {
+            command: "mark".to_string(),
+            args: String::new(),
+            agent: its,
+        };
+        let said = ActorEvent::CompleteMessageGenerated(Message {
+            sender_id: her,
+            role: MessageRole::User,
+            content: Some("hello".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        });
+        let running = HashMap::new();
+        channel.let_in(from_her(command), &running).await;
+        channel.let_in(from_her(said), &running).await;
+
+        let (delivered, _) = channel.recorded_for(its, Position::START).await.unwrap();
+        let kinds: Vec<_> = delivered.iter().map(|envelope| envelope.event.kind()).collect();
+        assert!(
+            kinds.contains(&"CompleteMessageGenerated") && !kinds.contains(&"CommandRequested"),
+            "the message delivered, the command it does not carry out left out: {kinds:?}"
+        );
+    }
+
     #[tokio::test]
     async fn an_actor_cannot_speak_in_the_name_of_another() {
         let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let talker = ActorId::Agent(AgentId::new());
         let her = ActorId::User(alice.id);
-        let said = |sender: ActorId, caller: ActorId, author: ActorId, text: &str| {
+        let said = |sender: ActorId, author: ActorId, text: &str| {
             let message = Message {
                 sender_id: author,
                 role: MessageRole::Assistant,
@@ -1202,20 +1334,21 @@ mod tests {
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             };
             Envelope::new(
-                SecurityContext::default().next(caller, ActorId::None, ActorId::None),
                 EventContext { sender_id: sender, ..EventContext::default() },
                 ActorEvent::CompleteMessageGenerated(message),
             )
         };
         let envelopes = vec![
-            said(her, talker, talker, "as alice's envelope"),
-            said(talker, her, talker, "in alice's security context"),
-            said(talker, talker, her, "as alice's message"),
+            said(her, talker, "as alice's envelope"),
+            said(talker, her, "as alice's message"),
             // On alice's behalf - she asked - but said by itself: as an agent answers.
             Envelope {
-                security: SecurityContext::new(her, channel.session_id, channel.id)
-                    .next(talker, her, her),
-                ..said(talker, talker, talker, "its own")
+                context: EventContext {
+                    sender_id: talker,
+                    initiator_id: her,
+                    ..EventContext::default()
+                },
+                ..said(talker, talker, "its own")
             },
         ];
         channel
@@ -1257,11 +1390,7 @@ mod tests {
         let her = ActorId::User(alice.id);
         let stranger = ActorId::User(UserId::new());
         let from_her = |event| {
-            Envelope::new(
-                SecurityContext::new(her, channel.session_id, channel.id),
-                EventContext { sender_id: her, ..EventContext::default() },
-                event,
-            )
+            Envelope::new(EventContext { sender_id: her, ..EventContext::default() }, event)
         };
         let (to_her, mut hers) = opened();
         let actors = HashMap::from([(
@@ -1333,11 +1462,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let (her, bob) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from_her = |event| {
-            Envelope::new(
-                SecurityContext::new(her, channel.session_id, channel.id),
-                EventContext { sender_id: her, ..EventContext::default() },
-                event,
-            )
+            Envelope::new(EventContext { sender_id: her, ..EventContext::default() }, event)
         };
         let (to_her, mut hers) = opened();
         let actors = HashMap::from([(
@@ -1386,12 +1511,8 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let agent = ActorId::Agent(AgentId::new());
         let her = ActorId::User(alice.id);
-        let sent = |sender: ActorId, caller: ActorId, event: ActorEvent| {
-            Envelope::new(
-                SecurityContext::default().next(caller, ActorId::None, ActorId::None),
-                EventContext { sender_id: sender, ..EventContext::default() },
-                event,
-            )
+        let sent = |sender: ActorId, event: ActorEvent| {
+            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
         };
         let turn_id = TurnId::new();
         let activity = "compacting its context".to_string();
@@ -1417,19 +1538,14 @@ mod tests {
         for event in of_a_turn {
             let kind = event.kind();
             assert_eq!(
-                channel.admission(&sent(agent, agent, event.clone())).await,
+                channel.admit(&sent(agent, event.clone())).await,
                 Ok(()),
                 "{kind} of an agent's turn, in its own name"
             );
             assert_eq!(
-                channel.admission(&sent(her, her, event.clone())).await,
+                channel.admit(&sent(her, event)).await,
                 Err(Rejection::Invalid),
                 "{kind}: a user has no turns"
-            );
-            assert_eq!(
-                channel.admission(&sent(agent, her, event)).await,
-                Err(Rejection::Invalid),
-                "{kind} in another's name"
             );
         }
         let of_the_session = ActorEvent::CommandExecuted {
@@ -1440,7 +1556,7 @@ mod tests {
             turn_id: None,
         };
         assert_eq!(
-            channel.admission(&sent(her, her, of_the_session)).await,
+            channel.admit(&sent(her, of_the_session)).await,
             Ok(()),
             "a command of the session is run by a user, in no turn"
         );
@@ -1466,7 +1582,6 @@ mod tests {
         }
         let said = || {
             Envelope::new(
-                context.clone(),
                 EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
                 ActorEvent::TurnFinished {
                     turn_id: TurnId::new(),
@@ -1491,29 +1606,23 @@ mod tests {
         use caelumora_model::security::OwnershipPolicy;
         let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
-        let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
-        let from = |sender: ActorId, context: ActorId, classification: Classification| {
+        let alice_id = ActorId::User(alice.id);
+        let from = |sender: ActorId, classification: Classification| {
             Envelope::new(
-                SecurityContext::new(context, Default::default(), Default::default()),
                 EventContext { sender_id: sender, ..EventContext::default() },
                 ActorEvent::CompleteMessageGenerated(Message::new(classification)),
             )
         };
         let internal = Classification::general(Confidentiality::Internal);
         let actors = HashMap::new();
-        channel.process_envelope(from(alice_id, alice_id, internal.clone()), &actors).await;
+        channel.process_envelope(from(alice_id, internal.clone()), &actors).await;
         channel
             .process_envelope(
-                from(alice_id, alice_id, Classification::general(Confidentiality::Confidential)),
+                from(alice_id, Classification::general(Confidentiality::Confidential)),
                 &actors,
             )
             .await;
-        channel.process_envelope(from(alice_id, bob_id, internal.clone()), &actors).await;
-        assert_eq!(
-            channel.history().await.len(),
-            1,
-            "neither above the channel nor in another's name"
-        );
+        assert_eq!(channel.history().await.len(), 1, "not above the channel");
 
         // A tool result is a part of its own.
         let call = ToolCall {
@@ -1529,7 +1638,7 @@ mod tests {
             "secret".to_string(),
             Classification::general(Confidentiality::Confidential),
         );
-        let mut with_result = from(alice_id, alice_id, internal);
+        let mut with_result = from(alice_id, internal);
         if let ActorEvent::CompleteMessageGenerated(message) = &mut with_result.event {
             message.tool_results.push(result);
         }
@@ -1545,11 +1654,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from = |sender: ActorId, event| {
-            Envelope::new(
-                SecurityContext::new(sender, Default::default(), Default::default()),
-                EventContext { sender_id: sender, ..EventContext::default() },
-                event,
-            )
+            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
         };
         let said = Message {
             id: MessageId::new(),
@@ -1730,11 +1835,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let alice_id = ActorId::User(alice.id);
         let from = |event| {
-            Envelope::new(
-                SecurityContext::new(alice_id, Default::default(), Default::default()),
-                EventContext { sender_id: alice_id, ..EventContext::default() },
-                event,
-            )
+            Envelope::new(EventContext { sender_id: alice_id, ..EventContext::default() }, event)
         };
         let said = |n: usize| Message {
             id: MessageId::new(),
@@ -1810,11 +1911,7 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let from = |sender: ActorId, event| {
-            Envelope::new(
-                SecurityContext::new(sender, Default::default(), Default::default()),
-                EventContext { sender_id: sender, ..EventContext::default() },
-                event,
-            )
+            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
         };
         let (to_alice, mut alices) = opened();
         let (to_bob, mut bobs) = opened();
@@ -2077,7 +2174,6 @@ mod tests {
         let mut events = channel.observe();
         let gone = ActorId::Agent(AgentId::new());
         let late = Envelope::new(
-            SecurityContext::default(),
             EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()),
             ActorEvent::TurnGivenUp {
                 turn_id: TurnId::new(),
@@ -2112,7 +2208,6 @@ mod tests {
         let going = ActorId::Agent(AgentId::new());
         let turn_id = TurnId::new();
         let farewell = Envelope::new(
-            SecurityContext::default().next(going, ActorId::None, ActorId::None),
             EventContext::new(channel.session_id, channel.id, going, "helper".to_string()),
             ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left },
         );
@@ -2244,7 +2339,6 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let said = || {
             Envelope::new(
-                context.clone(),
                 EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
                 ActorEvent::CompleteMessageGenerated(Message {
                     id: MessageId::new(),
@@ -2278,9 +2372,9 @@ mod tests {
                 Some(context.clone()),
             )
             .await;
-        channel.enter(said(), &running).await;
+        channel.let_in(said(), &running).await;
         start_all(&mut running, &mut join_set).await;
-        channel.enter(said(), &running).await;
+        channel.let_in(said(), &running).await;
 
         let mut told = Vec::new();
         while told.len() < 4 {
@@ -2321,7 +2415,6 @@ mod tests {
         )]);
         let from_alice = |event| {
             Envelope::new(
-                context.clone(),
                 EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
                 event,
             )
@@ -2383,7 +2476,6 @@ mod tests {
         assert!(!other.cancelled(), "the other's goes on");
 
         let said = Envelope::new(
-            context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
@@ -2420,11 +2512,6 @@ mod tests {
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let said = |text: &str| {
             Envelope::new(
-                SecurityContext::new(
-                    ActorId::User(alice.id),
-                    Default::default(),
-                    Default::default(),
-                ),
                 EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: ActorId::User(alice.id),
@@ -2445,7 +2532,7 @@ mod tests {
         };
 
         let everybody = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
-        everybody.enter(said("hello"), &HashMap::new()).await;
+        everybody.let_in(said("hello"), &HashMap::new()).await;
         assert_eq!(
             recorded(Arc::clone(&everybody)).await,
             Some((ActorId::User(alice.id), Recipients::members(true))),
@@ -2454,7 +2541,7 @@ mod tests {
 
         let to_bob =
             channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
-        to_bob.enter(said("psst"), &HashMap::new()).await;
+        to_bob.let_in(said("psst"), &HashMap::new()).await;
         assert_eq!(
             recorded(Arc::clone(&to_bob)).await,
             Some((ActorId::User(alice.id), Recipients::only(vec![ActorId::User(bob.id)]))),
@@ -2500,9 +2587,8 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         channel
-            .enter(
+            .let_in(
                 Envelope::new(
-                    SecurityContext::default(),
                     EventContext { sender_id: hers, ..EventContext::default() },
                     ActorEvent::CompleteMessageGenerated(said),
                 ),
@@ -2550,7 +2636,7 @@ mod tests {
         struct Told(Mutex<Vec<Envelope>>);
         #[async_trait::async_trait]
         impl Moderator for Told {
-            async fn route(&self, event: &Envelope) -> Routing {
+            async fn route(&self, event: &Envelope, _context: &SecurityContext) -> Routing {
                 self.0.lock().unwrap().push(event.clone());
                 Routing::default()
             }
@@ -2591,7 +2677,6 @@ mod tests {
         };
         let said = |message: Message| {
             Envelope::new(
-                SecurityContext::default(),
                 EventContext { sender_id: agent, ..EventContext::default() },
                 ActorEvent::CompleteMessageGenerated(message),
             )
@@ -2614,7 +2699,7 @@ mod tests {
         };
 
         channel
-            .enter(
+            .let_in(
                 said(Message { content: Some("found it".to_string()), ..thinking.clone() }),
                 &running,
             )
@@ -2638,7 +2723,7 @@ mod tests {
             "the channel records it whole"
         );
 
-        channel.enter(said(thinking), &running).await;
+        channel.let_in(said(thinking), &running).await;
         assert!(rx.try_recv().await.is_none(), "nothing of it is left to show");
         assert_eq!(told.0.lock().unwrap().len(), 1, "nor to decide on");
         assert_eq!(
@@ -2663,7 +2748,6 @@ mod tests {
         let owner = ctx.initiator_id;
         let said = |message: &Message| {
             Envelope::new(
-                ctx.clone(),
                 EventContext { sender_id: owner, ..EventContext::default() },
                 ActorEvent::CompleteMessageGenerated(message.clone()),
             )
@@ -2707,11 +2791,7 @@ mod tests {
         let upload = || attachments.create(&hers, &channel, "a.txt", None, (1, file("a")));
         let (alice, bob) = (ActorId::User(world.alice), ActorId::User(world.bob));
         let sent = |sender: ActorId, event: ActorEvent| {
-            Envelope::new(
-                SecurityContext::new(sender, session.id(), main.id()),
-                EventContext { sender_id: sender, ..EventContext::default() },
-                event,
-            )
+            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
         };
         let said = |sender: ActorId, attachments: Vec<ContentRef>| {
             sent(
@@ -2727,7 +2807,7 @@ mod tests {
 
         let hers = upload().await.unwrap();
         assert_eq!(
-            main.admission(&said(bob, vec![hers.clone()])).await,
+            main.admit(&said(bob, vec![hers.clone()])).await,
             Err(Rejection::Invalid),
             "not his"
         );
@@ -2741,7 +2821,7 @@ mod tests {
             }),
         );
         assert_eq!(
-            main.admission(&in_her_name).await,
+            main.admit(&in_her_name).await,
             Err(Rejection::Invalid),
             "not his for a message naming her"
         );
@@ -2782,12 +2862,12 @@ mod tests {
             .unwrap()
             .remove(0);
         assert_eq!(
-            main.admission(&giving(drawn.clone())).await,
+            main.admit(&giving(drawn.clone())).await,
             Ok(()),
             "what a tool gave (issue 512): kept for the channel"
         );
         assert_eq!(
-            main.admission(&giving(drawn.clone())).await,
+            main.admit(&giving(drawn.clone())).await,
             Ok(()),
             "and waiting for no message, so claimed by none"
         );
@@ -2796,7 +2876,7 @@ mod tests {
             ..drawn.clone()
         };
         assert_eq!(
-            main.admission(&giving(drawn_elsewhere)).await,
+            main.admit(&giving(drawn_elsewhere)).await,
             Err(Rejection::Invalid),
             "not another channel's"
         );
@@ -2805,7 +2885,7 @@ mod tests {
             ..drawn
         };
         assert_eq!(
-            main.admission(&giving(drawn_above)).await,
+            main.admit(&giving(drawn_above)).await,
             Err(Rejection::ClassificationRefused),
             "nor what may not flow in"
         );
@@ -2833,12 +2913,12 @@ mod tests {
             )
         };
         assert_eq!(
-            main.admission(&showing(hers.clone())).await,
+            main.admit(&showing(hers.clone())).await,
             Ok(()),
             "what a result showed: one of the channel's"
         );
         assert_eq!(
-            main.admission(&showing(elsewhere.clone())).await,
+            main.admit(&showing(elsewhere.clone())).await,
             Err(Rejection::Invalid),
             "not another channel's"
         );
@@ -2847,12 +2927,12 @@ mod tests {
             ..hers.clone()
         };
         assert_eq!(
-            main.admission(&showing(above)).await,
+            main.admit(&showing(above)).await,
             Err(Rejection::ClassificationRefused),
             "nor what may not flow in"
         );
         assert_eq!(
-            main.admission(&said(alice, vec![elsewhere])).await,
+            main.admit(&said(alice, vec![elsewhere])).await,
             Err(Rejection::Invalid),
             "only as it was uploaded"
         );
@@ -2861,17 +2941,13 @@ mod tests {
             many.push(upload().await.unwrap());
         }
         assert_eq!(
-            main.admission(&said(alice, many.clone())).await,
+            main.admit(&said(alice, many.clone())).await,
             Err(Rejection::Invalid),
             "more than a message carries"
         );
+        assert_eq!(main.admit(&said(alice, many[..10].to_vec())).await, Ok(()), "and claimed so");
         assert_eq!(
-            main.admission(&said(alice, many[..10].to_vec())).await,
-            Ok(()),
-            "and claimed so"
-        );
-        assert_eq!(
-            main.admission(&said(alice, many[..1].to_vec())).await,
+            main.admit(&said(alice, many[..1].to_vec())).await,
             Err(Rejection::Invalid),
             "by one message only"
         );
@@ -2889,7 +2965,7 @@ mod tests {
         };
         assert_eq!(message.attachments, slice::from_ref(&hers));
         assert_eq!(
-            main.admission(&said(alice, vec![hers.clone()])).await,
+            main.admit(&said(alice, vec![hers.clone()])).await,
             Err(Rejection::Invalid),
             "claimed by the message said"
         );
@@ -2899,7 +2975,7 @@ mod tests {
         };
         let added = upload().await.unwrap();
         assert_eq!(
-            main.admission(&modified(vec![hers.clone(), added.clone()])).await,
+            main.admit(&modified(vec![hers.clone(), added.clone()])).await,
             Ok(()),
             "what it carries, and what she uploaded"
         );
@@ -2908,7 +2984,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            main.admission(&modified(vec![hers, his])).await,
+            main.admit(&modified(vec![hers, his])).await,
             Err(Rejection::Invalid),
             "never another's upload"
         );

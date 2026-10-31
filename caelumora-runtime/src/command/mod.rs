@@ -1,8 +1,9 @@
 //! User commands (issue 28): `ChannelCommandProvider` components contribute
 //! commands, and a session's `CommandExecutor` finds and runs them on behalf
 //! of a user. `AgentCommandProvider` components of a personality contribute
-//! the commands an agent carries out itself (issue 269), which its actor's
-//! executor finds and the agent runs in a turn of its own.
+//! the commands an agent carries out itself (issue 269), a `CommandSet` its
+//! actor finds them in once the channel admitted the request, and the agent
+//! runs in a turn of its own.
 //!
 //! Commands are for people - agents act through tools. They are issued
 //! through `UserActor::execute_command`, on behalf of the user the actor
@@ -15,7 +16,6 @@ pub mod nudge_command;
 pub mod wakeup_command;
 
 use crate::actor::user::UserActor;
-use crate::actor::Actor;
 use crate::channel::{ChannelLoop, ChannelParticipant};
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;
@@ -80,7 +80,7 @@ pub struct CommandContext<'a> {
     /// sends only in its own name (issue 228).
     pub issuer: &'a UserActor,
     pub channel: &'a ChannelLoop,
-    pub executor: &'a CommandExecutor<dyn ChannelCommandProvider>,
+    pub executor: &'a CommandExecutor,
 }
 
 /// What every facet contributing commands says of them, whoever runs them:
@@ -111,8 +111,7 @@ pub trait ChannelCommandProvider: ProvidesCommands {
 }
 
 /// A command of a set, with the component that provides it and the facet
-/// that carries it out - what `CommandExecutor::admit` hands out once the
-/// command may be run, and only then.
+/// that carries it out.
 #[derive(Debug)]
 pub struct CommandEntry<P: ?Sized> {
     command: Command,
@@ -121,46 +120,34 @@ pub struct CommandEntry<P: ?Sized> {
 }
 
 impl<P: ?Sized> CommandEntry<P> {
-    /// The command.
-    pub fn command(&self) -> &Command {
-        &self.command
-    }
-
     /// The facet that carries it out - to be called once the command was
-    /// admitted (`CommandExecutor::admit`).
+    /// admitted, by whoever runs it.
     pub fn provider(&self) -> &Arc<P> {
         &self.provider
     }
 }
 
-/// Finds and runs the commands of one set - the session's, from the global
-/// ones and the session's own; an agent's (`caelumora_agents::command`, issue 370) -
-/// with the permission checks for seeing and
-/// running them, as the `ToolExecutor` does for an agent's tools. Like it,
-/// it is no component: how a command runs is the command's own business,
-/// and there is nothing about running them to try out. Generic over the
-/// facet that provides the commands, since what a
-/// command is given to run with is the facet's; finding one, refusing two
-/// of one name and asking the policy are the same for every facet.
+/// The commands one set of providers contributes - the session's, from the
+/// global ones and the session's own; an agent's (`caelumora_agents::command`,
+/// issue 370) -, each found by its name, no two of one name. Generic over the
+/// facet that provides the commands, since what a command is given to run
+/// with is the facet's; finding one and refusing two of one name are the same
+/// for every facet. Who may see and run one is asked by whoever runs it: the
+/// `CommandExecutor` for the channel's, the channel's door for an agent's
+/// (issue 516).
 #[derive(Debug)]
-pub struct CommandExecutor<P: ?Sized> {
-    access_policy: Arc<dyn AccessPolicy>,
+pub struct CommandSet<P: ?Sized> {
     entries: Vec<CommandEntry<P>>,
 }
 
-impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
-    /// An executor for the commands `providers` contribute. Building them is
-    /// up to whoever owns their configuration - for a session's commands,
-    /// `RuntimeManager::new_command_executor`.
+impl<P: ?Sized + ProvidesCommands> CommandSet<P> {
+    /// The commands `providers` contribute.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if two of them provide the same name:
     /// that is a mistake in the configuration, and resolving it by order
     /// would silently hide one.
-    pub fn new(
-        access_policy: Arc<dyn AccessPolicy>,
-        providers: Vec<ComponentImpl<P>>,
-    ) -> ComponentResult<Self> {
+    pub fn new(providers: Vec<ComponentImpl<P>>) -> ComponentResult<Self> {
         let mut entries: Vec<CommandEntry<P>> = Vec::new();
         for provider in providers {
             for command in provider.commands() {
@@ -177,79 +164,72 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
                 });
             }
         }
-        Ok(Self { access_policy, entries })
+        Ok(Self { entries })
+    }
+
+    /// A set without commands.
+    pub fn empty() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    /// Whether it has a command `name`.
+    pub fn has(&self, name: &str) -> bool {
+        self.entry(name).is_some()
+    }
+
+    /// The command `name` with what carries it out, if the set has it.
+    pub fn entry(&self, name: &str) -> Option<&CommandEntry<P>> {
+        self.entries.iter().find(|e| e.command.name == name)
+    }
+
+    /// The commands, sorted by name: the order components are built in
+    /// follows their dependencies, not the configuration, so it is no order
+    /// to show.
+    pub fn commands(&self) -> Vec<Command> {
+        let mut commands: Vec<Command> = self.entries.iter().map(|e| e.command.clone()).collect();
+        commands.sort_by(|l, r| l.name.cmp(&r.name));
+        commands
+    }
+}
+
+/// Finds and runs the commands of the channel - the session's set, run in
+/// each of its channels - with the permission checks for seeing and running
+/// them: `ShowCommand` and `ExecuteCommand`, with the attributes of the
+/// channel they are run in (issue 304), as the `ToolExecutor` does for an
+/// agent's tools. Like it, it is no component: how a command runs is the
+/// command's own business, and there is nothing about running them to try
+/// out. An agent's commands are admitted at the channel's door, with the
+/// agent's attributes besides (issue 516).
+#[derive(Debug)]
+pub struct CommandExecutor {
+    access_policy: Arc<dyn AccessPolicy>,
+    commands: CommandSet<dyn ChannelCommandProvider>,
+}
+
+impl CommandExecutor {
+    /// An executor for the commands `providers` contribute. Building them is
+    /// up to whoever owns their configuration - for a session's commands,
+    /// `RuntimeManager::new_command_executor`.
+    ///
+    /// # Errors
+    /// As `CommandSet::new`.
+    pub fn new(
+        access_policy: Arc<dyn AccessPolicy>,
+        providers: Vec<ComponentImpl<dyn ChannelCommandProvider>>,
+    ) -> ComponentResult<Self> {
+        Ok(Self { access_policy, commands: CommandSet::new(providers)? })
     }
 
     /// An executor without commands.
     pub fn empty(access_policy: Arc<dyn AccessPolicy>) -> Self {
-        Self { access_policy, entries: Vec::new() }
+        Self { access_policy, commands: CommandSet::empty() }
     }
 
     /// Whether it has a command `name`, whoever may see it.
     pub fn has(&self, name: &str) -> bool {
-        self.entries.iter().any(|e| e.command.name == name)
+        self.commands.has(name)
     }
 
-    /// The commands `issuer` may see - those `show` of them is granted -,
-    /// sorted by name: the order components are built in follows their
-    /// dependencies, not the configuration, so it is no order to show. What
-    /// `show` asks is the facet's: each facet's owner says how its commands
-    /// are seen (`ShowCommand` for the channel's, issue 370).
-    pub async fn visible_by<'c>(
-        &'c self,
-        issuer: &SecurityContext,
-        show: impl Fn(&'c Command) -> ActionType<'c>,
-    ) -> Vec<Command> {
-        let mut visible = Vec::new();
-        for entry in &self.entries {
-            if self.access_policy.check(issuer, show(&entry.command)).await {
-                visible.push(entry.command.clone());
-            }
-        }
-        visible.sort_by(|l, r| l.name.cmp(&r.name));
-        visible
-    }
-
-    /// The command `name`, if `issuer` may run it: `Empty` for an empty
-    /// name; `Unknown` if there is no such command or `show` of it is not
-    /// granted them - one they may not see is unknown to them, not refused;
-    /// `Forbidden` if `execute` of it is not. As `visible_by`, what is asked
-    /// is the facet's owner's to say.
-    ///
-    /// # Errors
-    /// As above.
-    pub async fn admit<'c>(
-        &'c self,
-        name: &str,
-        issuer: &SecurityContext,
-        show: impl Fn(&'c Command) -> ActionType<'c>,
-        execute: impl Fn(&'c Command) -> ActionType<'c>,
-    ) -> CommandResult<&'c CommandEntry<P>> {
-        if name.is_empty() {
-            return Err(CommandError::Empty);
-        }
-        let entry = self.entries.iter().find(|e| e.command.name == name);
-        let Some(entry) = entry else {
-            return Err(CommandError::Unknown(name.to_string()));
-        };
-        self.access_policy
-            .require(issuer, show(&entry.command), |_| CommandError::Unknown(name.to_string()))
-            .await?;
-        self.access_policy
-            .require(issuer, execute(&entry.command), |refused| CommandError::Forbidden {
-                name: name.to_string(),
-                refused,
-            })
-            .await?;
-        Ok(entry)
-    }
-}
-
-/// The commands of the channel - the session's set, run in each of its
-/// channels: seen and run by `ShowCommand` and `ExecuteCommand`, with the
-/// attributes of the channel they are run in - as the commands of an agent
-/// are, with the agent's besides (issue 304).
-impl CommandExecutor<dyn ChannelCommandProvider> {
     /// The commands `issuer` may see in the channel with `channel`
     /// attributes (`ShowCommand`), sorted by name.
     pub async fn visible(
@@ -257,28 +237,47 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
         issuer: &SecurityContext,
         channel: &SecurityAttributes,
     ) -> Vec<Command> {
-        self.visible_by(issuer, |command| ActionType::ShowCommand { command, channel }).await
+        let mut visible = Vec::new();
+        for command in self.commands.commands() {
+            let show = ActionType::ShowCommand { command: &command, channel };
+            if self.access_policy.check(issuer, show).await {
+                visible.push(command);
+            }
+        }
+        visible
     }
 
-    /// Runs the command `name` for `context.issuer`.
+    /// Runs the command `name` for `context.issuer`: `Empty` for an empty
+    /// name; `Unknown` if there is no such command or the issuer may not see
+    /// it - one they may not see is unknown to them, not refused;
+    /// `Forbidden` if they may see but not run it.
     ///
     /// # Errors
-    /// `CommandError::Empty` for an empty name; `Unknown` if there is no such
-    /// command or the issuer may not see it; `Forbidden` if they may see but
-    /// not run it; otherwise whatever the command reports.
+    /// As above; otherwise whatever the command reports.
     pub async fn execute(
         &self,
         name: &str,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
+        if name.is_empty() {
+            return Err(CommandError::Empty);
+        }
+        let entry =
+            self.commands.entry(name).ok_or_else(|| CommandError::Unknown(name.to_string()))?;
+        let issuer = context.issuer.security_context();
         let channel = context.channel.security_attributes();
-        let entry = self
-            .admit(
-                name,
-                &context.issuer.security_context(),
-                |command| ActionType::ShowCommand { command, channel: &channel },
-                |command| ActionType::ExecuteCommand { command, channel: &channel },
+        let command = &entry.command;
+        self.access_policy
+            .require(&issuer, ActionType::ShowCommand { command, channel: &channel }, |_| {
+                CommandError::Unknown(name.to_string())
+            })
+            .await?;
+        self.access_policy
+            .require(
+                &issuer,
+                ActionType::ExecuteCommand { command, channel: &channel },
+                |refused| CommandError::Forbidden { name: name.to_string(), refused },
             )
             .await?;
         entry.provider.execute(name, args, context).await

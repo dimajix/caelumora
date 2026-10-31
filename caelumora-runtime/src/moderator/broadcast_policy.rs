@@ -5,6 +5,7 @@ use crate::moderator::{ResponderPolicy, Undecided};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
+use caelumora_model::security::SecurityContext;
 use std::sync::Arc;
 
 pub const BROADCAST_POLICY_KIND: &str = "broadcast_policy";
@@ -18,6 +19,7 @@ impl ResponderPolicy for BroadcastPolicy {
     async fn choose(
         &self,
         _event: &Envelope,
+        _context: &SecurityContext,
         _messages: &[Message],
         candidates: Vec<ActorDescription>,
     ) -> Result<Vec<ActorId>, Undecided> {

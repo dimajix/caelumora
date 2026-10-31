@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, Envelope, RequestReason};
 use caelumora_model::history::Audience;
 use caelumora_model::message::{Message, MessageId};
+use caelumora_model::security::SecurityContext;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -33,7 +34,9 @@ pub(crate) trait Moderator: Send + Sync + Debug {
     /// What becomes of `event` in the channel: whom it is delivered to,
     /// whom to ask to respond, and what the moderator tells of its own.
     /// What a user sees is what is delivered to their actor (issue 220).
-    async fn route(&self, event: &Envelope) -> Routing;
+    /// `context` is the one the channel admitted the event in - its
+    /// sender's, as the channel built it (issue 516).
+    async fn route(&self, event: &Envelope, context: &SecurityContext) -> Routing;
     fn add_actor(&self, actor: Arc<dyn Actor>);
     fn remove_actor(&self, actor: ActorId);
 }
@@ -88,8 +91,9 @@ impl From<Notice> for ActorEvent {
 #[async_trait]
 pub trait ResponderPolicy: Send + Sync + Debug {
     /// The agents of `candidates` to ask to respond to what `event` said - a message, or the
-    /// messages of a turn -, by its sender and in its context, in which whatever the policy asks is
-    /// asked. `messages` is the conversation, the oldest first: what was heard before, as far as
+    /// messages of a turn -, by its sender, in `context`, the one the channel admitted it in, in
+    /// which whatever the policy asks is asked (issue 516). `messages` is the conversation, the
+    /// oldest first: what was heard before, as far as
     /// the moderator keeps it, as it stands (issue 414), and last what `event` said; each names its
     /// sender. The candidates are the agents that are awake and did not say what `event` said, in
     /// no particular order, as they are described to everyone in the channel (issue 403).
@@ -100,6 +104,7 @@ pub trait ResponderPolicy: Send + Sync + Debug {
     async fn choose(
         &self,
         event: &Envelope,
+        context: &SecurityContext,
         messages: &[Message],
         candidates: Vec<ActorDescription>,
     ) -> Result<Vec<ActorId>, Undecided>;

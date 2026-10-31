@@ -1679,7 +1679,7 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
     })
     .await
     .expect("what came of the task is said");
-    assert_eq!(told.security.initiator_id, bob, "said with the authority of bob's request");
+    assert_eq!(told.context.initiator_id, bob, "said on bob's request");
     assert_eq!(told.context.span_id, request.span_id, "in its span");
     let called_as: Vec<_> = remote
         .called_as

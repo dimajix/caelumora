@@ -870,18 +870,16 @@ impl ParticipantView {
     }
 
     /// The commands the participant carries out itself that the viewer may see
-    /// (issue 269), read from its actor, which asks the policy: none if it
-    /// carries out none here - it is no agent, has left - and none while the
-    /// channel does not run, when nothing could carry them out.
+    /// (issue 269), as the channel lets the viewer see them
+    /// (`ChannelLoop::commands_of`, issue 516): none if it carries out none
+    /// here - it is no agent, has left - and none while the channel does not
+    /// run, when nothing could carry them out.
     pub async fn commands(&self) -> Vec<Command> {
         if self.former {
             return Vec::new();
         }
-        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id()))
-        else {
-            return Vec::new();
-        };
-        actor.commands(self.views().context()).await
+        let Some(channel) = self.channel.running() else { return Vec::new() };
+        channel.commands_of(self.id(), self.views().context()).await
     }
 
     /// The tools the participant has now, in their tool sets (issue 194), as it

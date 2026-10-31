@@ -1060,12 +1060,8 @@ impl Actor for ExternalAgentActor {
         self.body.components()
     }
 
-    async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {
-        self.body.visible_commands(issuer).await
-    }
-
-    fn security_context(&self) -> SecurityContext {
-        self.body.security_context()
+    fn commands(&self) -> Vec<Command> {
+        self.body.commands()
     }
 
     async fn heard(&self) -> Option<Heard> {

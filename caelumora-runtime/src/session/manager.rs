@@ -1135,7 +1135,7 @@ mod tests {
     use super::SHUTDOWN_BOUND;
     use crate::agent::AgentError;
     use crate::channel::STOP_GRACE;
-    use crate::command::{ChannelCommandProvider, CommandExecutor};
+    use crate::command::CommandExecutor;
     use crate::component::BUNDLE_REF_KIND;
     use crate::error::is_forbidden;
     use crate::project::ProjectManager;
@@ -1348,7 +1348,7 @@ mod tests {
         use caelumora_model::command::HELP_COMMAND_KIND;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let runtime = test_runtime();
-        let names = |executor: CommandExecutor<dyn ChannelCommandProvider>| async move {
+        let names = |executor: CommandExecutor| async move {
             executor
                 .visible(&SecurityContext::default(), &SecurityAttributes::systems())
                 .await

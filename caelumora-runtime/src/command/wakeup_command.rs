@@ -1,6 +1,5 @@
 //! The built-in `/wakeup` command (issue 28).
 
-use crate::actor::Actor;
 use crate::command::{
     named_participant, names, ChannelCommandProvider, CommandContext, CommandError, CommandResult,
     ProvidesCommands,

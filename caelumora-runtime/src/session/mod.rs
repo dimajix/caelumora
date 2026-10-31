@@ -12,7 +12,7 @@ pub(crate) use manager::Found;
 pub use manager::{SessionManager, SessionSpec};
 
 use crate::channel::{ChannelLoop, Participation};
-use crate::command::{ChannelCommandProvider, CommandExecutor};
+use crate::command::CommandExecutor;
 use crate::component::{ComponentError, ComponentRegistry};
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
 use crate::event::{EventBus, SubscriptionTopic};
@@ -203,7 +203,7 @@ pub struct SessionLoop {
     /// it (issue 348).
     groups: Arc<GroupManager>,
     /// The user commands of every channel of the session.
-    commands: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
+    commands: Arc<CommandExecutor>,
     /// The session's channels, and which of them run (issues 116, 463). A
     /// channel deleted while it waits to be started has no entry any more, so
     /// `run` never starts it.

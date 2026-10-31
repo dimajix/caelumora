@@ -110,10 +110,7 @@ impl RuntimeManager {
     /// A `ComponentError` if a command component cannot be built or two
     /// provide the same command - the session does not start then; whatever
     /// the store reports reading its owner.
-    pub async fn new_command_executor(
-        &self,
-        session: &Session,
-    ) -> Result<CommandExecutor<dyn ChannelCommandProvider>> {
+    pub async fn new_command_executor(&self, session: &Session) -> Result<CommandExecutor> {
         let security = self
             .controller_manager
             .owner_context(session.security_attributes.owner_id, session.id, ChannelId::default())

@@ -15,7 +15,7 @@ use caelumora_model::channel::Participant;
 use caelumora_model::command::Command;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, Questions};
-use caelumora_model::security::{ActionType, SecurityContext};
+use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::store::Stored;
 use caelumora_model::value::name::Name;
 use std::collections::HashMap;
@@ -438,14 +438,52 @@ impl ChannelLoop {
         let mut found = Vec::new();
         for participant in self.participants().into_iter().filter(|m| m.id.as_agent_id().is_some())
         {
-            let Some(actor) = self.actor(participant.id) else { continue };
-            let commands = actor.commands(issuer).await;
+            let commands = self.commands_of(participant.id, issuer).await;
             if !commands.is_empty() {
                 found.push((participant, commands));
             }
         }
         found.sort_by(|(l, _), (r, _)| l.handle.cmp(&r.handle));
         found
+    }
+
+    /// The commands the agent `agent` carries out itself that `issuer` may see in this channel
+    /// (`ShowAgentCommand`, issue 516), by name: asked with the agent's attributes and the
+    /// channel's, as a command is admitted at the door (`admit_command`). None if `agent` is no
+    /// agent taking part.
+    pub(crate) async fn commands_of(
+        &self,
+        agent: ActorId,
+        issuer: &SecurityContext,
+    ) -> Vec<Command> {
+        let Some((commands, attributes)) = self.commands_held(agent).await else {
+            return Vec::new();
+        };
+        let channel = self.security_attributes();
+        let mut visible = Vec::new();
+        for command in commands {
+            let show = ActionType::ShowAgentCommand {
+                command: &command,
+                agent: &attributes,
+                channel: &channel,
+            };
+            if self.policies.access_policy().check(issuer, show).await {
+                visible.push(command);
+            }
+        }
+        visible
+    }
+
+    /// The commands the agent `agent` carries out in this channel, and its attributes, by which
+    /// who may see and ask for them is decided (`ShowAgentCommand`, `ExecuteAgentCommand`); `None`
+    /// if it is no agent taking part, or no longer exists.
+    pub(super) async fn commands_held(
+        &self,
+        agent: ActorId,
+    ) -> Option<(Vec<Command>, SecurityAttributes)> {
+        let actor = self.agent_actor(agent)?;
+        let attributes = self.controllers.agent_attributes(agent.as_agent_id()?).await.ok()?;
+        Some((actor.commands(), attributes))
     }
 
     /// `questions` of a call made in `context`, addressed to the users of the

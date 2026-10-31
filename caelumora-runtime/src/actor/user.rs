@@ -873,15 +873,17 @@ impl Drop for EndOfRun<'_> {
     }
 }
 
-#[async_trait]
-impl Actor for UserActor {
-    /// The context this user acts in, here - what their answers carry, so
-    /// that whoever decides on them asks about them in the same one (the
-    /// approver, issue 14).
-    fn security_context(&self) -> SecurityContext {
+impl UserActor {
+    /// The context this user acts in, here: what the commands they run and
+    /// what they ask of the channel are checked in. What they send is
+    /// admitted in the context the channel builds for them (issue 516).
+    pub(crate) fn security_context(&self) -> SecurityContext {
         self.user.security_context(self.session_id, self.channel_id)
     }
+}
 
+#[async_trait]
+impl Actor for UserActor {
     fn id(&self) -> ActorId {
         self.id
     }
@@ -993,11 +995,7 @@ mod tests {
     fn envelope_from(sender: ActorId) -> Envelope {
         let context =
             EventContext::new(Default::default(), Default::default(), sender, "agent".to_string());
-        Envelope::new(
-            SecurityContext::default(),
-            context,
-            ActorEvent::ResponseStarted { turn_id: TurnId::new() },
-        )
+        Envelope::new(context, ActorEvent::ResponseStarted { turn_id: TurnId::new() })
     }
 
     #[tokio::test]

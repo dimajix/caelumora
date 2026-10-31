@@ -163,8 +163,9 @@ asked to respond to a message.
 Everything that takes part in a channel is an **actor**: a user (`UserActor`), an agent
 (`AgentActor`), an agent that runs elsewhere (`ExternalAgentActor`), or the channel's approver
 (`ApproverActor`), which collects the users' decisions on tool calls that need approval. Actors
-communicate only through **envelopes** - an event with who sent it, on whose authority
-(`SecurityContext`) and in reply to what (`EventContext`).
+communicate only through **envelopes** - an event with who sent it and in reply to what
+(`EventContext`); on whose authority it is checked (`SecurityContext`) the channel builds from the
+sender as it admits it.
 
 An **agent** is an identity with a **personality**. The personality says what the agent consists of:
 a list of components (its tools, its system prompt, its notes, ...), how its agents are introduced
@@ -432,8 +433,8 @@ The design repeats a few decisions; new code follows them.
     the system runs if the application runs it, and an agent's own record - its transcript - is
     the application's; the core's record of a conversation is the channel's history, taken at its
     door. Today the code keeps this as a rule, not by the compiler: an application asks its
-    controller for its context and sets it on what it sends, declares the policies and the
-    managers as services of its components, and holds controllers (issue
+    controller for the context of its own work, declares the policies and the managers as
+    services of its components, and holds controllers (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)).
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.

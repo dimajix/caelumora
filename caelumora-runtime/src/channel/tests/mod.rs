@@ -163,7 +163,7 @@ pub(super) struct AskBack(pub(super) ActorId);
 
 #[async_trait::async_trait]
 impl Moderator for AskBack {
-    async fn route(&self, event: &Envelope) -> Routing {
+    async fn route(&self, event: &Envelope, _context: &SecurityContext) -> Routing {
         Routing {
             audience: Audience::Only(vec![self.0]),
             ask: vec![self.0],

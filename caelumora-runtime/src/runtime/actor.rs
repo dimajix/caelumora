@@ -3,7 +3,7 @@ use crate::actor::ActorManager;
 use crate::agent::state::AgentStateHandle;
 use crate::attachment::{AttachmentManager, AttachmentResult};
 use crate::channel::ChannelLoop;
-use crate::command::{ChannelCommandProvider, CommandExecutor};
+use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, SessionController, WorkspaceController};
 use crate::event::EventSubscription;
@@ -152,7 +152,7 @@ impl ActorRuntime {
 
     /// The user commands of the actor's session. Only a `UserActor` runs
     /// them: commands are for people, agents act through tools.
-    pub fn command_executor(&self) -> &Arc<CommandExecutor<dyn ChannelCommandProvider>> {
+    pub fn command_executor(&self) -> &Arc<CommandExecutor> {
         &self.runtime.command_executor
     }
 

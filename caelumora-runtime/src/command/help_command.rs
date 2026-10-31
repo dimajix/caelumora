@@ -1,6 +1,5 @@
 //! The built-in `/help` command (issue 28).
 
-use crate::actor::Actor;
 use crate::command::{
     ChannelCommandProvider, CommandContext, CommandError, CommandResult, ProvidesCommands,
 };

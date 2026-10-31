@@ -23,7 +23,6 @@ use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::history::Heard;
 use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use caelumora_model::plan::PlanProgress;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::turn::TurnState;
@@ -995,12 +994,8 @@ impl Actor for AgentActor {
         self.body.components()
     }
 
-    async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {
-        self.body.visible_commands(issuer).await
-    }
-
-    fn security_context(&self) -> SecurityContext {
-        self.body.security_context()
+    fn commands(&self) -> Vec<Command> {
+        self.body.commands()
     }
 
     async fn heard(&self) -> Option<Heard> {

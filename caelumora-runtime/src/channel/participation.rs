@@ -295,7 +295,7 @@ impl ResolvedParticipant {
     /// personality's (issue 179) - as the controllers hold them now (issues
     /// 304, 306). None for an approver. A participant of the session alone acts
     /// in no channel, which a `SecurityContext` names as the default id.
-    fn context(&self) -> Option<SecurityContext> {
+    pub(super) fn context(&self) -> Option<SecurityContext> {
         let (session, channel) = (self.session_id, self.channel_id.unwrap_or_default());
         match &self.kind {
             ResolvedKind::User(user) => Some(user.security_context(session, channel)),

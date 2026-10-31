@@ -396,7 +396,6 @@ mod tests {
         );
         let in_authority_of = |initiator: ActorId, event: ActorEvent| {
             Envelope::new(
-                SecurityContext::default(),
                 EventContext { initiator_id: initiator, ..EventContext::default() },
                 event,
             )
@@ -524,7 +523,6 @@ mod tests {
         );
         let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
             Envelope::new(
-                SecurityContext::default(),
                 EventContext {
                     initiator_id: initiator,
                     position: Some(Position::new(seq)),
@@ -562,7 +560,6 @@ mod tests {
                 "her request, unrecorded",
                 asked,
                 Envelope::new(
-                    SecurityContext::default(),
                     EventContext { initiator_id: alice, ..EventContext::default() },
                     ActorEvent::ResponseRequested { reason: RequestReason::Mentioned },
                 ),
