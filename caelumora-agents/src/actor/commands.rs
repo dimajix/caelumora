@@ -4,44 +4,15 @@
 //! the request (issue 516). Its body's (`AgentBody`).
 
 use super::body::AgentBody;
-use crate::command::AgentCommandProvider;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::turn::CommandRequest;
-use caelumora_runtime::command::{CommandError, CommandSet};
-use caelumora_runtime::component::{ComponentContainer, ComponentError, ComponentResult};
-use caelumora_runtime::runtime::ActorRuntime;
+use caelumora_runtime::command::CommandError;
 use caelumora_runtime::transport::EventSender;
 use tracing::{debug, info, warn};
 
 impl AgentBody {
-    /// The commands the components of `components` provide (issue 269).
-    /// Who may see and ask for them is the channel's to decide, at its door
-    /// (issue 516).
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` if two components provide the same
-    /// name, or one provides a name the session's commands have: the
-    /// session's would hide it (issue 37).
-    pub(super) fn command_set(
-        components: &ComponentContainer,
-        runtime: &ActorRuntime,
-    ) -> ComponentResult<CommandSet<dyn AgentCommandProvider>> {
-        let providers = components.get_all::<dyn AgentCommandProvider>(None)?;
-        for provider in &providers {
-            if let Some(command) =
-                provider.commands().into_iter().find(|c| runtime.command_executor().has(&c.name))
-            {
-                return Err(ComponentError::InvalidConfig(format!(
-                    "command /{} of component '{}' is a command of the session too, which would hide it",
-                    command.name, provider.id
-                )));
-            }
-        }
-        CommandSet::new(providers)
-    }
-
     /// The commands the agent carries out in its channel, sorted by name;
     /// who may see which is the channel's to decide (issue 516).
     pub(super) fn commands(&self) -> Vec<Command> {
@@ -73,7 +44,7 @@ impl AgentBody {
     ) {
         let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
         let issuer = request.context.sender_id;
-        let (agent_id, name) = (self.agent_id(), self.agent.name());
+        let (agent_id, name) = (self.agent_id(), self.scoped_name());
         let (answering, work) = self.work_for(request);
         let kept = CommandRequest { command: command.clone(), args: args.clone(), issuer };
         let turn_id = state.begin_command_turn(work.given_as(self.profile), kept);

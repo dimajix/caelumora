@@ -169,7 +169,7 @@ async fn place_of(
         })?;
     let channel = turn
         .situation()
-        .channel_view()
+        .own_channel()
         .await?
         .ok_or_else(|| ToolError::ExecutionFailed("the turn is in no channel".to_string()))?;
     Ok((place, channel))
@@ -346,7 +346,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing;
+    use crate::testing::{self, agent_runtime};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -357,10 +357,9 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::Grant;
     use caelumora_model::workspace::Workspace;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::session::SessionLoop;
     use caelumora_runtime::terminal::ByteStream;
-    use caelumora_runtime::testing::actor_runtime_in;
+    use caelumora_runtime::testing::participant_runtime_in;
     use caelumora_runtime::testing::World;
     use caelumora_runtime::view::Viewer;
     use futures::stream;
@@ -580,11 +579,8 @@ mod tests {
                 ModelProfile { images: true, ..ModelProfile::default() };
         }
         let seeing = Turn::of(
-            helper,
-            "helper".to_string(),
             &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(&session.channels()[0], ActorId::Agent(helper)),
+            agent_runtime(participant_runtime_in(&session.channels()[0], ActorId::Agent(helper))),
         )
         .unwrap();
         let offered: Vec<String> =

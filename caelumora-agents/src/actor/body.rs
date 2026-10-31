@@ -28,10 +28,8 @@ use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::Work;
 use caelumora_runtime::actor::Answering;
-use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::command::CommandSet;
 use caelumora_runtime::component::{ComponentContainer, ComponentImpl};
-use caelumora_runtime::controller::{AgentController, PersonalityController};
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use futures::future::BoxFuture;
@@ -43,32 +41,32 @@ use tracing::warn;
 /// What an agent's actor does with a change of a message its transcript
 /// did not take (issue 236; `AgentBody::take_in`), given its runtime to read
 /// what lies beyond what its state holds (issue 380).
-pub(super) type HandOver =
-    for<'a> fn(&'a ActorRuntime, &'a mut AgentChannelState, TranscriptEntry) -> BoxFuture<'a, ()>;
+pub(super) type HandOver = for<'a> fn(
+    &'a dyn ActorRuntime,
+    &'a mut AgentChannelState,
+    TranscriptEntry,
+) -> BoxFuture<'a, ()>;
 
 /// Hands over nothing: what an agent run here does, which gives its
 /// transcript nowhere else.
 fn hand_over_nothing<'a>(
-    _: &'a ActorRuntime,
+    _: &'a dyn ActorRuntime,
     _: &'a mut AgentChannelState,
     _: TranscriptEntry,
 ) -> BoxFuture<'a, ()> {
     Box::pin(ready(()))
 }
 
-/// The body of one agent in one channel (issue 355): the agent, its
-/// runtime, its components that hear and frame what it is given, its
-/// commands, and its state in the channel.
+/// The body of one agent in one channel (issue 355): its runtime, its
+/// components that hear and frame what it is given, its commands, and its
+/// state in the channel.
 #[derive(Debug)]
 pub(super) struct AgentBody {
-    /// The session's controller of the agent, shared with its actors in
-    /// the session's other channels (issue 120).
-    pub(super) agent: Arc<AgentController>,
-    /// The instance's controller of its personality (issue 406), what it
-    /// answers by as it runs - how it is introduced, who sees its reasoning.
-    /// Its components stay as they were built from it.
-    personality: Arc<PersonalityController>,
-    pub(super) runtime: ActorRuntime,
+    /// What it asks the core through (issue 516): who the agent and its personality are as they
+    /// are now - how it is introduced, who sees its reasoning (issue 406) -, its own state, shared
+    /// with its actors in other channels and sessions (issue 62), and what it asks of its channel.
+    /// Its components stay as they were built from its personality.
+    pub(super) runtime: Arc<dyn ActorRuntime>,
     /// What filters what reaches it (issue 196).
     pub(super) perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     /// What frames what its mind is given (issues 98, 204, 214): exactly one.
@@ -84,9 +82,6 @@ pub(super) struct AgentBody {
     /// How its model is given its context, kept with every turn of it - its
     /// model's, or its remote agent's (`ModelProfileProvider`).
     pub(super) profile: ModelProfile,
-    /// The agent's own state, shared with its actors in other channels and
-    /// sessions (issue 62).
-    agent_state: Arc<AgentStateHandle>,
     /// What it was built from, the component bundles it includes resolved
     /// (issue 270).
     built_from: ComponentConfig,
@@ -99,56 +94,41 @@ pub(super) struct AgentBody {
 }
 
 impl AgentBody {
-    /// The body of the agent `agent` in `channel`, as the personality
-    /// `personality` holds makes it, and the components it was built with - those `facets` asks
-    /// for (issue 337), with the components of `defaults` as the defaults of
-    /// the singles they provide - for its actor to take its own from. Its
-    /// state in the channel is made fit to run from by `resume`, as its
-    /// actor resumes, and its run control stands where that state says. It
-    /// hands nothing over (`handing_over`).
+    /// The body of the agent of `runtime` in its channel, as its personality makes it, and the
+    /// components it was built with - those `facets` asks for (issue 337), with the components of
+    /// `defaults` as the defaults of the singles they provide - for its actor to take its own from.
+    /// Its state in the channel is made fit to run from by `resume`, as its actor resumes, and its
+    /// run control stands where that state says. It hands nothing over (`handing_over`).
     ///
     /// # Errors
-    /// If its components cannot be built, its commands collide
-    /// (`command_set`), or its state cannot be loaded.
+    /// If its components cannot be built, two of them provide the same command, or its state
+    /// cannot be loaded.
     pub(super) async fn build(
-        agent: Arc<AgentController>,
-        personality: Arc<PersonalityController>,
         facets: &[TypeKey],
         defaults: &ComponentConfig,
-        runtime: ActorRuntime,
+        runtime: Arc<dyn ActorRuntime>,
         resume: impl FnOnce(&mut AgentChannelState),
     ) -> Result<(Self, ComponentContainer)> {
-        let attributes = agent.load().security_attributes.clone();
-        let components = ComponentContainer::with_defaults(
-            &personality.load().components,
-            defaults,
-            facets,
-            runtime.component_registry(),
-            // Its components get nothing of its runtime (issue 128); what they
-            // read of the session they read through their work (issue 163). They
-            // are built in its name as the core holds it (issue 516).
-            &runtime.component_context(),
-        )
-        .await?;
+        // Its components get nothing of its runtime (issue 128); what they read of the session
+        // they read through their work (issue 163). They are built in its name as the core holds
+        // it (issue 516).
+        let components =
+            runtime.build_components(&runtime.personality().components, defaults, facets).await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
         let profile = components.one::<dyn ModelProfileProvider>().await?.profile();
-        let commands = Self::command_set(&components, &runtime)?;
+        let commands = CommandSet::new(components.get_all::<dyn AgentCommandProvider>(None)?)?;
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
         let control =
             RunControl::new(state.processing_state, state.turn.as_ref().map(|t| t.work.turn_id));
-        let agent_state = runtime.agent_state(attributes).await?;
         let body = Self {
-            agent,
-            personality,
             runtime,
             perceive_in_processors,
             context_provider,
             hand_over: hand_over_nothing,
             commands,
             profile,
-            agent_state,
             built_from: components.components(),
             state: Mutex::new(state),
             control,
@@ -164,17 +144,22 @@ impl AgentBody {
 
     /// The agent's id.
     pub(super) fn agent_id(&self) -> AgentId {
-        self.agent.id()
+        self.runtime.agent().id
     }
 
     /// The agent as an actor.
     pub(super) fn id(&self) -> ActorId {
-        ActorId::Agent(self.agent.id())
+        ActorId::Agent(self.agent_id())
     }
 
     /// The agent's name as it is now.
     pub(super) fn name(&self) -> Name {
-        self.agent.load().name.name.clone()
+        self.runtime.agent().name.name.clone()
+    }
+
+    /// The agent's name as it is now, with its scope, as the channel knows it.
+    pub(super) fn scoped_name(&self) -> String {
+        self.runtime.agent().name.to_string()
     }
 
     /// What of it is public in its channel (issue 403): its name as it is
@@ -183,20 +168,20 @@ impl AgentBody {
         ActorDescription {
             id: self.id(),
             name: self.name(),
-            introduction: self.personality.load().introduction.clone(),
+            introduction: self.runtime.personality().introduction.clone(),
         }
     }
 
     /// Who sees its reasoning at least (issues 61, 133), as its
     /// personality says now (issue 406).
     pub(super) fn reasoning_visibility(&self) -> Visibility {
-        self.personality.load().reasoning_visibility
+        self.runtime.personality().reasoning_visibility
     }
 
     /// Whose messages it takes in between the steps of a turn (issue 431),
     /// as its personality says now.
     pub(super) fn hears_during_turn(&self) -> HearsDuringTurn {
-        self.personality.load().hears_during_turn
+        self.runtime.personality().hears_during_turn
     }
 
     /// What it was built from, the component bundles it includes resolved
@@ -208,13 +193,7 @@ impl AgentBody {
     /// The turn under way in `state`, as its steps work with it; `None`
     /// between turns.
     pub(super) fn turn<'s>(&self, state: &'s mut AgentChannelState) -> Option<Turn<'s>> {
-        Turn::of(
-            self.agent_id(),
-            self.agent.name(),
-            state,
-            Arc::clone(&self.agent_state),
-            self.runtime.clone(),
-        )
+        Turn::of(state, Arc::clone(&self.runtime))
     }
 
     /// The context `request` is answered in, continued in the agent's name
@@ -242,7 +221,7 @@ impl AgentBody {
         work: &'a Work,
         state: &'a AgentChannelState,
     ) -> Situation<'a> {
-        Situation::new(self.agent_id(), work, state, &self.agent_state, &self.runtime)
+        Situation::new(work, state, &*self.runtime)
     }
 
     /// The prompt parts and the knowledge they hold that its context
@@ -385,16 +364,10 @@ pub(super) fn retry_target(retry: &Envelope) -> Option<RetryTarget> {
 mod testing {
     use super::*;
     use crate::prompt::external_context_provider::ExternalContextProvider;
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::{Agent, Personality};
-    use caelumora_model::channel::testing::bare_channel;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::ScopedName;
-    use caelumora_runtime::runtime::ChannelRuntime;
-    use caelumora_runtime::session::testing::test_runtime;
+    use crate::testing::{detached_actor_runtime, detached_participant};
+    use caelumora_model::agent::Personality;
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use caelumora_runtime::runtime::AgentRuntime;
 
     impl AgentBody {
         /// The body of an agent in a channel outside a session, perceiving
@@ -402,24 +375,8 @@ mod testing {
         pub(in crate::actor) fn detached(
             processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
         ) -> Self {
-            let runtime = test_runtime();
-            let personality = make_personality("plain");
-            let agent = Agent::new(
-                ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")),
-                personality.id,
-                ActorId::User(UserId::new()),
-            );
-            let agent =
-                Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));
-            let commands = CommandSet::empty();
-            let session = bare_session(SessionId::new());
-            let channel = bare_channel(session.id);
-            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), session, channel);
-            let actor_runtime = channel.new_actor_runtime(ActorId::Agent(agent.id()));
             Self {
-                agent,
-                personality: Arc::new(PersonalityController::new(personality)),
-                runtime: actor_runtime,
+                runtime: detached_actor_runtime(AgentId::new()),
                 perceive_in_processors: processors,
                 context_provider: ComponentImpl {
                     id: "context".to_string(),
@@ -427,9 +384,8 @@ mod testing {
                     facet: Arc::new(ExternalContextProvider { prompt_providers: Vec::new() }),
                 },
                 hand_over: hand_over_nothing,
-                commands,
+                commands: CommandSet::empty(),
                 profile: ModelProfile::default(),
-                agent_state: AgentStateHandle::detached(),
                 built_from: ComponentConfig::default(),
                 state: Mutex::new(AgentChannelState::default()),
                 control: RunControl::new(ActorState::Idle, None),
@@ -441,9 +397,12 @@ mod testing {
         pub(in crate::actor) fn hearing(self, hears: HearsDuringTurn) -> Self {
             let personality = Personality {
                 hears_during_turn: hears,
-                ..Personality::clone(&self.personality.load())
+                ..Personality::clone(&self.runtime.personality())
             };
-            Self { personality: Arc::new(PersonalityController::new(personality)), ..self }
+            let runtime = detached_participant(self.agent_id());
+            let runtime = AgentRuntime::in_test(runtime, AgentStateHandle::detached())
+                .with_personality(personality);
+            Self { runtime: Arc::new(runtime), ..self }
         }
     }
 }

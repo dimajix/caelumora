@@ -83,7 +83,6 @@ mod tests {
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
 
     fn fixed(
         id: &str,
@@ -111,15 +110,13 @@ mod tests {
                 fixed("rules", "Answer in German.", PromptPosition::Start),
             ],
         };
-        let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
+        let state = AgentChannelState::default();
         let work = Work::default();
         let (parts, knowledge) = provider
             .current_context(&Situation::new(
-                AgentId::new(),
                 &work,
                 &state,
-                &agent_state,
-                &detached_actor_runtime(),
+                &*detached_actor_runtime(AgentId::new()),
             ))
             .await
             .unwrap();

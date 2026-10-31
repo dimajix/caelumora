@@ -277,7 +277,6 @@ mod tests {
     use caelumora_agents::tool::ToolOutput;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use std::collections::HashMap;
     use std::path::Path as FilePath;
     use std::sync::Mutex;
@@ -431,14 +430,8 @@ mod tests {
             Default::default(),
             Default::default(),
         ));
-        let mut turn = Turn::of(
-            AgentId::default(),
-            "test-agent".to_string(),
-            &mut state,
-            AgentStateHandle::detached(),
-            detached_actor_runtime(),
-        )
-        .expect("a turn was begun");
+        let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::default()))
+            .expect("a turn was begun");
         tool.execute(GENERATE_IMAGE, &params, None, &mut turn).await
     }
 

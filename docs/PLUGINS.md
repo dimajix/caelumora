@@ -70,7 +70,8 @@ a plugin
     [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool that names another plugin's tool
     writes its name as text: it does not know it as a value;
 *   registers the kinds of agent it brings (`agent_kinds()`, an `AgentKinds`): for a kind of
-    personality, what builds its agents' actors and which facets their components are asked for.
+    personality, what builds its agents' actors - from the agent's `ActorRuntime` alone, issue
+    516 - and which facets their components are asked for.
     The agents' plugin (`AgentsPlugin`, issue 370) registers both kinds there are; a program
     without it runs no agent;
 *   is handed the core's storages of content (`content_storages`, issue 282) for what it keeps
@@ -170,7 +171,7 @@ a plugin depends on:
     component of an application does not declare it: what it needs decided it asks of the core,
     through the `Turn` and the `Situation` it is called with (`may_reclassify`,
     `may_copy_information`, `copy_attachment`; the executor's `admit_tool_call`, issue 516), and
-    what it reads it reads through the readers (`Situation::session_view`, `SessionReader`). What it
+    what it reads it reads through the readers (`Situation::session`, `SessionReader`). What it
     needs of another plugin it declares as the trait that plugin offers for it, or, of a system
     service, as the extension it reads or writes by: a reader its situation hands out
     (`Situation::reader`), a writer its turn (`Turn::writer`).

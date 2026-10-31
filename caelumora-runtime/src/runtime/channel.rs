@@ -1,5 +1,8 @@
+//! `ChannelRuntime`: what a channel is built with (issues 360, 361), and the one source of the
+//! runtimes of its participants.
+
 use super::actor::Acting;
-use super::{ActorRuntime, RuntimeManager, Services};
+use super::{ParticipantRuntime, RuntimeManager, Services};
 use crate::actor::AgentKinds;
 use crate::attachment::AttachmentManager;
 use crate::channel::{ChannelLoop, Participation, ResolvedParticipant};
@@ -24,8 +27,8 @@ use std::sync::{Arc, OnceLock, Weak};
 /// is built: the process-wide services of the `RuntimeManager` - among them the controllers of its
 /// users and agents (issue 121) - the user commands of its session (issue 28), the session's
 /// controller (issue 13) and its loop (issue 361), the channel's controller (issue 374) and a
-/// handle to the channel's loop. It is the only source of `ActorRuntime`s, so every actor lives in
-/// exactly one channel and shares its controllers, commands and handle.
+/// handle to the channel's loop. It is the only source of `ParticipantRuntime`s, so every actor
+/// lives in exactly one channel and shares its controllers, commands and handle.
 #[derive(Debug, Clone)]
 pub struct ChannelRuntime {
     pub(super) runtime_manager: Arc<RuntimeManager>,
@@ -85,18 +88,18 @@ impl ChannelRuntime {
     /// in nothing, acting in its own name without roles (issue 516). The channel makes its actors'
     /// runtimes of their participants (`participant_runtime`).
     #[cfg(any(test, feature = "test-support"))]
-    pub fn new_actor_runtime(&self, actor: ActorId) -> ActorRuntime {
+    pub fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
         self.runtime_acting(actor, Acting::Itself)
     }
 
     /// The runtime of the participant `resolved` in the channel this runtime is for: acting in
     /// the participant's context as the controllers hold it now (issue 516).
-    pub(crate) fn participant_runtime(&self, resolved: &ResolvedParticipant) -> ActorRuntime {
+    pub(crate) fn participant_runtime(&self, resolved: &ResolvedParticipant) -> ParticipantRuntime {
         self.runtime_acting(resolved.actor_id(), Acting::Participant(resolved.clone()))
     }
 
-    fn runtime_acting(&self, actor: ActorId, acting: Acting) -> ActorRuntime {
-        ActorRuntime {
+    fn runtime_acting(&self, actor: ActorId, acting: Acting) -> ParticipantRuntime {
+        ParticipantRuntime {
             runtime: self.clone(),
             actor,
             session_id: self.session.id(),
@@ -201,6 +204,13 @@ impl ChannelRuntime {
         let session = runtime_manager.controller_manager().new_session_controller(session);
         let channel = runtime_manager.controller_manager().new_channel_controller(channel);
         Self::new(runtime_manager, command_executor, session, channel, Weak::new())
+    }
+
+    /// The controller of the channel's session, as its actors read it (`session_controller`): what
+    /// a test changes of the session where the channel runs without its session's loop, as
+    /// `ChannelLoop::session_controller_of` hands it out.
+    pub fn session_controller_of(&self) -> Arc<SessionController> {
+        Arc::clone(&self.session)
     }
 
     /// The runtime of the same channel built again, as after a restart -

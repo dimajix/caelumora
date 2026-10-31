@@ -52,7 +52,6 @@ use caelumora_model::value::name::Name;
 use caelumora_model::work::{TurnId, Work};
 use caelumora_runtime::actor::{Actor, Answering};
 use caelumora_runtime::component::ComponentImpl;
-use caelumora_runtime::controller::{AgentController, PersonalityController};
 use caelumora_runtime::logging::envelope_span;
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
@@ -126,22 +125,15 @@ impl ExternalAgentActor {
         TypeKey::of::<dyn AgentCommandProvider>(),
     ];
 
-    /// The actor of the external agent `agent_controller` holds - the
-    /// session's controller of it, shared with its actors in the session's
-    /// other channels (issue 120) - built from the personality `personality`
-    /// holds, the instance's controller of it (issue 406), in the channel of
-    /// `actor_runtime`.
+    /// The actor of the external agent of `actor_runtime` (issue 516), built from its
+    /// personality, in its channel.
     ///
     /// # Errors
     /// If its personality provides no `ExternalAgent` - or more than one -
     /// or its answers, as the component classifies them, may not be
     /// published in the channel; whatever its state store reports.
-    pub(crate) async fn new(
-        agent_controller: Arc<AgentController>,
-        personality: Arc<PersonalityController>,
-        actor_runtime: ActorRuntime,
-    ) -> Result<Self> {
-        let channel = Arc::clone(&actor_runtime.channel_controller().load());
+    pub(crate) async fn new(actor_runtime: Arc<dyn ActorRuntime>) -> Result<Self> {
+        let channel = actor_runtime.channel();
         // Its context provider is, unless it configures one, not a turn's.
         let defaults = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new(
@@ -152,15 +144,8 @@ impl ExternalAgentActor {
         // It resumes no answer: the remote agent's tasks are followed again
         // (`follow_open_tasks`), and it starts idle.
         let resume = |state: &mut AgentChannelState| state.processing_state = ActorState::Idle;
-        let (body, components) = AgentBody::build(
-            agent_controller,
-            personality,
-            Self::COMPONENT_FACETS,
-            &defaults,
-            actor_runtime,
-            resume,
-        )
-        .await?;
+        let (body, components) =
+            AgentBody::build(Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
 
         // Answers that may never enter the channel would each be dropped
@@ -905,7 +890,7 @@ impl Answer {
 /// given is stored before the next change is taken in. A store that cannot
 /// be read is logged, and nothing is told.
 fn tell<'a>(
-    runtime: &'a ActorRuntime,
+    runtime: &'a dyn ActorRuntime,
     state: &'a mut AgentChannelState,
     change: TranscriptEntry,
 ) -> BoxFuture<'a, ()> {

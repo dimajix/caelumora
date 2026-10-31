@@ -302,7 +302,7 @@ A container is built with a `ComponentContext`, which holds:
 
 *   the `SecurityContext` the graph is built in, the name of its owner, set by the core and not
     given out to the components (issue 516) - for an agent's components the agent's own, with its
-    owner's rights (`ActorRuntime::component_context`); for a channel's components and a session's
+    owner's rights (`ActorRuntime::build_components`); for a channel's components and a session's
     commands the owner's, with their roles as they are when it is built
     (`ControllerManager::owner_context`).
     What a component reads while building - a `ref` resolved, a secret a component of the core

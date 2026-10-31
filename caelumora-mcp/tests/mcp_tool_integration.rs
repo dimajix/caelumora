@@ -6,7 +6,7 @@
 )]
 
 use axum::Router;
-use caelumora_agents::testing::{offered_anywhere, TestAgents};
+use caelumora_agents::testing::{agent_runtime, offered_anywhere, TestAgents};
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_mcp::plugin::McpPlugin;
@@ -27,10 +27,9 @@ use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::work::Work;
-use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, BUNDLE_REF_KIND};
 use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
-use caelumora_runtime::session::testing::detached_actor_runtime_in;
+use caelumora_runtime::session::testing::detached_participant_in;
 use caelumora_runtime::testing::{asked_for, TestRuntime, World};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -147,15 +146,8 @@ async fn executed(
 ) -> ToolResult<ToolOutput> {
     let mut state = AgentChannelState::default();
     state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
-    let agent = AgentId::default();
-    let mut turn = Turn::of(
-        agent,
-        "test-agent".to_string(),
-        &mut state,
-        AgentStateHandle::detached(),
-        detached_actor_runtime(),
-    )
-    .expect("a turn was begun");
+    let mut turn =
+        Turn::of(&mut state, detached_actor_runtime(AgentId::default())).expect("a turn was begun");
     provider.execute(name, &params, None, &mut turn).await
 }
 
@@ -187,8 +179,8 @@ async fn build_container(params: Value) -> ComponentContainer {
 }
 
 /// What a turn outside of a running session acts through: the runtime of
-/// an actor in a channel that is attached to no session, so it reaches none.
-fn detached_actor_runtime() -> ActorRuntime {
+/// the agent `agent` in a channel that is attached to no session, so it reaches none.
+fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
     let session = bare_session(SessionId::new());
     let channel = Channel::build(
         session.id,
@@ -198,7 +190,9 @@ fn detached_actor_runtime() -> ActorRuntime {
         Classification::CHANNEL_DEFAULT,
         None,
     );
-    detached_actor_runtime_in(runtime(&Persistence::in_memory()), session, channel, ActorId::None)
+    let runtime = runtime(&Persistence::in_memory());
+    let runtime = detached_participant_in(runtime, session, channel, ActorId::Agent(agent));
+    agent_runtime(runtime)
 }
 
 #[tokio::test]

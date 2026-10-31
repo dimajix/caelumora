@@ -188,7 +188,7 @@ An agent's views are built per piece of work, with the agent's place, and handed
 
 | Operation | Questions in order | Rule | Refusal |
 |---|---|---|---|
-| Its own session (`ActorRuntime::session_view`) | `may_read_session` (T,1) - by the group of the session's participants | reach | `SessionNotFound` |
+| Its own session (`ActorRuntime::session`) | `may_read_session` (T,1) - by the group of the session's participants | reach | `SessionNotFound` |
 | A channel by name or id (`SessionReader::channel`, `channel_named`; `read_history`, `read_notes`) | `channel_reading`: `GetChannel` (T,1), `copyable_information` of the channel into the place (T,2) - as a whole or entry by entry; entry by entry what it answers (`Reading`) judges each message or note by its classification, a page of the history as a filter in the store (issue 421) | reach | `ChannelNotFound`, `NoChannelNamed` alike |
 | All channels (`channels`, `all_channels`) | as above per channel | reach | left out |
 | Its own private notes of other channels (`own_private_notes`) | no `GetChannel` - its own knowledge -; per note `may_copy_from` (T,2) | reach | left out |

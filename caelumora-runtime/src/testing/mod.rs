@@ -30,7 +30,7 @@ use crate::controller::WorkspaceController;
 use crate::error::refusal;
 use crate::plugin::Plugin;
 use crate::project::{ProjectError, ProjectManager};
-use crate::runtime::{ActorRuntime, RuntimeBuilder, RuntimeManager};
+use crate::runtime::{ParticipantRuntime, RuntimeBuilder, RuntimeManager};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::terminal::{ByteStream, TerminalReader, WorkspacePath};
 use crate::view::Viewer;
@@ -711,8 +711,8 @@ pub fn denied(error: &Error) -> bool {
 /// The runtime of `actor` in `channel`, as its turns act through it and navigate from it: the
 /// participant's, in its context as the controllers hold it, or, for an actor that takes no part,
 /// one in its own name without roles (issue 516).
-pub fn actor_runtime_in(channel: &Arc<ChannelLoop>, actor: ActorId) -> ActorRuntime {
-    channel.new_actor_runtime(actor)
+pub fn participant_runtime_in(channel: &Arc<ChannelLoop>, actor: ActorId) -> ParticipantRuntime {
+    channel.new_participant_runtime(actor)
 }
 
 pub async fn asked_for(world: &World, line: &str) {

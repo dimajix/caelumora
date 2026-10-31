@@ -539,14 +539,14 @@ impl ChannelLoop {
 
     /// The actor of `resolved`, built but not yet taken in (`adopt`).
     async fn create_actor(&self, resolved: &ResolvedParticipant) -> Result<Box<dyn Actor>> {
-        let actor_runtime = self.runtime.participant_runtime(resolved);
+        let participant_runtime = self.runtime.participant_runtime(resolved);
         Ok(match resolved.kind().clone() {
-            ResolvedKind::User(user) => Box::new(UserActor::new(user, actor_runtime).await?),
+            ResolvedKind::User(user) => Box::new(UserActor::new(user, participant_runtime).await?),
             ResolvedKind::Agent(agent, personality) => {
-                self.agent_kinds.build(agent, personality, actor_runtime).await?
+                self.agent_kinds.build(agent, personality, participant_runtime).await?
             }
             ResolvedKind::Approver(approver) => {
-                Box::new(ApproverActor::new(approver, actor_runtime))
+                Box::new(ApproverActor::new(approver, participant_runtime))
             }
         })
     }

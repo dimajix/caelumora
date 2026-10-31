@@ -12,7 +12,7 @@
 //! else that works with an agent's memory in a turn uses it too. What it
 //! needs of the session - its privacy, and that of the sessions entries
 //! come from - it reads through the turn's reader of its session
-//! (`Situation::session_view`, issues 163, 516).
+//! (`Situation::session`, issues 163, 516).
 
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
@@ -47,7 +47,7 @@ impl AgentMemory {
     pub(crate) async fn recalled(situation: &Situation<'_>) -> Vec<Memory> {
         let Some(own) = Self::own_session(situation).await else { return Vec::new() };
         let Some(here) = own.place().cloned() else { return Vec::new() };
-        let memory = situation.agent_state().current().memory.current();
+        let memory = situation.agent_state().memory.current();
         let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
         let mut decided: Vec<(MemoryOrigin, Classification, bool)> = Vec::new();
         let mut recalled = Vec::new();
@@ -119,23 +119,21 @@ impl AgentMemory {
     /// The digest of the memory as it is now: the state of knowledge a turn
     /// that recalls from it records.
     pub(crate) fn digest(situation: &Situation) -> Option<Digest> {
-        situation.agent_state().current().memory.digest()
+        situation.agent_state().memory.digest()
     }
 
-    /// Remembers `text`, as written in the turn's channel, with the privacy
-    /// its session has now (issue 134) and classified as the turn has seen
-    /// so far (`Situation::label`, issue 168): taken over when the turn completes.
-    /// Returns its number.
+    /// Remembers `text`, as written in the turn's channel, with the privacy its session has now
+    /// (issue 134) and classified as the turn has seen so far (`Situation::label`, issue 168):
+    /// taken over when the turn completes. Returns its number.
     ///
     /// Unlike a note's, the number is reserved on the agent's shared state
-    /// handle (`AgentStateHandle::reserve_memory_id`) instead of being
-    /// derived from the memory and the turn's staged changes: several actors
-    /// of one agent - in other channels and sessions - remember at the same
-    /// time, and would otherwise hand out the same number. Deliberately the
-    /// one exception to "commit, don't write" (issue 19).
+    /// (`Turn::reserve_memory_id`) instead of being derived from the memory and the turn's staged
+    /// changes: several actors of one agent - in other channels and sessions - remember at the same
+    /// time, and would otherwise hand out the same number. Deliberately the one exception to
+    /// "commit, don't write" (issue 19).
     pub(crate) async fn remember(turn: &mut Turn<'_>, text: String) -> MemoryId {
         let classification = turn.situation().label();
-        let id = turn.situation().agent_state().reserve_memory_id();
+        let id = turn.reserve_memory_id();
         let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Add { id, text, classification }, origin);
         id
@@ -145,7 +143,7 @@ impl AgentMemory {
     /// (issue 156) - every entry, recallable here or not.
     pub(crate) fn effective(turn: &Turn) -> Staged<Memories> {
         let staged = turn.staged_memory().iter().map(|(change, origin)| (change, origin.clone()));
-        turn.situation().agent_state().current().memory.with_staged(staged)
+        turn.situation().agent_state().memory.with_staged(staged)
     }
 
     /// Entry `id` as it stands with the turn's changes, if it does and is
@@ -154,14 +152,8 @@ impl AgentMemory {
     /// as in [`recalled`](Self::recalled).
     pub(crate) async fn find(turn: &Turn<'_>, id: MemoryId) -> Option<Memory> {
         let entry = Self::effective(turn).get(id)?.clone();
-        let Some(stored) = turn
-            .situation()
-            .agent_state()
-            .current()
-            .memory
-            .current()
-            .into_iter()
-            .find(|m| m.id == id)
+        let Some(stored) =
+            turn.situation().agent_state().memory.current().into_iter().find(|m| m.id == id)
         else {
             return Some(entry);
         };
@@ -241,12 +233,12 @@ impl AgentMemory {
         MemoryOrigin { channel: turn.situation().channel_id(), session }
     }
 
-    /// The agent's session as `situation` reads it (`Situation::session_view`),
+    /// The agent's session as `situation` reads it (`Situation::session`),
     /// through which what it remembers is recalled and placed; `None` if it
     /// reaches none, or reading it failed - which is logged, since the turn
     /// goes on as one in no session.
     async fn own_session(situation: &Situation<'_>) -> Option<Box<dyn SessionReader>> {
-        situation.session_view().await.unwrap_or_else(|e| {
+        situation.session().await.unwrap_or_else(|e| {
             warn!(
                 "Agent {}: its session could not be read for its memory: {e}",
                 situation.agent_id()

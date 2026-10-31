@@ -13,7 +13,7 @@ use crate::actor::Actor;
 use crate::channel::ChannelLoop;
 use crate::command::CommandError;
 use crate::controller::SessionController;
-use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
+use crate::runtime::{ChannelRuntime, ParticipantRuntime, RuntimeManager};
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -339,10 +339,10 @@ impl ChannelLoop {
     /// The runtime of `actor` in this channel, attached to it, as its turns act through it - for
     /// tests, where no actor runs: the participant's, acting in its context as the controllers
     /// hold it (issue 516), or, for an actor that takes no part, one in its own name without roles.
-    pub(crate) fn new_actor_runtime(&self, actor: ActorId) -> ActorRuntime {
+    pub(crate) fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
         match self.actors.load().get(&actor) {
             Some(taking_part) => self.runtime.participant_runtime(&taking_part.participant),
-            None => self.runtime.new_actor_runtime(actor),
+            None => self.runtime.new_participant_runtime(actor),
         }
     }
 }

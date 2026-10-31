@@ -48,7 +48,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::content::ContentRef;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
-use caelumora_model::memory::{MemoryChange, MemoryOrigin};
+use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::note::NoteChange;
 use caelumora_model::prompt_catalogue::PromptError;
@@ -58,7 +58,6 @@ use caelumora_model::work::TurnId;
 #[cfg(test)]
 use caelumora_model::work::Work;
 use caelumora_runtime::actor::Answering;
-use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::attachment::AttachmentResult;
 use caelumora_runtime::runtime::{ActorRuntime, OwnRecord};
 use caelumora_runtime::transport::EventSender;
@@ -77,31 +76,28 @@ pub struct Turn<'a> {
     agent_id: AgentId,
     agent_name: String,
     agent_channel_state: &'a mut AgentChannelState,
-    /// The agent's own state, shared by all its actors (issue 62). The turn
-    /// reads it and stages changes, never holds it.
-    agent_state: Arc<AgentStateHandle>,
     /// The runtime of the agent's actor, in whose name the turn acts: what
-    /// it asks of its channel - its workspace among it (issue 370) - and
-    /// what it navigates (issue 163). Its own: the components the turn is
+    /// it asks of its channel and what it navigates (issue 163), and the
+    /// agent's own state, shared by all its actors (issue 62), which the
+    /// turn reads and stages changes of. Its own: the components the turn is
     /// given to see the turn's methods, never the runtime (issue 128).
-    runtime: ActorRuntime,
+    runtime: Arc<dyn ActorRuntime>,
 }
 
 impl<'a> Turn<'a> {
-    /// The turn under way in the agent `agent_id`'s `agent_channel_state`,
+    /// The turn under way in `agent_channel_state` of the agent of `runtime`,
     /// as a step of its run loop works with it; `None` between turns. A
     /// turn is begun on the state (`AgentChannelState::begin_turn`), and
     /// ended through its handle (`commit`, `give_up`). It acts through the
-    /// actor's `runtime`.
+    /// actor's `runtime`, by the agent's name as it is when it is had.
     pub fn of(
-        agent_id: AgentId,
-        agent_name: String,
         agent_channel_state: &'a mut AgentChannelState,
-        agent_state: Arc<AgentStateHandle>,
-        runtime: ActorRuntime,
+        runtime: Arc<dyn ActorRuntime>,
     ) -> Option<Self> {
         agent_channel_state.turn.as_ref()?;
-        Some(Self { agent_id, agent_name, agent_channel_state, agent_state, runtime })
+        let agent = runtime.agent();
+        let (agent_id, agent_name) = (agent.id, agent.name.to_string());
+        Some(Self { agent_id, agent_name, agent_channel_state, runtime })
     }
 
     /// A turn begun on `agent_channel_state` with a default context, no
@@ -118,10 +114,8 @@ impl<'a> Turn<'a> {
         Self::under_way(agent_id, agent_channel_state)
     }
 
-    /// The turn a test began on `agent_channel_state`, of the agent
-    /// `agent_id` called "agent", with a state of its own
-    /// (`AgentStateHandle::detached`), in a channel of no running session
-    /// (`detached_actor_runtime`).
+    /// The turn a test began on `agent_channel_state`, of the agent `agent_id` called "agent",
+    /// with a state of its own, in a channel of no running session (`detached_actor_runtime`).
     ///
     /// # Panics
     /// If no turn is under way.
@@ -130,14 +124,8 @@ impl<'a> Turn<'a> {
         agent_id: AgentId,
         agent_channel_state: &'a mut AgentChannelState,
     ) -> Self {
-        Self::of(
-            agent_id,
-            "agent".to_string(),
-            agent_channel_state,
-            AgentStateHandle::detached(),
-            detached_actor_runtime(),
-        )
-        .expect("a turn is under way")
+        Self::of(agent_channel_state, detached_actor_runtime(agent_id))
+            .expect("a turn is under way")
     }
 
     /// The situation of the turn, to read (issues 204, 399): what the turn
@@ -145,13 +133,7 @@ impl<'a> Turn<'a> {
     /// what components that only read are given, as an external agent's
     /// work gives it too.
     pub fn situation(&self) -> Situation<'_> {
-        Situation::new(
-            self.agent_id,
-            &self.current().work,
-            self.agent_channel_state,
-            &self.agent_state,
-            &self.runtime,
-        )
+        Situation::new(&self.current().work, self.agent_channel_state, &*self.runtime)
     }
 
     /// The writer `T` a plugin or the core binds to the turn's work (`ActorRuntime::writer`, issue
@@ -179,6 +161,13 @@ impl<'a> Turn<'a> {
     pub async fn may_reclassify(&self, record: OwnRecord, classification: &Classification) -> bool {
         let (initiator, within) = (self.situation().initiator(), self.situation().classification());
         self.runtime.may_reclassify(initiator, record, classification, &within).await
+    }
+
+    /// A number for a new entry of the agent's memory, never handed out before
+    /// (`ActorRuntime::reserve_memory_id`): reserved at once, not as the turn completes, since
+    /// the agent's actors in other channels remember at the same time.
+    pub fn reserve_memory_id(&self) -> MemoryId {
+        self.runtime.reserve_memory_id()
     }
 
     /// Which turn this is (issue 235).

@@ -9,8 +9,8 @@
 use super::Actor;
 use crate::channel::ChannelError;
 use crate::controller::{AgentController, PersonalityController};
-use crate::runtime::ActorRuntime;
-use anyhow::Result;
+use crate::runtime::{ActorRuntime, AgentRuntime, ParticipantRuntime};
+use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::PersonalityKind;
 use caelumora_model::type_map::TypeKey;
@@ -20,17 +20,10 @@ use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
 
-/// What builds the actor of an agent of one kind: from its controller, its
-/// personality's and its runtime, which holds the channel it takes part in.
-type AgentFactory = Box<
-    dyn Fn(
-            Arc<AgentController>,
-            Arc<PersonalityController>,
-            ActorRuntime,
-        ) -> BoxFuture<'static, Result<Box<dyn Actor>>>
-        + Send
-        + Sync,
->;
+/// What builds the actor of an agent of one kind: from its runtime alone (issue 516), which
+/// holds the agent, its personality and the channel it takes part in.
+type AgentFactory =
+    Box<dyn Fn(Arc<dyn ActorRuntime>) -> BoxFuture<'static, Result<Box<dyn Actor>>> + Send + Sync>;
 
 /// A registered kind of agent.
 struct Registration {
@@ -54,23 +47,18 @@ impl fmt::Debug for AgentKinds {
 
 impl AgentKinds {
     /// Registers the agents of personalities of `kind`: their actor is built
-    /// by `factory`, their components are asked for `facets` (issue 337). A
-    /// kind registered before is replaced.
+    /// by `factory` from the agent's runtime (issue 516), their components are asked for `facets`
+    /// (issue 337). A kind registered before is replaced.
     pub fn register<F, Fut>(
         &mut self,
         kind: PersonalityKind,
         facets: &'static [TypeKey],
         factory: F,
     ) where
-        F: Fn(Arc<AgentController>, Arc<PersonalityController>, ActorRuntime) -> Fut
-            + Send
-            + Sync
-            + 'static,
+        F: Fn(Arc<dyn ActorRuntime>) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<Box<dyn Actor>>> + Send + 'static,
     {
-        let factory: AgentFactory = Box::new(move |agent, personality, runtime| {
-            Box::pin(factory(agent, personality, runtime))
-        });
+        let factory: AgentFactory = Box::new(move |runtime| Box::pin(factory(runtime)));
         self.kinds.insert(kind, Registration { facets, factory });
     }
 
@@ -81,16 +69,19 @@ impl AgentKinds {
     }
 
     /// The actor of the agent `agent` holds, built as the kind of the
-    /// personality `personality` holds builds it, running with `runtime` in its channel.
+    /// personality `personality` holds builds it, running with `runtime` in its channel - given
+    /// its `AgentRuntime` (issue 516).
     ///
     /// # Errors
     /// `ChannelError::UnknownAgentKind` for a kind the program runs no agent
-    /// of; whatever building the actor reports.
+    /// of; an error if the agent's state cannot be loaded, if one of its commands has the name of
+    /// a command of the session, which would hide it (issue 37); whatever building the actor
+    /// reports.
     pub(crate) async fn build(
         &self,
         agent: Arc<AgentController>,
         personality: Arc<PersonalityController>,
-        runtime: ActorRuntime,
+        runtime: ParticipantRuntime,
     ) -> Result<Box<dyn Actor>> {
         let Some(registration) = self.kinds.get(&personality.load().kind) else {
             return Err(ChannelError::UnknownAgentKind {
@@ -99,22 +90,45 @@ impl AgentKinds {
             }
             .into());
         };
-        (registration.factory)(agent, personality, runtime).await
+        let session_commands = Arc::clone(runtime.command_executor());
+        let agent_runtime = AgentRuntime::new(runtime, agent, personality).await?;
+        let actor = (registration.factory)(Arc::new(agent_runtime)).await?;
+        if let Some(command) = actor.commands().into_iter().find(|c| session_commands.has(&c.name))
+        {
+            return Err(anyhow!(
+                "command /{} of agent '{}' ({}), which a component of its personality provides, \
+                 is a command of the session too, which would hide it",
+                command.name,
+                actor.name(),
+                actor.id()
+            ));
+        }
+        Ok(actor)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testing::detached_actor_runtime;
-    use anyhow::anyhow;
+    use crate::command::help_command::{HelpCommandProvider, HELP_COMMAND_NAME};
+    use crate::command::{ChannelCommandProvider, CommandExecutor};
+    use crate::component::ComponentImpl;
+    use crate::runtime::ChannelRuntime;
+    use crate::session::testing::test_runtime;
+    use crate::transport::{EventReceiver, EventSender};
+    use async_trait::async_trait;
+    use caelumora_model::actor::{ActorState, Envelope};
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, Personality};
+    use caelumora_model::channel::testing::bare_channel;
+    use caelumora_model::command::Command;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::Policies;
-    use caelumora_model::store::{EntityStores, Persistence};
+    use caelumora_model::security::AccessPolicy;
+    use caelumora_model::session::testing::bare_session;
+    use caelumora_model::session::SessionId;
     use caelumora_model::user::UserId;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_model::value::name::{Name, ScopedName};
+    use std::sync::Weak;
 
     /// The names of `facets`, to compare them by.
     fn names(facets: Option<&[TypeKey]>) -> Option<Vec<&'static str>> {
@@ -122,23 +136,78 @@ mod tests {
     }
 
     /// Builds the actor of an agent of `personality` with `kinds`, in a
-    /// channel of no running session.
+    /// channel of no running session, whose session has no commands.
     async fn built(kinds: &AgentKinds, personality: Personality) -> Result<Box<dyn Actor>> {
-        let stores =
-            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap();
+        built_with(kinds, personality, CommandExecutor::empty).await
+    }
+
+    /// As `built`, the session's commands those `commands` makes of the access policy.
+    async fn built_with(
+        kinds: &AgentKinds,
+        personality: Personality,
+        commands: impl FnOnce(Arc<dyn AccessPolicy>) -> CommandExecutor,
+    ) -> Result<Box<dyn Actor>> {
+        let runtime = test_runtime();
         let agent = Agent::new(
             ScopedName::new("agent", Scope::GlobalScope).unwrap(),
             personality.id,
             ActorId::User(UserId::new()),
         );
-        let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), &stores));
-        kinds
-            .build(
-                agent,
-                Arc::new(PersonalityController::new(personality)),
-                detached_actor_runtime(),
-            )
-            .await
+        let controllers = runtime.controller_manager();
+        let session = bare_session(SessionId::new());
+        let channel = bare_channel(session.id);
+        let channel = ChannelRuntime::new(
+            Arc::clone(&runtime),
+            Arc::new(commands(Arc::clone(runtime.access_policy()))),
+            controllers.new_session_controller(session),
+            controllers.new_channel_controller(channel),
+            Weak::new(),
+        );
+        let participant = channel.new_participant_runtime(ActorId::Agent(agent.id));
+        let agent =
+            Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));
+        kinds.build(agent, Arc::new(PersonalityController::new(personality)), participant).await
+    }
+
+    /// An actor that carries out `/help` itself.
+    #[derive(Debug)]
+    struct Helping(ActorId);
+
+    #[async_trait]
+    impl Actor for Helping {
+        fn id(&self) -> ActorId {
+            self.0
+        }
+
+        fn name(&self) -> Name {
+            Name::new("helping").unwrap()
+        }
+
+        fn event_filter(&self) -> fn(&Envelope) -> bool {
+            |_| true
+        }
+
+        async fn run(&self, _: Box<dyn EventReceiver>, _: Box<dyn EventSender>) -> Result<()> {
+            Ok(())
+        }
+
+        fn state(&self) -> ActorState {
+            ActorState::Idle
+        }
+
+        fn commands(&self) -> Vec<Command> {
+            let help = HELP_COMMAND_NAME.to_string();
+            vec![Command {
+                name: help,
+                description: String::new(),
+                usage: None,
+                owners_only: false,
+            }]
+        }
+
+        fn stop(&self) {}
+
+        fn leave(&self) {}
     }
 
     /// An agent of a kind the program runs none of cannot take part: its
@@ -166,13 +235,13 @@ mod tests {
     async fn an_agent_is_built_by_the_kind_of_its_personality() {
         let mut kinds = AgentKinds::default();
         assert!(kinds.facets(PersonalityKind::Internal).is_none(), "none unless registered");
-        kinds.register(PersonalityKind::Internal, &[], |_, _, _| async {
+        kinds.register(PersonalityKind::Internal, &[], |_| async {
             Err(anyhow!("built as first registered"))
         });
-        kinds.register(PersonalityKind::External, &[], |_, _, _| async {
+        kinds.register(PersonalityKind::External, &[], |_| async {
             Err(anyhow!("built as first registered"))
         });
-        kinds.register(PersonalityKind::External, &[], |_, _, _| async {
+        kinds.register(PersonalityKind::External, &[], |_| async {
             Err(anyhow!("built as registered again"))
         });
 
@@ -188,5 +257,30 @@ mod tests {
             .expect_err("the stand-in builds nothing");
         assert_eq!(error.to_string(), "built as first registered", "by its own kind");
         assert_eq!(names(kinds.facets(PersonalityKind::External)), Some(Vec::new()));
+    }
+
+    /// Issue 37: an agent's command of the name of a command of its session would be hidden by
+    /// it - its actor is refused, by the core, whatever its kind; where the session has no such
+    /// command, it is built.
+    #[tokio::test]
+    async fn an_agent_whose_command_a_command_of_the_session_hides_is_refused() {
+        let mut kinds = AgentKinds::default();
+        kinds.register(PersonalityKind::Internal, &[], |runtime| async move {
+            Ok(Box::new(Helping(runtime.actor_id())) as Box<dyn Actor>)
+        });
+        let help = |policy| {
+            let help = ComponentImpl {
+                id: "help".to_string(),
+                fail_policy: Default::default(),
+                facet: Arc::new(HelpCommandProvider) as Arc<dyn ChannelCommandProvider>,
+            };
+            CommandExecutor::new(policy, vec![help]).unwrap()
+        };
+
+        let error = built_with(&kinds, make_personality("plain"), help)
+            .await
+            .expect_err("hidden by the session's /help");
+        assert!(error.to_string().contains("/help"), "{error:#}");
+        built(&kinds, make_personality("plain")).await.expect("no session command hides it");
     }
 }

@@ -1,3 +1,6 @@
+//! `ParticipantRuntime`: what the actor of a participant runs with in its channel (issue 69),
+//! made by the core of the participant, and asking the core in its name.
+
 use super::{ChannelRuntime, Face, Services};
 use crate::actor::ActorManager;
 use crate::agent::state::AgentStateHandle;
@@ -29,27 +32,27 @@ use caelumora_model::security::{
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
 use caelumora_model::tool::{ToolCall, ToolMedia};
-use caelumora_model::type_map::TypeKey;
+use caelumora_model::type_map::{ErasedArc, TypeKey};
 use caelumora_model::value::time_zone::TimeZone;
 use chrono::Utc;
 use std::sync::Arc;
 
-/// What an actor runs with (issue 69): the services every actor needs, and
-/// access to what concerns this actor alone - its controller, its state, its
-/// events, what it asks of its channel. It is the actor's interface: what an
-/// actor needs and does not find here is added here (issue 370). It is made
-/// for one participant (`ChannelRuntime::participant_runtime`) and hands out nothing
-/// about others. It is the actor's alone, and its turns': its components get
-/// only what they need of it (`ComponentContext`, issue 128) and the turn's
-/// methods; what they read of the session they read from the root its work
-/// is given (`session_view`, issue 163), as the confidentiality rules allow.
-/// The full channel and session are `pub(crate)`, for the user's and the
-/// approver's actors and the views. What the core decides of the actor's
-/// work - a tool call, a flow, a reclassification, the secrets it may read -
-/// it decides here, and it lends no policy - but through `services`, which
-/// the components are built with, until that is closed (issue 516, step 5).
+/// What a participant's actor runs with (issue 69): the services every actor needs, and access to
+/// what concerns this actor alone - its controllers, its state, its events, what it asks of its
+/// channel. It is the actor's interface: what an actor needs and does not find here is added here
+/// (issue 370). It is made for one participant (`ChannelRuntime::participant_runtime`) and hands
+/// out nothing about others. The actors of the core - the user's and the approver's - hold it; an
+/// agent's actor, an application's, is given the `ActorRuntime` the core serves from it
+/// (`AgentRuntime`, issue 516), and what is the core's alone - the controllers, the registry, the
+/// commands of the session - is `pub(crate)`. Its components get only what they need of it
+/// (`ComponentContext`, issue 128) and the turn's methods; what they read of the session they read
+/// from the root its work is given (`session`, issue 163), as the confidentiality rules allow. The
+/// full channel and session are `pub(crate)`, for the user's and the approver's actors and the
+/// views. What the core decides of the actor's work - a tool call, a flow, a reclassification, the
+/// secrets it may read - it decides here, and it lends no policy - but through `services`, which
+/// the components are built with, until that is closed (issue 516).
 #[derive(Debug, Clone)]
-pub struct ActorRuntime {
+pub struct ParticipantRuntime {
     pub(super) runtime: ChannelRuntime,
     pub(super) actor: ActorId,
     pub(super) session_id: SessionId,
@@ -59,7 +62,7 @@ pub struct ActorRuntime {
 }
 
 /// How the context an actor's runtime acts in is built, at every call that asks the core
-/// (`ActorRuntime::acting_for`, issue 516).
+/// (`ParticipantRuntime::acting_for`, issue 516).
 #[derive(Debug, Clone)]
 pub(crate) enum Acting {
     /// A participant of the channel, as the channel resolved it: its context as the controllers
@@ -69,12 +72,12 @@ pub(crate) enum Acting {
     /// In a test, an actor that takes part in nothing: in its own name, without roles.
     #[cfg(any(test, feature = "test-support"))]
     Itself,
-    /// In a test, the context it gives (`ActorRuntime::acting_as`).
+    /// In a test, the context it gives (`ParticipantRuntime::acting_as`).
     #[cfg(any(test, feature = "test-support"))]
     Fixed(SecurityContext),
 }
 
-/// What the core decides of a tool call as it is admitted (`ActorRuntime::admit_tool_call`,
+/// What the core decides of a tool call as it is admitted (`ParticipantRuntime::admit_tool_call`,
 /// issue 516).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallPermit {
@@ -89,7 +92,7 @@ pub enum CallPermit {
 }
 
 /// What an agent keeps of its own in its channel, which it may reclassify
-/// (`ActorRuntime::may_reclassify`, issue 516).
+/// (`ParticipantRuntime::may_reclassify`, issue 516).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnRecord {
     /// One of its notes, public or private.
@@ -98,7 +101,7 @@ pub enum OwnRecord {
     Memory,
 }
 
-impl ActorRuntime {
+impl ParticipantRuntime {
     /// The actor this runtime is for.
     pub fn actor_id(&self) -> ActorId {
         self.actor
@@ -147,11 +150,11 @@ impl ActorRuntime {
     /// The context the actor's components are built in (issue 321): in the actor's own name, as
     /// the core holds it now, with the runtime's services (issue 516). What a component reads
     /// while it is built it reads in it; what it does later, in its turn's.
-    pub fn component_context(&self) -> ComponentContext {
+    pub(crate) fn component_context(&self) -> ComponentContext {
         ComponentContext::new(self.acting_for(self.actor), self.services().clone())
     }
 
-    pub fn services(&self) -> &Services {
+    pub(crate) fn services(&self) -> &Services {
         self.runtime.runtime_manager.services()
     }
 
@@ -203,7 +206,7 @@ impl ActorRuntime {
         self.attachment_manager().create_media(context, &channel, classification, media).await
     }
 
-    pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
+    pub(crate) fn component_registry(&self) -> &Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()
     }
 
@@ -215,20 +218,20 @@ impl ActorRuntime {
     /// The controller of the actor's session: what its agent's tool calls
     /// are guarded by, beside the channel's (issue 13). Held for as long as
     /// the actor runs, unlike its channel: the guard must not lapse.
-    pub fn session_controller(&self) -> &Arc<SessionController> {
+    pub(crate) fn session_controller(&self) -> &Arc<SessionController> {
         self.runtime.session_controller()
     }
 
     /// The controller of the actor's channel (issue 374), held as the
     /// session's is: what the actor reads its channel by, and what its
     /// agent's tool calls are guarded by.
-    pub fn channel_controller(&self) -> &Arc<ChannelController> {
+    pub(crate) fn channel_controller(&self) -> &Arc<ChannelController> {
         self.runtime.channel_controller()
     }
 
     /// The user commands of the actor's session. Only a `UserActor` runs
     /// them: commands are for people, agents act through tools.
-    pub fn command_executor(&self) -> &Arc<CommandExecutor> {
+    pub(crate) fn command_executor(&self) -> &Arc<CommandExecutor> {
         &self.runtime.command_executor
     }
 
@@ -247,7 +250,7 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// If this actor is no agent, or the state cannot be loaded.
-    pub async fn agent_state(
+    pub(crate) async fn agent_state(
         &self,
         attributes: SecurityAttributes,
     ) -> Result<Arc<AgentStateHandle>> {
@@ -335,7 +338,7 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// As `Views::session`: the actor may not read it, or reading it failed.
-    pub async fn session_view(
+    pub async fn session(
         &self,
         initiator: ActorId,
         classification: Classification,
@@ -345,43 +348,22 @@ impl ActorRuntime {
         Ok(Some(Box::new(session)))
     }
 
-    /// The reader `T` a plugin or the core binds to the actor's work for `initiator` at
-    /// `classification` (`RuntimeBuilder::extend_readers`, issue 516): what of the plugin's service
-    /// the work reads by, acting as `session_view` reads. Its session is reached as `session_view`
-    /// reaches it - asking `GetSession` - and not handed out. `None` if none is bound, if it is not
-    /// offered there, if the actor may not read its session, or while the channel is not attached
-    /// to it.
-    pub async fn reader<T: ?Sized + Send + Sync + 'static>(
-        &self,
-        initiator: ActorId,
-        classification: Classification,
-    ) -> Option<Arc<T>> {
-        self.extension(Face::Reader, initiator, classification).await
-    }
-
-    /// The writer `T` a plugin or the core binds to the actor's work
-    /// (`RuntimeBuilder::extend_writers`): what of the plugin's service the work acts by, made as
-    /// `reader` makes a reader.
-    pub async fn writer<T: ?Sized + Send + Sync + 'static>(
-        &self,
-        initiator: ActorId,
-        classification: Classification,
-    ) -> Option<Arc<T>> {
-        self.extension(Face::Writer, initiator, classification).await
-    }
-
-    /// The extension `T`, bound as `face` (`reader`, `writer`).
-    async fn extension<T: ?Sized + Send + Sync + 'static>(
+    /// The extension of the type `key` names, bound as `face`, that a plugin or the core binds to
+    /// the actor's work for `initiator` at `classification` (`RuntimeBuilder::extend_readers`,
+    /// `extend_writers`, issue 516): the service, acting as `session` reads. Its session is
+    /// reached as `session` reaches it - asking `GetSession` - and not handed out. `None` if
+    /// none is bound as that face, if it is not offered there, if the actor may not read its
+    /// session, or while the channel is not attached to it.
+    pub(crate) async fn extension_of(
         &self,
         face: Face,
         initiator: ActorId,
         classification: Classification,
-    ) -> Option<Arc<T>> {
+        key: TypeKey,
+    ) -> Option<ErasedArc> {
         let views = self.views_of_work(initiator, classification)?;
         let session = views.session(self.session_id).await.ok()?;
-        let extensions = self.runtime.runtime_manager.extensions();
-        let made = extensions.made(face, TypeKey::of::<T>(), session).await?;
-        made.get::<T>().cloned()
+        self.runtime.runtime_manager.extensions().made(face, key, session).await
     }
 
     /// The views a piece of work of the actor reads through, for `initiator`, from its channel at
@@ -561,7 +543,7 @@ impl ActorRuntime {
 mod tests {
     use super::*;
     use crate::session::testing::test_runtime;
-    use crate::testing::{actor_runtime_in, Script, ScriptedAgents, World, STAFF};
+    use crate::testing::{participant_runtime_in, Script, ScriptedAgents, World, STAFF};
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::user::UserId;
@@ -573,9 +555,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_actor_runtime_acts_for_its_own_actor_only() {
+    async fn a_participant_runtime_acts_for_its_own_actor_only() {
         let runtime = channel_runtime();
-        let hers = runtime.new_actor_runtime(ActorId::User(UserId::new()));
+        let hers = runtime.new_participant_runtime(ActorId::User(UserId::new()));
 
         assert!(hers.load_channel_state().await.is_err(), "a user has no agent state");
         assert!(hers
@@ -583,7 +565,7 @@ mod tests {
             .await
             .is_err());
 
-        let its = runtime.new_actor_runtime(ActorId::Agent(AgentId::new()));
+        let its = runtime.new_participant_runtime(ActorId::Agent(AgentId::new()));
         its.store_channel_state(&mut AgentChannelState::default())
             .await
             .expect("its own state in its channel");
@@ -600,7 +582,7 @@ mod tests {
         let helper = world.agent("helper", world.alice, &personality).await;
         let session = world.shared_session(&[helper], &[]).await;
         let main = Arc::clone(&session.channels()[0]);
-        let runtime = actor_runtime_in(&main, ActorId::Agent(helper));
+        let runtime = participant_runtime_in(&main, ActorId::Agent(helper));
         let bob = ActorId::User(world.bob);
 
         let context = runtime.acting_for(bob);

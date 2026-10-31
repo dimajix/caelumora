@@ -212,13 +212,13 @@ impl AgentBody {
             }
             ActorEvent::MessageModified(modified) => {
                 if let Some(change) = self.take_in_modified(state, modified).await {
-                    (self.hand_over)(&self.runtime, state, change).await;
+                    (self.hand_over)(&*self.runtime, state, change).await;
                 }
             }
             ActorEvent::MessageRevoked { message, at } => {
                 if !state.transcript.revoke(message, at) {
                     (self.hand_over)(
-                        &self.runtime,
+                        &*self.runtime,
                         state,
                         TranscriptEntry::Revoked { message, at },
                     )
@@ -726,7 +726,7 @@ mod tests {
         };
         // Writes down what it is handed, where it is handed it.
         fn noted<'a>(
-            _: &'a ActorRuntime,
+            _: &'a dyn ActorRuntime,
             state: &'a mut AgentChannelState,
             change: TranscriptEntry,
         ) -> BoxFuture<'a, ()> {

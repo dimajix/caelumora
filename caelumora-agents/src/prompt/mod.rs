@@ -280,7 +280,7 @@ mod tests {
     use super::*;
     use crate::llm::{LLMClient, LLMResult};
     use crate::prompt::current_time_prompt_provider::CURRENT_TIME_PROMPT_PROVIDER_KIND;
-    use crate::testing::TestAgents;
+    use crate::testing::{agent_runtime, TestAgents};
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
     use caelumora_model::actor::ActorId;
@@ -297,9 +297,8 @@ mod tests {
     use caelumora_model::tool::Tool;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentFacets};
-    use caelumora_runtime::session::testing::detached_actor_runtime_in;
+    use caelumora_runtime::session::testing::detached_participant_in;
     use caelumora_runtime::testing::TestRuntime;
     use futures::stream;
     use futures::stream::BoxStream;
@@ -397,11 +396,15 @@ mod tests {
 
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
-        let actor_runtime =
-            detached_actor_runtime_in(Arc::clone(&runtime), session, channel, ActorId::None);
+        let actor_runtime = agent_runtime(detached_participant_in(
+            Arc::clone(&runtime),
+            session,
+            channel,
+            ActorId::Agent(AgentId::new()),
+        ));
         let work = Work::default().given_as(Gemma.profile());
-        let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
-        let situation = Situation::new(AgentId::new(), &work, &state, &agent_state, &actor_runtime);
+        let state = AgentChannelState::default();
+        let situation = Situation::new(&work, &state, &*actor_runtime);
         let time = built.get_all::<dyn PromptProvider>(None).unwrap().remove(0);
         assert!(
             time.get_prompt(&situation).await.unwrap().text.starts_with("[Now]\n"),
@@ -413,11 +416,8 @@ mod tests {
         );
         let elsewhere = Work::default();
         assert!(
-            denied_result(
-                &Situation::new(AgentId::new(), &elsewhere, &state, &agent_state, &actor_runtime)
-                    .texts()
-            )
-            .contains("The user declined"),
+            denied_result(&Situation::new(&elsewhere, &state, &*actor_runtime).texts())
+                .contains("The user declined"),
             "work of another profile, as it"
         );
     }

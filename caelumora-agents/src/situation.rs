@@ -13,7 +13,7 @@
 //! they serve both kinds of agent.
 
 use caelumora_model::actor::{ActorId, RequestReason};
-use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::context::{ContextResolver, ModelProfile};
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
@@ -22,7 +22,6 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::work::Work;
-use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::view::{ChannelReader, SessionReader, ViewResult};
 use std::sync::Arc;
@@ -34,23 +33,20 @@ pub struct Situation<'a> {
     agent_id: AgentId,
     work: &'a Work,
     agent_channel_state: &'a AgentChannelState,
-    agent_state: &'a Arc<AgentStateHandle>,
-    /// The runtime of the agent's actor: what it asks of its channel, and
-    /// what it navigates.
-    runtime: &'a ActorRuntime,
+    /// The runtime of the agent's actor: what it asks of its channel, what
+    /// it navigates, and the agent's own state.
+    runtime: &'a dyn ActorRuntime,
 }
 
 impl<'a> Situation<'a> {
-    /// `work` of the agent `agent_id`, with its state in the channel and its
-    /// own state, read through the actor's `runtime`.
+    /// `work` of the agent of `runtime`, with its state in the channel, read
+    /// through the actor's `runtime`.
     pub(crate) fn new(
-        agent_id: AgentId,
         work: &'a Work,
         agent_channel_state: &'a AgentChannelState,
-        agent_state: &'a Arc<AgentStateHandle>,
-        runtime: &'a ActorRuntime,
+        runtime: &'a dyn ActorRuntime,
     ) -> Self {
-        Self { agent_id, work, agent_channel_state, agent_state, runtime }
+        Self { agent_id: runtime.agent().id, work, agent_channel_state, runtime }
     }
 
     /// The agent whose work this is.
@@ -100,10 +96,10 @@ impl<'a> Situation<'a> {
     /// attached to its channel, or once the session is gone.
     ///
     /// # Errors
-    /// As `ActorRuntime::session_view`: the agent may not read it, or reading
+    /// As `ActorRuntime::session`: the agent may not read it, or reading
     /// it failed.
-    pub async fn session_view(&self) -> ViewResult<Option<Box<dyn SessionReader>>> {
-        self.runtime.session_view(self.initiator(), self.work.classification.clone()).await
+    pub async fn session(&self) -> ViewResult<Option<Box<dyn SessionReader>>> {
+        self.runtime.session(self.initiator(), self.work.classification.clone()).await
     }
 
     /// The reader `T` a plugin or the core binds to the work (`ActorRuntime::reader`, issue 516):
@@ -127,8 +123,8 @@ impl<'a> Situation<'a> {
     ///
     /// # Errors
     /// What following the views to it reports.
-    pub async fn channel_view(&self) -> ViewResult<Option<Box<dyn ChannelReader>>> {
-        let Some(session) = self.session_view().await? else { return Ok(None) };
+    pub async fn own_channel(&self) -> ViewResult<Option<Box<dyn ChannelReader>>> {
+        let Some(session) = self.session().await? else { return Ok(None) };
         session.channel(self.channel_id()).await.map(Some)
     }
 
@@ -188,9 +184,10 @@ impl<'a> Situation<'a> {
             .unwrap_or_default()
     }
 
-    /// The agent's own state (issue 62), shared by all its actors.
-    pub fn agent_state(&self) -> &'a Arc<AgentStateHandle> {
-        self.agent_state
+    /// The agent's own state as it is now (issue 62), shared by all its actors
+    /// (`ActorRuntime::agent_state`): a snapshot, which changes applied after do not change.
+    pub fn agent_state(&self) -> Arc<AgentState> {
+        self.runtime.agent_state()
     }
 
     /// The secrets that may be read in the work's name (`ActorRuntime::secrets`, issue 516): what

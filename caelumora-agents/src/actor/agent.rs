@@ -31,7 +31,6 @@ use caelumora_model::value::name::Name;
 use caelumora_model::work::{TurnId, Work};
 use caelumora_runtime::actor::{Actor, Answering};
 use caelumora_runtime::component::ComponentImpl;
-use caelumora_runtime::controller::{AgentController, PersonalityController};
 use caelumora_runtime::logging::{agent_span, envelope_span};
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
@@ -72,18 +71,11 @@ impl AgentActor {
         TypeKey::of::<dyn AgentCommandProvider>(),
     ];
 
-    /// The actor of the agent `agent_controller` holds - the session's
-    /// controller of it, shared with its actors in the session's other
-    /// channels (issue 120) - built from the personality `personality`
-    /// holds, the instance's controller of it (issue 406), in the channel of
-    /// `actor_runtime`.
-    pub(crate) async fn new(
-        agent_controller: Arc<AgentController>,
-        personality: Arc<PersonalityController>,
-        actor_runtime: ActorRuntime,
-    ) -> Result<Self> {
-        let channel_id = actor_runtime.channel_controller().id();
-        let agent_id = agent_controller.id();
+    /// The actor of the agent of `actor_runtime` (issue 516), built from its personality, in
+    /// its channel.
+    pub(crate) async fn new(actor_runtime: Arc<dyn ActorRuntime>) -> Result<Self> {
+        let channel_id = actor_runtime.channel_id();
+        let agent_id = actor_runtime.agent().id;
         // A turn stored under way is resumed (issue 75).
         let prompts = Arc::clone(actor_runtime.prompts());
         let resume = |state: &mut AgentChannelState| {
@@ -96,8 +88,6 @@ impl AgentActor {
             }
         };
         let (body, components) = AgentBody::build(
-            agent_controller,
-            personality,
             Self::COMPONENT_FACETS,
             &ComponentConfig::default(),
             actor_runtime,
@@ -107,8 +97,10 @@ impl AgentActor {
         let llm_client = components.one::<dyn LLMClient>().await?;
         let activities = components.get_all::<dyn ActivityProvider>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
-        let tool_executor =
-            ToolExecutor::new(components.get_all::<dyn ToolProvider>(None)?, body.runtime.clone())?;
+        let tool_executor = ToolExecutor::new(
+            components.get_all::<dyn ToolProvider>(None)?,
+            Arc::clone(&body.runtime),
+        )?;
 
         Ok(AgentActor { body, llm_client, activities, emit_out_processors, tool_executor })
     }
@@ -203,15 +195,13 @@ impl AgentActor {
     /// lands in: the one a tool requested (the stop tool), or `Idle`; a
     /// cancelled turn lands `Idle` whatever was requested.
     ///
-    /// The turn is taken over and stored before its `TurnFinished`
-    /// announces its end (issue 65): whoever reacts to it - another agent
-    /// whose turn it starts, a user interface reloading notes - reads the
-    /// state as the turn left it. A change of the agent's state in the
-    /// channel is announced as the channel's `channel::AGENT_STATE_CHANGED`
-    /// once stored; a change of its own state by its `AgentStateHandle`. The end
-    /// is announced even with no final messages - a plan cancelled before
-    /// any step produced a visible answer still has to tell observers (e.g.
-    /// the web UI) that generation stopped.
+    /// The turn is taken over and stored before its `TurnFinished` announces its end (issue 65):
+    /// whoever reacts to it - another agent whose turn it starts, a user interface reloading
+    /// notes - reads the state as the turn left it. A change of the agent's state in the channel
+    /// is announced as the channel's `channel::AGENT_STATE_CHANGED` once stored; a change of its
+    /// own state through its runtime (`ActorRuntime::apply_agent_state`). The end is announced
+    /// even with no final messages - a plan cancelled before any step produced a visible answer
+    /// still has to tell observers (e.g. the web UI) that generation stopped.
     async fn end_turn(
         &self,
         state: &mut AgentChannelState,
@@ -239,7 +229,7 @@ impl AgentActor {
         debug!(
             "Agent {} {} ended its turn{}",
             self.id(),
-            self.body.agent.name(),
+            self.body.scoped_name(),
             if cancelled { ", cancelled" } else { "" }
         );
         Ok(next)
@@ -352,7 +342,7 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<bool> {
         let Some(target) = retry_target(request) else { return Ok(false) };
-        let answering = Answering::to(request, self.id(), self.body.agent.name());
+        let answering = Answering::to(request, self.id(), self.body.scoped_name());
         let can = match target {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
             // Its last turn given up: answered anew after it, nothing taken
@@ -390,7 +380,7 @@ impl AgentActor {
         error: &Error,
         output: &dyn EventSender,
     ) {
-        let agent_name = self.body.agent.name();
+        let agent_name = self.body.scoped_name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id(), agent_name, error);
 
         self.give_up(state, GivenUpReason::Failed { message: failure_message(error) }, output)
@@ -424,7 +414,7 @@ impl AgentActor {
             None => reason.clone(),
         };
         let turn_id = under_way.work.turn_id;
-        let agent_name = self.body.agent.name();
+        let agent_name = self.body.scoped_name();
         let Some(turn) = self.turn(state) else { return };
         let (answering, abandoned_calls) = turn.give_up(recorded.clone(), output).await;
         if let Err(e) = withdraw_requests(&answering, &abandoned_calls, output).await {
@@ -629,7 +619,7 @@ impl AgentActor {
         rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
-        let agent_name = self.body.agent.name();
+        let agent_name = self.body.scoped_name();
 
         if !self.turn_under_way(state)?.may_call_model() {
             warn!(
@@ -1042,7 +1032,7 @@ impl Actor for AgentActor {
             // Every other state always produces a next state.
             let span = agent_span(
                 self.body.agent_id(),
-                &self.body.agent.name(),
+                &self.body.scoped_name(),
                 current_state,
                 state.turn.as_ref().map(|t| &t.work.event_context),
             );
@@ -1055,7 +1045,7 @@ impl Actor for AgentActor {
                     info!(
                         "Agent {} {} gives up its turn: the channel was lowered to {}",
                         self.id(),
-                        self.body.agent.name(),
+                        self.body.scoped_name(),
                         channel
                     );
                     self.give_up(&mut state, GivenUpReason::Lowered { channel }, &*output)
@@ -1196,7 +1186,7 @@ impl Actor for AgentActor {
 
     fn wakeup(&self) {
         // Called for every agent on every user message, sleeping or not.
-        debug!("Waking up agent {} {}", self.id(), self.body.agent.name());
+        debug!("Waking up agent {} {}", self.id(), self.body.scoped_name());
         self.body.control.wakeup();
     }
 
@@ -1210,13 +1200,13 @@ impl Actor for AgentActor {
             true => info!(
                 "Agent {} {} gives its turn {} up: its answer is asked for again",
                 self.id(),
-                self.body.agent.name(),
+                self.body.scoped_name(),
                 turn
             ),
             false => debug!(
                 "Agent {} {}: turn {} is not under way, nothing to answer again",
                 self.id(),
-                self.body.agent.name(),
+                self.body.scoped_name(),
                 turn
             ),
         }
@@ -1229,14 +1219,14 @@ impl Actor for AgentActor {
             true => info!(
                 "Agent {} {}: tool call {} of turn {} is interrupted on its own",
                 self.id(),
-                self.body.agent.name(),
+                self.body.scoped_name(),
                 call,
                 turn
             ),
             false => debug!(
                 "Agent {} {}: tool call {} of turn {} does not run, nothing to interrupt",
                 self.id(),
-                self.body.agent.name(),
+                self.body.scoped_name(),
                 call,
                 turn
             ),
@@ -1247,24 +1237,24 @@ impl Actor for AgentActor {
     fn cancel(&self) {
         match self.body.control.turn_under_way() {
             Some(turn) => {
-                info!("Cancelling agent {} {} in turn {}", self.id(), self.body.agent.name(), turn)
+                info!("Cancelling agent {} {} in turn {}", self.id(), self.body.scoped_name(), turn)
             }
             None => info!(
                 "Cancelling agent {} {}: no turn is under way",
                 self.id(),
-                self.body.agent.name()
+                self.body.scoped_name()
             ),
         }
         self.body.control.cancel();
     }
 
     fn stop(&self) {
-        info!("Stopping agent {} {}: its channel stops", self.id(), self.body.agent.name());
+        info!("Stopping agent {} {}: its channel stops", self.id(), self.body.scoped_name());
         self.body.control.stop();
     }
 
     fn leave(&self) {
-        info!("Stopping agent {} {}: it left the channel", self.id(), self.body.agent.name());
+        info!("Stopping agent {} {}: it left the channel", self.id(), self.body.scoped_name());
         self.body.control.leave();
     }
 }

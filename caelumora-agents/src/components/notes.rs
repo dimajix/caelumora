@@ -258,7 +258,7 @@ impl NotesComponent {
             channel: Option<String>,
         }
         let ReadNotes { channel } = arguments(params)?;
-        let Some(session) = turn.situation().session_view().await? else {
+        let Some(session) = turn.situation().session().await? else {
             return Err(ToolError::ExecutionFailed(
                 "the turn is in no session to read from".to_string(),
             ));
@@ -327,7 +327,7 @@ impl PromptProvider for NotesComponent {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         let own = ActorId::Agent(situation.agent_id());
         let mut others = Vec::new();
-        let published = match situation.channel_view().await {
+        let published = match situation.own_channel().await {
             Ok(Some(channel)) => channel.notes().await,
             Ok(None) => Ok(Vec::new()),
             Err(e) => Err(e),
@@ -412,7 +412,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, TestAgents};
+    use crate::testing::{self, agent_runtime, TestAgents};
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::message::MessageId;
@@ -420,9 +420,8 @@ mod tests {
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::runtime::ActorRuntime;
-    use caelumora_runtime::session::testing::detached_actor_runtime_in;
+    use caelumora_runtime::runtime::ParticipantRuntime;
+    use caelumora_runtime::session::testing::detached_participant_in;
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::transport::Discard;
     use chrono::Utc;
@@ -430,7 +429,7 @@ mod tests {
 
     /// The runtime of the actor of `agent`, in a channel of no running session, under the
     /// ownership policy: who may reclassify a note is decided by its authorship (issue 516).
-    fn owned_runtime_of(agent: AgentId) -> ActorRuntime {
+    fn owned_runtime_of(agent: AgentId) -> ParticipantRuntime {
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
         let runtime = TestRuntime {
@@ -439,7 +438,7 @@ mod tests {
             ..Default::default()
         }
         .build();
-        detached_actor_runtime_in(runtime, session, channel, ActorId::Agent(agent))
+        detached_participant_in(runtime, session, channel, ActorId::Agent(agent))
     }
 
     /// A turn of `agent` under way in `state`, through the runtime of its actor under the
@@ -452,8 +451,7 @@ mod tests {
             Default::default(),
         ));
         let runtime = owned_runtime_of(agent);
-        Turn::of(agent, "agent".to_string(), state, AgentStateHandle::detached(), runtime)
-            .expect("a turn was begun")
+        Turn::of(state, agent_runtime(runtime)).expect("a turn was begun")
     }
 
     fn note(id: u32, text: &str) -> Note {

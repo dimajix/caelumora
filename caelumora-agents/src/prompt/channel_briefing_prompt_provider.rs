@@ -92,8 +92,8 @@ impl PromptProvider for ChannelBriefingPromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`Situation::channel_view`) has no place to describe.
-        let Some(channel) = situation.channel_view().await? else {
+        // Work that reaches no session (`Situation::own_channel`) has no place to describe.
+        let Some(channel) = situation.own_channel().await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
         let session = channel.session();
@@ -160,7 +160,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, TestAgents};
+    use crate::testing::{self, agent_runtime, TestAgents};
     use crate::turn::Turn;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::testing::{make_personality, stored_agent};
@@ -174,8 +174,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::actor_runtime_in;
+    use caelumora_runtime::session::testing::participant_runtime_in;
     use caelumora_runtime::session::{SessionLoop, SessionManager};
     use caelumora_runtime::testing::TestRuntime;
 
@@ -324,11 +323,11 @@ mod tests {
         state: &mut AgentChannelState,
     ) -> Prompt {
         let turn = Turn::of(
-            agent,
-            "Jonathan".to_string(),
             state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(agent)),
+            agent_runtime(participant_runtime_in(
+                &session_loop.channels()[0],
+                ActorId::Agent(agent),
+            )),
         )
         .expect("a turn was begun");
         provider.get_prompt(&turn.situation()).await.unwrap()

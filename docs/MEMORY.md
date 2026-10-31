@@ -125,7 +125,7 @@ per personality.
 ## Reading other channels
 
 Components read what other channels know through the readers of the situation they are given
-(`Situation::session_view`, a `SessionReader`, see [SECURITY.md](SECURITY.md#views)): the agent's
+(`Situation::session`, a `SessionReader`, see [SECURITY.md](SECURITY.md#views)): the agent's
 session, its channels and their notes and histories, and the agent's own private notes of the other
 channels.
 

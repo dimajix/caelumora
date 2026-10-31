@@ -18,7 +18,7 @@ The project is a Rust workspace, with a web UI next to it:
     of their users and approvers, the kinds of agent registered with it (`AgentKinds`),
     components, the views, the event bus, the controllers that keep entities live, workspaces, the
     storages of binary content, and the store implementations. An actor reaches its channel
-    through its `ActorRuntime` alone.
+    through its runtime alone - an agent's actor through its `ActorRuntime`.
 *   **`caelumora-agents`** - what an agent does in a channel (issue 370): both kinds of agent - a
     model run here, or an agent that runs elsewhere -, the agent's cognitive cycle and its turn, and
     the facets its components serve (tools, prompt parts, the model, message stages, its commands,
@@ -448,10 +448,11 @@ The design repeats a few decisions; new code follows them.
     enforce it does not pretend to: a tool whose effect lies outside the system runs if the
     application runs it, and an agent's own record - its transcript - is the application's; the
     core's record of a conversation is the channel's history, taken at its door. Today the code
-    keeps part of this as a rule, not by the compiler: an application holds controllers and could
-    reach the core's services through its components' context (issue
+    keeps part of this as a rule, not by the compiler: an application could reach the core's
+    services through its components' context (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)); that it names no context,
-    policy, view or manager of the core or of a plugin `scripts/application-names.sh` checks.
+    policy, view, manager or controller of the core or of a plugin, nor the runtime of a
+    participant, `scripts/application-names.sh` checks.
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to

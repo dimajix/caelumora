@@ -3,7 +3,7 @@
 
 use crate::actor::{Actor, Answering};
 use crate::controller::ChannelController;
-use crate::runtime::ActorRuntime;
+use crate::runtime::ParticipantRuntime;
 use crate::transport::{is_closed, EventReceiver, EventSender};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -69,7 +69,7 @@ impl PendingApproval {
 pub struct ApproverActor {
     id: ActorId,
     approver: Approver,
-    actor_runtime: ActorRuntime,
+    participant_runtime: ParticipantRuntime,
     channel: Arc<ChannelController>,
     /// Who may approve (issue 14).
     access_policy: Arc<dyn AccessPolicy>,
@@ -79,14 +79,14 @@ pub struct ApproverActor {
 }
 
 impl ApproverActor {
-    /// The actor of `approver` in the channel of `actor_runtime`.
-    pub fn new(approver: Approver, actor_runtime: ActorRuntime) -> Self {
+    /// The actor of `approver` in the channel of `participant_runtime`.
+    pub fn new(approver: Approver, participant_runtime: ParticipantRuntime) -> Self {
         Self {
             id: ActorId::Approver(approver.id),
             approver,
-            access_policy: Arc::clone(actor_runtime.access_policy()),
-            channel: Arc::clone(actor_runtime.channel_controller()),
-            actor_runtime,
+            access_policy: Arc::clone(participant_runtime.access_policy()),
+            channel: Arc::clone(participant_runtime.channel_controller()),
+            participant_runtime,
             pending: Mutex::new(HashMap::new()),
             ended: CancellationToken::new(),
         }
@@ -105,7 +105,7 @@ impl ApproverActor {
     /// The attributes of `agent`, as stored (`agent_attributes`). `None` if
     /// they cannot be read.
     async fn attributes_of(&self, agent: AgentId) -> Option<SecurityAttributes> {
-        match self.actor_runtime.agent_attributes(agent).await {
+        match self.participant_runtime.agent_attributes(agent).await {
             Ok(attributes) => Some(attributes),
             Err(e) => {
                 warn!("ApproverActor cannot read agent {}: {}", agent, e);
@@ -120,7 +120,7 @@ impl ApproverActor {
     /// does not run or the agent cannot be read.
     async fn approvers_of(&self, agent: AgentId) -> Vec<ActorId> {
         let (Some(running), Some(attributes)) =
-            (self.actor_runtime.channel_loop(), self.attributes_of(agent).await)
+            (self.participant_runtime.channel_loop(), self.attributes_of(agent).await)
         else {
             return Vec::new();
         };
@@ -168,7 +168,7 @@ impl ApproverActor {
     /// every other is decided again by who may approve now. Nothing is
     /// denied while the channel does not run.
     async fn catch_up(&self, output: &dyn EventSender) -> Result<()> {
-        if let Some(running) = self.actor_runtime.channel_loop() {
+        if let Some(running) = self.participant_runtime.channel_loop() {
             let asking: HashSet<AgentId> =
                 self.pending.lock().await.values().map(|p| p.agent_id).collect();
             let channel = self.channel.load();
@@ -393,7 +393,7 @@ impl Actor for ApproverActor {
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
         info!("ApproverActor {:?} started", self.id);
-        let mut global_rx = self.actor_runtime.subscribe_channel();
+        let mut global_rx = self.participant_runtime.subscribe_channel();
         let mut following = true;
 
         loop {

@@ -79,7 +79,7 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`Situation::channel_view`) has nobody to name.
+        // Work that reaches no session (`Situation::own_channel`) has nobody to name.
         let Some((me, others)) = participants(situation).await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
@@ -97,7 +97,7 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
 pub(crate) async fn participants(
     situation: &Situation<'_>,
 ) -> Result<Option<(Option<ActorDescription>, Vec<ActorDescription>)>, ContextError> {
-    let Some(channel) = situation.channel_view().await? else { return Ok(None) };
+    let Some(channel) = situation.own_channel().await? else { return Ok(None) };
     let own = ActorId::Agent(situation.agent_id());
     let mut me = None;
     let mut others = Vec::new();
@@ -170,7 +170,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, TestAgents};
+    use crate::testing::{self, agent_runtime, TestAgents};
     use crate::turn::Turn;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::testing::make_personality;
@@ -186,8 +186,7 @@ mod tests {
     use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::actor_runtime_in;
+    use caelumora_runtime::session::testing::participant_runtime_in;
     use caelumora_runtime::session::SessionManager;
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::view::ViewError;
@@ -374,11 +373,11 @@ mod tests {
             Default::default(),
         ));
         let turn = Turn::of(
-            jonathan.id,
-            "Jonathan".to_string(),
             &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(jonathan.id)),
+            agent_runtime(participant_runtime_in(
+                &session_loop.channels()[0],
+                ActorId::Agent(jonathan.id),
+            )),
         )
         .expect("a turn was begun");
 
@@ -417,15 +416,12 @@ mod tests {
             Default::default(),
         ));
         let turn = Turn::of(
-            outsider,
-            "outsider".to_string(),
             &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(channel, ActorId::Agent(outsider)),
+            agent_runtime(participant_runtime_in(channel, ActorId::Agent(outsider))),
         )
         .expect("a turn was begun");
         assert!(
-            matches!(turn.situation().session_view().await, Err(ViewError::SessionNotFound(_))),
+            matches!(turn.situation().session().await, Err(ViewError::SessionNotFound(_))),
             "reached, but not to be read (issue 399)"
         );
         let failed =

@@ -91,7 +91,6 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
 
     /// What the provider tells in work asked for as `asked`, offered the
     /// tools named `tools`.
@@ -125,13 +124,7 @@ mod tests {
             prompts: testing::prompts(),
         };
         let prompt = provider
-            .get_prompt(&Situation::new(
-                AgentId::new(),
-                &work,
-                &state,
-                &AgentStateHandle::detached(),
-                &detached_actor_runtime(),
-            ))
+            .get_prompt(&Situation::new(&work, &state, &*detached_actor_runtime(AgentId::new())))
             .await
             .unwrap();
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));

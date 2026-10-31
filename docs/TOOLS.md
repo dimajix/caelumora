@@ -100,10 +100,10 @@ the policy permits the call (`CallTool`) and what the rules of its places say, o
 admitted (`ActorRuntime::admit_tool_call`, see [Checked before anyone is
 asked](APPROVALS.md#checked-before-anyone-is-asked)); whether a rule denies it now, again as it
 runs (`rule_denying`); and what may flow where (`may_publish`). Before it hands a call to its tool,
-it checks besides that the caller is an agent - only agents call tools - and that the call was
-offered to it. Afterwards the executor times the call, turns an error into a status and a next
-step, classifies the result, withholds what may not flow into the channel and marks what only the
-owner sees.
+it checks besides that the call was offered to it. Only agents call tools: the core makes an
+`ActorRuntime` for an agent alone, so that the executor need not ask. Afterwards the executor
+times the call, turns an error into a status and a next step, classifies the result, withholds what
+may not flow into the channel and marks what only the owner sees.
 
 **Two tools of the same name** are a configuration error that keeps the agent from starting, naming
 both components: resolved by order, one of them would be silently unreachable. User commands follow

@@ -3743,7 +3743,7 @@ impl AgentCommandProvider for Commanded {
         _args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {
-        let _ = turn.situation().session_view().await;
+        let _ = turn.situation().session().await;
         self.0.lock().unwrap().push(turn.situation().initiator());
         Ok(CommandOutput::private(format!("{name}: done")))
     }

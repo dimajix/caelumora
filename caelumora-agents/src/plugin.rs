@@ -44,16 +44,13 @@ impl Plugin for AgentsPlugin {
         kinds.register(
             PersonalityKind::Internal,
             AgentActor::COMPONENT_FACETS,
-            |agent, personality, runtime| async move {
-                Ok(Box::new(AgentActor::new(agent, personality, runtime).await?) as Box<dyn Actor>)
-            },
+            |runtime| async move { Ok(Box::new(AgentActor::new(runtime).await?) as Box<dyn Actor>) },
         );
         kinds.register(
             PersonalityKind::External,
             ExternalAgentActor::COMPONENT_FACETS,
-            |agent, personality, runtime| async move {
-                Ok(Box::new(ExternalAgentActor::new(agent, personality, runtime).await?)
-                    as Box<dyn Actor>)
+            |runtime| async move {
+                Ok(Box::new(ExternalAgentActor::new(runtime).await?) as Box<dyn Actor>)
             },
         );
         Ok(())

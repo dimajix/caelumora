@@ -47,8 +47,9 @@ against this list, rule by rule, before it is reported (the self-review of
     extension traits of its own - its questions on `AccessQuestions`, its views on `Views` - and
     adds nothing about its kind to the core (see [PLUGINS.md](PLUGINS.md)).
 *   An application - `caelumora-agents`, a crate that brings an agent's components - names no
-    `SecurityContext`, policy, view or manager of the core or of a plugin: it asks the core through
-    `ActorRuntime`, `Situation` and `Turn`, and reads through the readers
+    `SecurityContext`, policy, view, manager or controller of the core or of a plugin, nor the
+    runtime of a participant: it asks the core through `ActorRuntime`, `Situation` and `Turn`, and
+    reads through the readers
     ([ARCHITECTURE.md](ARCHITECTURE.md#principles); `scripts/application-names.sh` checks it).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
     test in the security suite (`caelumora-runtime/tests/security_suite.rs`, an agent's in
@@ -296,8 +297,8 @@ condition's doc comment names it, and a test holds both together.
 
 ### Runtimes and their entities
 
-A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored entity it holds
-(`Session`, `Channel`) share their work by three rules:
+A running object - `SessionLoop`, `ChannelLoop`, `ParticipantRuntime` - and the stored entity it
+holds (`Session`, `Channel`) share their work by three rules:
 
 *   **The model derives.** A value derived from an entity is computed in `caelumora-model` - a
     method of the entity (`Agent::security_context`) or a constructor of the derived type
@@ -312,19 +313,21 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
     entity above is reached through the parent - `channel.session_loop()` - never through a
     forwarder such as a `session_privacy()` on the channel's loop. What holds when the parent is
     missing is the caller's to decide.
-*   **The `ActorRuntime` is the actor's interface.** The one exception to the rule above: an actor
-    reaches its channel through its `ActorRuntime`. The channel as it stands, its classification and
-    attributes are read from the channel's controller, which the runtime holds as the session's
-    (issue 374); what only the running channel can answer - its users for the questions of a tool
-    call (issue 370) - is asked of the channel; the session's workspace is asked of its
-    `WorkspaceController`, reached through the session's loop - for the workspace's writer with the
-    session and the channel as their controllers hold them, for its reader as its views reached them
-    (`WorkspaceWriter`, `WorkspaceReader`). Both answer `None` or refuse while the channel is being
-    built or once it is gone, so that the caller still decides what that means. The public API of
-    `ChannelLoop` is the frontends'; it acts in a user's name too (`ChannelLoop::user_actor`), and
-    is not an actor's. What an actor needs of its channel and does not find on its `ActorRuntime` is
-    added there. `ActorRuntime::channel_loop` stays the runtime's (`pub(crate)`): for the user's and
-    the approver's actors, which act for a person as the frontends do, and for the views.
+*   **The actor's runtime is its interface.** The one exception to the rule above: an actor
+    reaches its channel through its runtime - the `ParticipantRuntime`, and an agent's actor the
+    `ActorRuntime` the core serves from it (issue 516). The channel as it stands, its
+    classification and attributes are read from the channel's controller, which the runtime holds
+    as the session's (issue 374); what only the running channel can answer - its users for the
+    questions of a tool call (issue 370) - is asked of the channel; the session's workspace is asked
+    of its `WorkspaceController`, reached through the session's loop - for the workspace's writer
+    with the session and the channel as their controllers hold them, for its reader as its views
+    reached them (`WorkspaceWriter`, `WorkspaceReader`). Both answer `None` or refuse while the
+    channel is being built or once it is gone, so that the caller still decides what that means.
+    The public API of `ChannelLoop` is the frontends'; it acts in a user's name too
+    (`ChannelLoop::user_actor`), and is not an actor's. What an actor needs of its channel and does
+    not find on its runtime is added there. `ParticipantRuntime::channel_loop` stays the runtime's
+    (`pub(crate)`): for the user's and the approver's actors, which act for a person as the
+    frontends do, and for the views.
 *   **A loop gives out what it holds; a manager is given coordinates and properties.** An operation
     of a manager or a controller on what lies in a channel takes the channel by its coordinates - an
     id, an `Address<Channel>` - or by its document (`Session`, `Channel`), the properties it needs;
@@ -332,7 +335,7 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
     where messages are exchanged (`AttachmentManager::create`, `WorkspaceController::terminal_in`,
     `ArtifactManager::publish`; issue 468). Whoever holds the live documents hands them over - a
     frontend from the loops it opened (`SessionLoop::channel_for`), an actor from its
-    `ActorRuntime` - and decided, in reaching them, that the caller reads the channel; the manager
+    runtime - and decided, in reaching them, that the caller reads the channel; the manager
     asks what is its own. A loop does not act on other resources for its callers: it holds no
     forwarder to a workspace or a manager.
 *   **One name, one kind of thing.** `channel()` and `session()` return the entity's document as it
@@ -358,7 +361,7 @@ A type takes the services it works with - the `AccessPolicy`, the stores, the ev
 *   **What it holds says what it needs.** A type holds the services it uses, not the runtime that
     reaches all of them. Several services that go together travel as a small context holding
     exactly those - `ComponentContext`, `Views` - never as one that holds everything again. A
-    scoped runtime such as `ActorRuntime` is such a context; it does not hand out the
+    scoped runtime such as `ParticipantRuntime` is such a context; it does not hand out the
     `RuntimeManager` behind it, so that its users cannot reach past it (issue 359).
 *   **The policies travel as a pair.** A type that asks both the `AccessPolicy` and the
     `ConfidentialityPolicy` holds them as one `Policies` (`caelumora_model::security`) and is made

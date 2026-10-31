@@ -184,7 +184,7 @@ impl ToolProvider for ArtifactTool {
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
         let channel = (turn.situation().session_id(), turn.situation().channel_id());
         // Into the project its session's results go to (issue 467), as the session is now.
-        let session = turn.situation().session_view().await?.ok_or_else(|| {
+        let session = turn.situation().session().await?.ok_or_else(|| {
             ToolError::ExecutionFailed("the turn is in no session to publish in".to_string())
         })?;
         let name = ScopedName::new(name, Scope::ProjectScope { project_id: session.project() })

@@ -9,25 +9,25 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-pub use crate::testing::actor_runtime_in;
+pub use crate::testing::participant_runtime_in;
 
 use crate::actor::user::ChannelWatch;
 use crate::channel::ChannelLoop;
-use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
+use crate::runtime::{ChannelRuntime, ParticipantRuntime, RuntimeManager};
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
 use crate::testing::TestRuntime;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Rejection};
-use caelumora_model::channel::testing::{bare_channel, main_channel};
+use caelumora_model::channel::testing::main_channel;
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::security::{AccessPolicy, Admission, OwnershipPolicy};
-use caelumora_model::session::testing::{bare_session, make_session};
-use caelumora_model::session::{Session, SessionId};
+use caelumora_model::session::testing::make_session;
+use caelumora_model::session::Session;
 use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::memberships::StoreMemberships;
@@ -73,26 +73,19 @@ pub fn test_runtime() -> Arc<RuntimeManager> {
     TestRuntime::default().build()
 }
 
-/// The runtime of an actor in a channel of no running session, never
-/// attached - for turns and what an actor is built with in tests that reach
-/// no channel: its views read nothing elsewhere, its questions have nobody
-/// to be put to, and it has no workspace.
-pub fn detached_actor_runtime() -> ActorRuntime {
-    let session = bare_session(SessionId::new());
-    let channel = bare_channel(session.id);
-    detached_actor_runtime_in(test_runtime(), session, channel, ActorId::None)
-}
-
-/// As `detached_actor_runtime`, of `actor`, on `runtime_manager`, in `channel` of `session` - for
-/// tests that give the actor the policy, the rules, the session and the channel of their own
-/// (issues 371, 374), acting in its own name without roles (issue 516).
-pub fn detached_actor_runtime_in(
+/// The runtime of the participant `actor` on `runtime_manager`, in `channel` of `session`, which
+/// runs in no session and is never attached - for tests that give the actor the policy, the
+/// rules, the session and the channel of their own (issues 371, 374), acting in its own name
+/// without roles (issue 516): its views read nothing elsewhere, its questions have nobody to be
+/// put to, and it has no workspace.
+pub fn detached_participant_in(
     runtime_manager: Arc<RuntimeManager>,
     session: Session,
     channel: Channel,
     actor: ActorId,
-) -> ActorRuntime {
-    ChannelRuntime::outside_a_session(runtime_manager, session, channel).new_actor_runtime(actor)
+) -> ParticipantRuntime {
+    ChannelRuntime::outside_a_session(runtime_manager, session, channel)
+        .new_participant_runtime(actor)
 }
 
 /// Creates and starts `session` with its main channel.

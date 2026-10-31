@@ -37,11 +37,13 @@ use caelumora_model::work::Work;
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::{ActorRuntime, RuntimeBuilder};
-use caelumora_runtime::session::testing::detached_actor_runtime_in;
+use caelumora_runtime::runtime::{ActorRuntime, AgentRuntime, ParticipantRuntime, RuntimeBuilder};
+use caelumora_runtime::session::testing::detached_participant_in;
 use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::testing::TestRuntime;
-use caelumora_runtime::testing::{actor_runtime_in, test_registry as runtime_registry, World};
+use caelumora_runtime::testing::{
+    participant_runtime_in, test_registry as runtime_registry, World,
+};
 use caelumora_runtime::workspace::testing::WithWorkspace;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -97,14 +99,8 @@ pub fn turn<'a>(
         channel.classification(),
         Default::default(),
     ));
-    Turn::of(
-        agent,
-        agent.to_string(),
-        state,
-        AgentStateHandle::detached(),
-        actor_runtime_in(channel, ActorId::Agent(agent)),
-    )
-    .expect("a turn was begun")
+    Turn::of(state, agent_runtime(participant_runtime_in(channel, ActorId::Agent(agent))))
+        .expect("a turn was begun")
 }
 
 /// What `provider` offers in a turn that reaches no channel (issue 290) -
@@ -112,14 +108,7 @@ pub fn turn<'a>(
 pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<Tool>, String> {
     let mut state = AgentChannelState::default();
     state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
-    let agent = AgentId::new();
-    let Some(turn) = Turn::of(
-        agent,
-        agent.to_string(),
-        &mut state,
-        AgentStateHandle::detached(),
-        detached_actor_runtime(),
-    ) else {
+    let Some(turn) = Turn::of(&mut state, detached_actor_runtime(AgentId::new())) else {
         return Err("no turn was begun".to_string());
     };
     provider.offered(&turn.situation()).await
@@ -231,18 +220,30 @@ impl ModelProfileProvider for Unasked {
     }
 }
 
-/// The runtime of an actor in a channel of no running session, never
-/// attached, as the runtime's (`caelumora_runtime::session::testing`), with
-/// the agents' plugin - and so the agents' texts (issue 57).
-pub fn detached_actor_runtime() -> ActorRuntime {
+/// The runtime of the agent `agent` in a channel of no running session, never attached, with a
+/// state of its own (`agent_runtime`): of the participant `detached_participant` makes.
+pub fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
+    agent_runtime(detached_participant(agent))
+}
+
+/// The runtime of the participant `agent` in a channel of no running session, never attached,
+/// as the runtime's (`caelumora_runtime::session::testing`), with the agents' plugin - and so the
+/// agents' texts (issue 57).
+pub fn detached_participant(agent: AgentId) -> ParticipantRuntime {
     let session = bare_session(SessionId::new());
     let channel = bare_channel(session.id);
-    detached_actor_runtime_in(
+    detached_participant_in(
         TestRuntime { plugins: vec![&TestAgents], ..Default::default() }.build(),
         session,
         channel,
-        ActorId::None,
+        ActorId::Agent(agent),
     )
+}
+
+/// The runtime of the agent `runtime` is made for, with a state of its own
+/// (`AgentStateHandle::detached`), as `AgentRuntime::in_test` makes it.
+pub fn agent_runtime(runtime: ParticipantRuntime) -> Arc<dyn ActorRuntime> {
+    Arc::new(AgentRuntime::in_test(runtime, AgentStateHandle::detached()))
 }
 
 /// The prompt catalogue with the core's texts and the agents', as the
@@ -496,12 +497,6 @@ pub fn workspace_turn<'a>(with: &WithWorkspace, state: &'a mut AgentChannelState
         channel.classification(),
         Default::default(),
     ));
-    Turn::of(
-        with.agent,
-        "Jonathan".to_string(),
-        state,
-        AgentStateHandle::detached(),
-        actor_runtime_in(channel, ActorId::Agent(with.agent)),
-    )
-    .expect("a turn was begun")
+    Turn::of(state, agent_runtime(participant_runtime_in(channel, ActorId::Agent(with.agent))))
+        .expect("a turn was begun")
 }

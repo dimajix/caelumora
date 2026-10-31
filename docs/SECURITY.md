@@ -651,7 +651,7 @@ channel is read.
 An application reads through **readers** (`SessionReader`, `ChannelReader`, `ParticipantReader`,
 issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): the part of the views
 an agent's work reads through, which the views implement. A turn is handed a reader of its session
-(`ActorRuntime::session_view`), never a view, so that it reaches no policy, no manager and no
+(`ActorRuntime::session`), never a view, so that it reaches no policy, no manager and no
 context through what it reads. What a system service offers an agent's work of its kind - the core
 for its own, the workspace - it binds to every piece of work as its extensions
 (`RuntimeBuilder::extend_readers`, `extend_writers`): traits of its own, made from the work's

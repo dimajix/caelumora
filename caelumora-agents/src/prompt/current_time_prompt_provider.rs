@@ -91,7 +91,6 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use chrono::TimeZone as _;
 
     fn sunday() -> DateTime<Utc> {
@@ -102,15 +101,9 @@ mod tests {
     async fn told(provider: &CurrentTimePromptProvider, zone: TimeZone) -> Prompt {
         let mut work = Work::default();
         work.context.frame.time_zone = zone;
-        let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
+        let state = AgentChannelState::default();
         provider
-            .get_prompt(&Situation::new(
-                AgentId::new(),
-                &work,
-                &state,
-                &agent_state,
-                &detached_actor_runtime(),
-            ))
+            .get_prompt(&Situation::new(&work, &state, &*detached_actor_runtime(AgentId::new())))
             .await
             .unwrap()
     }

@@ -3,7 +3,7 @@ use crate::actor::{Actor, Answering};
 use crate::channel::{ChannelError, ChannelLoop};
 use crate::command::{CommandContext, CommandError, CommandReply};
 use crate::controller::{ChannelController, UserController};
-use crate::runtime::ActorRuntime;
+use crate::runtime::ParticipantRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -43,7 +43,7 @@ pub struct UserActor {
     session_id: SessionId,
     channel_id: ChannelId,
     user: Arc<UserController>,
-    actor_runtime: ActorRuntime,
+    participant_runtime: ParticipantRuntime,
     /// What the user's rules answer with (issue 13): whether they may
     /// approve the calls of an agent in this channel is asked first.
     access_policy: Arc<dyn AccessPolicy>,
@@ -134,22 +134,25 @@ impl ChannelWatch {
 impl UserActor {
     /// The actor of the user `user` - the session's controller of them,
     /// shared with their actors in its other channels (issue 120) - in the
-    /// channel of `actor_runtime`.
-    pub async fn new(user: Arc<UserController>, actor_runtime: ActorRuntime) -> Result<Self> {
-        let channel_controller = Arc::clone(actor_runtime.channel_controller());
+    /// channel of `participant_runtime`.
+    pub async fn new(
+        user: Arc<UserController>,
+        participant_runtime: ParticipantRuntime,
+    ) -> Result<Self> {
+        let channel_controller = Arc::clone(participant_runtime.channel_controller());
         let channel = Arc::clone(&channel_controller.load());
         let user_id = user.id();
 
         let (utx, urx) = mpsc::channel(100);
-        let outbox = actor_runtime.actor_manager().outbox(channel.id, ActorId::User(user_id));
+        let outbox = participant_runtime.actor_manager().outbox(channel.id, ActorId::User(user_id));
 
         Ok(Self {
             id: ActorId::User(user_id),
             session_id: channel.session_id,
             channel_id: channel.id,
             user,
-            access_policy: Arc::clone(actor_runtime.access_policy()),
-            actor_runtime,
+            access_policy: Arc::clone(participant_runtime.access_policy()),
+            participant_runtime,
             channel: channel_controller,
             user_rx: Mutex::new(urx),
             user_tx: utx,
@@ -249,7 +252,7 @@ impl UserActor {
     ) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let classification = classification.unwrap_or_else(|| channel_loop.classification());
-        let attachments = self.actor_runtime.attachment_manager().named(
+        let attachments = self.participant_runtime.attachment_manager().named(
             self.id,
             self.channel_id,
             &attachments,
@@ -328,7 +331,7 @@ impl UserActor {
             .into());
         }
         let classification = classification.unwrap_or_else(|| original.classification.clone());
-        let attachments = self.actor_runtime.attachment_manager().named(
+        let attachments = self.participant_runtime.attachment_manager().named(
             self.id,
             self.channel_id,
             &attachments,
@@ -501,7 +504,7 @@ impl UserActor {
     /// # Errors
     /// An error if the channel is gone.
     fn channel_loop(&self) -> Result<Arc<ChannelLoop>> {
-        self.actor_runtime
+        self.participant_runtime
             .channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))
     }
@@ -614,7 +617,7 @@ impl UserActor {
         if decision == RuleDecision::Ask {
             return None;
         }
-        let agent = match self.actor_runtime.agent_attributes(request.agent_id).await {
+        let agent = match self.participant_runtime.agent_attributes(request.agent_id).await {
             Ok(attributes) => attributes,
             Err(e) => {
                 warn!("UserActor {} cannot read agent {}: {}", self.id(), request.agent_id, e);
@@ -650,7 +653,7 @@ impl UserActor {
     /// if the channel is gone.
     pub async fn execute_command(&self, name: &str, args: &str) -> Result<CommandReply> {
         let channel = self.channel_loop()?;
-        let executor = self.actor_runtime.command_executor();
+        let executor = self.participant_runtime.command_executor();
         let context = CommandContext { issuer: self, channel: &channel, executor };
         debug!("UserActor {} runs /{}", self.id, name);
         let output = match executor.execute(name, args, &context).await {
@@ -765,7 +768,10 @@ impl UserActor {
     /// The commands this user may see, e.g. for completion.
     pub async fn visible_commands(&self) -> Vec<Command> {
         let channel = self.channel.load().security_attributes.clone();
-        self.actor_runtime.command_executor().visible(&self.security_context(), &channel).await
+        self.participant_runtime
+            .command_executor()
+            .visible(&self.security_context(), &channel)
+            .await
     }
 
     /// Follows the channel as this user, from now on: see `ChannelWatch`.
@@ -878,7 +884,7 @@ impl UserActor {
     /// what they ask of the channel are checked in. What they send is
     /// admitted in the context the channel builds for them (issue 516).
     pub(crate) fn security_context(&self) -> SecurityContext {
-        self.actor_runtime.acting_for(self.id)
+        self.participant_runtime.acting_for(self.id)
     }
 }
 
@@ -981,11 +987,11 @@ mod tests {
             channel,
         );
         let channel_loop = ChannelLoop::new(channel_runtime.clone()).await.unwrap();
-        let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id));
+        let participant_runtime = channel_runtime.new_participant_runtime(ActorId::User(user.id));
         record_users(runtime.entity_stores(), &[&user]).await;
         let actor = UserActor::new(
             runtime.controller_manager().user_controller(user.id).await.unwrap(),
-            actor_runtime,
+            participant_runtime,
         )
         .await
         .unwrap();

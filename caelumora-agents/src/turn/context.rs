@@ -155,7 +155,7 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing;
+    use crate::testing::{self, agent_runtime};
     use crate::turn::tests::seen;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -179,8 +179,7 @@ mod tests {
         use caelumora_model::digest;
         use caelumora_model::session::testing::bare_session;
         use caelumora_model::session::SessionId;
-        use caelumora_runtime::agent::state::AgentStateHandle;
-        use caelumora_runtime::session::testing::detached_actor_runtime_in;
+        use caelumora_runtime::session::testing::detached_participant_in;
         use caelumora_runtime::testing::TestRuntime;
         use std::fs;
         use std::sync::Arc;
@@ -219,11 +218,11 @@ mod tests {
         let notes = kept("notes.txt", b"notes", &Classification::PUBLIC);
 
         let given = |images: bool, attachments: Vec<ContentRef>| {
-            let runtime = detached_actor_runtime_in(
+            let runtime = detached_participant_in(
                 Arc::clone(&runtime),
                 session.clone(),
                 channel.clone(),
-                ActorId::None,
+                ActorId::Agent(AgentId::new()),
             );
             let channel_classification = confidential.clone();
             async move {
@@ -238,14 +237,7 @@ mod tests {
                     Work::new(Default::default(), None, channel_classification, Default::default())
                         .given_as(profile),
                 );
-                let mut turn = Turn::of(
-                    AgentId::new(),
-                    "agent".to_string(),
-                    &mut state,
-                    AgentStateHandle::detached(),
-                    runtime,
-                )
-                .unwrap();
+                let mut turn = Turn::of(&mut state, agent_runtime(runtime)).unwrap();
                 let context = turn.full_context().await.map(|(messages, _)| messages);
                 (context, turn.situation().label())
             }

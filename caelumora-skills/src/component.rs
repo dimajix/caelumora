@@ -563,7 +563,7 @@ impl AgentCommandProvider for SkillsComponent {
                     skills.usable_skill_named(wanted).await.map_err(|e| command_error(name, e))?;
                 // In the name of who asked, as the channel knows them.
                 let issuer = turn.situation().initiator();
-                let issuer_name = match turn.situation().channel_view().await {
+                let issuer_name = match turn.situation().own_channel().await {
                     Ok(Some(channel)) => channel
                         .participant(issuer)
                         .await

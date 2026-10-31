@@ -1008,3 +1008,31 @@ service and the application never holds an entry it may not recall.
   configuration that names it fails to load, naming it, and is to name it at each storage instead.
   Differs from the plan besides: an application still reads the largest file of the storage, from
   the `TerminalReader`, where `publish_file` bounds what it offers.
+- **2026-10-31** — Step 5b.4 done on the branch: `ActorRuntime` is the trait of the table above,
+  the struct the runtime makes of a participant `ParticipantRuntime`. The core serves the trait from
+  it as `AgentRuntime`, which holds the participant's runtime, the controllers of the agent and of
+  its personality and the agent's state; the factory of a kind of agent is given an `Arc<dyn
+  ActorRuntime>` alone (`AgentKinds::register`), and `AgentKinds::build` makes it, loading the
+  agent's state. `agent()` and `personality()` replace the controllers in the agents' body,
+  `agent_state`, `reserve_memory_id` and `apply_agent_state` the `AgentStateHandle` in the situation
+  and the turn (`Situation::agent_state` a snapshot, `Turn::reserve_memory_id`), and
+  `build_components` the registry and the component context. The readers' accessors lost their
+  `…_view`: `Situation::session` and `own_channel` (decision 11), `ActorRuntime::session` and
+  `ParticipantRuntime::session`. The controllers, the registry, the services, the component context,
+  the session's commands and the agent's state are `pub(crate)` on the `ParticipantRuntime`, and
+  `scripts/application-names.sh` refuses an application that names the runtime of a participant, an
+  `AgentRuntime`, a `ChannelRuntime`, the `AgentStateHandle` or a controller. Differs from the plan:
+  an agent's command that a command of its session would hide is refused, not left out - as the
+  agents' body refused it -, by the core as it builds the actor (`AgentKinds::build`), so that the
+  behaviour stays and no kind of agent can forget it; the extensions are reached through `reader_of`
+  and `writer_of`, which keeps `Face` the core's; the secrets and the copying of an attachment stay
+  on the trait (decision 10 amended); the trait has no `session_id`, which nothing asks, and
+  `build_components` takes the defaults of the singles beside the configuration, as an external
+  agent builds its own context provider by them; `Situation::new` takes the agent from the runtime,
+  as `Turn::of` does. Tests make an agent's runtime with `AgentRuntime::in_test` - of the agent the
+  channel resolved, else of one made up, never of a user or an approver - and `with_personality`;
+  that only an agent calls tools the type says now - the core makes an `ActorRuntime` for an agent
+  alone -, so that the `ToolExecutor` asks it no more, and its test went. The functions that make a
+  `ParticipantRuntime` are named after it (`new_participant_runtime`, `participant_runtime_in`,
+  `detached_participant_in`), and tests change a session's rules through
+  `ChannelRuntime::session_controller_of`. Stored data: none.

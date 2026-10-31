@@ -6,7 +6,6 @@
 //! as an agent does, and keeps what it hears.
 
 use crate::actor::{Actor, AgentKinds, Answering};
-use crate::controller::AgentController;
 use crate::plugin::Plugin;
 use crate::runtime::{ActorRuntime, RuntimeBuilder};
 use crate::transport::{EventReceiver, EventSender};
@@ -20,7 +19,7 @@ use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -49,11 +48,9 @@ impl Plugin for ScriptedAgents {
         let kinds: &mut AgentKinds = runtime.agent_kinds();
         for kind in [PersonalityKind::Internal, PersonalityKind::External] {
             let script = self.0.clone();
-            kinds.register(kind, &[], move |agent, _personality, runtime| {
+            kinds.register(kind, &[], move |runtime| {
                 let script = script.clone();
-                async move {
-                    Ok(Box::new(ScriptedAgent::new(&agent, runtime, script)) as Box<dyn Actor>)
-                }
+                async move { Ok(Box::new(ScriptedAgent::new(runtime, script)) as Box<dyn Actor>) }
             });
         }
         Ok(())
@@ -74,7 +71,7 @@ enum Interrupt {
 pub struct ScriptedAgent {
     id: ActorId,
     name: Name,
-    runtime: ActorRuntime,
+    runtime: Arc<dyn ActorRuntime>,
     script: Script,
     state: Mutex<ActorState>,
     /// The turn under way, if one is.
@@ -90,10 +87,11 @@ pub struct ScriptedAgent {
 }
 
 impl ScriptedAgent {
-    fn new(agent: &AgentController, runtime: ActorRuntime, script: Script) -> Self {
+    fn new(runtime: Arc<dyn ActorRuntime>, script: Script) -> Self {
+        let agent = runtime.agent();
         Self {
-            id: ActorId::Agent(agent.id()),
-            name: agent.load().name.name.clone(),
+            id: ActorId::Agent(agent.id),
+            name: agent.name.name.clone(),
             runtime,
             script,
             state: Mutex::new(ActorState::Idle),

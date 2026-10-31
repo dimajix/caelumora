@@ -285,7 +285,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::testing;
-    use crate::testing::detached_actor_runtime;
+    use crate::testing::detached_participant;
     use crate::tool::ToolError;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -306,8 +306,8 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
-    use caelumora_runtime::runtime::ActorRuntime;
-    use caelumora_runtime::session::testing::{actor_runtime_in, owned_runtime_under, spec};
+    use caelumora_runtime::runtime::{AgentRuntime, ParticipantRuntime};
+    use caelumora_runtime::session::testing::{owned_runtime_under, participant_runtime_in, spec};
     use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
     use caelumora_runtime::transport::Discard;
     use std::collections::HashMap;
@@ -341,7 +341,7 @@ mod tests {
         /// by its session, acting with its owner's rights (issue 255). The agent takes no part,
         /// so the test gives the runtime the context the core builds for a participant
         /// (`acting_as`, issue 516).
-        fn runtime_in(&self, sessions: &Sessions, at: &At, agent: AgentId) -> ActorRuntime {
+        fn runtime_in(&self, sessions: &Sessions, at: &At, agent: AgentId) -> ParticipantRuntime {
             let context = SecurityContext::new(self.owner, at.0 .0, at.0 .1).next(
                 ActorId::Agent(agent),
                 self.owner,
@@ -468,9 +468,9 @@ mod tests {
 
         /// The runtime a turn of `agent` in channel `at` acts through: its actor's in that
         /// channel, run by its session.
-        fn runtime_in(&self, at: &At, agent: AgentId) -> ActorRuntime {
+        fn runtime_in(&self, at: &At, agent: AgentId) -> ParticipantRuntime {
             let channel = self.running(at.0 .0).channel(at.0 .1).expect("a channel of the test");
-            actor_runtime_in(&channel, ActorId::Agent(agent))
+            participant_runtime_in(&channel, ActorId::Agent(agent))
         }
 
         fn running(&self, id: SessionId) -> &Arc<SessionLoop> {
@@ -504,11 +504,11 @@ mod tests {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at);
         let mut turn = Turn::of(
-            agent,
-            "agent".to_string(),
             &mut state,
-            Arc::clone(handle),
-            memory.runtime_in(sessions, &at, agent),
+            Arc::new(AgentRuntime::in_test(
+                memory.runtime_in(sessions, &at, agent),
+                Arc::clone(handle),
+            )),
         )
         .expect("a turn was begun");
         turn.see(&at.1);
@@ -530,11 +530,11 @@ mod tests {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at);
         let turn = Turn::of(
-            agent,
-            "agent".to_string(),
             &mut state,
-            Arc::clone(handle),
-            memory.runtime_in(sessions, &at, agent),
+            Arc::new(AgentRuntime::in_test(
+                memory.runtime_in(sessions, &at, agent),
+                Arc::clone(handle),
+            )),
         )
         .expect("a turn was begun");
         memory.get_prompt(&turn.situation()).await.unwrap()
@@ -565,11 +565,11 @@ mod tests {
         {
             memory.begin(&mut state, &team);
             let mut turn = Turn::of(
-                agent,
-                "agent".to_string(),
                 &mut state,
-                Arc::clone(&handle),
-                memory.runtime_in(&sessions, &team, agent),
+                Arc::new(AgentRuntime::in_test(
+                    memory.runtime_in(&sessions, &team, agent),
+                    Arc::clone(&handle),
+                )),
             )
             .expect("a turn was begun");
             turn.see(&team.1);
@@ -584,7 +584,7 @@ mod tests {
                 .unwrap();
             assert_eq!(result.value["id"], 1);
             assert!(
-                turn.situation().agent_state().current().memory.current().is_empty(),
+                turn.situation().agent_state().memory.current().is_empty(),
                 "not before the turn completes"
             );
             turn.commit(false, &Discard).await;
@@ -617,11 +617,11 @@ mod tests {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &elsewhere);
         let mut turn = Turn::of(
-            agent,
-            "agent".to_string(),
             &mut state,
-            Arc::clone(&handle),
-            memory.runtime_in(&sessions, &elsewhere, agent),
+            Arc::new(AgentRuntime::in_test(
+                memory.runtime_in(&sessions, &elsewhere, agent),
+                Arc::clone(&handle),
+            )),
         )
         .expect("a turn was begun");
         assert!(memory
@@ -630,11 +630,11 @@ mod tests {
             .is_err());
         memory.begin(&mut state, &team);
         let mut turn = Turn::of(
-            agent,
-            "agent".to_string(),
             &mut state,
-            Arc::clone(&handle),
-            memory.runtime_in(&sessions, &team, agent),
+            Arc::new(AgentRuntime::in_test(
+                memory.runtime_in(&sessions, &team, agent),
+                Arc::clone(&handle),
+            )),
         )
         .expect("a turn was begun");
         memory
@@ -668,11 +668,11 @@ mod tests {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &elsewhere);
         let mut turn = Turn::of(
-            agent,
-            "agent".to_string(),
             &mut state,
-            Arc::clone(&handle),
-            memory.runtime_in(&sessions, &elsewhere, agent),
+            Arc::new(AgentRuntime::in_test(
+                memory.runtime_in(&sessions, &elsewhere, agent),
+                Arc::clone(&handle),
+            )),
         )
         .expect("a turn was begun");
         let there = memory
@@ -691,11 +691,11 @@ mod tests {
         // Updated in a turn that has seen what is confidential ...
         memory.begin(&mut state, &confidential);
         let mut turn = Turn::of(
-            agent,
-            "agent".to_string(),
             &mut state,
-            Arc::clone(&handle),
-            memory.runtime_in(&sessions, &confidential, agent),
+            Arc::new(AgentRuntime::in_test(
+                memory.runtime_in(&sessions, &confidential, agent),
+                Arc::clone(&handle),
+            )),
         )
         .expect("a turn was begun");
         turn.see(&confidential.1);
@@ -741,11 +741,11 @@ mod tests {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &team);
         let mut turn = Turn::of(
-            agent,
-            "agent".to_string(),
             &mut state,
-            Arc::clone(&handle),
-            memory.runtime_in(&sessions, &team, agent),
+            Arc::new(AgentRuntime::in_test(
+                memory.runtime_in(&sessions, &team, agent),
+                Arc::clone(&handle),
+            )),
         )
         .expect("a turn was begun");
         memory
@@ -783,7 +783,7 @@ mod tests {
     async fn a_turn_in_no_session_recalls_nothing_and_remembers_as_private() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let runtime = detached_actor_runtime();
+        let runtime = detached_participant(agent);
         let memory = component(ActorId::User(UserId::new()));
         let at = (
             (SessionId::new(), ChannelId::new()),
@@ -791,9 +791,11 @@ mod tests {
         );
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at);
-        let mut turn =
-            Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), runtime.clone())
-                .expect("a turn was begun");
+        let mut turn = Turn::of(
+            &mut state,
+            Arc::new(AgentRuntime::in_test(runtime.clone(), Arc::clone(&handle))),
+        )
+        .expect("a turn was begun");
         memory
             .execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), None, &mut turn)
             .await
@@ -805,8 +807,9 @@ mod tests {
             "its session, private: nobody agreed to anything"
         );
         memory.begin(&mut state, &at);
-        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), runtime)
-            .expect("a turn was begun");
+        let turn =
+            Turn::of(&mut state, Arc::new(AgentRuntime::in_test(runtime, Arc::clone(&handle))))
+                .expect("a turn was begun");
         assert!(
             memory.get_prompt(&turn.situation()).await.unwrap().text.is_empty(),
             "no session to recall in"
@@ -913,11 +916,11 @@ mod tests {
         {
             memory.begin(&mut state, &confidential);
             let mut turn = Turn::of(
-                agent,
-                "agent".to_string(),
                 &mut state,
-                Arc::clone(&handle),
-                memory.runtime_in(&sessions, &confidential, agent),
+                Arc::new(AgentRuntime::in_test(
+                    memory.runtime_in(&sessions, &confidential, agent),
+                    Arc::clone(&handle),
+                )),
             )
             .expect("a turn was begun");
             turn.see(&Classification::general(Confidentiality::Internal));
@@ -1001,11 +1004,11 @@ mod tests {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &hr);
         let mut turn = Turn::of(
-            agent,
-            "agent".to_string(),
             &mut state,
-            Arc::clone(&handle),
-            memory.runtime_in(&sessions, &hr, agent),
+            Arc::new(AgentRuntime::in_test(
+                memory.runtime_in(&sessions, &hr, agent),
+                Arc::clone(&handle),
+            )),
         )
         .expect("a turn was begun");
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });

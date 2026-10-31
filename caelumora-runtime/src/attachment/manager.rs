@@ -420,7 +420,7 @@ impl AttachmentManager {
     /// showed, that the model of `profile` is given along (issues 282, 512) - held in memory, else
     /// read from its storage and checked against its digest -, and answers how each is classified:
     /// what the model is given of them. Asking nothing: what lies in an agent's transcript, it
-    /// heard (`ActorRuntime::load_attachments`).
+    /// heard (`ParticipantRuntime::load_attachments`).
     ///
     /// # Errors
     /// `NotFound` if the storage has nothing under an attachment's key, `Altered` if its bytes are

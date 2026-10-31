@@ -744,7 +744,7 @@ pub struct ToolExecutor {
     /// whether one may be called, the rules of its places, what may flow where -, through which a
     /// call's questions are put to the users of its channel, and what its tool gave its model is
     /// kept for the channel (issue 512).
-    runtime: ActorRuntime,
+    runtime: Arc<dyn ActorRuntime>,
 }
 
 impl ToolExecutor {
@@ -759,7 +759,7 @@ impl ToolExecutor {
     /// same name (`ToolProviders::new`).
     pub(crate) fn new(
         providers: Vec<ComponentImpl<dyn ToolProvider>>,
-        runtime: ActorRuntime,
+        runtime: Arc<dyn ActorRuntime>,
     ) -> ComponentResult<Self> {
         Ok(Self { providers: ToolProviders::new(providers)?, runtime })
     }
@@ -1034,19 +1034,13 @@ impl ToolExecutor {
         offered
     }
 
-    /// Nothing if `call` may be run now: it was offered, the caller is an
-    /// agent and no rule of a place denies it - one may have been set while
-    /// the call waited. Whether the policy permits it was asked as it was
-    /// admitted (`admit`), once (issue 304).
+    /// Nothing if `call` may be run now: it was offered and no rule of a place denies it - one
+    /// may have been set while the call waited. Whether the policy permits it was asked as it was
+    /// admitted (`admit`), once (issue 304); that its caller is an agent, the runtime it acts
+    /// through says, which the core makes for an agent alone (issue 516).
     async fn check(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<()> {
         if !offered(call, turn) {
             return Err(ToolError::UnknownTool(call.function_name.clone()));
-        }
-        let caller = self.runtime.actor_id();
-        if caller.as_agent_id().is_none() {
-            return Err(ToolError::PermissionDenied(format!(
-                "tools can only be called by agents, not by {caller}"
-            )));
         }
         // A rule that denies may have been set while the call waited.
         match self.runtime.rule_denying(call) {
@@ -1069,7 +1063,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, TestAgents};
+    use crate::testing::{self, agent_runtime, TestAgents};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::approval::{ApprovalRule, RuleDecision};
@@ -1088,13 +1082,11 @@ mod tests {
     use caelumora_model::session::{Session, SessionId, SessionUpdateEvent};
     use caelumora_model::tool::{ToolCallStatus, ToolResultStatus};
     use caelumora_model::turn::TurnState;
-    use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::controller::{ChannelController, SessionController};
-    use caelumora_runtime::session::testing::detached_actor_runtime_in;
-    use caelumora_runtime::testing::{actor_runtime_in, TestRuntime, World};
+    use caelumora_runtime::controller::SessionController;
+    use caelumora_runtime::runtime::ChannelRuntime;
+    use caelumora_runtime::testing::{participant_runtime_in, TestRuntime, World};
     use serde_json::json;
     use std::fs;
     use std::future;
@@ -1336,14 +1328,13 @@ mod tests {
     }
 
     /// The mock tools - each requiring approval if `requires_approval` -
-    /// guarded by `access_policy` and the rules of `places`; the controllers of
-    /// the session and the channel are returned, for their rules to be
-    /// changed.
+    /// guarded by `access_policy` and the rules of `places`; the controller of
+    /// the session is returned, for its rules to be changed.
     fn guarded_in(
         access_policy: Arc<dyn AccessPolicy>,
         requires_approval: bool,
         places: Places,
-    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+    ) -> (ToolExecutor, Arc<SessionController>) {
         guarding(
             access_policy,
             vec![("tools", Arc::new(MockToolProvider { requires_approval }))],
@@ -1357,7 +1348,7 @@ mod tests {
         access_policy: Arc<dyn AccessPolicy>,
         providers: Vec<(&str, Arc<dyn ToolProvider>)>,
         places: Places,
-    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+    ) -> (ToolExecutor, Arc<SessionController>) {
         let agent = ActorId::Agent(AgentId::new());
         guarding_under(
             access_policy,
@@ -1378,7 +1369,7 @@ mod tests {
         providers: Vec<(&str, Arc<dyn ToolProvider>)>,
         places: Places,
         actor: ActorId,
-    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+    ) -> (ToolExecutor, Arc<SessionController>) {
         let providers = providers
             .into_iter()
             .map(|(id, facet)| ComponentImpl {
@@ -1407,11 +1398,11 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let runtime = detached_actor_runtime_in(runtime, session, channel, actor);
-        let session = Arc::clone(runtime.session_controller());
-        let channel = Arc::clone(runtime.channel_controller());
-        let executor = ToolExecutor::new(providers, runtime).unwrap();
-        (executor, session, channel)
+        let channel = ChannelRuntime::outside_a_session(runtime, session, channel);
+        let session = channel.session_controller_of();
+        let executor =
+            ToolExecutor::new(providers, agent_runtime(channel.new_participant_runtime(actor)));
+        (executor.unwrap(), session)
     }
 
     fn guarded(
@@ -1491,7 +1482,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_rule_that_denies_set_while_a_call_waits_refuses_it_when_run() {
-        let (executor, session, _channel) =
+        let (executor, session) =
             guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
@@ -1630,7 +1621,7 @@ mod tests {
         let outward: Arc<dyn ToolProvider> =
             Arc::new(Outward { destination: Classification::general(Confidentiality::Internal) });
         let local: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: false });
-        let (executor, _, _) = guarding(
+        let (executor, _) = guarding(
             access_policy,
             vec![("outward", outward), ("local", local)],
             Places::default(),
@@ -1712,28 +1703,6 @@ mod tests {
                 "{approval:?}: reading, writing"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn only_an_agent_calls_tools() {
-        let providers = vec![(
-            "tools",
-            Arc::new(MockToolProvider { requires_approval: false }) as Arc<dyn ToolProvider>,
-        )];
-        // The executor of a user's actor, whose work calls a tool.
-        let (executor, _, _) = guarding_under(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-            providers,
-            Places::default(),
-            ActorId::User(UserId::new()),
-        );
-        let mut agent_channel_state = offered(&executor, Work::default()).await;
-        let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-
-        let result =
-            executor.execute(&call("test_tool"), None, &mut context, future::pending()).await;
-        assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
     }
 
     /// A turn of an agent in a general internal channel, with the tools of
@@ -1969,7 +1938,7 @@ mod tests {
             fail_policy: Default::default(),
             facet: Arc::new(Drawing) as Arc<dyn ToolProvider>,
         };
-        let runtime = actor_runtime_in(main, ActorId::Agent(helper));
+        let runtime = agent_runtime(participant_runtime_in(main, ActorId::Agent(helper)));
         let executor = ToolExecutor::new(vec![drawing], runtime).unwrap();
         let mut state = AgentChannelState::default();
         let tool_sets = {
@@ -1979,11 +1948,8 @@ mod tests {
         let tools = state.keep_offer(tool_sets);
         state.turn.as_mut().unwrap().work.context.frame.tools = tools;
         let mut turn = Turn::of(
-            helper,
-            helper.to_string(),
             &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(main, ActorId::Agent(helper)),
+            agent_runtime(participant_runtime_in(main, ActorId::Agent(helper))),
         )
         .unwrap();
 

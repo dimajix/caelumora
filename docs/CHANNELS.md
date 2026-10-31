@@ -907,25 +907,35 @@ everything in the channel shares:
 A session exists before its channels: `SessionLoop::new` makes it, and then builds each channel as
 one created later is built (`add_channel_loop`), so that a channel has its session from the start.
 
-The `ChannelRuntime` is the only source of `ActorRuntime`s, so every actor belongs to exactly one
-channel. An `ActorRuntime` is made for one actor and hands out only what concerns that actor: the
-services every actor needs - the model is not among them, an agent has it as a component - and those
-its components may use; its own agent state and its state in the channel; its own event
-subscription, for its channel and nothing else; the attributes of an agent that asks something of
-it, as stored; what an actor asks of its channel - its classification and attributes, its users for
-the questions of a tool call, the workspace as the channel may use it (issue 370); the controllers
-of its session and its channel, which the actor reads them by and which guard its agent's tool
-calls, held so that they do not lapse while a turn ends (issue 374); and its own session as the root
-of what its work reads (`session_view`), from which the session's other channels are read as the
-confidentiality rules allow (see [MEMORY.md](MEMORY.md#reading-other-channels)). It does not hand
-out the `RuntimeManager` it is made from: what an actor may reach is read from `ActorRuntime` alone
-(issue 359). It is the actor's interface to its channel, not a way to its `ChannelLoop`: the loop's
-public API is the frontends', and acts in a user's name too. The loop is reached through it only by
-the user's and the approver's actors and by the views, all in the runtime (`pub(crate)`, see
+The `ChannelRuntime` is the only source of `ParticipantRuntime`s, so every actor belongs to exactly
+one channel. A `ParticipantRuntime` is made for one participant and hands out only what concerns
+it: the services every actor needs - the model is not among them, an agent has it as a component -;
+its own agent state and its state in the channel; its own event subscription, for its channel and
+nothing else; the attributes of an agent that asks something of it, as stored; what an actor asks
+of its channel - its classification and attributes, its users for the questions of a tool call;
+the controllers of its session and its channel, which the actor reads them by and which guard its
+agent's tool calls, held so that they do not lapse while a turn ends (issue 374); and its own
+session as the root of what its work reads (`session`), from which the session's other channels
+are read as the confidentiality rules allow (see [MEMORY.md](MEMORY.md#reading-other-channels)). It
+does not hand out the `RuntimeManager` it is made from: what an actor may reach is read from its
+runtime alone (issue 359). It is the actor's interface to its channel, not a way to its
+`ChannelLoop`: the loop's public API is the frontends', and acts in a user's name too. The loop is
+reached through it only by the user's and the approver's actors and by the views, all in the
+runtime (`pub(crate)`, see
 [CODING-GUIDELINES.md](CODING-GUIDELINES.md#runtimes-and-their-entities)).
 
+The actor of an agent is an application's, and is given less (issue 516): its kind's factory
+(`AgentKinds::register`) is handed an `Arc<dyn ActorRuntime>` alone, the trait the core's
+`AgentRuntime` serves from the participant's runtime. It says who the agent and its personality are
+as they are now (`agent`, `personality`), reads and changes the agent's own state through three
+calls (`agent_state`, `reserve_memory_id`, `apply_agent_state`), builds the agent's components
+(`build_components`), and asks the core what the participant's runtime asks; no controller, no
+registry and no store leaves it. Whether a command of an agent is hidden by a command of its
+session the core decides as it builds the actor: an agent whose command has the name of one of the
+session's is refused (issue 37).
+
 The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from other crates cannot
-reach them. Components are not given their actor's `ActorRuntime` either, only what their
+reach them. Components are not given their actor's runtime either, only what their
 `ComponentContext` holds; see [COMPONENTS.md](COMPONENTS.md).
 
 ## Moderators

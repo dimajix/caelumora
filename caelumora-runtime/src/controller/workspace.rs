@@ -247,8 +247,8 @@ impl WorkspaceController {
             return Err(WorkspaceError::NotUsableInChannel);
         }
         let at = Place::of(channel, SessionPrivacy::of(session));
-        // An agent uses the workspace only in the channel it acts in (`ActorRuntime`), and so reads
-        // it from there.
+        // An agent uses the workspace only in the channel it acts in (`ParticipantRuntime`), and so
+        // reads it from there.
         let agent = matches!(ctx.caller_id, ActorId::Agent(_));
         let basis = ReadingBasis::of(agent.then_some(&at));
         if channel_reading(&self.policies, ctx, &channel.security_attributes, &at, basis)

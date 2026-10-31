@@ -69,11 +69,8 @@ impl Turn<'_> {
         let TurnState { memory, notes, private_notes, answer: final_messages, .. } = turn;
         let channel_state_changed =
             self.agent_channel_state.finish_turn(turn_id, notes, private_notes);
-        if let Err(e) = self
-            .agent_state
-            .apply(memory, self.agent_channel_state.last_message.unwrap_or_default())
-            .await
-        {
+        let after = self.agent_channel_state.last_message.unwrap_or_default();
+        if let Err(e) = self.runtime.apply_agent_state(memory, after).await {
             warn!(
                 "Agent {}: the changes of its turn to its own state are lost: {:#}",
                 self.agent_id, e
