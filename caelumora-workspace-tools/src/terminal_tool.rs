@@ -51,7 +51,6 @@ use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibili
 use caelumora_runtime::component::{
     config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
-use caelumora_runtime::workspace::WorkspaceManager;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -98,8 +97,6 @@ impl Params for TerminalToolConfig {}
 #[derive(Debug)]
 pub struct TerminalTool {
     pub(crate) config: TerminalToolConfig,
-    /// Where the largest file it may write is said.
-    pub(crate) workspaces: Arc<WorkspaceManager>,
     /// What its tool set is for and its tools, as the configuration or the
     /// prompt catalogue words them (issue 57).
     description: String,
@@ -109,14 +106,13 @@ pub struct TerminalTool {
 }
 
 impl TerminalTool {
-    /// The tool, configured by `config`, with the largest file it may write
-    /// said by `workspaces`, its texts from `prompts`.
+    /// The tool, configured by `config`, its texts from `prompts`. It writes no larger file than
+    /// its turn may put into the workspace (`Turn::max_file_bytes`, issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
     pub(crate) fn new(
         config: TerminalToolConfig,
-        workspaces: Arc<WorkspaceManager>,
         prompts: PromptTexts,
     ) -> Result<Self, PromptError> {
         let mut tools = shell::tools(&config, &prompts)?;
@@ -125,7 +121,7 @@ impl TerminalTool {
             Some(description) => description.clone(),
             None => tool_text(&prompts, NAMESPACE, TERMINAL_TOOL_KIND, "description", ())?,
         };
-        Ok(Self { config, workspaces, description, tools, prompts })
+        Ok(Self { config, description, tools, prompts })
     }
 }
 
@@ -269,17 +265,13 @@ pub fn register(registry: &mut ComponentRegistry) {
         writing_for_the_model(
             ComponentKind::new(TERMINAL_TOOL_KIND)
                 .params::<TerminalToolConfig>()
-                .provides::<dyn ToolProvider>()
-                .uses::<WorkspaceManager>(),
+                .provides::<dyn ToolProvider>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
             let config: TerminalToolConfig = config_of_params(&descriptor.params)?;
-            let workspaces = Arc::clone(context.service::<WorkspaceManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool::new(
-                config, workspaces, prompts,
-            )?));
+            facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool::new(config, prompts)?));
             Ok(facets)
         },
     );
@@ -297,16 +289,11 @@ pub(crate) mod tests {
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::type_map::TypeKey;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-    use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
+    use caelumora_runtime::workspace::testing::session_with_workspace;
     use serde_json::json;
 
-    pub(crate) fn tool(world: &WithWorkspace, params: Value) -> TerminalTool {
-        TerminalTool::new(
-            serde_json::from_value(params).unwrap(),
-            Arc::clone(world.runtime.workspace_manager()),
-            prompts(),
-        )
-        .unwrap()
+    pub(crate) fn tool(params: Value) -> TerminalTool {
+        TerminalTool::new(serde_json::from_value(params).unwrap(), prompts()).unwrap()
     }
 
     /// Issue 290: offered where the channel uses the workspace - every tool,
@@ -315,7 +302,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn no_workspace_is_offered_nor_used_where_the_channel_does_not_use_it() {
         let world = session_with_workspace().await;
-        let tool = tool(&world, json!({}));
+        let tool = tool(json!({}));
         let mut state = AgentChannelState::default();
         let offered = tool
             .offered(&workspace_turn(&world, &mut state).situation())
@@ -385,9 +372,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn which_calls_ask_is_configured_for_all_none_or_all_but_what_only_reads() {
-        let world = session_with_workspace().await;
         let asking = |mode: Value| -> Vec<(String, bool)> {
-            tool(&world, json!({ "requires_approval": mode }))
+            tool(json!({ "requires_approval": mode }))
                 .tools()
                 .into_iter()
                 .map(|t| (t.name, t.requires_approval))
@@ -417,7 +403,7 @@ pub(crate) mod tests {
             assert!(!asks(json!(true), name), "{name} concerns a command approved already");
         }
         assert!(!asks(json!(true), PUBLISH_FILE), "publishing gives nothing away");
-        let defaults = tool(&world, json!({}));
+        let defaults = tool(json!({}));
         assert!(
             defaults.tools().iter().all(|t| t.requires_approval
                 || [COMMAND_OUTPUT, KILL_COMMAND, PUBLISH_FILE].contains(&t.name.as_str())),

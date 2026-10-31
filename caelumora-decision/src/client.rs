@@ -150,7 +150,7 @@ impl DecisionClient {
         let mut request = self.http.post(url).json(&body);
         let token = self
             .endpoint
-            .bearer_token(&self.secret_manager, context)
+            .bearer_token(&self.secret_manager.for_context(context.clone()))
             .await
             .map_err(|source| DecisionError::Credential { endpoint: self.shown(), source })?;
         if let Some(token) = token {

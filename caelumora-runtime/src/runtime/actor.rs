@@ -13,25 +13,28 @@ use crate::workspace::{WorkspaceError, WorkspaceResult};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::approval::ApprovalRule;
+use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
 use caelumora_model::channel::{self, Channel, ChannelId};
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
+use caelumora_model::confidentiality::{
+    Classification, ConfidentialityPolicy, ConfidentialityQuestions, Place,
+};
 use caelumora_model::content::ContentRef;
 use caelumora_model::context::ModelProfile;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::question::{QuestionError, Questions};
-use caelumora_model::secret::SecretManager;
+use caelumora_model::secret::{SecretManager, Secrets};
 use caelumora_model::security::{
-    AccessPolicy, Grant, Policies, SecurityAttributes, SecurityContext,
+    AccessPolicy, ActionType, Enforcement, Grant, Reclassified, SecurityAttributes, SecurityContext,
 };
 use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
-use caelumora_model::tool::ToolMedia;
+use caelumora_model::tool::{ToolCall, ToolMedia};
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::workspace::Workspace;
+use chrono::Utc;
 use std::sync::Arc;
 
 /// What an actor runs with (issue 69): the services every actor needs, and
@@ -44,7 +47,10 @@ use std::sync::Arc;
 /// methods; what they read of the session they read from the root its work
 /// is given (`session_view`, issue 163), as the confidentiality rules allow.
 /// The full channel and session are `pub(crate)`, for the user's and the
-/// approver's actors and the views.
+/// approver's actors and the views. What the core decides of the actor's
+/// work - a tool call, a flow, a reclassification, the secrets it may read -
+/// it decides here, and it lends no policy - but through `services`, which
+/// the components are built with, until that is closed (issue 516, step 5).
 #[derive(Debug, Clone)]
 pub struct ActorRuntime {
     pub(super) runtime: ChannelRuntime,
@@ -53,26 +59,49 @@ pub struct ActorRuntime {
     pub(super) channel_id: ChannelId,
 }
 
+/// What the core decides of a tool call as it is admitted (`ActorRuntime::admit_tool_call`,
+/// issue 516).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallPermit {
+    /// The policy does not let it be called (`CallTool`).
+    Forbidden,
+    /// A rule of a place denies it.
+    Denied(ApprovalRuleId),
+    /// A rule of a place asks a person to decide it, whatever its tool says (issue 13).
+    Ask,
+    /// Nothing of the core stands against it: whether a person is asked is its tool's.
+    Open,
+}
+
+/// What an agent keeps of its own in its channel, which it may reclassify
+/// (`ActorRuntime::may_reclassify`, issue 516).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnRecord {
+    /// One of its notes, public or private.
+    Note,
+    /// An entry of its memory, recalled in the channel.
+    Memory,
+}
+
 impl ActorRuntime {
     /// The actor this runtime is for.
     pub fn actor_id(&self) -> ActorId {
         self.actor
     }
 
-    /// The policies of the process, the pair its stores are checked by.
-    pub fn policies(&self) -> &Policies {
-        self.runtime.runtime_manager.policies()
-    }
-
-    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
+    /// The access policy of the process - the core's alone, as its other policy and its secrets
+    /// are: what an actor of an application needs decided it asks below (issue 516).
+    pub(crate) fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
         self.runtime.runtime_manager.access_policy()
     }
 
-    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+    /// The confidentiality policy of the process, by which the flow questions below are decided.
+    fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
         self.runtime.runtime_manager.confidentiality()
     }
 
-    pub fn secret_manager(&self) -> &Arc<SecretManager> {
+    /// The secrets of the process, which `secrets` binds to a name.
+    fn secret_manager(&self) -> &Arc<SecretManager> {
         self.runtime.runtime_manager.secret_manager()
     }
 
@@ -132,7 +161,7 @@ impl ActorRuntime {
     }
 
     /// What the system restricts of tool calls everywhere (issue 13).
-    pub fn approval_rules(&self) -> &Arc<[ApprovalRule]> {
+    fn approval_rules(&self) -> &Arc<[ApprovalRule]> {
         self.runtime.runtime_manager.approval_rules()
     }
 
@@ -297,14 +326,6 @@ impl ActorRuntime {
         self.session_controller().load().effective_time_zone()
     }
 
-    /// The attributes of the actor's channel as it stands, by which an act
-    /// in it is asked - which of an agent's commands someone may see or
-    /// carry out (issue 269), an act on what an agent keeps there (issue
-    /// 312): read from its controller, as `channel_classification`.
-    pub fn channel_attributes(&self) -> SecurityAttributes {
-        self.channel().security_attributes.clone()
-    }
-
     /// `questions` put to the users of the actor's channel, their addressees
     /// resolved as `context` - who caused them - names them (issue 165,
     /// `ChannelLoop::address_questions`); `None` while the channel is still
@@ -320,8 +341,121 @@ impl ActorRuntime {
         Some(self.channel_loop()?.address_questions(questions, context))
     }
 
+    /// How a call of `call`, made in `context` by the actor's agent, is admitted (issue 516):
+    /// `Forbidden` unless the policy lets it be called (`CallTool`, the call's one question of
+    /// permission, issue 304); else as the strongest rule of the system, the actor's session and
+    /// its channel decides it now (`ApprovalRule::decide`, issue 13). Whether a person is asked
+    /// beyond what a rule asks is its tool's, as the agent's owner configured it.
+    pub async fn admit_tool_call(&self, context: &SecurityContext, call: &ToolCall) -> CallPermit {
+        let call_tool = ActionType::CallTool(call);
+        if self.access_policy().require(context, call_tool, |_| ()).await.is_err() {
+            return CallPermit::Forbidden;
+        }
+        match self.place_rule(call) {
+            Some((rule, RuleDecision::Deny)) => CallPermit::Denied(rule),
+            Some((_, RuleDecision::Ask)) => CallPermit::Ask,
+            Some((_, RuleDecision::Allow)) | None => CallPermit::Open,
+        }
+    }
+
+    /// The rule of a place that denies `call` now, if one does (issue 13): asked again as an
+    /// admitted call is run, since one may have been set while it waited. The policy is not asked
+    /// again (issue 304).
+    pub fn rule_denying(&self, call: &ToolCall) -> Option<ApprovalRuleId> {
+        match self.place_rule(call)? {
+            (rule, RuleDecision::Deny) => Some(rule),
+            (_, RuleDecision::Ask | RuleDecision::Allow) => None,
+        }
+    }
+
+    /// The rule of a place that decides `call` now, if one does, with what it decides of it: the
+    /// strongest of the system's, the session's and the channel's.
+    fn place_rule(&self, call: &ToolCall) -> Option<(ApprovalRuleId, RuleDecision)> {
+        let session = self.session_controller().load();
+        let channel = self.channel_controller().load();
+        let system = self.approval_rules().iter();
+        let rules = system.chain(&session.approval_rules).chain(&channel.approval_rules);
+        ApprovalRule::decide(rules, call, session.id, channel.id, Utc::now())
+            .map(|(rule, decision)| (rule.id, decision))
+    }
+
+    /// Whether what is classified `classification` may flow, in `context`, into what is
+    /// classified `into` (`ConfidentialityPolicy::may_publish`, issue 516): a tool's result into
+    /// the turn, the channel to a tool set's remote side, what an external agent brings into the
+    /// channel, what a turn saw into the channel as it is now.
+    pub fn may_publish(
+        &self,
+        context: &SecurityContext,
+        classification: &Classification,
+        into: &Classification,
+    ) -> bool {
+        self.confidentiality().may_publish(context, classification, into)
+    }
+
+    /// Whether what lies at `from` may be copied, in `context`, to `into`
+    /// (`ConfidentialityQuestions::may_copy_information`, issue 516): what an agent may recall
+    /// of what it keeps of its own, written elsewhere.
+    pub fn may_copy_information(
+        &self,
+        context: &SecurityContext,
+        from: &Place,
+        into: &Place,
+    ) -> bool {
+        self.confidentiality().may_copy_information(context, from, into)
+    }
+
+    /// Whether `record` - what the actor's agent keeps of its own in its channel - may be
+    /// reclassified, in `context`, as `classification`, within what is classified `within`
+    /// (issues 133, 516): `Reclassify` of it, by the agent as its author, with the channel's
+    /// attributes as it stands, then the flow (`require_publish`).
+    pub async fn may_reclassify(
+        &self,
+        context: &SecurityContext,
+        record: OwnRecord,
+        classification: &Classification,
+        within: &Classification,
+    ) -> bool {
+        let (author, attributes) = (self.actor, self.channel().security_attributes.clone());
+        let target = match record {
+            OwnRecord::Note => Reclassified::Note { author, attributes: &attributes },
+            OwnRecord::Memory => Reclassified::Memory { author, attributes: &attributes },
+        };
+        let reclassify = ActionType::Reclassify(target);
+        self.access_policy().require(context, reclassify, |_| ()).await.is_ok()
+            && self
+                .confidentiality()
+                .require_publish(context, classification, within, || ())
+                .is_ok()
+    }
+
+    /// The secrets that may be read in the name of `context` (issue 516), each read asked of the
+    /// policy then (`ReadSecret`): what a component that talks to a remote system is handed for
+    /// its credentials, shared, as what follows a remote task after a call reads them too.
+    pub fn secrets(&self, context: &SecurityContext) -> Arc<dyn Secrets> {
+        Arc::new(self.secret_manager().for_context(context.clone()))
+    }
+
+    /// `attachment`, one of the actor's channel, copied in `context` for a message the actor will
+    /// say there (`AttachmentManager::copy`, issue 282).
+    ///
+    /// # Errors
+    /// As `AttachmentManager::copy`.
+    pub async fn copy_attachment(
+        &self,
+        context: &SecurityContext,
+        attachment: &ContentRef,
+    ) -> AttachmentResult<ContentRef> {
+        self.attachment_manager().copy(context, &self.channel(), attachment).await
+    }
+
+    /// The largest file that may be put into a workspace, as the process is configured
+    /// (`WorkspaceManager::max_file_bytes`).
+    pub fn max_file_bytes(&self) -> u64 {
+        self.runtime.runtime_manager.workspace_manager().max_file_bytes()
+    }
+
     /// The actor's channel as it stands, read from its controller - as it stood last once the
-    /// channel is gone (issue 374): what `channel_classification` and `channel_attributes` are read
+    /// channel is gone (issue 374): what `channel_classification` is read
     /// from, and what an operation in the channel is given as the channel's properties
     /// (`AttachmentManager::copy`).
     pub fn channel(&self) -> Arc<Channel> {

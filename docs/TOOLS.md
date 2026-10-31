@@ -1,8 +1,9 @@
 # Tools
 
-Agents act through tools. A tool is contributed by a component and run by the runtime's
-`ToolExecutor`, which receives the ready providers and checks permissions. This document describes
-what a tool is, how its calls are run and what they answer, and the tools that come with Caelumora.
+Agents act through tools. A tool is contributed by a component and run by the agent's
+`ToolExecutor`, which receives the ready providers and has the core decide what is the core's
+(issue 516). This document describes what a tool is, how its calls are run and what they answer,
+and the tools that come with Caelumora.
 Which calls need a person's approval, and how a tool asks a person, is in
 [APPROVALS.md](APPROVALS.md); how components are built in [COMPONENTS.md](COMPONENTS.md); how far a
 tool call may travel in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
@@ -91,15 +92,18 @@ too. See [CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
 
 ## Running tool calls
 
-An agent's tool calls are run by the runtime's `ToolExecutor`, built with the `ToolProvider`s of its
+An agent's tool calls are run by its `ToolExecutor`, built with the `ToolProvider`s of its
 components. The executor is no component: how a call runs is its tool's business, but whether it
-runs and what the model is told is never the choice of whoever may write a personality. Before it
-hands a call to its tool, it checks that the caller is an agent - only agents call tools - that the
-call was offered to it, and that the place's rules still let it run. Whether the policy permits the
-call (`CallTool`) is asked once, as the call is admitted (see [Checked before anyone is
-asked](APPROVALS.md#checked-before-anyone-is-asked)), not again as it runs. Afterwards the executor
-times the call, turns an error into a status and a next step, classifies the result, withholds what
-may not flow into the channel and marks what only the owner sees.
+runs and what the model is told is never the choice of whoever may write a personality. What of a
+call is the core's to decide it asks of the core, through the agent's runtime (issue 516): whether
+the policy permits the call (`CallTool`) and what the rules of its places say, once, as the call is
+admitted (`ActorRuntime::admit_tool_call`, see [Checked before anyone is
+asked](APPROVALS.md#checked-before-anyone-is-asked)); whether a rule denies it now, again as it
+runs (`rule_denying`); and what may flow where (`may_publish`). Before it hands a call to its tool,
+it checks besides that the caller is an agent - only agents call tools - and that the call was
+offered to it. Afterwards the executor times the call, turns an error into a status and a next
+step, classifies the result, withholds what may not flow into the channel and marks what only the
+owner sees.
 
 **Two tools of the same name** are a configuration error that keeps the agent from starting, naming
 both components: resolved by order, one of them would be silently unreachable. User commands follow

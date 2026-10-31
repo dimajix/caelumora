@@ -197,6 +197,8 @@ someone else's channel. No agent is the system's (issue
 
 Before a call is registered, the `ToolExecutor` decides how it is admitted (`ToolExecutor::admit`):
 answered at once, put to a user, or run as it is. The actor only records what the executor decided.
+What of it is the core's - the policy and the rules of the places - the executor asks of the core
+(`ActorRuntime::admit_tool_call`, issue 516), and decides the rest itself.
 
 *   **Policy.** A call the `AccessPolicy` does not permit is refused before any approval is
     requested, so users are not asked about calls that would be refused anyway. It is the one place

@@ -117,7 +117,7 @@ impl Client {
         let key = match &self.key {
             // The storage is the operator's, configured as the server's
             // own keys are: its key is read in the system's name.
-            Key::Endpoint(secrets) => self.endpoint.bearer_token(secrets, &SecurityContext::system()).await.map_err(|e| {
+            Key::Endpoint(secrets) => self.endpoint.bearer_token(&secrets.for_context(SecurityContext::system())).await.map_err(|e| {
                 warn!(endpoint = %self.endpoint.shown(), "The key of an Open Terminal storage could not be read: {e}");
                 TerminalError::Unavailable("the storage's key could not be read".to_string())
             })?,

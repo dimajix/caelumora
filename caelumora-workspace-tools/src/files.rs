@@ -496,7 +496,7 @@ pub(crate) async fn execute(
 ) -> ToolResult<Value> {
     let config = &tool.config;
     let prompts = &tool.prompts;
-    let max_file_bytes = tool.workspaces.max_file_bytes();
+    let max_file_bytes = turn.max_file_bytes();
     let read = |turn: &mut Turn<'_>, digest| {
         turn.record_knowledge(KnowledgeRef {
             channel: turn.situation().channel_id(),
@@ -665,7 +665,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(&world, json!({}));
+        let tool = terminal_tool(json!({}));
         let run = |name: &'static str, params: Value| (name, params);
 
         let calls = [
@@ -812,7 +812,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(&world, json!({ "max_output_bytes": 10 }));
+        let tool = terminal_tool(json!({ "max_output_bytes": 10 }));
         fs::write(world.dir().join("long.txt"), "line one\nline two\nline three\n").unwrap();
         fs::write(world.dir().join("image.bin"), [0xff, 0xfe, 0x00, 0x81]).unwrap();
 
@@ -867,7 +867,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(&world, json!({}));
+        let tool = terminal_tool(json!({}));
         fs::create_dir_all(world.dir().join("docs")).unwrap();
         fs::write(world.dir().join("docs/plan.md"), "plan").unwrap();
         fs::write(world.dir().join("docs/notes.md"), "notes").unwrap();
@@ -946,7 +946,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(&world, json!({}));
+        let tool = terminal_tool(json!({}));
         fs::create_dir_all(world.dir().join("out")).unwrap();
         fs::write(world.dir().join("out/report.csv"), "a,b\n1,2\n").unwrap();
 
@@ -1007,7 +1007,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(&world, json!({}));
+        let tool = terminal_tool(json!({}));
         let too_large = "x".repeat(MAX_FILE_BYTES as usize + 1);
         let refused = tool
             .execute(
@@ -1024,10 +1024,9 @@ mod tests {
         assert!(!world.dir().join("big.txt").exists());
     }
 
-    #[tokio::test]
-    async fn the_approver_reads_the_change_whole_and_a_rule_covers_the_file_or_the_move() {
-        let world = session_with_workspace().await;
-        let tool = terminal_tool(&world, json!({}));
+    #[test]
+    fn the_approver_reads_the_change_whole_and_a_rule_covers_the_file_or_the_move() {
+        let tool = terminal_tool(json!({}));
         let write = json!({ "path": "docs/a.md", "content": "hello\nworld" });
         assert_eq!(
             tool.describe(WRITE_FILE, &write).unwrap(),
@@ -1076,10 +1075,9 @@ mod tests {
         assert_eq!(reading.arguments.len(), 2, "a read is alike when exactly alike");
     }
 
-    #[tokio::test]
-    async fn the_file_tools_are_presented_as_what_they_do_to_files() {
-        let world = session_with_workspace().await;
-        let presented: BTreeMap<String, ToolPresentation> = terminal_tool(&world, json!({}))
+    #[test]
+    fn the_file_tools_are_presented_as_what_they_do_to_files() {
+        let presented: BTreeMap<String, ToolPresentation> = terminal_tool(json!({}))
             .tools()
             .into_iter()
             .map(|t| (t.name, t.presentation))

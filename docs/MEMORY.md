@@ -97,8 +97,9 @@ per personality.
     private notes, memory is the agent's own, seen by its owner in the context panel only.
 *   **Where it is recalled.** Every entry carries the label of the turn that wrote it
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)) and is recalled only where that
-    may be read. The component asks the policy (`may_copy_information`) in the context of the turn
-    it is called in - the agent's, with its owner's rights - once per channel the entries come
+    may be read. The component asks the core (`Situation::may_copy_information`, issue 516) in the
+    context of the turn it is called in - the agent's, with its owner's rights - once per channel
+    the entries come
     from. Under the ownership policy an entry is recalled where its classification flows into the
     current channel's - within the session, and beyond it only where the entry's session permits
     it. In another session an entry is recalled only where both the privacy its session had when it

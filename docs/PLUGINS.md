@@ -129,18 +129,19 @@ a plugin depends on:
     others it declared it needs. What a container accepts follows from these declarations
     ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service that decides for the
     core - a policy, one of the core's managers, a store - is the core's, and a component of an
-    application does not declare it: what it needs decided it asks of the core, through its
-    `ComponentContext` while it is built and its `Turn` when it is called; what it needs of
-    another plugin it declares as the trait that plugin offers for it. Today the `AccessPolicy`,
-    the `ConfidentialityPolicy`, the `SecretManager`, the `WorkspaceManager`, the
-    `AttachmentManager` and the `ArtifactManager` are still among what such kinds declare (issue
-    516).
+    application does not declare it: what it needs decided it asks of the core, through the
+    `Turn` and the `Situation` it is called with (`may_reclassify`, `may_copy_information`,
+    `copy_attachment`, `max_file_bytes`; the executor's `admit_tool_call`, issue 516); what it
+    needs of another plugin it declares as the trait that plugin offers for it. Today the
+    artifacts' component still declares the `ArtifactManager` itself (issue 516).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
     `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
 *   **If it talks to a remote system:** `caelumora_runtime::remote`, which describes its errors
-    as the core's are described - `describe_request_error`, `describe_chain` (issue 326).
+    as the core's are described - `describe_request_error`, `describe_chain` (issue 326) -, and
+    the `Secrets` its credential is read of (`RemoteEndpoint::bearer_token`): the work's, from its
+    `Situation` (`secrets`), or handed to an `ExternalAgent` with every call (issue 516).
 *   **The model's types** of what it handles: `Tool`, `RemoteEndpoint`, `Classification`, ...
 
 What a plugin needs beyond that is made visible when a plugin needs it, as part of the runtime's

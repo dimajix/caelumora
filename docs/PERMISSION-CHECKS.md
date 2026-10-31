@@ -64,7 +64,7 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 | **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for what was deleted) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
 | **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ProjectController`, `ArtifactManager`, `AttachmentManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
-| **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, a left-out answer |
+| **Owners of acts** (`ToolExecutor` - asking the core through the agent's runtime, issue 516 -, `CommandExecutor`, the approver, components on what they keep - asking it the same way), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, a left-out answer |
 | **Views** (`caelumora-runtime/src/view`), rule 5 and reach | reaching (concept 4) and the flags of a snapshot | `may_*`; `require` for reading a participant's tools, components and context | `*NotFound`, a flag false, `Forbidden` |
 | **Filters** (event bus, command lists, store lists), rule 5 | the read question per item | `check` | silently left out |
 
@@ -166,9 +166,9 @@ actor can send (issue 228) -, an attachment that is none of the user's uploads f
 
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
-| Admit a tool call (`ToolExecutor::admit`) | offered; `CallTool` (T,3); the place's rules; approval | R4 | not again as it runs: offered, an agent, the place's rules | a forbidden result |
-| A tool's result (`ToolExecutor::admitted`) | `may_publish` of the result into the turn (T,2) | R4: the agent's context is a destination of its own | the channel as the result enters it (R3) | the result withheld |
-| Tool sets offered (`ToolExecutor::tool_sets`) | per set with a destination `may_publish` of the channel into it (T,2) | R5 | - | the set not offered |
+| Admit a tool call (`ToolExecutor::admit`) | offered; asked of the core (`ActorRuntime::admit_tool_call`, issue 516): `CallTool` (T,3), the place's rules; approval | R4 | not again as it runs: offered, an agent, the place's rules (`ActorRuntime::rule_denying`) | a forbidden result |
+| A tool's result (`ToolExecutor::admitted`) | `may_publish` of the result into the turn (T,2), asked of the core (`ActorRuntime::may_publish`) | R4: the agent's context is a destination of its own | the channel as the result enters it (R3) | the result withheld |
+| Tool sets offered (`ToolExecutor::tool_sets`) | per set with a destination `may_publish` of the channel into it (T,2), asked of the core (`ActorRuntime::may_publish`) | R5 | - | the set not offered |
 | Who may approve (`ApproverActor::approvers_of`) | per user `may_approve` (their own context, 3) | R5 | - | left out; nobody, denied at once |
 | An approval by click (`ApproverActor::handle_response`) | admitted by the channel (*What enters a channel*); the approver checks only that it names the agent that asked | R3 | `approvers_of` for the strategy (R5) | `MessageRejected` to its sender; an answer for another agent left out |
 | An approval by a person's rule (`UserActor::answer_by_rule`) | `may_approve` (U,3), then as a click | R5 | three times per answer: whether the rule answers, the admission, whom to wait for | the rule does not answer |
@@ -176,7 +176,7 @@ actor can send (issue 228) -, an attachment that is none of the user's uploads f
 | Commands shown (`CommandExecutor::visible`, `/help`, completion) | per command `ShowCommand` (U,3) | R5 | - | left out |
 | A command of an agent asked for (`UserActor::request_command`) | whom it names: the agents' commands as the issuer sees them (`ChannelLoop::commands_of`: `ShowAgentCommand`, U,3) | R5 | at the door (*What enters a channel*) | `Unknown`, `InvalidArguments` |
 | An agent carries a command out (`AgentBody::carry_out`) | nothing: admitted at the door (issue 516) | - | - | `CommandFailed` for one it does not carry out |
-| A secret (`SecretManager::resolve`) | `ReadSecret` (3) - T at a call, A or C as a component is built, S for a storage | R4 | - | `SecretError::PermissionDenied` |
+| A secret (`SecretManager::resolve`) | `ReadSecret` (3) - T at a call, of the secrets the core binds to the work (`ActorRuntime::secrets`, issue 516), C as a component of the core is built, S for a storage | R4 | - | `SecretError::PermissionDenied` |
 
 ### What an agent reads beyond its channel
 
@@ -188,9 +188,9 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | A channel by name or id (`SessionView::channel`, `channel_named`; `read_history`, `read_notes`) | `channel_reading`: `GetChannel` (T,1), `copyable_information` of the channel into the place (T,2) - as a whole or entry by entry; entry by entry what it answers (`Reading`) judges each message or note by its classification, a page of the history as a filter in the store (issue 421) | reach | `ChannelNotFound`, `NoChannelNamed` alike |
 | All channels (`channels`, `all_channels`) | as above per channel | reach | left out |
 | Its own private notes of other channels (`own_private_notes`) | no `GetChannel` - its own knowledge -; per note `may_copy_from` (T,2) | reach | left out |
-| Its memory (`AgentMemory::recalled`, `find`, `update`, `forget`) | per entry `may_copy_information` of its origin, by the origin's privacy then and now | R4: the agent's own knowledge, as its private notes | left out |
-| Reclassify a note (`AgentNotes::reclassify`) | the note is there; `Reclassify` of the note with its channel's attributes (T,3); `require_publish` of the new classification (T,2) | R4 | `InvalidParameter`, `PermissionDenied` |
-| Reclassify a memory entry (`AgentMemory::reclassify`) | the entry recalled; `Reclassify` with the channel's attributes (T,3); `require_publish` (T,2) | R4 | as above |
+| Its memory (`AgentMemory::recalled`, `find`, `update`, `forget`) | per entry `may_copy_information` of its origin, by the origin's privacy then and now, asked of the core (`Situation::may_copy_information`, issue 516) | R4: the agent's own knowledge, as its private notes | left out |
+| Reclassify a note (`AgentNotes::reclassify`) | the note is there; asked of the core (`Turn::may_reclassify`, issue 516): `Reclassify` of the note with its channel's attributes (T,3), `require_publish` of the new classification (T,2) | R4 | `InvalidParameter`, `PermissionDenied` |
+| Reclassify a memory entry (`AgentMemory::reclassify`) | the entry recalled; asked of the core as a note is: `Reclassify` with the channel's attributes (T,3), `require_publish` (T,2) | R4 | as above |
 
 ### Skills
 

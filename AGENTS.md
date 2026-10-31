@@ -69,12 +69,12 @@ under `## History`), and numbers are never reused.
 *   **Follow the pattern, or change it.** Before designing, find the closest thing the codebase
     already has, name it in the plan, and build the new thing the same way: construction, naming,
     configuration, errors, where it lives (commands like tools: a `…Provider` component facet, and
-    something that receives the ready providers and checks permissions - for tools the runtime's
-    `ToolExecutor`, issues 127 and 280). If the pattern does not fit, question the pattern and
-    propose changing it for all its uses; never add a variant beside it. Where two implementations
-    of one thing differ without a reason - in naming, construction, error handling -, propose
-    aligning them, in whichever direction is the better one. A deliberate difference is named with
-    its reason.
+    something that receives the ready providers and has the permissions checked - for tools the
+    agent's `ToolExecutor`, which asks the core, issues 127, 280 and 516). If the pattern does not
+    fit, question the pattern and propose changing it for all its uses; never add a variant beside
+    it. Where two implementations of one thing differ without a reason - in naming, construction,
+    error handling -, propose aligning them, in whichever direction is the better one. A deliberate
+    difference is named with its reason.
 *   **Existing cuts are not fixed.** Which type owns what, which crate holds what, what a concept
     is called - each may be questioned whenever a simpler design shows. If a change only fits by
     bending the existing code, propose the restructuring that makes room for it, as an architecture

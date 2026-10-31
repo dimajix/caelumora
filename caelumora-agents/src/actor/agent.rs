@@ -454,12 +454,12 @@ impl AgentActor {
 
     /// The channel's classification as it is now, if what the turn
     /// `under_way` saw may no longer flow into it
-    /// (`ConfidentialityPolicy::may_publish`, in the agent's name, as its
+    /// (`ActorRuntime::may_publish`, in the agent's name, as its
     /// tools' results are admitted) - once the channel was lowered below the
     /// classification the turn began with (issue 141); `None` while it flows.
     fn lowered(&self, under_way: &TurnState) -> Option<Classification> {
         let channel = self.body.runtime.channel_classification();
-        let flows = self.body.runtime.confidentiality().may_publish(
+        let flows = self.body.runtime.may_publish(
             &under_way.work.security_context,
             &under_way.work.classification,
             &channel,

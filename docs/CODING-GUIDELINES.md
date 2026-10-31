@@ -360,9 +360,9 @@ A type takes the services it works with - the `AccessPolicy`, the stores, the ev
     `ConfidentialityPolicy` holds them as one `Policies` (`caelumora_model::security`) and is made
     with `&Policies`, as a manager is made with `&EntityStores`, and a function that asks both
     takes `&Policies` (`may_reach`, `channel_reading`); who hands them out lends `policies()` beside
-    `access_policy()` and `confidentiality()` for whoever asks one. A component is the exception:
-    it takes each policy as a service of its own from its `ComponentContext`, where the services
-    are found by their type.
+    `access_policy()` and `confidentiality()` for whoever asks one. A component of the core is the
+    exception: it takes each policy as a service of its own from its `ComponentContext`, where the
+    services are found by their type; one of an application holds none (issue 516).
 *   **No threading next to the owner.** A service is not passed into a function beside the object
     that already holds it; the function becomes a method of that object, or takes the object.
 *   **Accessors lend.** An accessor returns `&Arc<dyn …>` or `&dyn …`; whoever keeps the service

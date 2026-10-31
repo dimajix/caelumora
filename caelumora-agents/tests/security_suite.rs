@@ -55,7 +55,7 @@ use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::secret::SecretManager;
+use caelumora_model::secret::Secrets;
 use caelumora_model::security::{AclEntry, Grant, Secured, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::PersonalitySnapshot;
@@ -2620,16 +2620,16 @@ async fn a_turn_that_waits_until_its_initiator_asks_hears_nothing_of_another_who
 /// classified as it `declared`.
 #[derive(Debug)]
 struct RemoteAtWork {
-    secrets: Arc<SecretManager>,
     calls: Arc<Mutex<Vec<&'static str>>>,
     declared: Option<Classification>,
     gate: Option<Arc<Semaphore>>,
 }
 
 impl RemoteAtWork {
-    async fn called(&self, call: &'static str, security: &SecurityContext) {
-        // Whether there is such a secret does not matter: who is asked does.
-        let _ = self.secrets.resolve(security, "REMOTE_TOKEN").await;
+    /// Records `call`, made with `secrets`, reading a token of them as a credential is read:
+    /// whether there is such a secret does not matter, in whose name it is asked does (issue 516).
+    async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
+        let _ = secrets.resolve("REMOTE_TOKEN").await;
         self.calls.lock().unwrap().push(call);
     }
 }
@@ -2638,11 +2638,11 @@ impl RemoteAtWork {
 impl ExternalAgent for RemoteAtWork {
     async fn send(
         &self,
-        security: &SecurityContext,
+        secrets: Arc<dyn Secrets>,
         _: Option<&ConversationId>,
         _: OutboundMessage,
     ) -> ExternalAgentResult<ExternalStream> {
-        self.called("send", security).await;
+        self.called("send", &*secrets).await;
         let started = stream::iter([Ok(ExternalEvent::Started(TaskId("t-1".to_string())))]);
         let Some(gate) = self.gate.clone() else {
             return Ok(Box::pin(started.chain(stream::pending())));
@@ -2661,15 +2661,15 @@ impl ExternalAgent for RemoteAtWork {
 
     async fn resume(
         &self,
-        security: &SecurityContext,
+        secrets: Arc<dyn Secrets>,
         _: &TaskId,
     ) -> ExternalAgentResult<ExternalStream> {
-        self.called("resume", security).await;
+        self.called("resume", &*secrets).await;
         Ok(Box::pin(stream::pending()))
     }
 
-    async fn cancel(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<()> {
-        self.called("cancel", security).await;
+    async fn cancel(&self, secrets: Arc<dyn Secrets>, _: &TaskId) -> ExternalAgentResult<()> {
+        self.called("cancel", &*secrets).await;
         Ok(())
     }
 
@@ -2705,12 +2705,10 @@ async fn with_remote(
         registry.register(
             ComponentKind::new("remote_at_work")
                 .provides::<dyn ExternalAgent>()
-                .provides::<dyn ModelProfileProvider>()
-                .uses::<SecretManager>(),
-            move |_, context| {
+                .provides::<dyn ModelProfileProvider>(),
+            move |_, _| {
                 let mut facets = ComponentFacets::empty();
                 let remote = Arc::new(RemoteAtWork {
-                    secrets: Arc::clone(context.service::<SecretManager>()?),
                     calls: Arc::clone(&calls),
                     declared: declared.clone(),
                     gate: gate.clone(),
@@ -3996,12 +3994,7 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
     let mut state = AgentChannelState::default();
     state.perceive(vec![Message { role: MessageRole::User, ..said }]);
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    let tool = AttachmentTool::new(
-        agent_testing::prompts(),
-        Arc::clone(world.runtime.attachment_manager()),
-        Arc::clone(world.runtime.workspace_manager()),
-    )
-    .unwrap();
+    let tool = AttachmentTool::new(agent_testing::prompts()).unwrap();
     let (_, read) =
         world.asked(tool.execute(READ_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn)).await;
     let (_, attached) =

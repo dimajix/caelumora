@@ -19,12 +19,10 @@ use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::security::Grant;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::attachment::AttachmentManager;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
 use caelumora_runtime::view::ChannelView;
-use caelumora_runtime::workspace::WorkspaceManager;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -79,23 +77,16 @@ pub struct AttachmentTool {
     tools: Vec<Tool>,
     /// The texts its results give.
     prompts: PromptTexts,
-    /// Where an attachment is copied for the turn's next message.
-    attachments: Arc<AttachmentManager>,
-    /// Where the largest file a workspace takes is said.
-    workspaces: Arc<WorkspaceManager>,
 }
 
 impl AttachmentTool {
-    /// The provider, its texts from `prompts`, copying what it attaches through `attachments`,
-    /// writing no larger file into a workspace than `workspaces` take.
+    /// The provider, its texts from `prompts`. What it attaches it has its turn copy
+    /// (`Turn::copy_attachment`), and it writes no larger file into a workspace than the turn may
+    /// put there (`Turn::max_file_bytes`, issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(
-        prompts: PromptTexts,
-        attachments: Arc<AttachmentManager>,
-        workspaces: Arc<WorkspaceManager>,
-    ) -> Result<Self, PromptError> {
+    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
         let reference = || ("ref".to_string(), ToolParameters::string());
         let tool = |name: &str, parameters: ToolParameters, requires_approval: bool| {
             described(
@@ -145,7 +136,7 @@ impl AttachmentTool {
             },
         ];
         let description = tool_text(&prompts, NAMESPACE, ATTACHMENT_TOOL_KIND, "description", ())?;
-        Ok(Self { description, tools, prompts, attachments, workspaces })
+        Ok(Self { description, tools, prompts })
     }
 
     /// The text `key` of its results, rendered with `values`; `None`, logged, if it cannot be had -
@@ -292,8 +283,8 @@ impl ToolProvider for AttachmentTool {
                 let at = WorkspacePath::parse(
                     &path.unwrap_or_else(|| format!("{COPIED_TO}/{}", attachment.name.as_str())),
                 )?;
-                let written =
-                    terminal.write(&at, content, self.workspaces.max_file_bytes()).await?;
+                let max_file_bytes = turn.max_file_bytes();
+                let written = terminal.write(&at, content, max_file_bytes).await?;
                 Ok(ToolOutput::classified(
                     json!({ "ref": reference, "path": at.to_string(), "bytes": written }),
                     workspace.classification,
@@ -302,11 +293,7 @@ impl ToolProvider for AttachmentTool {
             ATTACH => {
                 let Named { reference } = arguments(params)?;
                 let attachment = attachment(turn, &reference).await?;
-                let situation = turn.situation();
-                let copy = self
-                    .attachments
-                    .copy(situation.security_context(), &situation.channel(), &attachment)
-                    .await?;
+                let copy = turn.copy_attachment(&attachment).await?;
                 let classification = copy.classification.clone();
                 turn.put_aside(copy);
                 let value = json!({ "ref": reference, "name": attachment.name.as_str(), "attached": self.text("attached", ()).unwrap_or_default() });
@@ -342,21 +329,12 @@ impl ToolProvider for AttachmentTool {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(ATTACHMENT_TOOL_KIND)
-                .provides::<dyn ToolProvider>()
-                .uses::<AttachmentManager>()
-                .uses::<WorkspaceManager>(),
+            ComponentKind::new(ATTACHMENT_TOOL_KIND).provides::<dyn ToolProvider>(),
         ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let attachments = Arc::clone(context.service::<AttachmentManager>()?);
-            let workspaces = Arc::clone(context.service::<WorkspaceManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentTool::new(
-                texts,
-                attachments,
-                workspaces,
-            )?));
+            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentTool::new(texts)?));
             Ok(facets)
         },
     );
@@ -460,13 +438,8 @@ mod tests {
         .expect("said")
     }
 
-    fn tool(world: &World) -> AttachmentTool {
-        AttachmentTool::new(
-            testing::prompts(),
-            Arc::clone(world.runtime.attachment_manager()),
-            Arc::clone(world.runtime.workspace_manager()),
-        )
-        .unwrap()
+    fn tool() -> AttachmentTool {
+        AttachmentTool::new(testing::prompts()).unwrap()
     }
 
     #[tokio::test]
@@ -474,7 +447,7 @@ mod tests {
     async fn an_attachment_heard_is_reached_by_its_number_as_its_message_stands() {
         let world = testing::world().await;
         let (session, helper, docs) = session_with_helper(&world).await;
-        let tool = tool(&world);
+        let tool = tool();
         let mut state = AgentChannelState::default();
         assert_eq!(
             tool.offered(&testing::turn(&session, helper, world.alice, &mut state).situation())

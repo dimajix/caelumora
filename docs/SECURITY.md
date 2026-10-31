@@ -408,8 +408,9 @@ rights. In three parts:
     by the flow rule alone. An agent must not see more than the person responsible for it, and it
     passes on whatever it read to whoever it answers next - so what it may read is fixed by its
     owner, not by who happens to ask.
-2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`): the policy,
-    the owner's rules for the place - evaluated in their name, as their own answer - and the
+2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`, which asks
+    the core what is the core's, `ActorRuntime::admit_tool_call`): the policy, the owner's rules
+    for the place - evaluated in their name, as their own answer - and the
     approval of the owner or whom the agent's list lets read it (see
     [APPROVALS.md](APPROVALS.md#who-may-approve)). A personality's limiting roles narrow the agent
     further. A tool that needs no approval is the owner's approval given in advance.
@@ -725,7 +726,10 @@ JSON key/value file, re-read on every lookup so that secrets can rotate without 
 process environment; the `secrets` section sets the chain, each provider a backend that a plugin may
 add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
 
-Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted.
+Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted. A
+component of an application holds no `SecretManager`: it is handed the secrets that may be read in
+the name of the work it serves (`Secrets`, bound by the core, `ActorRuntime::secrets`, issue 516),
+and each read is checked in that name.
 The ownership policy allows every one: a secret is a key and a value, with no owner and no access
 list to decide by. So whoever writes a component that names a secret decides which credential it
 uses and where it is sent. Until secrets have an owner

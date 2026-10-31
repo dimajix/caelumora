@@ -173,7 +173,7 @@ impl ExternalAgentActor {
         // else as the channel - has to enter the channel: asked here, and
         // before every exchange, as the channel may have been lowered since
         // (issue 212).
-        if !body.runtime.confidentiality().may_publish(
+        if !body.runtime.may_publish(
             &body.security_context(),
             &classification,
             &channel.classification,
@@ -358,11 +358,7 @@ impl ExternalAgentActor {
         // brings in itself, and all it was given in this channel (issue 212).
         answering.send(ActorEvent::ResponseStarted { turn_id: work.turn_id }, output).await?;
         let brought = self.remote.classification().unwrap_or_else(|| work.classification.clone());
-        if !self.body.runtime.confidentiality().may_publish(
-            &work.security_context,
-            &brought,
-            &work.classification,
-        ) {
+        if !self.body.runtime.may_publish(&work.security_context, &brought, &work.classification) {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
         }
         work.see(&brought);
@@ -412,7 +408,7 @@ impl ExternalAgentActor {
         let mut stream = self
             .remote
             .send(
-                &answering.security_context,
+                self.body.runtime.secrets(&answering.security_context),
                 state.remote.conversation.as_ref(),
                 OutboundMessage { prompts: parts, said, answers: answers.clone() },
             )
@@ -556,7 +552,8 @@ impl ExternalAgentActor {
                     continue;
                 }
             }
-            match self.remote.resume(&self.acting_for(state, &task), &task).await {
+            let secrets = self.body.runtime.secrets(&self.acting_for(state, &task));
+            match self.remote.resume(secrets, &task).await {
                 Ok(stream) => {
                     debug!("External agent {} follows its open task again", self.id());
                     let tag = task.clone();
@@ -677,16 +674,13 @@ impl ExternalAgentActor {
     }
 
     /// The channel's classification as it is now, if `work` - begun under
-    /// another - may no longer flow into it (`ConfidentialityPolicy::may_publish`,
-    /// in the work's name, as `AgentActor::turn_flow`): then it is given up
+    /// another - may no longer flow into it (`ActorRuntime::may_publish`, in
+    /// the work's name, as `AgentActor::turn_flow`): then it is given up
     /// (issue 212). `None` while it flows.
     fn lowered(&self, work: &Work) -> Option<Classification> {
         let channel = self.body.runtime.channel_classification();
-        let flows = self.body.runtime.confidentiality().may_publish(
-            &work.security_context,
-            &work.classification,
-            &channel,
-        );
+        let flows =
+            self.body.runtime.may_publish(&work.security_context, &work.classification, &channel);
         (!flows).then_some(channel)
     }
 
@@ -743,7 +737,8 @@ impl ExternalAgentActor {
         security: &SecurityContext,
         task: &TaskId,
     ) {
-        if let Err(e) = self.remote.cancel(security, task).await {
+        let secrets = self.body.runtime.secrets(security);
+        if let Err(e) = self.remote.cancel(secrets, task).await {
             warn!("External agent {} cannot cancel its task: {:#}", self.id(), e);
         }
         state.remote.close(task);

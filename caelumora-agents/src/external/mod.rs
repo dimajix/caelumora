@@ -12,11 +12,11 @@
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
-use caelumora_model::secret::SecretError;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::secret::{SecretError, Secrets};
 use caelumora_runtime::component::ComponentRegistry;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 /// What one participant said, as the remote agent is given it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,8 +115,10 @@ pub type ExternalAgentResult<T> = Result<T, ExternalAgentError>;
 pub type ExternalStream = BoxStream<'static, ExternalAgentResult<ExternalEvent>>;
 
 /// An agent that runs elsewhere, as an external personality reaches it
-/// (issue 179). Every call carries the security context it is made in, so
-/// that credentials are resolved for whoever acts (`SecretManager::resolve`).
+/// (issue 179). Every call carries the secrets that may be read in the name
+/// it is made in, bound by the core (`ActorRuntime::secrets`, issue 516), so
+/// that credentials are resolved for whoever acts - shared, as what follows
+/// a task after the call resolves them too.
 #[async_trait]
 pub trait ExternalAgent: Send + Sync + Debug {
     /// Hands `message` to the remote agent within `conversation` - `None`
@@ -124,7 +126,7 @@ pub trait ExternalAgent: Send + Sync + Debug {
     /// (`ExternalEvent::Conversation`) - and streams what comes back.
     async fn send(
         &self,
-        security: &SecurityContext,
+        secrets: Arc<dyn Secrets>,
         conversation: Option<&ConversationId>,
         message: OutboundMessage,
     ) -> ExternalAgentResult<ExternalStream>;
@@ -134,13 +136,13 @@ pub trait ExternalAgent: Send + Sync + Debug {
     /// task that ended meanwhile yields its end at once.
     async fn resume(
         &self,
-        security: &SecurityContext,
+        secrets: Arc<dyn Secrets>,
         task: &TaskId,
     ) -> ExternalAgentResult<ExternalStream>;
 
     /// Asks the remote agent to cancel `task`. A task that cannot be
     /// cancelled any more - it has ended - is no error.
-    async fn cancel(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()>;
+    async fn cancel(&self, secrets: Arc<dyn Secrets>, task: &TaskId) -> ExternalAgentResult<()>;
 
     /// How what the remote agent brings in itself is classified, if the
     /// component is configured with a classification; otherwise as the
@@ -164,11 +166,35 @@ pub(crate) mod testing {
     use super::*;
     use crate::prompt::ModelProfileProvider;
     use caelumora_model::context::ModelProfile;
+    use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
     use futures::stream;
     use futures::StreamExt;
     use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
     use tokio::sync::Semaphore;
+
+    /// The secret a scripted remote agent reads with every call, so that in whose name it was
+    /// called is asked of the policy (`ReadSecret`), as a credential is.
+    const CALLED_AS: &str = "CALLED_AS";
+
+    /// The access policy a test of a scripted remote agent runs with: it allows everything, and
+    /// keeps the context of every read of `CALLED_AS` - in whose name the remote agent was called
+    /// (issue 516).
+    #[derive(Debug, Default)]
+    pub(crate) struct CallsRead(Mutex<Vec<SecurityContext>>);
+
+    #[async_trait]
+    impl AccessPolicy for CallsRead {
+        async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
+            if matches!(action, ActionType::ReadSecret(CALLED_AS)) {
+                self.0
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(context.clone());
+            }
+            true
+        }
+    }
 
     /// A remote agent that answers each request with the next of its
     /// scripted event lists, and records what it was given. A script that
@@ -183,9 +209,10 @@ pub(crate) mod testing {
         pub(crate) sent: Mutex<Vec<(Option<ConversationId>, OutboundMessage)>>,
         /// Every task it was asked to cancel.
         pub(crate) cancelled: Mutex<Vec<TaskId>>,
-        /// In whose name it was called, for every call: the call and its
-        /// security context.
-        pub(crate) called_as: Mutex<Vec<(&'static str, SecurityContext)>>,
+        /// Every call, in order.
+        calls: Mutex<Vec<&'static str>>,
+        /// In whose name it was called, if its runtime runs under it (`called_as`).
+        pub(crate) read: Arc<CallsRead>,
         /// How many requests to come cannot reach it.
         unreachable: Mutex<usize>,
         /// How it classifies what it brings in itself.
@@ -230,11 +257,20 @@ pub(crate) mod testing {
             Self { unreachable: Mutex::new(requests), ..self }
         }
 
-        fn called(&self, call: &'static str, security: &SecurityContext) {
-            self.called_as
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .push((call, security.clone()));
+        /// Records `call`, made with `secrets`, reading `CALLED_AS` of them: whether there is such
+        /// a secret does not matter, in whose name it is asked does.
+        async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
+            let _ = secrets.resolve(CALLED_AS).await;
+            self.calls.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(call);
+        }
+
+        /// In whose name it was called, for every call: the call and the context its secrets were
+        /// bound to - as `read` saw it, the policy of its runtime.
+        pub(crate) fn called_as(&self) -> Vec<(&'static str, SecurityContext)> {
+            let calls = self.calls.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let read = self.read.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert_eq!(calls.len(), read.len(), "one read of its secrets per call, under `read`");
+            calls.iter().copied().zip(read.iter().cloned()).collect()
         }
 
         fn next(
@@ -249,11 +285,11 @@ pub(crate) mod testing {
     impl ExternalAgent for ScriptedExternalAgent {
         async fn send(
             &self,
-            security: &SecurityContext,
+            secrets: Arc<dyn Secrets>,
             conversation: Option<&ConversationId>,
             message: OutboundMessage,
         ) -> ExternalAgentResult<ExternalStream> {
-            self.called("send", security);
+            self.called("send", &*secrets).await;
             let mut unreachable =
                 self.unreachable.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if *unreachable > 0 {
@@ -280,19 +316,19 @@ pub(crate) mod testing {
 
         async fn resume(
             &self,
-            security: &SecurityContext,
+            secrets: Arc<dyn Secrets>,
             _: &TaskId,
         ) -> ExternalAgentResult<ExternalStream> {
-            self.called("resume", security);
+            self.called("resume", &*secrets).await;
             Ok(Self::next(&self.resumed))
         }
 
         async fn cancel(
             &self,
-            security: &SecurityContext,
+            secrets: Arc<dyn Secrets>,
             task: &TaskId,
         ) -> ExternalAgentResult<()> {
-            self.called("cancel", security);
+            self.called("cancel", &*secrets).await;
             self.cancelled
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -316,6 +352,8 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::ScriptedExternalAgent;
     use super::*;
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use futures::StreamExt;
     use std::time::Duration;
     use tokio::time;
@@ -359,24 +397,27 @@ mod tests {
             Ok(ExternalEvent::Completed),
         ]])
         .resuming(vec![vec![Ok(ExternalEvent::Completed)]]);
-        let security = SecurityContext::default();
+        let secrets = || -> Arc<dyn Secrets> {
+            let manager = SecretManager::new(Vec::new(), Arc::new(AllowAllPolicy::new()));
+            Arc::new(Arc::new(manager).for_context(SecurityContext::default()))
+        };
 
         let events: Vec<_> =
-            agent.send(&security, None, hello()).await.unwrap().take(4).collect().await;
+            agent.send(secrets(), None, hello()).await.unwrap().take(4).collect().await;
         assert_eq!(events.len(), 4);
         assert!(matches!(events.last(), Some(Ok(ExternalEvent::Completed))));
         assert_eq!(agent.sent.lock().unwrap().as_slice(), &[(None, hello())]);
 
-        let resumed: Vec<_> = agent.resume(&security, &task).await.unwrap().take(1).collect().await;
+        let resumed: Vec<_> = agent.resume(secrets(), &task).await.unwrap().take(1).collect().await;
         assert!(
             matches!(resumed.as_slice(), [Ok(ExternalEvent::Completed)]),
             "resuming has a script of its own"
         );
 
-        agent.cancel(&security, &task).await.unwrap();
+        agent.cancel(secrets(), &task).await.unwrap();
         assert_eq!(agent.cancelled.lock().unwrap().as_slice(), &[task]);
 
-        let mut nothing_left = agent.send(&security, None, hello()).await.unwrap();
+        let mut nothing_left = agent.send(secrets(), None, hello()).await.unwrap();
         let waited = time::timeout(Duration::from_millis(20), nothing_left.next()).await;
         assert!(waited.is_err(), "with no script left, the answer never comes");
     }

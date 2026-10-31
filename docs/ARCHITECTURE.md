@@ -257,8 +257,10 @@ part in the turn. A component contributes tools (`ToolProvider`), text for the m
 (`PromptProvider`), or filters incoming messages (`PerceiveInProcessor`). Of some facets an agent
 has exactly one: the `LLMClient`, the language model it talks to, and the `ContextProvider`, which
 assembles the model's context. Both have built-in defaults that a personality or the configuration
-can replace. Tool calls are run by the runtime's `ToolExecutor` with the tools of the agent's
-providers; it is no component, so that what it checks is never a personality's choice.
+can replace. Tool calls are run by the agent's `ToolExecutor` with the tools of its providers; it
+is no component, so that what it checks is never a personality's choice, and what of a call is the
+core's to decide - whether it may be called, what the rules of its places say, what may flow
+where - it asks of the core (`ActorRuntime::admit_tool_call`, `may_publish`, issue 516).
 
 Components are wired by type, much like Spring beans: a component asks for the facets it needs, and
 the container builds whatever provides them. User commands such as `/help` are components as well,
@@ -433,8 +435,8 @@ The design repeats a few decisions; new code follows them.
     the system runs if the application runs it, and an agent's own record - its transcript - is
     the application's; the core's record of a conversation is the channel's history, taken at its
     door. Today the code keeps this as a rule, not by the compiler: an application asks its
-    controller for the context of its own work, declares the policies and the managers as
-    services of its components, and holds controllers (issue
+    controller for the context of its own work, holds controllers, and could reach the policies
+    through the views and the core's services through its components' context (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)).
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.

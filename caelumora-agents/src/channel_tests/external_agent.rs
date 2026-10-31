@@ -2,7 +2,7 @@
 //! tasks it keeps open.
 
 use super::*;
-use crate::external::testing::ScriptedExternalAgent;
+use crate::external::testing::{CallsRead, ScriptedExternalAgent};
 use crate::external::ExternalAgent;
 use crate::prompt::ModelProfileProvider;
 use crate::prompt::PromptProvider;
@@ -85,6 +85,7 @@ async fn external_channel(
         Personality { kind: PersonalityKind::External, components, ..make_personality("remote") };
     let (context, agent_id, alice) = alice_and_an_agent(&store, "hermes", personality).await;
 
+    let read = Arc::clone(&remote.read);
     let components = move |registry: &mut ComponentRegistry| {
         registry.register(
             ComponentKind::new("test_remote")
@@ -103,8 +104,11 @@ async fn external_channel(
         register_heard(registry);
         register_marking_command(registry);
     };
+    // In whose name the remote agent is called, its policy sees (`called_as`).
+    let access_policy: Arc<dyn AccessPolicy> = Arc::<CallsRead>::clone(&read);
     let runtime = TestRuntime {
         store,
+        access_policy,
         components: Box::new(components),
         plugins: vec![&TestAgents],
         ..Default::default()
@@ -1526,7 +1530,7 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
         given.iter().filter_map(|e| e.entry.message()?.content.clone()).collect::<Vec<_>>(),
         ["hello"]
     );
-    let sent_as = remote.called_as.lock().unwrap()[0].1.clone();
+    let sent_as = remote.called_as()[0].1.clone();
     assert_eq!(work.security_context, sent_as, "the authority of the request it was sent with");
     assert_eq!(
         work.event_context.sender_id,
@@ -1609,9 +1613,7 @@ async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_
     );
     assert!(remote.sent.lock().unwrap().is_empty(), "nothing was sent to it");
     let called_as: Vec<_> = remote
-        .called_as
-        .lock()
-        .unwrap()
+        .called_as()
         .iter()
         .map(|(call, security)| {
             (*call, security.initiator_id, security.owner_id, security.principal_id)
@@ -1681,13 +1683,8 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
     .expect("what came of the task is said");
     assert_eq!(told.context.initiator_id, bob, "said on bob's request");
     assert_eq!(told.context.span_id, request.span_id, "in its span");
-    let called_as: Vec<_> = remote
-        .called_as
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(call, security)| (*call, security.initiator_id))
-        .collect();
+    let called_as: Vec<_> =
+        remote.called_as().iter().map(|(call, security)| (*call, security.initiator_id)).collect();
     assert_eq!(called_as, [("resume", bob)], "followed in bob's name, as it was begun");
     running.abort();
 }
@@ -1777,7 +1774,7 @@ async fn a_task_begun_before_its_channel_was_lowered_is_given_up_instead_of_foll
 
     let told = turn_given_up(&mut events, agent).await;
     assert!(told.contains("lowered"), "{told}");
-    let calls: Vec<&str> = remote.called_as.lock().unwrap().iter().map(|(call, _)| *call).collect();
+    let calls: Vec<&str> = remote.called_as().iter().map(|(call, _)| *call).collect();
     assert_eq!(calls, ["cancel"], "cancelled, not followed");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and forgotten");

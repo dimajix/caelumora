@@ -34,12 +34,11 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
-use caelumora_model::security::AccessPolicy;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::view::PrivateNotesElsewhere;
@@ -58,12 +57,6 @@ const TEXT: &str = "agents.private_notes";
 
 #[derive(Debug)]
 pub struct PrivateNotesComponent {
-    /// The policy that decides whether a note may be reclassified, asked in
-    /// the turn's context - the agent's, with its owner's rights (issues
-    /// 131, 133, 255).
-    access_policy: Arc<dyn AccessPolicy>,
-    /// What may flow where (issue 304): what it recalls, how it reclassifies.
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The texts of its prompt part (issue 57).
     prompts: PromptTexts,
     /// What its tool set is for and its tools, as the prompt catalogue
@@ -105,16 +98,12 @@ impl ToolProvider for PrivateNotesComponent {
 }
 
 impl PrivateNotesComponent {
-    /// The component, deciding by `access_policy` and `confidentiality`;
-    /// its texts from `prompts`.
+    /// The component, its texts from `prompts`; whether a note may be reclassified, the core
+    /// decides, asked in the turn's context (`Turn::may_reclassify`, issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
-        prompts: PromptTexts,
-    ) -> Result<Self, PromptError> {
+    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![
             described(
                 &prompts,
@@ -184,7 +173,7 @@ impl PrivateNotesComponent {
             )?,
         ];
         let description = tool_text(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, "description", ())?;
-        Ok(Self { access_policy, confidentiality, prompts, description, tools })
+        Ok(Self { prompts, description, tools })
     }
 
     /// `write_private_note(text)`: notes `text` privately, taken over when
@@ -220,15 +209,7 @@ impl PrivateNotesComponent {
     ) -> ToolResult<Value> {
         let id: NoteId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentNotes::reclassify(
-            turn,
-            NoteKind::Private,
-            id,
-            classification.clone(),
-            self.access_policy.as_ref(),
-            self.confidentiality.as_ref(),
-        )
-        .await?;
+        AgentNotes::reclassify(turn, NoteKind::Private, id, classification.clone()).await?;
         Ok(
             serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }),
         )
@@ -313,17 +294,11 @@ pub fn register(registry: &mut ComponentRegistry) {
         writing_for_the_model(
             ComponentKind::new(PRIVATE_NOTES_KIND)
                 .provides::<dyn ToolProvider>()
-                .provides::<dyn PromptProvider>()
-                .uses::<dyn AccessPolicy>()
-                .uses::<dyn ConfidentialityPolicy>(),
+                .provides::<dyn PromptProvider>(),
         ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let component = Arc::new(PrivateNotesComponent::new(
-                Arc::clone(context.service::<dyn AccessPolicy>()?),
-                Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-                texts,
-            )?);
+            let component = Arc::new(PrivateNotesComponent::new(texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -337,9 +312,7 @@ mod tests {
     use super::*;
     use crate::testing;
     use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::message::MessageId;
-    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
     use caelumora_model::session::ChannelId;
     use caelumora_runtime::transport::Discard;
     use chrono::Utc;
@@ -385,12 +358,7 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent::new(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-            testing::prompts(),
-        )
-        .unwrap();
+        let tools = PrivateNotesComponent::new(testing::prompts()).unwrap();
         let mut turn = Turn::begun(AgentId::new(), &mut state);
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools
@@ -485,13 +453,7 @@ mod tests {
 
     #[test]
     fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = PrivateNotesComponent::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-            testing::prompts(),
-        )
-        .unwrap()
-        .tools();
+        let tools = PrivateNotesComponent::new(testing::prompts()).unwrap().tools();
         assert!(
             tools
                 .iter()

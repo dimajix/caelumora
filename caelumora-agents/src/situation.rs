@@ -14,11 +14,11 @@
 
 use caelumora_model::actor::{ActorId, RequestReason};
 use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::channel::Channel;
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::context::{ContextResolver, ModelProfile};
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext};
+use caelumora_model::secret::Secrets;
+use caelumora_model::security::{Grant, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::time_zone::TimeZone;
@@ -87,19 +87,6 @@ impl<'a> Situation<'a> {
     /// began: the most it may read, and the most it writes as.
     pub fn classification(&self) -> Classification {
         self.work.classification.clone()
-    }
-
-    /// The attributes of the agent's channel as it stands, by which an act
-    /// on what the agent keeps there is asked (issue 312).
-    pub fn channel_attributes(&self) -> SecurityAttributes {
-        self.runtime.channel_attributes()
-    }
-
-    /// The agent's channel as it stands (`ActorRuntime::channel`): what an operation in the
-    /// channel is given as the channel's properties (`AttachmentManager::copy`); `channel_view` is
-    /// how the work reads it.
-    pub fn channel(&self) -> Arc<Channel> {
-        self.runtime.channel()
     }
 
     /// The classification of what the work writes (issue 168): the join of
@@ -217,5 +204,18 @@ impl<'a> Situation<'a> {
     /// The agent's own state (issue 62), shared by all its actors.
     pub fn agent_state(&self) -> &'a Arc<AgentStateHandle> {
         self.agent_state
+    }
+
+    /// The secrets that may be read in the work's name (`ActorRuntime::secrets`, issue 516): what
+    /// a component that talks to a remote system resolves its credentials by.
+    pub fn secrets(&self) -> Arc<dyn Secrets> {
+        self.runtime.secrets(&self.work.security_context)
+    }
+
+    /// Whether what lies at `from` may be copied, in the work's name, to `into`
+    /// (`ActorRuntime::may_copy_information`, issue 516): what the agent may recall of what it
+    /// keeps of its own.
+    pub fn may_copy_information(&self, from: &Place, into: &Place) -> bool {
+        self.runtime.may_copy_information(&self.work.security_context, from, into)
     }
 }

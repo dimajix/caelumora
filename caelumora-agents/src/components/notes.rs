@@ -23,12 +23,11 @@ use crate::tool::{
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
-use caelumora_model::security::AccessPolicy;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::PublishedNotes;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
@@ -63,12 +62,6 @@ const TEXT: &str = "agents.notes";
 
 #[derive(Debug)]
 pub struct NotesComponent {
-    /// The policy that decides whether a note may be reclassified, asked in
-    /// the turn's context - the agent's, with its owner's rights (issues
-    /// 131, 133, 255).
-    access_policy: Arc<dyn AccessPolicy>,
-    /// What may flow where (issue 304): what it recalls, how it reclassifies.
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The texts of its prompt part (issue 57).
     prompts: PromptTexts,
     /// What its tool set is for and its tools, as the prompt catalogue
@@ -109,16 +102,12 @@ impl ToolProvider for NotesComponent {
 }
 
 impl NotesComponent {
-    /// The component, deciding by `access_policy` and `confidentiality`;
-    /// its texts from `prompts`.
+    /// The component, its texts from `prompts`; whether a note may be reclassified, the core
+    /// decides, asked in the turn's context (`Turn::may_reclassify`, issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(
-        access_policy: Arc<dyn AccessPolicy>,
-        confidentiality: Arc<dyn ConfidentialityPolicy>,
-        prompts: PromptTexts,
-    ) -> Result<Self, PromptError> {
+    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![
             described(
                 &prompts,
@@ -206,7 +195,7 @@ impl NotesComponent {
             )?,
         ];
         let description = tool_text(&prompts, NAMESPACE, NOTES_KIND, "description", ())?;
-        Ok(Self { access_policy, confidentiality, prompts, description, tools })
+        Ok(Self { prompts, description, tools })
     }
 
     /// `write_note(text)`: notes `text`, published when the turn completes.
@@ -249,15 +238,7 @@ impl NotesComponent {
     ) -> ToolResult<Value> {
         let id: NoteId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentNotes::reclassify(
-            turn,
-            NoteKind::Public,
-            id,
-            classification.clone(),
-            self.access_policy.as_ref(),
-            self.confidentiality.as_ref(),
-        )
-        .await?;
+        AgentNotes::reclassify(turn, NoteKind::Public, id, classification.clone()).await?;
         Ok(
             serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }),
         )
@@ -415,17 +396,11 @@ pub fn register(registry: &mut ComponentRegistry) {
         writing_for_the_model(
             ComponentKind::new(NOTES_KIND)
                 .provides::<dyn ToolProvider>()
-                .provides::<dyn PromptProvider>()
-                .uses::<dyn AccessPolicy>()
-                .uses::<dyn ConfidentialityPolicy>(),
+                .provides::<dyn PromptProvider>(),
         ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let component = Arc::new(NotesComponent::new(
-                Arc::clone(context.service::<dyn AccessPolicy>()?),
-                Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-                texts,
-            )?);
+            let component = Arc::new(NotesComponent::new(texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<NotesComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -437,15 +412,52 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing;
+    use crate::testing::{self, TestAgents};
     use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::message::MessageId;
-    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy, SecurityContext};
+    use caelumora_model::security::{OwnershipPolicy, SecurityContext};
+    use caelumora_model::session::testing::bare_session;
+    use caelumora_model::session::SessionId;
+    use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use caelumora_runtime::runtime::{ActorRuntime, ChannelRuntime};
+    use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::transport::Discard;
     use chrono::Utc;
     use std::iter;
+
+    /// The runtime of the actor of `agent`, in a channel of no running session, under the
+    /// ownership policy: who may reclassify a note is decided by its authorship (issue 516).
+    fn owned_runtime_of(agent: AgentId) -> ActorRuntime {
+        let session = bare_session(SessionId::new());
+        let channel = bare_channel(session.id);
+        let runtime = TestRuntime {
+            access_policy: Arc::new(OwnershipPolicy::new()),
+            plugins: vec![&TestAgents],
+            ..Default::default()
+        }
+        .build();
+        ChannelRuntime::outside_a_session(runtime, session, channel)
+            .new_actor_runtime(ActorId::Agent(agent))
+    }
+
+    /// A turn of `agent` under way in `state`, begun in the context of `caller`, through the
+    /// runtime of its actor under the ownership policy.
+    fn turn_as<'a>(agent: AgentId, caller: ActorId, state: &'a mut AgentChannelState) -> Turn<'a> {
+        let context = SecurityContext::default().next(caller, ActorId::None, ActorId::None);
+        state.begin_turn(Work::new(
+            Default::default(),
+            None,
+            context,
+            Default::default(),
+            Default::default(),
+        ));
+        let runtime = owned_runtime_of(agent);
+        Turn::of(agent, "agent".to_string(), state, AgentStateHandle::detached(), runtime)
+            .expect("a turn was begun")
+    }
 
     fn note(id: u32, text: &str) -> Note {
         Note {
@@ -496,23 +508,9 @@ mod tests {
         use caelumora_model::confidentiality::{Classification, Confidentiality};
         let agent = AgentId::new();
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-            testing::prompts(),
-        )
-        .unwrap();
+        let tools = NotesComponent::new(testing::prompts()).unwrap();
         // Asked in the turn's context: the agent's, which reclassifies its own note.
-        let context =
-            SecurityContext::default().next(ActorId::Agent(agent), ActorId::None, ActorId::None);
-        state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            context,
-            Default::default(),
-            Default::default(),
-        ));
-        let mut turn = Turn::under_way(agent, &mut state);
+        let mut turn = turn_as(agent, ActorId::Agent(agent), &mut state);
         tools
             .execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn)
             .await
@@ -554,15 +552,32 @@ mod tests {
         );
     }
 
+    /// Whether a note may be reclassified is decided by the core, with the agent of the runtime as
+    /// its author (issue 516): in a context whose caller is someone else, it may not.
+    #[tokio::test]
+    async fn a_note_is_reclassified_only_in_the_name_of_its_author() {
+        let agent = AgentId::new();
+        let mut state = AgentChannelState::default();
+        let tools = NotesComponent::new(testing::prompts()).unwrap();
+        let mut turn = turn_as(agent, ActorId::User(UserId::new()), &mut state);
+        tools
+            .execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn)
+            .await
+            .unwrap();
+        let public = serde_json::json!({ "id": 1, "level": "public" });
+        assert!(
+            matches!(
+                tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &public, None, &mut turn).await,
+                Err(ToolError::PermissionDenied(_))
+            ),
+            "not its author's"
+        );
+    }
+
     #[tokio::test]
     async fn notes_are_published_when_the_turn_completes_and_only_the_author_revokes() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-            testing::prompts(),
-        )
-        .unwrap();
+        let tools = NotesComponent::new(testing::prompts()).unwrap();
         {
             let mut turn = Turn::begun(AgentId::new(), &mut state);
             let noted = tools
@@ -638,12 +653,7 @@ mod tests {
     async fn an_updated_note_keeps_its_number_and_is_classified_as_the_turn_that_updated_it() {
         use caelumora_model::confidentiality::{Classification, Confidentiality};
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-            testing::prompts(),
-        )
-        .unwrap();
+        let tools = NotesComponent::new(testing::prompts()).unwrap();
         let texts = |state: &AgentChannelState| {
             state.notes.current().into_iter().map(|n| (n.id.0, n.text)).collect::<Vec<_>>()
         };
@@ -754,12 +764,7 @@ mod tests {
     #[tokio::test]
     async fn a_note_revoked_in_the_turn_that_noted_it_is_gone_and_its_number_used_up() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(
-            Arc::new(AllowAllPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-            testing::prompts(),
-        )
-        .unwrap();
+        let tools = NotesComponent::new(testing::prompts()).unwrap();
         {
             let mut turn = Turn::begun(AgentId::new(), &mut state);
             tools
@@ -804,13 +809,7 @@ mod tests {
 
     #[test]
     fn a_note_acted_on_is_shown_as_a_note_and_the_notes_read_as_a_list() {
-        let tools = NotesComponent::new(
-            Arc::new(OwnershipPolicy::new()),
-            Arc::new(ConfidentialityRules::default()),
-            testing::prompts(),
-        )
-        .unwrap()
-        .tools();
+        let tools = NotesComponent::new(testing::prompts()).unwrap().tools();
         let notes: Vec<_> = tools
             .iter()
             .filter(|t| t.presentation == NOTE_PRESENTATION)

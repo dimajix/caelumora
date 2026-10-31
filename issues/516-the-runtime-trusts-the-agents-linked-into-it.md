@@ -577,4 +577,39 @@ whether or not 5 and 6 follow.
   stays where it was (`AgentBody::command_set`, through `ActorRuntime::command_executor`) - it is a
   check of the configuration, not of a right, and leaves with the service in step 5. Stored data:
   none.
+- **2026-10-31** — Step 3 done on the branch: what an application needs decided it asks of the
+  core. `ActorRuntime` decides a tool call as it is admitted (`admit_tool_call`, answering a
+  `CallPermit`: the policy, then the rules of the places) and again as it runs (`rule_denying`),
+  what may flow where (`may_publish`), what may be copied (`may_copy_information`), whether what
+  an agent keeps may be reclassified (`may_reclassify`); it binds the secrets of a work
+  (`secrets`, the model's new `Secrets`), copies an attachment (`copy_attachment`) and says the
+  largest file of the workspace (`max_file_bytes`). Its policies, its secret manager and its
+  approval rules are the crate's. `Situation` and `Turn` offer the calls a component needs, in
+  the work's name. The `ToolExecutor`, the notes, private notes and memory, both actors, the
+  attachment and terminal tools, MCP and A2A ask these calls; none of their kinds declares a
+  policy or a manager of the core any more. `ExternalAgent` is handed `Arc<dyn Secrets>` instead
+  of a context (from step 4, since A2A needed it now), `RemoteEndpoint::bearer_token` a `&dyn
+  Secrets`. Who reclassifies is the runtime's actor: the core builds the `Reclassified` itself
+  from it and the channel, the application names only which of its records (`OwnRecord`).
+  Differs from the plan:
+  - `withdraw_approvals` is not needed: an agent withdraws its requests through the approver, the
+    core's, already.
+  - `admit_tool_call` folds in neither the questions nor the approval request: both stay in the
+    executor, which puts the questions through `address_questions`, a call of the core already,
+    and requests approval from the approver by an envelope, which the core admits.
+  - The three flow questions of the plan are one, `may_publish`; `may_copy_information(from,
+    into)` stands where the plan had `may_copy_from(place)` - each the name of the policy's
+    question it asks.
+  - The admission is two calls, as the policy is asked once and the rules twice.
+  - A note's and a memory entry's reclassification is asked by the application of the core
+    (`Turn::may_reclassify`), not admitted at the door: neither enters the channel as an event
+    the door sees, so the door has nothing to admit.
+  - The largest file of a workspace is a call of the runtime (`max_file_bytes`), not of a
+    workspace's reader, which would have asked the views' questions for a number of the
+    configuration.
+  - The security suite was adapted, not extended: it records the same checks in the same
+    contexts as before; that they are now asked by the core is not visible to it.
+  Left for step 5: the artifacts' component declares the `ArtifactManager`, the views still lend
+  their policies (`Views::access_policy`, `confidentiality`), and a component's context still
+  offers every service. Stored data: none.
 

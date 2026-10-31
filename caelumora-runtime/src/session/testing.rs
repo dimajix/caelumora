@@ -52,10 +52,17 @@ use uuid::Uuid;
 /// policy beside it (issue 304), and a manager on it - what a test writes, it writes through the
 /// runtime's stores, which check as the runtime does.
 pub fn owned_runtime(rules: ConfidentialityRules) -> (Arc<RuntimeManager>, Arc<SessionManager>) {
+    owned_runtime_under(Arc::new(rules))
+}
+
+/// As `owned_runtime`, with `confidentiality` as the confidentiality policy: a test's own, for
+/// what the runtime decides by it (issue 516).
+pub fn owned_runtime_under(
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
+) -> (Arc<RuntimeManager>, Arc<SessionManager>) {
     let memberships = Arc::new(StoreMemberships::new());
     let access_policy: Arc<dyn AccessPolicy> =
         Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
-    let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
     let runtime = TestRuntime { access_policy, confidentiality, ..Default::default() }.build();
     memberships.bind(&runtime.entity_stores().groups);
     (Arc::clone(&runtime), Arc::new(SessionManager::new(runtime)))

@@ -61,7 +61,8 @@ use caelumora_model::work::Work;
 use caelumora_model::workspace::Workspace;
 use caelumora_runtime::actor::Answering;
 use caelumora_runtime::agent::state::AgentStateHandle;
-use caelumora_runtime::runtime::ActorRuntime;
+use caelumora_runtime::attachment::AttachmentResult;
+use caelumora_runtime::runtime::{ActorRuntime, OwnRecord};
 use caelumora_runtime::terminal::{Shell, Terminal};
 use caelumora_runtime::transport::EventSender;
 use caelumora_runtime::workspace::WorkspaceResult;
@@ -180,6 +181,30 @@ impl<'a> Turn<'a> {
     /// As [`Self::workspace_terminal`].
     pub async fn workspace_shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
         self.runtime.workspace_shell(self.situation().security_context()).await
+    }
+
+    /// `attachment`, one of the agent's channel, copied in the turn's name for what the agent
+    /// says there (`ActorRuntime::copy_attachment`, issue 282).
+    ///
+    /// # Errors
+    /// As `ActorRuntime::copy_attachment`.
+    pub async fn copy_attachment(&self, attachment: &ContentRef) -> AttachmentResult<ContentRef> {
+        self.runtime.copy_attachment(self.situation().security_context(), attachment).await
+    }
+
+    /// Whether `record` - a note of the agent or an entry of its memory, in its channel - may be
+    /// reclassified, in the turn's name, as `classification`, never above the turn's channel as it
+    /// began (`ActorRuntime::may_reclassify`, issue 516): what the turn stages then.
+    pub async fn may_reclassify(&self, record: OwnRecord, classification: &Classification) -> bool {
+        let work = &self.current().work;
+        let within = &work.classification;
+        self.runtime.may_reclassify(&work.security_context, record, classification, within).await
+    }
+
+    /// The largest file the turn may put into its session's workspace, as the process is
+    /// configured (`ActorRuntime::max_file_bytes`).
+    pub fn max_file_bytes(&self) -> u64 {
+        self.runtime.max_file_bytes()
     }
 
     /// Which turn this is (issue 235).

@@ -10,8 +10,7 @@ use super::wire::{
 use bytes::Buf;
 use caelumora_agents::external::{ExternalAgentError, ExternalAgentResult};
 use caelumora_model::remote::{redact_endpoint, RemoteEndpoint};
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::secret::Secrets;
 use caelumora_runtime::component::ComponentError;
 use caelumora_runtime::remote::{describe_chain, describe_request_error, ExpiringCache};
 use futures::stream::{once, BoxStream};
@@ -53,7 +52,6 @@ pub(super) struct A2aClient {
     /// its stream begins.
     timeout: Duration,
     http: Client,
-    secret_manager: Arc<SecretManager>,
     interface: ExpiringCache<Interface>,
 }
 
@@ -68,19 +66,11 @@ impl A2aClient {
         endpoint: RemoteEndpoint,
         timeout: Duration,
         refresh: Duration,
-        secret_manager: Arc<SecretManager>,
     ) -> Result<Self, ComponentError> {
         let http = Client::builder().connect_timeout(timeout).build().map_err(|e| {
             ComponentError::InvalidConfig(format!("no HTTP client for '{}': {e}", endpoint.shown()))
         })?;
-        Ok(Self {
-            id,
-            endpoint,
-            timeout,
-            http,
-            secret_manager,
-            interface: ExpiringCache::new(refresh),
-        })
+        Ok(Self { id, endpoint, timeout, http, interface: ExpiringCache::new(refresh) })
     }
 
     /// Whether the agent streams its answers.
@@ -88,8 +78,8 @@ impl A2aClient {
     /// # Errors
     /// If its card cannot be read, or offers no JSON-RPC interface of A2A
     /// 1.x.
-    pub(super) async fn streaming(&self, security: &SecurityContext) -> ExternalAgentResult<bool> {
-        Ok(self.interface(security).await?.streaming)
+    pub(super) async fn streaming(&self, secrets: &dyn Secrets) -> ExternalAgentResult<bool> {
+        Ok(self.interface(secrets).await?.streaming)
     }
 
     /// The result of the JSON-RPC request `method` with `params` - or the
@@ -100,11 +90,11 @@ impl A2aClient {
     /// If the agent cannot be reached, or does not answer as JSON-RPC.
     pub(super) async fn call<T: DeserializeOwned>(
         &self,
-        security: &SecurityContext,
+        secrets: &dyn Secrets,
         method: &str,
         params: impl Serialize,
     ) -> ExternalAgentResult<Result<T, RpcError>> {
-        let response = self.post(security, method, params, false).await?;
+        let response = self.post(secrets, method, params, false).await?;
         let answer: RpcResponse<T> = self.json_of(response).await?;
         answer.into_result(&self.shown())
     }
@@ -117,11 +107,11 @@ impl A2aClient {
     /// If the agent cannot be reached, or refuses the request.
     pub(super) async fn stream(
         &self,
-        security: &SecurityContext,
+        secrets: &dyn Secrets,
         method: &str,
         params: impl Serialize,
     ) -> ExternalAgentResult<Responses> {
-        let response = self.post(security, method, params, true).await?;
+        let response = self.post(secrets, method, params, true).await?;
         self.require_success(&response)?;
         let is_stream = response
             .headers()
@@ -165,16 +155,17 @@ impl A2aClient {
         })
     }
 
-    /// Where and how to reach the agent, as its card says: read in
-    /// `security` unless what was read is kept still.
-    async fn interface(&self, security: &SecurityContext) -> ExternalAgentResult<Arc<Interface>> {
-        self.interface.get(|| self.discover(security)).await
+    /// Where and how to reach the agent, as its card says: read with
+    /// `secrets`, in the name they are bound to, unless what was read is kept
+    /// still.
+    async fn interface(&self, secrets: &dyn Secrets) -> ExternalAgentResult<Arc<Interface>> {
+        self.interface.get(|| self.discover(secrets)).await
     }
 
     /// Reads the agent card and chooses its JSON-RPC interface of A2A 1.x.
-    async fn discover(&self, security: &SecurityContext) -> ExternalAgentResult<Interface> {
+    async fn discover(&self, secrets: &dyn Secrets) -> ExternalAgentResult<Interface> {
         let mut request = self.http.get(self.card_url()?).timeout(self.timeout);
-        if let Some(token) = self.token(security).await? {
+        if let Some(token) = self.token(secrets).await? {
             request = request.bearer_auth(token);
         }
         let response = request.send().await.map_err(|e| self.connection(e))?;
@@ -201,9 +192,9 @@ impl A2aClient {
         })
     }
 
-    async fn token(&self, security: &SecurityContext) -> ExternalAgentResult<Option<String>> {
+    async fn token(&self, secrets: &dyn Secrets) -> ExternalAgentResult<Option<String>> {
         self.endpoint
-            .bearer_token(&self.secret_manager, security)
+            .bearer_token(secrets)
             .await
             .map_err(|source| ExternalAgentError::Credential { endpoint: self.shown(), source })
     }
@@ -240,12 +231,12 @@ impl A2aClient {
     /// beginning of its stream (issue 186).
     async fn post(
         &self,
-        security: &SecurityContext,
+        secrets: &dyn Secrets,
         method: &str,
         params: impl Serialize,
         streamed: bool,
     ) -> ExternalAgentResult<Response> {
-        let interface = self.interface(security).await?;
+        let interface = self.interface(secrets).await?;
         let body = RpcRequest::new(method, params);
         trace!(
             "A2A agent component '{}' sends {}: {}",
@@ -260,7 +251,7 @@ impl A2aClient {
         } else {
             request.timeout(self.timeout)
         };
-        if let Some(token) = self.token(security).await? {
+        if let Some(token) = self.token(secrets).await? {
             request = request.bearer_auth(token);
         }
         match timeout(self.timeout, request.send()).await {
@@ -327,20 +318,17 @@ mod tests {
     use super::super::wire::WireTaskState;
     use super::*;
     use bytes::Bytes;
-    use caelumora_model::security::AllowAllPolicy;
     use futures::stream::iter;
     use serde_json::{json, Value};
     use std::io::Error;
 
     fn client(url: &str) -> A2aClient {
         let endpoint: RemoteEndpoint = serde_json::from_value(json!({ "url": url })).unwrap();
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
         A2aClient::new(
             "hermes".to_string(),
             endpoint,
             Duration::from_secs(1),
             Duration::from_secs(300),
-            secrets,
         )
         .unwrap()
     }

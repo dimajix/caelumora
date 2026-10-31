@@ -16,7 +16,7 @@ mod builder;
 mod channel;
 mod manager;
 
-pub use actor::ActorRuntime;
+pub use actor::{ActorRuntime, CallPermit, OwnRecord};
 pub use builder::RuntimeBuilder;
 pub use channel::ChannelRuntime;
 pub use manager::RuntimeManager;
