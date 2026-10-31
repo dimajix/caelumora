@@ -1,6 +1,6 @@
-//! Compaction through the whole runtime (issues 16, 284, 464): the plugin joined to the world of
+//! Compaction through the whole runtime (issues 16, 284, 464): the library joined to the world of
 //! the security suite - the ownership policy, recording what it is asked, and alice, bob and carol
-//! (`caelumora_runtime::testing`) - with the agents' plugin. An agent compacts on its own as an
+//! (`caelumora_runtime::testing`) - with the agents' library. An agent compacts on its own as an
 //! activity before a model call, and when its owner asks with `/compact`.
 #![expect(
     clippy::unwrap_used,
@@ -13,7 +13,7 @@ use caelumora_agents::testing::{
 };
 use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
 use caelumora_compaction::component::COMPACTION_KIND;
-use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_compaction::library::CompactionLibrary;
 use caelumora_model::actor::ActorEvent;
 use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -46,7 +46,7 @@ fn measured(prompt: u64, message: Message) -> Message {
 
 /// A world whose model, of the kind `scripted`, gives `answers`, one per call.
 async fn world(answers: Vec<Message>) -> World {
-    World::with(&[&TestAgents, &CompactionPlugin], |registry| {
+    World::with(&[], &[&TestAgents, &CompactionLibrary], |registry| {
         register_scripted(registry, "scripted", answers)
     })
     .await

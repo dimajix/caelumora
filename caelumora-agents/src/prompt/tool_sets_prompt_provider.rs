@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use caelumora_model::tool::ToolSet;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use std::sync::Arc;
 
 pub const TOOL_SETS_PROMPT_PROVIDER_KIND: &str = "tool_sets_prompt_provider";
@@ -64,7 +64,7 @@ fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND)

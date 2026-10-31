@@ -30,7 +30,7 @@ use caelumora_model::store::StoreError;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_model::value::name::ScopedName;
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult, Params,
+    config_of_params, ComponentFacets, ComponentKind, ComponentResult, LibraryComponents, Params,
 };
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::WorkspacePath;
@@ -215,7 +215,7 @@ impl ToolProvider for ArtifactTool {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(ARTIFACT_TOOL_KIND)

@@ -1,5 +1,5 @@
 //! Compaction (issues 16, 464): an agent's context replaced by a shorter one when it grows too long
-//! for its model, as a plugin of its own (`plugin::CompactionPlugin`).
+//! for its model, as a library of its own (`library::CompactionLibrary`).
 //!
 //! When a context is compacted and how are kept apart. The [`component`] - `compaction` -
 //! compacts the agent's context on its own, as an activity (`caelumora_agents::activity`, issue
@@ -23,7 +23,7 @@
 mod compactor;
 pub mod component;
 mod cut;
-pub mod plugin;
+pub mod library;
 pub mod summary_compaction;
 #[cfg(test)]
 mod testing;
@@ -40,7 +40,7 @@ use uuid::Uuid;
 /// The namespace of the texts of compaction in the prompt catalogue (issue 57).
 pub const NAMESPACE: &str = "compaction";
 
-/// Their texts, added to the catalogue under `NAMESPACE` by the plugin.
+/// Their texts, added to the catalogue under `NAMESPACE` by the library.
 pub const PROMPTS: &str = include_str!("prompts.yaml");
 
 /// What stands in the place of the older part of an agent's context when it is compacted. An agent

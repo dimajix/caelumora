@@ -28,8 +28,8 @@ use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptTexts};
 use caelumora_model::store::StoreError;
 use caelumora_runtime::component::{
-    config_of_params, ComponentContext, ComponentImpl, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
+    config_of_params, ComponentContext, ComponentImpl, ComponentKind, ComponentResult,
+    LibraryComponents, Params,
 };
 use caelumora_runtime::view::ViewError;
 use serde::Deserialize;
@@ -40,7 +40,7 @@ use std::fmt::Debug;
 pub const NAMESPACE: &str = "agents";
 
 /// The agents' texts (issue 57), added to the catalogue under `NAMESPACE`
-/// by `AgentsPlugin`.
+/// by `AgentsLibrary`.
 pub const PROMPTS: &str = include_str!("../prompts.yaml");
 
 /// Where a prompt part goes in the context (issue 47).
@@ -259,7 +259,7 @@ pub enum ContextError {
 /// Registers the component kinds of this directory with `registry`, and the
 /// `ContextProvider` as a facet of which an agent has exactly one, with its
 /// default kind (issue 99).
-pub fn register_all(registry: &mut ComponentRegistry) {
+pub fn register_all(registry: &mut LibraryComponents<'_>) {
     registry.single::<dyn ContextProvider>(Some(turn_context_provider::TURN_CONTEXT_PROVIDER_KIND));
     registry.single::<dyn ModelProfileProvider>(None);
 
@@ -297,7 +297,9 @@ mod tests {
     use caelumora_model::tool::Tool;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::work::Work;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentFacets};
+    use caelumora_runtime::component::{
+        ComponentContainer, ComponentContext, ComponentFacets, ComponentRegistry,
+    };
     use caelumora_runtime::session::testing::detached_participant_in;
     use caelumora_runtime::testing::TestRuntime;
     use futures::stream;
@@ -361,7 +363,7 @@ mod tests {
             store,
             config,
             components: Box::new(components),
-            plugins: vec![&TestAgents],
+            libraries: vec![&TestAgents],
             ..Default::default()
         }
         .build();

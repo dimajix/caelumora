@@ -1,11 +1,12 @@
 # Plugins
 
 A plugin brings a subject the core does not know - a kind of entity, its components, its views, its
-routes -, or a backend of a service of the core, in a crate of its own. This document describes what
-a plugin is and how it registers, what of the runtime a component kind outside the core may use, and
-how a plugin answers the core when something fails. How components are declared and built is in
-[COMPONENTS.md](COMPONENTS.md); the overall picture, with the plugins there are, in
-[ARCHITECTURE.md](ARCHITECTURE.md#plugins).
+routes -, or a backend of a service of the core, in a crate of its own; a library brings what runs
+an agent or serves its facets, on the agent side. This document describes what a plugin is and how
+it registers, what a library is and how it registers, what of the runtime a component kind outside
+the core may use, and how a plugin answers the core when something fails. How components are
+declared and built is in [COMPONENTS.md](COMPONENTS.md); the overall picture, with the plugins there
+are, in [ARCHITECTURE.md](ARCHITECTURE.md#plugins).
 
 ## What a plugin is
 
@@ -14,44 +15,38 @@ know - a kind of entity with what keeps it, its components, its views and its ro
 of a service of the core (issue 324). It implements `caelumora_runtime::plugin::Plugin` - a name for
 messages, `backends` and `register` - and the program lists it: `caelumora-app` in `rest_plugins()`
 if it serves routes, otherwise in `plugins()`, and builds its runtime with both; `caelumora-tui` in
-its own `plugins()`. Both list the agents' plugin first, the essential one (issue 370). A program
-builds its runtime with `RuntimeBuilder::from_config`, given the configuration and its plugins, in
-two steps:
+its own `plugins()`. A program builds its runtime with `RuntimeBuilder::from_config`, given the
+configuration and its plugins, in two steps, and registers its libraries after (see
+[What a library is](#what-a-library-is)):
 
 1.  Each plugin registers its backends (`backends`, see
     [ARCHITECTURE.md](ARCHITECTURE.md#backends)) with the core's (`Backends::with_plugins`), before
     anything is made: what the core's services are made of has to be known first.
 2.  The policies, the stores and the secrets are made, then the core's services, managers and
     component kinds (`RuntimeBuilder::new`), with the backends the configuration names; then each
-    plugin registers the rest of what it brings (`register`) - the agents' plugin the kinds of an
-    agent's components and the kinds of agent (issue 370) -, and `build` makes the runtime. The
-    program names the default kinds of singles after its plugins registered (`set_default_kind`).
+    plugin registers the rest of what it brings (`register`). Once the libraries registered too,
+    the program names the default kinds of singles (`set_default_kind`), and `build` makes the
+    runtime.
 
-A plugin stands on one of two levels of trust (see [ARCHITECTURE.md](ARCHITECTURE.md#principles)).
-One that brings what is the core's - a backend, a kind of entity with its manager, views and routes,
-a component of a channel such as the `ResponderPolicy` of `caelumora-decision` - is trusted as the
-core and is given what the core has: the stores, the policies, the secrets, the controllers, the
-system's context. One that runs an agent or brings components for an agent's facets is a library of
-the agent side, trusted for nothing: the agents' plugin, `caelumora-mcp`, `caelumora-a2a`,
-`caelumora-ollama`, `caelumora-comfyui`, `caelumora-workspace-tools` and `caelumora-compaction`.
-`caelumora-skills` and `caelumora-artifacts` stand on both: their manager, views and routes are the
-core's, their components a library's. A library reaches the core through the interface the core
-gives an actor and its components (see
-[What a component kind outside the core may use](#what-a-component-kind-outside-the-core-may-use)),
-and may offer a service of its own to its own kinds - `caelumora-comfyui` its workflows -, which
-decides nothing of the core's. Both levels register as a `Plugin`, and "plugin" in this document
-covers both, until libraries register on their own (issue
-[516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)).
+A plugin brings what is the core's - a backend, a kind of entity with its manager, views and routes,
+a component of a channel such as the `ResponderPolicy` of `caelumora-decision` - and is trusted as
+the core: it is given what the core has, the stores, the policies, the secrets, the controllers, the
+system's context. What runs an agent or brings components for an agent's facets is no plugin but a
+library of the agent side, trusted for nothing (see [What a library is](#what-a-library-is) and
+[ARCHITECTURE.md](ARCHITECTURE.md#principles)). `caelumora-skills` and `caelumora-artifacts` stand
+on both levels: their manager, views and routes are the core's, their components a library's; until
+they are cut in two (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)),
+both register as a `Plugin`, their component kinds through a `LibraryComponents`, as a library's.
 
-A test builds the runtime with `testing::TestRuntime`, naming the plugins it needs (issue 375). A
-test of the agents' logic names the agents' plugin; the runtime's own tests name scripted agents
-(`testing::ScriptedAgents`, issue 370) where an agent takes part, so that they test what the runtime
-does with an agent, not what an agent does. A backend's factory is registered with
-`Backends::register` for the service it serves (`dyn TerminalProvider`, say) and the struct of its
-parameters, which implements `Params` - `NoParams` for a type that takes none -, is given them read
-and checked, one it does not take refused before it is called, and asks the services it is given -
-the policies, the `SecretManager`, the store of the users - with `service_of`. While it registers,
-a plugin
+A test builds the runtime with `testing::TestRuntime`, naming the plugins and the libraries it needs
+(issue 375). A test of the agents' logic names the agents' library; the runtime's own tests name
+scripted agents (`testing::ScriptedAgents`, a library, issue 370) where an agent takes part, so that
+they test what the runtime does with an agent, not what an agent does. A backend's factory is
+registered with `Backends::register` for the service it serves (`dyn TerminalProvider`, say) and the
+struct of its parameters, which implements `Params` - `NoParams` for a type that takes none -, is
+given them read and checked, one it does not take refused before it is called, and asks the services
+it is given - the policies, the `SecretManager`, the store of the users - with `service_of`. While
+it registers, a plugin
 
 *   asks for the store of its kind (`entity_store::<T>()`), checked by the runtime's policies. The
     configured backend keeps any kind in one storage - whoever asks for the kind again is given a
@@ -68,11 +63,6 @@ a plugin
     model use the catalogue as a service (see
     [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool that names another plugin's tool
     writes its name as text: it does not know it as a value;
-*   registers the kinds of agent it brings (`agent_kinds()`, an `AgentKinds`): for a kind of
-    personality, what builds its agents' actors - from the agent's `ActorRuntime` alone, issue
-    516 - and which facets their components are asked for.
-    The agents' plugin (`AgentsPlugin`, issue 370) registers both kinds there are; a program
-    without it runs no agent;
 *   is handed the core's storages of content (`content_storages`, issue 282) for what it keeps
     beyond documents - the versions of artifacts -, under a key space of its own;
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`, which
@@ -97,24 +87,49 @@ writer (see
 [What a system service offers an agent's work](#what-a-system-service-offers-an-agents-work)).
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
-plugin that brings component kinds alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`
-(issue 326), `caelumora-ollama` (issue 329), `caelumora-decision` (issue 403),
-`caelumora-workspace-tools` (issue 428) or `caelumora-compaction` (issue 464), implements `Plugin`
-only and registers the kinds in `register` - as does one that claims a section of the configuration
-for them besides, `caelumora-comfyui` (issue 512); whether a kind of a facet of the core of which
-there is one is its default, the program says, not the plugin
-(`ComponentRegistry::set_default_kind`), so that two plugins of a facet cannot both claim it. A
-facet a plugin brings itself is its own: `caelumora-compaction` registers its `CompactionStrategy`
-as a single with its default kind, as the core's modules do theirs. One that brings backends alone,
+plugin that brings a component of a channel alone, such as `caelumora-decision` (issue 403),
+registers its kind in `register`. One that brings backends alone,
 such as `caelumora-open-terminal` (issue 327) or `caelumora-store-json` (issue 446), registers them
 in `backends` and nothing in `register`. A backend of the stores runs the store suite of the model
 in its own tests (`caelumora_model::store::suite`, feature `test-support`). A plugin's tests use the
 world of the security suite - the runtime with the recording ownership policy and three users -,
 `caelumora_runtime::testing`, as a dev-dependency with the feature `test-support`. That world runs
-no agent; a plugin whose components serve an agent's facets tests them with the agents beside it -
-`World::with(&[&TestAgents, &Plugin], …)` - where `caelumora_agents::testing::TestAgents` brings the
-agents' plugin and a model that is not to be asked as the default (issues 370, 373). Naming that
-default is the program's, and in a test, `TestAgents` stands in for the program.
+no agent unless a library brings them (`World::with(plugins, libraries, …)`).
+
+## What a library is
+
+A library (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) is a crate of
+the agent side: what runs an agent - `caelumora-agents`, the essential one, which brings the kinds
+of agent and the built-in components (issue 370) - or brings components for an agent's facets -
+`caelumora-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-ollama` (issue 329),
+`caelumora-workspace-tools` (issue 428), `caelumora-compaction` (issue 464), `caelumora-comfyui`
+(issue 512). It is linked into the program as a plugin is, but trusted for nothing. It implements
+`caelumora_runtime::library::Library` - a name for messages and `register` -, and the programs list
+it in `libraries()`, the agents' library first, and register each with `RuntimeBuilder::library`
+once their plugins registered. A library registers with a `LibraryBuilder`, which offers what a
+library registers and nothing of the core - no store, no policy, no secret, no controller:
+
+*   its component kinds (`components()`, a `LibraryComponents`), marked as a library's;
+*   its kinds of agent (`agent_kinds()`, an `AgentKinds`): for a kind of personality, what builds
+    its agents' actors - from the agent's `ActorRuntime` alone - and which facets their components
+    are asked for. Kinds of agent are the agent side's: a plugin registers none. The agents' library
+    registers both kinds there are; a program without it runs no agent;
+*   its texts (`prompts()`), under a namespace of its own, as a plugin adds its;
+*   its section of the configuration (`config::<C>(name)`);
+*   a service of its own to its own kinds (`provide`), which decides nothing of the core's -
+    `caelumora-comfyui` its workflows.
+
+The runtime is not built where a kind of a library provides a facet the core builds in its own name,
+a moderator of a channel or a command of a session, or uses a service that is neither a library's
+nor the texts (`PromptCatalogue`): a library's components reach nothing of the core but through the
+interface they are given. Whether a kind of a facet of which there is one is its default, the
+program says, not the library (`ComponentRegistry::set_default_kind`), so that two libraries of a
+facet cannot both claim it. A facet a library brings itself is its own: `caelumora-compaction`
+registers its `CompactionStrategy` as a single with its default kind. A library whose components
+serve an agent's facets tests them with the agents beside it -
+`World::with(&[], &[&TestAgents, &Library], …)` -, where `caelumora_agents::testing::TestAgents`
+brings the agents' library and declares a model that is not to be asked the default of the model's
+facets (issues 370, 373): the tests have no program to name one.
 
 ## What a system service offers an agent's work
 
@@ -154,12 +169,13 @@ does with its kind it offers as **extensions**, by one pattern:
 
 A component kind in a crate of its own uses the runtime through what a component of the core uses
 too, and nothing else - there is no prelude that re-exports at large, so that it shows which types
-a plugin depends on:
+a plugin or a library depends on:
 
-*   **To register it:** `ComponentRegistry::register` or `register_async`, `ComponentKind` with the
-    parameters it takes (`params`, a struct that implements `Params`), the facets it `provides`,
-    those of others it `needs`, the services it `uses` and the extensions it `reads` and `writes`
-    by, `ComponentFacets`, and `config_of_params` to read its `params`. A kind that declares no
+*   **To register it:** `LibraryComponents::register` or `register_async` for a library's kind
+    (`ComponentRegistry::register` for a plugin's), `ComponentKind` with the parameters it takes
+    (`params`, a struct that implements `Params`), the facets it `provides`, those of others it
+    `needs`, the services it `uses` and the extensions it `reads` and `writes` by,
+    `ComponentFacets`, and `config_of_params` to read its `params`. A kind that declares no
     parameters takes none: every one it is given is refused
     ([COMPONENTS.md](COMPONENTS.md#parameters)).
 *   **While it is built:** the `ComponentContext` - in whose name it is built, the core's to set and
@@ -167,13 +183,13 @@ a plugin depends on:
     `all` and `one`, the facets of others it declared it needs. What a container accepts follows
     from these declarations ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service
     that decides for the core - a policy, one of the core's managers, a store - is the core's, and a
-    component of a library does not declare it: what it needs decided it asks of the core, through
-    the `Turn` and the `Situation` it is called with (`may_reclassify`, `may_copy_information`,
-    `copy_attachment`; the executor's `admit_tool_call`, issue 516), and what it reads it reads
-    through the readers (`Situation::session`, `SessionReader`). What it needs of another plugin it
-    declares as the trait that plugin offers for it, or, of a system service, as the extension it
-    reads or writes by: a reader its situation hands out (`Situation::reader`), a writer its turn
-    (`Turn::writer`).
+    component of a library does not declare it - the runtime is not built where one does: what it
+    needs decided it asks of the core, through the `Turn` and the `Situation` it is called with
+    (`may_reclassify`, `may_copy_information`, `copy_attachment`; the executor's `admit_tool_call`,
+    issue 516), and what it reads it reads through the readers (`Situation::session`,
+    `SessionReader`). What it needs of another crate it declares as the trait that crate offers for
+    it, or, of a system service, as the extension it reads or writes by: a reader its situation
+    hands out (`Situation::reader`), a writer its turn (`Turn::writer`).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
@@ -195,7 +211,7 @@ decides what a person is told of an error by the types it knows -
 `caelumora_runtime::error::user_message` for the user of a command and the TUI, and
 `From<anyhow::Error> for ApiError` for the REST API -, and a plugin's types are not among them:
 inside an `anyhow`, whatever a plugin's error says is shown as a failure that points to the log.
-The agents' plugin, which defines the facets most plugins serve, is a core of its own in this: what
+The agents' library, which defines the facets most plugins serve, is a core of its own in this: what
 an agent's owner is told when an answer fails is judged by `caelumora_agents::error::user_message`,
 which knows
 the error types of those facets and asks the runtime's judgement for the rest

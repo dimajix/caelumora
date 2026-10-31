@@ -1,13 +1,13 @@
 //! An agent whose answers are scripted (issue 370): an actor of a kind of
-//! agent, registered in place of the agents' plugin's (`ScriptedAgents`),
+//! agent, registered in place of the agents' library's (`ScriptedAgents`),
 //! with nothing of an agent's logic - no model, no tools, no turn - for the
 //! tests of what a channel, a session and the views do with an agent among
 //! their participants. It tells where it stands, begins and ends its answers
 //! as an agent does, and keeps what it hears.
 
 use crate::actor::{Actor, AgentKinds, Answering};
-use crate::plugin::Plugin;
-use crate::runtime::{ActorRuntime, RuntimeBuilder};
+use crate::library::{Library, LibraryBuilder};
+use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -34,18 +34,18 @@ pub enum Script {
     Hangs,
 }
 
-/// Scripted agents in place of the agents' plugin's, as a plugin: every
+/// Scripted agents in place of the agents' library's, as a library: every
 /// agent, of either kind, is a `ScriptedAgent` that follows the script.
 #[derive(Debug, Clone)]
 pub struct ScriptedAgents(pub Script);
 
-impl Plugin for ScriptedAgents {
+impl Library for ScriptedAgents {
     fn name(&self) -> &'static str {
         "scripted_agents"
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
-        let kinds: &mut AgentKinds = runtime.agent_kinds();
+    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+        let kinds: &mut AgentKinds = library.agent_kinds();
         for kind in [PersonalityKind::Internal, PersonalityKind::External] {
             let script = self.0.clone();
             kinds.register(kind, &[], move |runtime| {

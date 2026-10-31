@@ -11,6 +11,7 @@ use crate::extension::ArtifactPublisher;
 use crate::manager::{ArtifactManager, ArtifactsConfig};
 use crate::{NAMESPACE, PROMPTS};
 use anyhow::Result;
+use caelumora_runtime::component::LibraryComponents;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use std::sync::Arc;
@@ -40,7 +41,9 @@ impl Plugin for ArtifactsPlugin {
             configured.then(|| Arc::new(session.views().clone()) as Arc<dyn ArtifactPublisher>)
         })?;
         runtime.prompts().add(NAMESPACE, PROMPTS)?;
-        component::register(runtime.components());
+        // Its component kind is a library's (issue 516), though the crate registers as a plugin
+        // until it is cut in two (step 5d of issue 516).
+        component::register(&mut LibraryComponents::new(runtime.components()));
         Ok(())
     }
 }

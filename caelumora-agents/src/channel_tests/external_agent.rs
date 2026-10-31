@@ -110,7 +110,7 @@ async fn external_channel(
         store,
         access_policy,
         components: Box::new(components),
-        plugins: vec![&TestAgents],
+        libraries: vec![&TestAgents],
         ..Default::default()
     }
     .build();
@@ -1944,7 +1944,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let runtime = TestRuntime {
         store: store.clone(),
         components: Box::new(components),
-        plugins: vec![&TestAgents],
+        libraries: vec![&TestAgents],
         ..Default::default()
     }
     .build();

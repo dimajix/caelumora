@@ -29,7 +29,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents,
 };
 use std::sync::{Arc, Mutex};
 
@@ -134,7 +134,7 @@ fn render(prompts: &PromptTexts, places: &[Place<'_>]) -> Result<String, PromptE
     prompts.render(TEXT, context! { places })
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND)
@@ -229,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_descriptions_are_read_at_every_turn_and_classified_as_their_place() {
-        let runtime = TestRuntime { plugins: vec![&TestAgents], ..Default::default() }.build();
+        let runtime = TestRuntime { libraries: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 
         let agent = stored_agent(

@@ -2783,7 +2783,7 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
 /// through a `ref` to a component bundle the creator may read.
 #[tokio::test]
 async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_ref() {
-    let world = World::with(&[], |registry| {
+    let world = World::with(&[], &[], |registry| {
         registry.register(
             ComponentKind::new("operated_policy").provides::<dyn ResponderPolicy>().operator_only(),
             |_, _| {

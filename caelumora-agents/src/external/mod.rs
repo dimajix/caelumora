@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::secret::{SecretError, Secrets};
-use caelumora_runtime::component::ComponentRegistry;
+use caelumora_runtime::component::LibraryComponents;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -151,12 +151,11 @@ pub trait ExternalAgent: Send + Sync + Debug {
     fn classification(&self) -> Option<Classification>;
 }
 
-/// Registers `ExternalAgent` with `registry`, as a facet of which an
-/// external personality has exactly one. It has no default: a remote agent
-/// is always named, and a personality that names none fails to build where
-/// its agent asks for it. The kinds that provide it are registered by the
-/// plugins of their protocols.
-pub fn register_all(registry: &mut ComponentRegistry) {
+/// Registers `ExternalAgent` with `registry`, as a facet of which an external personality has
+/// exactly one. It has no default: a remote agent is always named, and a personality that names
+/// none fails to build where its agent asks for it. The kinds that provide it are registered by the
+/// libraries of their protocols.
+pub fn register_all(registry: &mut LibraryComponents<'_>) {
     registry.single::<dyn ExternalAgent>(None);
 }
 

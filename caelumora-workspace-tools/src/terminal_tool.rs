@@ -45,7 +45,7 @@ use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
 };
 use caelumora_runtime::workspace::{WorkspaceReader, WorkspaceWriter};
 use serde::Deserialize;
@@ -272,7 +272,7 @@ impl ToolProvider for TerminalTool {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(TERMINAL_TOOL_KIND)
@@ -295,7 +295,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 pub(crate) mod tests {
     use super::*;
     use crate::files::READ_FILE;
-    use crate::plugin::WorkspaceToolsPlugin;
+    use crate::library::WorkspaceToolsLibrary;
     use crate::{catalogue, prompts};
     use caelumora_agents::testing::with_agent_kinds;
     use caelumora_agents::testing::workspace_turn;
@@ -308,7 +308,7 @@ pub(crate) mod tests {
     use caelumora_model::security::{Policies, SecurityContext};
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::type_map::TypeKey;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext};
+    use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry};
     use caelumora_runtime::testing::World;
     use caelumora_runtime::workspace::testing::session_with_workspace;
     use serde_json::json;
@@ -323,7 +323,7 @@ pub(crate) mod tests {
     /// to read -, and is never asked whether the agent may change them.
     #[tokio::test]
     async fn a_read_of_a_file_asks_what_reading_asks_and_never_a_change() {
-        let world = World::with(&[&TestAgents, &WorkspaceToolsPlugin], |_| {}).await;
+        let world = World::with(&[], &[&TestAgents, &WorkspaceToolsLibrary], |_| {}).await;
         let personality = world.personality("plain", None, &[]).await;
         let helper = world.agent("helper", world.alice, &personality).await;
         let alice = World::as_user(world.alice);
@@ -424,7 +424,7 @@ pub(crate) mod tests {
         );
         // The agents' kinds, with a model whose profile names the variant.
         with_agent_kinds(&mut registry);
-        register(&mut registry);
+        register(&mut LibraryComponents::new(&mut registry));
         let config = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)],
         };

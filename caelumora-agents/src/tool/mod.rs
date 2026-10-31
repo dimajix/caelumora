@@ -31,7 +31,7 @@ use caelumora_model::tool::{
 use caelumora_model::turn::GivenUpReason;
 use caelumora_runtime::attachment::AttachmentError;
 use caelumora_runtime::backend::StorageGone;
-use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentResult};
+use caelumora_runtime::component::{ComponentImpl, ComponentResult, LibraryComponents};
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::runtime::{ActorRuntime, CallPermit};
 use caelumora_runtime::terminal::TerminalError;
@@ -1051,7 +1051,7 @@ impl ToolExecutor {
 }
 
 /// Registers the tool kinds with `registry`.
-pub fn register_all(registry: &mut ComponentRegistry) {
+pub fn register_all(registry: &mut LibraryComponents<'_>) {
     ask_user_tool::register(registry);
     attachment_tool::register(registry);
     calculator_tool::register(registry);
@@ -1394,7 +1394,7 @@ mod tests {
             access_policy,
             confidentiality,
             config,
-            plugins: vec![&TestAgents],
+            libraries: vec![&TestAgents],
             ..Default::default()
         }
         .build();

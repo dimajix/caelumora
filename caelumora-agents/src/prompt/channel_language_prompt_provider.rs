@@ -28,7 +28,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::language::Language;
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents,
 };
 use std::sync::{Arc, Mutex};
 
@@ -112,7 +112,7 @@ fn render(prompts: &PromptTexts, language: Option<&Language>) -> Result<String, 
     prompts.render(TEXT, context! { tag => language.to_string(), english, native })
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND)
@@ -210,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_language_is_read_from_the_channel_and_its_session_at_every_turn() {
-        let runtime = TestRuntime { plugins: vec![&TestAgents], ..Default::default() }.build();
+        let runtime = TestRuntime { libraries: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 
         let agent = stored_agent(

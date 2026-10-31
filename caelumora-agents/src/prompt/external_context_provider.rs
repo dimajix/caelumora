@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
 use caelumora_runtime::component::{
-    ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry,
+    ComponentFacets, ComponentImpl, ComponentKind, LibraryComponents,
 };
 use std::sync::Arc;
 
@@ -55,7 +55,7 @@ impl ContextProvider for ExternalContextProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         ComponentKind::new(EXTERNAL_CONTEXT_PROVIDER_KIND)
             .provides::<dyn ContextProvider>()

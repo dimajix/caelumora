@@ -1,17 +1,14 @@
-//! What an agent does in a channel (issue 370): both kinds of agent - one
-//! whose mind is a model run here (`actor::agent`), one whose mind runs
-//! elsewhere (`actor::external_agent`) - with what they share (their body,
-//! how they take in what they hear, the commands they carry out), the turn
-//! of an agent run here (`turn`, `work`, `memory`, `notes`), and the facets
-//! their components serve: tools (`tool`), prompt parts and contexts
-//! (`prompt`), the model (`llm`), message stages (`message`), an agent that
-//! runs elsewhere (`external`), an agent's commands (`command`) and what it
-//! does of its own accord (`activity`) - compacting its context, which the
-//! plugin `caelumora-compaction` provides -, with the built-in kinds
-//! (`components`). It runs
-//! on the runtime (`caelumora-runtime`), which knows agents only as a kind
-//! of participant, and joins it as a plugin (`plugin::AgentsPlugin`) - an
-//! essential one: without it, the program is a chat between users.
+//! What an agent does in a channel (issue 370): both kinds of agent - one whose mind is a model run
+//! here (`actor::agent`), one whose mind runs elsewhere (`actor::external_agent`) - with what they
+//! share (their body, how they take in what they hear, the commands they carry out), the turn of an
+//! agent run here (`turn`, `work`, `memory`, `notes`), and the facets their components serve: tools
+//! (`tool`), prompt parts and contexts (`prompt`), the model (`llm`), message stages (`message`),
+//! an agent that runs elsewhere (`external`), an agent's commands (`command`) and what it does of
+//! its own accord (`activity`) - compacting its context, which the library `caelumora-compaction`
+//! provides -, with the built-in kinds (`components`). It runs on the runtime
+//! (`caelumora-runtime`), which knows agents only as a kind of participant, and joins it as a
+//! library of the agent side (`library::AgentsLibrary`, issue 516) - an essential one: without it,
+//! the program is a chat between users.
 
 pub mod activity;
 pub(crate) mod actor;
@@ -21,11 +18,11 @@ pub mod command;
 pub mod components;
 pub mod error;
 pub mod external;
+pub mod library;
 pub mod llm;
 pub(crate) mod memory;
 pub mod message;
 pub(crate) mod notes;
-pub mod plugin;
 pub mod prompt;
 pub mod situation;
 #[cfg(any(test, feature = "test-support"))]

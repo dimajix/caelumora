@@ -57,7 +57,7 @@ use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
 };
 use chrono::Utc;
 use serde::Deserialize;
@@ -629,7 +629,7 @@ impl KnowledgeRestorer for SkillsComponent {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(SKILLS_KIND)

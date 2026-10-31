@@ -53,11 +53,6 @@ pub(crate) enum Acting {
 }
 
 impl ParticipantRuntime {
-    /// The actor this runtime is for.
-    pub(crate) fn actor_id(&self) -> ActorId {
-        self.actor
-    }
-
     /// The context the actor acts in now, for `initiator` - who began the chain it answers, for
     /// the record, never for rights (issue 516): built by the core at every call, from what it
     /// holds of the actor (`Acting`), never handed in by the actor.
@@ -169,7 +164,7 @@ mod tests {
     /// one piece of work is gone for the second.
     #[tokio::test]
     async fn an_agent_s_runtime_acts_with_its_owner_s_roles_as_they_are_at_each_call() {
-        let world = World::with(&[&ScriptedAgents(Script::Hangs)], |_| {}).await;
+        let world = World::with(&[], &[&ScriptedAgents(Script::Hangs)], |_| {}).await;
         let personality = world.personality("plain", None, &[]).await;
         let helper = world.agent("helper", world.alice, &personality).await;
         let session = world.shared_session(&[helper], &[]).await;

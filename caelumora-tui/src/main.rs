@@ -2,16 +2,16 @@
 //! template.
 
 use anyhow::Result;
-use caelumora_a2a::plugin::A2aPlugin;
+use caelumora_a2a::library::A2aLibrary;
+use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::llm::LLMClient;
-use caelumora_agents::plugin::AgentsPlugin;
 use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
-use caelumora_comfyui::plugin::ComfyUiPlugin;
-use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_comfyui::library::ComfyUiLibrary;
+use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_logging::{init, LogTarget};
-use caelumora_mcp::plugin::McpPlugin;
+use caelumora_mcp::library::McpLibrary;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
@@ -28,11 +28,12 @@ use caelumora_model::user_provider::Credential;
 use caelumora_model::value::language::Language;
 use caelumora_model::work::TurnId;
 use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
-use caelumora_ollama::plugin::OllamaPlugin;
+use caelumora_ollama::library::OllamaLibrary;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
 use caelumora_runtime::error::user_message;
+use caelumora_runtime::library::Library;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::{SessionManager, SessionSpec};
@@ -40,7 +41,7 @@ use caelumora_runtime::view::Viewer;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
-use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
+use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
 use clap::Parser;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
@@ -531,23 +532,29 @@ struct Args {
     user: String,
 }
 
-/// The plugins the terminal builds its runtime with (issue 323) - first the
-/// essential one, the agents' (issue 370).
+/// The plugins the terminal builds its runtime with (issue 323).
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
-        Box::new(AgentsPlugin),
-        Box::new(CompactionPlugin),
         Box::new(SkillsPlugin),
         Box::new(ArtifactsPlugin),
-        Box::new(OllamaPlugin),
-        Box::new(McpPlugin),
-        Box::new(A2aPlugin),
         Box::new(OpenTerminalPlugin),
-        Box::new(WorkspaceToolsPlugin),
         Box::new(DecisionPlugin),
-        Box::new(ComfyUiPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
+    ]
+}
+
+/// The libraries the terminal builds its runtime with, of the agent side (issue 516) - first the
+/// essential one, the agents' (issue 370).
+fn libraries() -> Vec<Box<dyn Library>> {
+    vec![
+        Box::new(AgentsLibrary),
+        Box::new(CompactionLibrary),
+        Box::new(OllamaLibrary),
+        Box::new(McpLibrary),
+        Box::new(A2aLibrary),
+        Box::new(WorkspaceToolsLibrary),
+        Box::new(ComfyUiLibrary),
     ]
 }
 
@@ -580,6 +587,9 @@ async fn main() -> Result<()> {
     let plugins = plugins();
     let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
     let mut builder = RuntimeBuilder::from_config(&config, &plugins).await?;
+    for library in libraries() {
+        builder.library(library.as_ref())?;
+    }
     default_kinds(builder.components())?;
     let runtime = Arc::new(builder.build()?);
     runtime.seed(&config.seed).await?;

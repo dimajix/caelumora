@@ -30,7 +30,6 @@ use caelumora_model::session::Session;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::{EntityStores, StateStore};
-use caelumora_model::type_map::TypeKey;
 use caelumora_model::user_provider::UserManager;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -125,7 +124,7 @@ impl RuntimeManager {
         for config in [&self.commands, &session.commands] {
             let container = ComponentContainer::from_config(
                 config,
-                &[TypeKey::of::<dyn ChannelCommandProvider>()],
+                CommandExecutor::COMPONENT_FACETS,
                 &self.component_registry,
                 &context,
             )

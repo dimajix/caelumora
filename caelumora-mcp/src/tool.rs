@@ -8,7 +8,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, Secrets};
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
 };
 use caelumora_runtime::remote::ExpiringCache;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
@@ -400,7 +400,7 @@ impl ToolProvider for McpToolProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register(
         ComponentKind::new(MCP_TOOL_KIND).params::<McpToolConfig>().provides::<dyn ToolProvider>(),
         |descriptor, _context| {

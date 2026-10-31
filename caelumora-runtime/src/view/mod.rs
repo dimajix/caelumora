@@ -3078,7 +3078,7 @@ mod tests {
         let store = Persistence::in_memory();
         let runtime = TestRuntime {
             store: store.clone(),
-            plugins: vec![&ScriptedAgents(Script::Hangs)],
+            libraries: vec![&ScriptedAgents(Script::Hangs)],
             ..Default::default()
         }
         .build();

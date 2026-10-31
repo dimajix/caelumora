@@ -143,13 +143,20 @@ pub(super) struct Registration {
     pub(super) needs: Vec<TypeKey>,
     extensions: Vec<(Face, TypeKey)>,
     operator_only: bool,
+    /// Whether a library registered it (`LibraryComponents`, issue 516), which is trusted for
+    /// nothing.
+    of_library: bool,
     factory: ComponentFactory,
 }
 
 impl Registration {
     fn of(kind: ComponentKind, factory: ComponentFactory) -> (String, Self) {
         let ComponentKind { name, params, provides, uses, needs, extensions, operator_only } = kind;
-        (name, Self { params, provides, uses, needs, extensions, operator_only, factory })
+        let of_library = false;
+        (
+            name,
+            Self { params, provides, uses, needs, extensions, operator_only, of_library, factory },
+        )
     }
 }
 
@@ -191,13 +198,64 @@ struct DefaultRef {
     params: Value,
 }
 
+/// The component kinds a library registers (issue 516): registered as the registry registers them,
+/// marked as a library's, so that the runtime is not built where one provides a facet the core
+/// builds in its own name or uses a service of the core (`RuntimeBuilder::build`). A library is
+/// handed it, never the registry (`LibraryBuilder::components`); made of a registry, it marks what
+/// it registers and grants nothing.
+pub struct LibraryComponents<'a> {
+    registry: &'a mut ComponentRegistry,
+}
+
+impl<'a> LibraryComponents<'a> {
+    /// The kinds a library registers with `registry`.
+    pub fn new(registry: &'a mut ComponentRegistry) -> Self {
+        Self { registry }
+    }
+
+    /// Registers `kind`, a library's, with a factory that builds without waiting
+    /// (`ComponentRegistry::register`).
+    pub fn register<F>(&mut self, kind: ComponentKind, factory: F)
+    where
+        F: Fn(&ComponentDescriptor, &ComponentContext) -> ComponentResult<ComponentFacets>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let name = kind.name.clone();
+        self.registry.register(kind, factory);
+        self.registry.mark_of_library(&name);
+    }
+
+    /// Registers `kind`, a library's, with a factory that waits
+    /// (`ComponentRegistry::register_async`).
+    pub fn register_async<F, Fut>(&mut self, kind: ComponentKind, factory: F)
+    where
+        F: Fn(ComponentDescriptor, ComponentContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ComponentResult<ComponentFacets>> + Send + 'static,
+    {
+        let name = kind.name.clone();
+        self.registry.register_async(kind, factory);
+        self.registry.mark_of_library(&name);
+    }
+
+    /// Makes `T` a facet of which there is exactly one per container (`ComponentRegistry::single`),
+    /// declared by a library.
+    pub fn single<T: ?Sized + 'static>(&mut self, default_kind: Option<&str>) {
+        self.registry.single::<T>(default_kind);
+        self.registry.singles_of_libraries.push(TypeKey::of::<T>());
+    }
+}
+
 pub struct ComponentRegistry {
     kinds: HashMap<String, Registration>,
     singles: HashMap<TypeId, Single>,
-    /// The default kinds of singles the program named (`set_default_kind`),
-    /// in place of those they were declared with - kept apart, so that a
-    /// plugin that declares a single after the program named its default
-    /// does not undo the program's choice.
+    /// The singles a library declared (`LibraryComponents::single`), which may be none the core
+    /// builds in its own name (issue 516).
+    singles_of_libraries: Vec<TypeKey>,
+    /// The default kinds of singles the program named (`set_default_kind`), in place of those they
+    /// were declared with - kept apart, so that a plugin or a library that declares a single after
+    /// the program named its default does not undo the program's choice.
     chosen: HashMap<TypeId, String>,
     /// The configuration's defaults for singles (`AppConfig::component_defaults`),
     /// by the single they provide.
@@ -221,20 +279,19 @@ impl ComponentRegistry {
         Self {
             kinds: HashMap::new(),
             singles: HashMap::new(),
+            singles_of_libraries: Vec::new(),
             chosen: HashMap::new(),
             defaults: HashMap::new(),
             bundles,
         }
     }
 
-    /// A registry with the runtime's own component kinds - the user
-    /// commands (`command`) and a channel's moderation (`moderator`) -,
-    /// resolving the bundles a `ref` names in `bundles`. The kinds of an
-    /// agent's components are the agents' plugin's
-    /// (`caelumora_agents::plugin::AgentsPlugin`, issue 370), those of other
-    /// plugins theirs.
-    /// A binary passes it to the `RuntimeBuilder` as it is; a test may
-    /// register kinds of its own first, such as a stand-in for the model.
+    /// A registry with the runtime's own component kinds - the user commands (`command`) and a
+    /// channel's moderation (`moderator`) -, resolving the bundles a `ref` names in `bundles`. The
+    /// kinds of an agent's components are the agents' library's
+    /// (`caelumora_agents::library::AgentsLibrary`, issue 370), those of other libraries and
+    /// plugins theirs. A binary passes it to the `RuntimeBuilder` as it is; a test may register
+    /// kinds of its own first, such as a stand-in for the model.
     pub fn built_in(bundles: Arc<dyn EntityStore<ComponentBundle>>) -> Self {
         let mut registry = Self::new(bundles);
         command::register_all(&mut registry);
@@ -248,6 +305,66 @@ impl ComponentRegistry {
         self.kinds.iter().flat_map(|(name, registration)| {
             registration.extensions.iter().map(move |(face, key)| (name.as_str(), *face, *key))
         })
+    }
+
+    /// Refuses what a library registered (`LibraryComponents`, issue 516) and may not: a kind that
+    /// provides one of the facets the core builds in its own name, from the containers that ask for
+    /// `asked` - those facets and, of the kinds a library did not register that provide one, what
+    /// they need, on and on -, a single of one of them a library declared, and a kind that uses a
+    /// service `of_libraries` does not answer for.
+    ///
+    /// # Errors
+    /// Naming the first such kind or single and what it provides, declares or uses.
+    pub(crate) fn keeps_libraries_to_their_side(
+        &self,
+        asked: &[TypeKey],
+        of_libraries: impl Fn(&TypeKey) -> bool,
+    ) -> anyhow::Result<()> {
+        let core = self.built_for(asked);
+        let of_core = |facet: &TypeKey| core.iter().any(|c| c.id == facet.id);
+        for (kind, registration) in self.kinds.iter().filter(|(_, r)| r.of_library) {
+            if let Some(facet) = registration.provides.iter().find(|f| of_core(f)) {
+                anyhow::bail!(
+                    "The component kind '{kind}' of a library provides {}, which the core builds in \
+                     its own name",
+                    facet.name()
+                );
+            }
+            if let Some(service) = registration.uses.iter().find(|s| !of_libraries(s)) {
+                anyhow::bail!(
+                    "The component kind '{kind}' of a library uses {}, a service of the core",
+                    service.name()
+                );
+            }
+        }
+        if let Some(facet) = self.singles_of_libraries.iter().find(|f| of_core(f)) {
+            anyhow::bail!(
+                "A library declares {} a single, which the core builds in its own name",
+                facet.name()
+            );
+        }
+        Ok(())
+    }
+
+    /// The facets built for containers that ask for `asked`: those, and what the kinds that are no
+    /// library's and provide one of them need, on and on.
+    fn built_for(&self, asked: &[TypeKey]) -> Vec<TypeKey> {
+        let mut facets = asked.to_vec();
+        let mut at = 0;
+        while at < facets.len() {
+            let facet = facets[at];
+            for registration in self.kinds.values().filter(|r| !r.of_library) {
+                if registration.provides.iter().any(|p| p.id == facet.id) {
+                    for need in &registration.needs {
+                        if !facets.iter().any(|f| f.id == need.id) {
+                            facets.push(*need);
+                        }
+                    }
+                }
+            }
+            at += 1;
+        }
+        facets
     }
 
     /// Registers `kind` with a factory that builds without waiting.
@@ -279,12 +396,19 @@ impl ComponentRegistry {
         self.kinds.insert(name, registration);
     }
 
+    /// Marks the kind `name` as a library's (`LibraryComponents`).
+    fn mark_of_library(&mut self, name: &str) {
+        if let Some(registration) = self.kinds.get_mut(name) {
+            registration.of_library = true;
+        }
+    }
+
     /// Makes `T` a facet of which there is exactly one per container, built
     /// from `default_kind` - unless the configuration names another default
     /// (`set_defaults`) - if no component of the container provides it. With
     /// no default, a container that is asked for `T` and provides none fails
     /// to build it (issue 179: a remote agent has no default). Declared
-    /// again - by a plugin registered into a registry the program prepared,
+    /// again - by a plugin or a library registered into a registry the program prepared,
     /// say - the declaration replaces the one before, not the default kind
     /// the program named (`set_default_kind`).
     pub fn single<T: ?Sized + 'static>(&mut self, default_kind: Option<&str>) {
@@ -295,12 +419,11 @@ impl ComponentRegistry {
 
     /// Makes `kind` the default kind of the single `T`, in place of the one
     /// it was declared with - for the program, which knows which kinds its
-    /// plugins brought (issue 329: the model). The configuration's defaults
+    /// libraries brought (issue 329: the model). The configuration's defaults
     /// (`set_defaults`) still replace it.
     ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` if `T` is no facet of which there is
-    /// one, or `kind` is not registered or does not provide `T`.
+    /// # Errors `ComponentError::InvalidConfig` if `T` is no facet of which there is one, or `kind`
+    /// is not registered or does not provide `T`.
     pub fn set_default_kind<T: ?Sized + 'static>(&mut self, kind: &str) -> ComponentResult<()> {
         let facet = TypeKey::of::<T>();
         if !self.provides(kind).is_some_and(|facets| facets.iter().any(|f| f.id == facet.id)) {
@@ -1748,8 +1871,8 @@ mod tests {
         );
     }
 
-    /// A single declared again - by a plugin registered after the program
-    /// named its default, as the agents' plugin is in a test's registry
+    /// A single declared again - by a library registered after the program
+    /// named its default, as the agents' library is in a test's registry
     /// (issue 370) - keeps the program's choice.
     #[test]
     fn a_single_declared_again_keeps_the_default_the_program_named() {

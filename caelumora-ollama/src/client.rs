@@ -56,8 +56,8 @@ use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
 use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
+    LibraryComponents, Params,
 };
 use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use chrono::Utc;
@@ -1030,7 +1030,7 @@ impl ModelProfileProvider for OllamaClient {
 }
 
 /// Registers the kind `ollama_client` with `registry`.
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     let control_tokens = Arc::new(ControlTokenCache::default());
     let running_context_sizes = Arc::new(RunningContextSizes::default());
     let vision = Arc::new(ModelVision::default());
@@ -1077,7 +1077,7 @@ mod tests {
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::tool::ToolCall;
     use caelumora_model::type_map::TypeKey;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext};
+    use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry};
     use caelumora_runtime::runtime::Services;
     use futures::stream as futures_stream;
     use serde_json::json;
@@ -1402,9 +1402,9 @@ mod tests {
                 .unwrap()
                 .component_bundles,
         );
-        // As the agents' plugin declares it.
+        // As the agents' library declares it.
         registry.single::<dyn ModelProfileProvider>(None);
-        register(&mut registry);
+        register(&mut LibraryComponents::new(&mut registry));
         let registry = Arc::new(registry);
         let context = ComponentContext::new(
             SecurityContext::default(),
@@ -1467,7 +1467,7 @@ mod tests {
                 .component_bundles,
         );
         registry.single::<dyn ModelProfileProvider>(None);
-        register(&mut registry);
+        register(&mut LibraryComponents::new(&mut registry));
         let registry = Arc::new(registry);
         let context = ComponentContext::new(
             SecurityContext::default(),

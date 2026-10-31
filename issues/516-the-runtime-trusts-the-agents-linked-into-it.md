@@ -1126,3 +1126,26 @@ links alone. One trait whose implementor declared its own level would let it dec
   *crate*, so that *library* names the agent side alone. The open parts of this issue follow:
   decision 9 is marked answered, step 5d names a `Library`, step 6, the plan of memory and *Done
   when* the libraries and the agent side. No behaviour changes; stored data: none.
+- **2026-10-31** — Step 5c.2 done on the branch: libraries register as libraries. A `Library`
+  (`caelumora_runtime::library`: `name`, `register`) registers with a `LibraryBuilder`, which offers
+  its component kinds (`components()`, a `LibraryComponents`), its kinds of agent, its texts, its
+  section of the configuration and a service of its own (`provide`), and nothing of the core;
+  `RuntimeBuilder::library` registers one, after the plugins. `caelumora-agents`, `-mcp`, `-a2a`,
+  `-ollama`, `-comfyui`, `-workspace-tools` and `-compaction` are libraries (`AgentsLibrary`, …, in
+  a module `library`), and register their kinds through `LibraryComponents`; so do the components
+  of skills and artifacts, whose crates register as plugins until 5d. The runtime is not built
+  where a kind of a library provides a `Moderator` or a `ChannelCommandProvider`, or uses a service
+  that is neither a library's nor the `PromptCatalogue` (decision 15); a plugin registers no kind
+  of agent any more (`RuntimeBuilder::agent_kinds` is the core's). The programs list their
+  libraries apart (`libraries()`), as `TestRuntime` and `World` do (`libraries`, beside
+  `plugins`); `ScriptedAgents` and `TestAgents` are libraries, and `TestAgents` declares its model
+  the default of the model's facets (`single`), since a library names no default kind.
+  `scripts/library-names.sh` refuses a library that names `RuntimeBuilder`, `Plugin` or
+  `ComponentRegistry`. After the review of the step: a library offers no service in place of one
+  the core, a plugin or another library offers (`LibraryBuilder::provide` answers a `Result`), so
+  that it cannot replace the access policy and then use it; the facets the core builds in its own
+  name are those its containers ask for (`ChannelLoop::COMPONENT_FACETS`, and
+  `CommandExecutor::COMPONENT_FACETS` for the commands of a session) and what the core's kinds of
+  them need, on and on - the `ResponderPolicy` among them -, and a library declares no single of
+  them either; the registry answers the check itself (`keeps_libraries_to_their_side`). The
+  documents name the libraries as libraries throughout. Stored data: none.

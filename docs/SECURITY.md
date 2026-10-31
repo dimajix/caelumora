@@ -565,7 +565,7 @@ flow of what it carries -, and what is refused is answered to its sender alone
 
 `caelumora-runtime/tests/security_suite.rs` runs the whole runtime with the ownership policy, as a
 frontend does - and `caelumora-agents/tests/security_suite.rs` the actions of agents, in the same
-world with the agents' plugin -, with users of different permissions. Its policy records every
+world with the agents' library -, with users of different permissions. Its policy records every
 question it is asked; each test of an action asserts the questions asked in a user's name, in order,
 for the action's owner, someone taking part and a stranger. The suite is the record, in code, of
 which permissions each action needs; issue [198](../issues/198-security-scenarios.md) says what is
@@ -580,7 +580,7 @@ leaves it out of the action's questions and records it in a test of its own.
 The world the suite runs in - the runtime, the recording policy, the users alice, bob and carol, and
 the helpers that put what the system starts from into the store - is `caelumora_runtime::testing`,
 public behind the feature `test-support` (issue 323). It runs no agent; the actions of agents are
-tested in the same world with the agents' plugin and the models of a test
+tested in the same world with the agents' library and the models of a test
 (`caelumora_agents::testing::world`, issue 370). A plugin's actions are tested in the plugin, in the
 same world, taken as a dev-dependency with that feature, and follow the same rule.
 

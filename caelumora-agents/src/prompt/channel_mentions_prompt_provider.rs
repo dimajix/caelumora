@@ -22,7 +22,7 @@ use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::PromptTexts;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use std::sync::Arc;
 
 pub const CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND: &str = "channel_mentions_prompt_provider";
@@ -56,7 +56,7 @@ impl PromptProvider for ChannelMentionsPromptProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND)

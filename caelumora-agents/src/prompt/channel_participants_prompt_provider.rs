@@ -28,7 +28,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::text::Introduction;
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents,
 };
 use std::sync::{Arc, Mutex};
 
@@ -144,7 +144,7 @@ fn one_line(introduction: &Introduction) -> String {
     introduction.as_str().split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND)
@@ -312,9 +312,12 @@ mod tests {
     #[tokio::test]
     async fn the_participants_of_the_channel_are_read_with_their_introductions() {
         let store = Persistence::in_memory();
-        let runtime =
-            TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }
-                .build();
+        let runtime = TestRuntime {
+            store: store.clone(),
+            libraries: vec![&TestAgents],
+            ..Default::default()
+        }
+        .build();
         let system = SecurityContext::system();
 
         let kaya = make_user("Kaya");

@@ -26,7 +26,8 @@ pub mod testing;
 pub use container::{ComponentContainer, ComponentImpl};
 pub use context::{service_of, ComponentContext};
 pub use registry::{
-    ComponentFacets, ComponentKind, ComponentRegistry, BUNDLE_REF_KIND, COMPONENT_DEFAULT_KIND,
+    ComponentFacets, ComponentKind, ComponentRegistry, LibraryComponents, BUNDLE_REF_KIND,
+    COMPONENT_DEFAULT_KIND,
 };
 
 use caelumora_model::component::ComponentDescriptor;

@@ -29,12 +29,12 @@ What a tool, its parameters and its tool set say to the model are texts of the p
 schema. The code builds the schema - the parameters, their types, which are required
 (`ToolParameters::string()`, `object(…)`) -, and `tool::described` gives the tool and each of its
 parameters the text of its path among the tools of its component kind, in the namespace of the
-agents or of the plugin that brings it (`<namespace>.tools.<kind>`): `notes.write_note` is the
+agents or of the library that brings it (`<namespace>.tools.<kind>`): `notes.write_note` is the
 tool's, `notes.write_note.text` its parameter's, `.item` an entry's of a list, and the entries of a
 list of objects are described by their fields under the list's path. A parameter described already
 keeps its text, as the parameters every reclassifying tool shares (`tool::reclassify_parameters`).
-The texts are rendered once, when the component is made; a text missing keeps it from being built.
-A tool of a generic provider, an MCP server's, is described as it describes itself
+The texts are rendered once, when the component is made; a text missing keeps it from being built. A
+tool of a generic provider, an MCP server's, is described as it describes itself
 (`ToolParameters::described`).
 
 ## Tool sets
@@ -196,8 +196,8 @@ transport:
 { "id": "github-mcp", "kind": "mcp_tool", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } } }
 ```
 
-The kind lives in the plugin `caelumora-mcp` (issue 325), with `rmcp`, so that the runtime does not
-depend on it; `caelumora-app` and `caelumora-tui` list the plugin, and a personality names the kind
+The kind lives in the library `caelumora-mcp` (issue 325), with `rmcp`, so that the runtime does not
+depend on it; `caelumora-app` and `caelumora-tui` list the library, and a personality names the kind
 as before. What such a component kind may use of the runtime is said in
 [PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-core-may-use).
 
@@ -226,7 +226,7 @@ as before. What such a component kind may use of the runtime is said in
 
 ## ComfyUI
 
-A `comfyui_tool` component (issue 512, plugin `caelumora-comfyui`) generates images on one ComfyUI
+A `comfyui_tool` component (issue 512, library `caelumora-comfyui`) generates images on one ComfyUI
 server with the workflows it names, of those the section `comfyui` of the configuration holds (see
 [CONFIGURATION.md](CONFIGURATION.md#comfyui)):
 
@@ -298,10 +298,10 @@ views on every call all the same, before anything is sent: a call where there is
 list does not grant, fails and says so. Which calls need approval is configured as for `mcp_tool`:
 all - the default -, none, or all but those that only read files.
 
-The kind lives in the plugin `caelumora-workspace-tools` (issue 428), with the prompt part that
+The kind lives in the library `caelumora-workspace-tools` (issue 428), with the prompt part that
 names its `read_file`, `workspace_prompt_provider`: the workspaces are the core's, what an agent is
 given to work on them is built on the terminal's public API and the agents' tools, as the tools of
-any other subject are. `caelumora-app` and `caelumora-tui` list the plugin, and a personality names
+any other subject are. `caelumora-app` and `caelumora-tui` list the library, and a personality names
 the kinds as before.
 
 **Files.** The file tools work over the workspace's terminal, whatever its storage, without a shell:

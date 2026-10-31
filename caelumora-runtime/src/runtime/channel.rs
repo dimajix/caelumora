@@ -19,6 +19,7 @@ use caelumora_model::security::Policies;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::session::Session;
 use caelumora_model::store::history::HistoryStore;
+#[cfg(any(test, feature = "test-support"))]
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::StateStore;
 use std::sync::{Arc, OnceLock, Weak};
@@ -165,6 +166,7 @@ impl ChannelRuntime {
     pub(crate) fn history_store(&self) -> &Arc<dyn HistoryStore> {
         self.runtime_manager.history_store()
     }
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn transcript_store(&self) -> &Arc<dyn TranscriptStore> {
         self.runtime_manager.transcript_store()
     }

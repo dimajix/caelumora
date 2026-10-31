@@ -11,7 +11,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
 use caelumora_runtime::component::{
-    ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry,
+    ComponentFacets, ComponentImpl, ComponentKind, LibraryComponents,
 };
 use std::sync::Arc;
 
@@ -102,7 +102,7 @@ fn joined(parts: Vec<(String, Option<Classification>)>) -> (String, Option<Class
     (texts.join("\n\n"), classification)
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         ComponentKind::new(TURN_CONTEXT_PROVIDER_KIND)
             .provides::<dyn ContextProvider>()

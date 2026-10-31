@@ -14,7 +14,7 @@ use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -200,7 +200,7 @@ impl ToolProvider for CreatePlanToolProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CREATE_PLAN_TOOL_KIND)

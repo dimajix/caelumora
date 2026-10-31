@@ -28,8 +28,8 @@ use caelumora_agents::situation::Situation;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
+    LibraryComponents, Params,
 };
 use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
 use caelumora_runtime::workspace::WorkspaceReader;
@@ -180,7 +180,7 @@ impl PromptProvider for WorkspacePromptProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND)

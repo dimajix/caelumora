@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::Tool;
-use caelumora_runtime::component::ComponentRegistry;
+use caelumora_runtime::component::LibraryComponents;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
@@ -65,6 +65,6 @@ pub trait LLMClient: Send + Sync + Debug {
 /// has exactly one - without a default kind: the core knows no model
 /// provider, the program names it (`ComponentRegistry::default_kind`,
 /// issue 329).
-pub fn register_all(registry: &mut ComponentRegistry) {
+pub fn register_all(registry: &mut LibraryComponents<'_>) {
     registry.single::<dyn LLMClient>(None);
 }

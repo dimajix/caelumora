@@ -23,8 +23,8 @@ use caelumora_agents::turn::Turn;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
+    LibraryComponents, Params,
 };
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -187,7 +187,7 @@ impl ActivityProvider for CompactionComponent {
 }
 
 /// Registers the kind `compaction` with `registry`.
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         ComponentKind::new(COMPACTION_KIND)
             .params::<CompactionConfig>()

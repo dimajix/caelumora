@@ -1,8 +1,7 @@
-//! The agents as a plugin (issue 370): what makes the core more than a
-//! chat between users - its kinds of agent, whose actors run a model here
-//! (`AgentActor`) or reach an agent that runs elsewhere
-//! (`ExternalAgentActor`), and the kinds of their components. An
-//! essential plugin: a program without it runs no agent.
+//! The agents as a library (issues 370, 516): what makes the core more than a chat between users -
+//! its kinds of agent, whose actors run a model here (`AgentActor`) or reach an agent that runs
+//! elsewhere (`ExternalAgentActor`), and the kinds of their components. An essential library: a
+//! program without it runs no agent.
 
 use crate::actor::agent::AgentActor;
 use crate::actor::external_agent::ExternalAgentActor;
@@ -10,17 +9,16 @@ use crate::{components, external, llm, prompt, tool};
 use anyhow::Result;
 use caelumora_model::agent::PersonalityKind;
 use caelumora_runtime::actor::Actor;
-use caelumora_runtime::component::ComponentRegistry;
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::RuntimeBuilder;
+use caelumora_runtime::component::LibraryComponents;
+use caelumora_runtime::library::{Library, LibraryBuilder};
 
 /// Registers the kinds of an agent's components with `registry` (issue
 /// 370): its context (`prompt`), its model (`llm`), its tools (`tool`), its
 /// memory and notes (`components`) and the facet an agent that runs
 /// elsewhere is reached through (`external`).
-/// What `AgentsPlugin` registers, and a test that builds components without
+/// What `AgentsLibrary` registers, and a test that builds components without
 /// a runtime.
-pub fn register_components(registry: &mut ComponentRegistry) {
+pub fn register_components(registry: &mut LibraryComponents<'_>) {
     components::register_all(registry);
     prompt::register_all(registry);
     tool::register_all(registry);
@@ -28,19 +26,19 @@ pub fn register_components(registry: &mut ComponentRegistry) {
     external::register_all(registry);
 }
 
-/// The agents, as a plugin.
+/// The agents, as a library.
 #[derive(Debug, Default)]
-pub struct AgentsPlugin;
+pub struct AgentsLibrary;
 
-impl Plugin for AgentsPlugin {
+impl Library for AgentsLibrary {
     fn name(&self) -> &'static str {
         "agents"
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
-        register_components(runtime.components());
-        runtime.prompts().add(prompt::NAMESPACE, prompt::PROMPTS)?;
-        let kinds = runtime.agent_kinds();
+    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+        register_components(&mut library.components());
+        library.prompts().add(prompt::NAMESPACE, prompt::PROMPTS)?;
+        let kinds = library.agent_kinds();
         kinds.register(
             PersonalityKind::Internal,
             AgentActor::COMPONENT_FACETS,
@@ -59,7 +57,7 @@ impl Plugin for AgentsPlugin {
 
 #[cfg(test)]
 mod tests {
-    use super::AgentsPlugin;
+    use super::AgentsLibrary;
     use crate::actor::agent::AgentActor;
     use crate::actor::external_agent::ExternalAgentActor;
     use crate::testing::{self, test_registry};
@@ -85,11 +83,11 @@ mod tests {
         facets.map(|facets| facets.iter().map(TypeKey::name).collect())
     }
 
-    /// The plugin brings both kinds of agent, their components asked for
+    /// The library brings both kinds of agent, their components asked for
     /// what their actors ask for (issue 337).
     #[test]
-    fn the_plugin_brings_both_kinds_of_agent() {
-        let runtime = TestRuntime { plugins: vec![&AgentsPlugin], ..Default::default() }.build();
+    fn the_library_brings_both_kinds_of_agent() {
+        let runtime = TestRuntime { libraries: vec![&AgentsLibrary], ..Default::default() }.build();
         assert_eq!(
             names(runtime.agent_kinds().facets(PersonalityKind::Internal)),
             names(Some(AgentActor::COMPONENT_FACETS))
@@ -165,7 +163,7 @@ mod tests {
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
             TestRuntime {
                 config: AppConfig { component_defaults: defaults, ..Default::default() },
-                plugins: vec![&AgentsPlugin],
+                libraries: vec![&AgentsLibrary],
                 ..Default::default()
             }
             .try_build()

@@ -9,12 +9,14 @@ use crate::agent::state::AgentStates;
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
 use crate::backend::{Backends, NamedBackends};
-use crate::channel::Participation;
+use crate::channel::{ChannelLoop, Participation};
+use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::content::ContentStorage;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
+use crate::library::{Library, LibraryBuilder};
 use crate::plugin::Plugin;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
@@ -36,6 +38,7 @@ use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{
     EntityStore, EntityStores, Persistence, PersistenceBackend, StoreResult, Stored,
 };
+use caelumora_model::type_map::TypeKey;
 use caelumora_model::user_provider::{UserManager, UserProvider};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -77,6 +80,9 @@ pub struct RuntimeBuilder {
     scope_members: Vec<Arc<dyn ScopedKind>>,
     scope_holders: Arc<ScopeHolders>,
     services: Services,
+    /// The services the libraries provide (`LibraryBuilder::provide`), which a library's kinds may
+    /// use beside the texts (issue 516).
+    services_of_libraries: Vec<TypeKey>,
     /// What the plugins and the core bind to an agent's work (issue 516).
     extensions: Extensions,
     /// The texts given to models, to which the plugins add theirs (issue
@@ -252,6 +258,7 @@ impl RuntimeBuilder {
             scope_members,
             scope_holders,
             services,
+            services_of_libraries: Vec::new(),
             extensions,
             prompts,
             prompt_variants: config.prompts.clone(),
@@ -337,6 +344,17 @@ impl RuntimeBuilder {
             .with_context(|| format!("Cannot register the plugin {}", plugin.name()))
     }
 
+    /// Registers what `library` brings, with the part of this builder a library may use
+    /// (`LibraryBuilder`, issue 516).
+    ///
+    /// # Errors
+    /// Whatever its registration fails with, naming the library.
+    pub fn library(&mut self, library: &dyn Library) -> Result<()> {
+        library
+            .register(&mut LibraryBuilder::new(self))
+            .with_context(|| format!("Cannot register the library {}", library.name()))
+    }
+
     /// The store of the entities of `T`, a plugin's kind: over the one
     /// storage of the kind, checked by the builder's policies.
     ///
@@ -393,10 +411,10 @@ impl RuntimeBuilder {
         &mut self.component_registry
     }
 
-    /// The kinds of agent the program runs (issue 370), none to begin
-    /// with, to register a plugin's with - the agents'
-    /// (`caelumora_agents::plugin::AgentsPlugin`).
-    pub fn agent_kinds(&mut self) -> &mut AgentKinds {
+    /// The kinds of agent the program runs (issue 370), none to begin with, to register a
+    /// library's with (`LibraryBuilder::agent_kinds`) - the agents'
+    /// (`caelumora_agents::library::AgentsLibrary`): kinds of agent are the agent side's.
+    pub(crate) fn agent_kinds(&mut self) -> &mut AgentKinds {
         &mut self.agent_kinds
     }
     /// The texts given to models (issue 57), to add a plugin's with - under
@@ -410,6 +428,25 @@ impl RuntimeBuilder {
     /// that use it, to the views and to the routes (`Services`).
     pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) {
         self.services.insert(service);
+    }
+
+    /// Offers `service`, a library's, as `provide` offers a plugin's: one that the kinds of the
+    /// libraries may use (`LibraryBuilder::provide`, issue 516).
+    ///
+    /// # Errors
+    /// If a service of its type is offered already - by the core, a plugin or a library: a library
+    /// replaces none.
+    pub(crate) fn provide_of_library<T: ?Sized + Send + Sync + 'static>(
+        &mut self,
+        service: Arc<T>,
+    ) -> Result<()> {
+        let key = TypeKey::of::<T>();
+        if self.services.get::<T>().is_some() {
+            bail!("The service {} is offered already, and a library replaces none", key.name());
+        }
+        self.services_of_libraries.push(key);
+        self.provide(service);
+        Ok(())
     }
 
     /// Binds the reader `T` to every piece of work of an agent (`ActorRuntime::reader`, issue 516):
@@ -482,6 +519,24 @@ impl RuntimeBuilder {
         Ok(())
     }
 
+    /// Refuses what a library registered that reaches what is the core's (issue 516): a kind or a
+    /// single of a facet the core builds in its own name - for a channel (`ChannelLoop`) or for the
+    /// commands of a session (`CommandExecutor`) -, or a kind that uses a service that is neither a
+    /// library's nor the texts: a library is trusted for nothing, and its components reach nothing
+    /// of the core but through the interface they are given.
+    ///
+    /// # Errors
+    /// As `ComponentRegistry::keeps_libraries_to_their_side`.
+    fn libraries_keep_to_their_side(&self) -> Result<()> {
+        let channel = ChannelLoop::COMPONENT_FACETS.iter();
+        let asked: Vec<TypeKey> =
+            channel.chain(CommandExecutor::COMPONENT_FACETS).copied().collect();
+        let texts = TypeKey::of::<PromptCatalogue>();
+        self.component_registry.keeps_libraries_to_their_side(&asked, |service| {
+            service.id == texts.id || self.services_of_libraries.iter().any(|s| s.id == service.id)
+        })
+    }
+
     /// The runtime, with everything registered.
     ///
     /// # Errors
@@ -503,6 +558,7 @@ impl RuntimeBuilder {
                 key.name()
             );
         }
+        self.libraries_keep_to_their_side()?;
         self.component_registry.set_defaults(&self.component_defaults)?;
         // The default variant first: the others fall back to it.
         let (defaults, variants): (Vec<_>, Vec<_>) = self
@@ -554,9 +610,12 @@ impl RuntimeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{ComponentFacets, ComponentKind};
+    use crate::command::ChannelCommandProvider;
+    use crate::component::{ComponentFacets, ComponentKind, LibraryComponents};
+    use crate::moderator::{Moderator, ResponderPolicy};
     use crate::testing::TestRuntime;
     use caelumora_model::prompt_catalogue::PromptVariant;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::user_provider::Credential;
     use std::fs;
 
@@ -591,6 +650,95 @@ mod tests {
             let message = format!("{refused:#}");
             assert!(names.iter().all(|name| message.contains(name)), "{yaml:?} gave: {message}");
         }
+    }
+
+    /// Issue 516: a component kind of a library keeps to the agent side - the runtime is not built
+    /// where one, registered either way, provides a facet the core builds in its own name, also one
+    /// the core's kinds need, or uses a service of the core but the texts, nor where a library
+    /// declares a single of the core's or offers a service in place of one -, while the same kind,
+    /// registered by the core or a plugin, may; and a library's own service is the libraries'
+    /// kinds' to use.
+    #[test]
+    fn the_runtime_is_not_built_where_a_library_reaches_what_is_the_core_s() {
+        /// A service a library offers its own kinds.
+        #[derive(Debug)]
+        struct Workflows;
+        /// What a library does as it registers, besides offering its workflows.
+        struct Brings(fn(&mut LibraryComponents<'_>));
+        impl Library for Brings {
+            fn name(&self) -> &'static str {
+                "brings"
+            }
+            fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+                library.provide(Arc::new(Workflows))?;
+                (self.0)(&mut library.components());
+                Ok(())
+            }
+        }
+        /// Registers the kind "brought", as `declare` declares it.
+        fn brought(
+            components: &mut LibraryComponents<'_>,
+            declare: fn(ComponentKind) -> ComponentKind,
+        ) {
+            components.register(declare(ComponentKind::new("brought")), |_, _| {
+                Ok(ComponentFacets::empty())
+            });
+        }
+        let built = |brings: &Brings| {
+            TestRuntime { libraries: vec![brings], ..Default::default() }.try_build().map(drop)
+        };
+
+        built(&Brings(|c| brought(c, |kind| kind.uses::<Workflows>().uses::<PromptCatalogue>())))
+            .expect("its own service and the texts");
+        let refusing: [(Brings, &str); 6] = [
+            (Brings(|c| brought(c, |kind| kind.provides::<dyn Moderator>())), "provides Moderator"),
+            (
+                Brings(|c| brought(c, |kind| kind.provides::<dyn ResponderPolicy>())),
+                "provides ResponderPolicy",
+            ),
+            (
+                Brings(|c| brought(c, |kind| kind.provides::<dyn ChannelCommandProvider>())),
+                "provides ChannelCommandProvider",
+            ),
+            (Brings(|c| brought(c, |kind| kind.uses::<dyn AccessPolicy>())), "uses AccessPolicy"),
+            (
+                Brings(|c| {
+                    let kind = ComponentKind::new("brought").uses::<SecretManager>();
+                    c.register_async(kind, |_, _| async { Ok(ComponentFacets::empty()) });
+                }),
+                "uses SecretManager",
+            ),
+            (Brings(|c| c.single::<dyn Moderator>(None)), "declares Moderator a single"),
+        ];
+        for (brings, what) in refusing {
+            let refused = built(&brings).expect_err(what);
+            let message = format!("{refused:#}");
+            assert!(message.contains(what), "{message}");
+        }
+        /// Offers an access policy of its own, in place of the core's.
+        struct Replaces;
+        impl Library for Replaces {
+            fn name(&self) -> &'static str {
+                "replaces"
+            }
+            fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+                library.provide(Arc::new(AllowAllPolicy::new()) as Arc<dyn AccessPolicy>)
+            }
+        }
+        let refused = TestRuntime { libraries: vec![&Replaces], ..Default::default() }
+            .try_build()
+            .map(drop)
+            .expect_err("the core's policy stays");
+        assert!(format!("{refused:#}").contains("AccessPolicy is offered already"), "{refused:#}");
+        TestRuntime {
+            components: Box::new(|registry| {
+                let kind = ComponentKind::new("brought").uses::<dyn AccessPolicy>();
+                registry.register(kind, |_, _| Ok(ComponentFacets::empty()));
+            }),
+            ..Default::default()
+        }
+        .try_build()
+        .expect("the core's own kinds may");
     }
 
     /// Issue 516: a component kind that needs an extension no plugin binds keeps the runtime from

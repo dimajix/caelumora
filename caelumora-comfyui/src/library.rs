@@ -5,13 +5,12 @@
 use crate::workflow::Workflows;
 use crate::{tool, NAMESPACE, PROMPTS};
 use anyhow::{Context, Result};
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::RuntimeBuilder;
+use caelumora_runtime::library::{Library, LibraryBuilder};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// The section of the configuration and the name of the plugin.
+/// The section of the configuration and the name of the library.
 pub const COMFYUI: &str = "comfyui";
 
 /// The section `comfyui` of the configuration.
@@ -24,25 +23,25 @@ struct ComfyUiConfig {
     workflows: Option<PathBuf>,
 }
 
-/// ComfyUI, as a plugin: its section of the configuration, the workflows it names as a service,
+/// ComfyUI, as a library: its section of the configuration, the workflows it names as a service,
 /// and the tool that generates images with them.
 #[derive(Debug, Default)]
-pub struct ComfyUiPlugin;
+pub struct ComfyUiLibrary;
 
-impl Plugin for ComfyUiPlugin {
+impl Library for ComfyUiLibrary {
     fn name(&self) -> &'static str {
         COMFYUI
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
-        let config: ComfyUiConfig = runtime.config(COMFYUI)?;
+    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+        let config: ComfyUiConfig = library.config(COMFYUI)?;
         let workflows = match &config.workflows {
             Some(dir) => Workflows::read(dir).context("Cannot read comfyui.workflows")?,
             None => Workflows::default(),
         };
-        runtime.provide(Arc::new(workflows));
-        runtime.prompts().add(NAMESPACE, PROMPTS)?;
-        tool::register(runtime.components());
+        library.provide(Arc::new(workflows))?;
+        library.prompts().add(NAMESPACE, PROMPTS)?;
+        tool::register(&mut library.components());
         Ok(())
     }
 }
@@ -55,7 +54,7 @@ mod tests {
     use serde_json::{json, Value};
     use std::path::Path;
 
-    /// The workflows the section names, of the example configuration here, are what the plugin
+    /// The workflows the section names, of the example configuration here, are what the library
     /// offers; a section that names none offers none, and one whose workflows cannot be read keeps
     /// the runtime from being built, naming the parameter.
     #[test]
@@ -65,7 +64,8 @@ mod tests {
             if let Some(section) = section {
                 config.plugins.insert(COMFYUI.to_string(), section);
             }
-            TestRuntime { config, plugins: vec![&ComfyUiPlugin], ..Default::default() }.try_build()
+            TestRuntime { config, libraries: vec![&ComfyUiLibrary], ..Default::default() }
+                .try_build()
         };
         let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/comfyui/workflows");
         let runtime = built(Some(json!({ "workflows": examples }))).expect("the example's");

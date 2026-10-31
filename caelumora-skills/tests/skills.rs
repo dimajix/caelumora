@@ -17,7 +17,7 @@ use caelumora_agents::testing::{
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_compaction::component::COMPACTION_KIND;
-use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_compaction::library::CompactionLibrary;
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
@@ -59,7 +59,7 @@ use std::sync::Arc;
 
 /// The world with skills.
 async fn world() -> World {
-    World::with(&[&TestAgents, &SkillsPlugin], |_| {}).await
+    World::with(&[&SkillsPlugin], &[&TestAgents], |_| {}).await
 }
 
 /// The one writer of skills of `world`.
@@ -410,7 +410,7 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
         measured(50, "They met."),
         measured(60, "skill release-notes"),
     ];
-    let world = World::with(&[&TestAgents, &SkillsPlugin, &CompactionPlugin], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&TestAgents, &CompactionLibrary], |registry| {
         register_scripted(registry, "scripted", script)
     })
     .await;
@@ -654,7 +654,7 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
 /// channel; and how bob's stream shows him what comes of his commands.
 async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId, ChannelWatch)
 {
-    let world = World::with(&[&TestAgents, &SkillsPlugin], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&TestAgents], |registry| {
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])
     })
     .await;
@@ -804,7 +804,7 @@ async fn with_a_writing_agent(
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let world = World::with(&[&TestAgents, &SkillsPlugin], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&TestAgents], |registry| {
         register_scripted(registry, "writing", vec![call])
     })
     .await;

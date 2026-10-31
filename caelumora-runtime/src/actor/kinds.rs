@@ -1,10 +1,9 @@
-//! The kinds of agent a program runs (issue 370): for each kind of
-//! personality, how the actor of an agent of that kind is built and which
-//! facets its components are asked for. Built after the pattern of
-//! `ComponentRegistry` and `Backends`: empty to begin with, filled by the
-//! plugins - the agents' (`caelumora_agents::plugin::AgentsPlugin`). The channel builds an agent's
-//! actor through them and knows no actor of an agent by name; the users'
-//! and the approvers' actors are the runtime's own.
+//! The kinds of agent a program runs (issue 370): for each kind of personality, how the actor of an
+//! agent of that kind is built and which facets its components are asked for. Built after the
+//! pattern of `ComponentRegistry` and `Backends`: empty to begin with, filled by the libraries -
+//! the agents' (`caelumora_agents::library::AgentsLibrary`). The channel builds an agent's actor
+//! through them and knows no actor of an agent by name; the users' and the approvers' actors are
+//! the runtime's own.
 
 use super::Actor;
 use crate::channel::ChannelError;

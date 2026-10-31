@@ -23,6 +23,7 @@ use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
 use caelumora_model::security::{
     AccessPolicy, ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext,
 };
+use caelumora_model::type_map::TypeKey;
 use std::fmt::Debug;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -207,6 +208,10 @@ pub struct CommandExecutor {
 }
 
 impl CommandExecutor {
+    /// The facets the commands of a session are built for (`RuntimeManager::new_command_executor`):
+    /// in the name of its owner, so that none is a library's (issue 516).
+    pub const COMPONENT_FACETS: &[TypeKey] = &[TypeKey::of::<dyn ChannelCommandProvider>()];
+
     /// An executor for the commands `providers` contribute. Building them is
     /// up to whoever owns their configuration - for a session's commands,
     /// `RuntimeManager::new_command_executor`.

@@ -1,7 +1,6 @@
-//! The world of the tests of the agents' logic (issue 370): the world of
-//! the security suite (`caelumora_runtime::testing::World`) with the
-//! agents' plugin and the models of a test, and what those tests share - a
-//! turn to work in, the models, a call an agent makes in a workspace.
+//! The world of the tests of the agents' logic (issue 370): the world of the security suite
+//! (`caelumora_runtime::testing::World`) with the agents' library and the models of a test, and
+//! what those tests share - a turn to work in, the models, a call an agent makes in a workspace.
 //! Behind the feature `test-support`, as the runtime's `testing` is.
 #![expect(
     clippy::unwrap_used,
@@ -9,8 +8,8 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
+use crate::library::{register_components, AgentsLibrary};
 use crate::llm::{LLMClient, LLMError, LLMResult};
-use crate::plugin::{register_components, AgentsPlugin};
 use crate::prompt::ModelProfileProvider;
 use crate::prompt::{NAMESPACE, PROMPTS};
 use crate::tool::ToolProvider;
@@ -35,9 +34,11 @@ use caelumora_model::turn::GivenUpReason;
 use caelumora_model::user::UserId;
 use caelumora_model::work::Work;
 use caelumora_runtime::agent::state::AgentStateHandle;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::{ActorRuntime, AgentRuntime, ParticipantRuntime, RuntimeBuilder};
+use caelumora_runtime::component::{
+    ComponentFacets, ComponentKind, ComponentRegistry, LibraryComponents,
+};
+use caelumora_runtime::library::{Library, LibraryBuilder};
+use caelumora_runtime::runtime::{ActorRuntime, AgentRuntime, ParticipantRuntime};
 use caelumora_runtime::session::testing::detached_participant_in;
 use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::testing::TestRuntime;
@@ -57,30 +58,29 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::{sleep, timeout};
 
-/// The agents in the world of a test, as a plugin (issue 373): the agents'
-/// plugin (`AgentsPlugin`) and a model that is not to be asked
-/// (`UNASKED_MODEL_KIND`) as the default. A test gives it to the runtime's
-/// `World` with its own plugins. Naming the default model is the program's
-/// (issue 329), not a plugin's: this one stands in for the program of the
-/// tests.
+/// The agents in the world of a test, as a library (issues 373, 516): the agents' library
+/// (`AgentsLibrary`) and a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
+/// default of the model's facets. A test gives it to the runtime's `World` with its own plugins and
+/// libraries. Naming the default model is the program's (issue 329); the tests have no program that
+/// names one, so this library declares it.
 #[derive(Debug, Default)]
 pub struct TestAgents;
 
-impl Plugin for TestAgents {
+impl Library for TestAgents {
     fn name(&self) -> &'static str {
-        AgentsPlugin.name()
+        AgentsLibrary.name()
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
-        AgentsPlugin.register(runtime)?;
-        with_unasked_model(runtime.components());
+    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+        AgentsLibrary.register(library)?;
+        with_unasked_model(&mut library.components());
         Ok(())
     }
 }
 
 /// The world with the agents (`TestAgents`) and nothing else.
 pub async fn world() -> World {
-    World::with(&[&TestAgents], |_| {}).await
+    World::with(&[], &[&TestAgents], |_| {}).await
 }
 
 /// A turn of `agent`, of `owner`, in the first channel of `session`,
@@ -226,14 +226,14 @@ pub fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
     agent_runtime(detached_participant(agent))
 }
 
-/// The runtime of the participant `agent` in a channel of no running session, never attached,
-/// as the runtime's (`caelumora_runtime::session::testing`), with the agents' plugin - and so the
+/// The runtime of the participant `agent` in a channel of no running session, never attached, as
+/// the runtime's (`caelumora_runtime::session::testing`), with the agents' library - and so the
 /// agents' texts (issue 57).
 pub fn detached_participant(agent: AgentId) -> ParticipantRuntime {
     let session = bare_session(SessionId::new());
     let channel = bare_channel(session.id);
     detached_participant_in(
-        TestRuntime { plugins: vec![&TestAgents], ..Default::default() }.build(),
+        TestRuntime { libraries: vec![&TestAgents], ..Default::default() }.build(),
         session,
         channel,
         ActorId::Agent(agent),
@@ -246,9 +246,8 @@ pub fn agent_runtime(runtime: ParticipantRuntime) -> Arc<dyn ActorRuntime> {
     Arc::new(AgentRuntime::in_test(runtime, AgentStateHandle::detached()))
 }
 
-/// The prompt catalogue with the core's texts and the agents', as the
-/// runtime and `AgentsPlugin` add them - for what resolves a context in a
-/// test.
+/// The prompt catalogue with the core's texts and the agents', as the runtime and `AgentsLibrary`
+/// add them - for what resolves a context in a test.
 pub fn catalogue() -> Arc<PromptCatalogue> {
     catalogue_of(&[])
 }
@@ -259,8 +258,8 @@ pub fn prompts() -> PromptTexts {
     PromptTexts::new(catalogue(), None)
 }
 
-/// The prompt catalogue with the core's texts, the agents' and a plugin's `texts` under
-/// `namespace`, as the runtime and the plugins add them - for what a plugin's test makes itself.
+/// The prompt catalogue with the core's texts, the agents' and a library's `texts` under
+/// `namespace`, as the runtime and the libraries add them - for what a library's test makes itself.
 pub fn catalogue_with(namespace: &str, texts: &str) -> Arc<PromptCatalogue> {
     catalogue_of(&[(namespace, texts)])
 }
@@ -297,15 +296,16 @@ pub fn test_registry(store: &Persistence) -> ComponentRegistry {
 /// default (`with_unasked_model`) - for tests that build components without
 /// a runtime; a runtime gets them from `TestAgents`.
 pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
-    register_components(registry);
-    with_unasked_model(registry);
+    let mut components = LibraryComponents::new(registry);
+    register_components(&mut components);
+    with_unasked_model(&mut components);
 }
 
-/// Registers with `registry` a model that is not to be asked
-/// (`UNASKED_MODEL_KIND`) as the default - the core names none, each
-/// program names its own (issue 329), and so do the tests.
-fn with_unasked_model(registry: &mut ComponentRegistry) {
-    registry.register(
+/// Registers with `components` a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
+/// default of the model's facets - the core names none, each program names its own (issue 329), and
+/// the tests declare this one.
+fn with_unasked_model(components: &mut LibraryComponents<'_>) {
+    components.register(
         ComponentKind::new(UNASKED_MODEL_KIND)
             .provides::<dyn LLMClient>()
             .provides::<dyn ModelProfileProvider>(),
@@ -317,12 +317,8 @@ fn with_unasked_model(registry: &mut ComponentRegistry) {
             Ok(facets)
         },
     );
-    registry
-        .set_default_kind::<dyn LLMClient>(UNASKED_MODEL_KIND)
-        .expect("registered as providing it");
-    registry
-        .set_default_kind::<dyn ModelProfileProvider>(UNASKED_MODEL_KIND)
-        .expect("registered as providing it");
+    components.single::<dyn LLMClient>(Some(UNASKED_MODEL_KIND));
+    components.single::<dyn ModelProfileProvider>(Some(UNASKED_MODEL_KIND));
 }
 
 /// A model that gives the answers it was given, one per call, and then

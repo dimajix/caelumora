@@ -10,6 +10,7 @@ pub mod controller;
 pub mod error;
 pub mod event;
 pub mod group;
+pub mod library;
 mod lock;
 pub mod logging;
 pub mod moderator;

@@ -38,7 +38,7 @@ use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use serde_json::Value;
 use std::fmt;
 use std::fmt::Debug;
@@ -263,7 +263,7 @@ fn render(prompts: &PromptTexts, recalled: &[Memory]) -> Result<String, PromptEr
     prompts.render(TEXT, context! { recalled, remember => REMEMBER_TOOL_NAME, update => UPDATE_MEMORY_TOOL_NAME, forget => FORGET_TOOL_NAME })
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(AGENT_MEMORY_KIND)

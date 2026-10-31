@@ -2,8 +2,8 @@
 # Finds what a library names that only the core may hold, against the rule of
 # docs/ARCHITECTURE.md, "The core decides, the agent side asks" (issue 516): a library builds no
 # `SecurityContext`, asks no policy, holds no manager or controller of the core or of a plugin, nor
-# the runtime of a participant, and reads through the readers, not the views, but asks the core
-# through the interface it is given (`ActorRuntime`).
+# the runtime of a participant, registers through its `LibraryBuilder` alone, and reads through the
+# readers, not the views, but asks the core through the interface it is given (`ActorRuntime`).
 #
 #   library-names.sh [file...]
 #
@@ -28,6 +28,7 @@ names="$names|WorkspaceManager|AttachmentManager|SkillManager|ArtifactManager"
 names="$names|Views|Viewer|SessionView|ChannelView|WorkspaceView|ParticipantView|SkillViews|SkillView"
 names="$names|ParticipantRuntime|AgentRuntime|ChannelRuntime|AgentStateHandle|AgentController"
 names="$names|PersonalityController|SessionController|ChannelController|UserController"
+names="$names|RuntimeBuilder|Plugin|ComponentRegistry"
 
 if [ $# -eq 0 ]; then
     cd "$(git rev-parse --show-toplevel)"

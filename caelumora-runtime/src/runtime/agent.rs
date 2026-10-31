@@ -399,7 +399,7 @@ impl AgentRuntime {
                     (Arc::clone(agent), Arc::clone(personality))
                 }
                 ResolvedKind::User(_) | ResolvedKind::Approver(_) => {
-                    panic!("{} takes part as no agent", participant.actor_id())
+                    panic!("{} takes part as no agent", participant.actor)
                 }
             },
             Acting::Itself | Acting::Fixed(_) => Self::made_up(&participant),
@@ -431,7 +431,7 @@ impl AgentRuntime {
         use caelumora_model::scope::Scope;
         use caelumora_model::user::UserId;
         use caelumora_model::value::name::ScopedName;
-        let id = participant.actor_id().as_agent_id().expect("the runtime of an agent");
+        let id = participant.actor.as_agent_id().expect("the runtime of an agent");
         let personality = make_personality("plain");
         let name =
             ScopedName::new("agent", Scope::GlobalScope).expect("a test's name of an agent is one");

@@ -31,7 +31,7 @@ use caelumora_model::question::Answers;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::PublishedNotes;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -391,7 +391,7 @@ fn render<'a>(
     prompts.render(TEXT, context! { own => numbered(own), others, write => WRITE_NOTE_TOOL_NAME, update => UPDATE_NOTE_TOOL_NAME, revoke => REVOKE_NOTE_TOOL_NAME })
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(NOTES_KIND)
@@ -434,7 +434,7 @@ mod tests {
         let channel = bare_channel(session.id);
         let runtime = TestRuntime {
             access_policy: Arc::new(OwnershipPolicy::new()),
-            plugins: vec![&TestAgents],
+            libraries: vec![&TestAgents],
             ..Default::default()
         }
         .build();

@@ -252,7 +252,8 @@ pub(super) async fn scripted_channel(
     let (context, agent, alice) =
         alice_and_an_agent(&store, "helper", make_personality("plain")).await;
     let runtime =
-        TestRuntime { store, plugins: vec![&ScriptedAgents(script)], ..Default::default() }.build();
+        TestRuntime { store, libraries: vec![&ScriptedAgents(script)], ..Default::default() }
+            .build();
     (channel_of_alice_and(runtime, alice, agent).await, context, agent, alice)
 }
 

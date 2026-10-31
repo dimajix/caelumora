@@ -36,7 +36,7 @@ use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::Secrets;
 use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, Params,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, LibraryComponents, Params,
 };
 use futures::stream::once;
 use futures::StreamExt;
@@ -281,7 +281,7 @@ impl ModelProfileProvider for A2aAgentComponent {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register(
         ComponentKind::new(A2A_AGENT_KIND)
             .params::<A2aAgentConfig>()

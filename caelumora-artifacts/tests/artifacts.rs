@@ -81,7 +81,7 @@ use tower::ServiceExt;
 
 /// The world with artifacts.
 async fn world() -> World {
-    World::with(&[&TestAgents, &ArtifactsPlugin], |_| {}).await
+    World::with(&[&ArtifactsPlugin], &[&TestAgents], |_| {}).await
 }
 
 /// The one owner of artifacts of `world`.
@@ -294,7 +294,8 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
 #[tokio::test]
 async fn the_tool_is_not_offered_without_a_storage_of_content() {
     let world = World::configured(
-        &[&TestAgents, &ArtifactsPlugin],
+        &[&ArtifactsPlugin],
+        &[&TestAgents],
         |_| {},
         |config| {
             config.content = Default::default();
@@ -372,7 +373,8 @@ async fn kept_in(store: Persistence) -> Kept {
     let runtime = TestRuntime {
         store,
         config,
-        plugins: vec![&TestAgents, &ArtifactsPlugin],
+        plugins: vec![&ArtifactsPlugin],
+        libraries: vec![&TestAgents],
         ..Default::default()
     }
     .build();
@@ -449,9 +451,14 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
             plugins: [("artifacts".to_string(), section)].into(),
             ..Default::default()
         };
-        TestRuntime { config, plugins: vec![&TestAgents, &ArtifactsPlugin], ..Default::default() }
-            .try_build()
-            .map_err(|e| format!("{e:#}"))
+        TestRuntime {
+            config,
+            plugins: vec![&ArtifactsPlugin],
+            libraries: vec![&TestAgents],
+            ..Default::default()
+        }
+        .try_build()
+        .map_err(|e| format!("{e:#}"))
     }
     let configured = |runtime: RuntimeManager| {
         runtime.services().get::<ArtifactManager>().is_some_and(|manager| manager.is_configured())
@@ -1548,7 +1555,7 @@ async fn publishing_into_a_project_needs_reading_it() {
 #[tokio::test]
 async fn an_agents_artifact_is_published_for_its_owner() {
     let call = calling(PUBLISH_ARTIFACT, json!({ "path": "notes/a.md" }));
-    let world = World::with(&[&TestAgents, &ArtifactsPlugin], |registry| {
+    let world = World::with(&[&ArtifactsPlugin], &[&TestAgents], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![call])
     })
     .await;
@@ -1627,7 +1634,8 @@ async fn a_purge_that_fails_between_is_restored_by_nobody_and_finished_by_the_ne
     // Another instance, which keeps content nowhere: its content cannot be removed there.
     let elsewhere = TestRuntime {
         store: persistence.clone(),
-        plugins: vec![&TestAgents, &ArtifactsPlugin],
+        plugins: vec![&ArtifactsPlugin],
+        libraries: vec![&TestAgents],
         ..Default::default()
     }
     .build();

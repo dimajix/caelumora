@@ -28,6 +28,7 @@ use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::controller::WorkspaceController;
 use crate::error::refusal;
+use crate::library::Library;
 use crate::plugin::Plugin;
 use crate::project::{ProjectError, ProjectManager};
 use crate::runtime::{ParticipantRuntime, RuntimeBuilder, RuntimeManager};
@@ -265,11 +266,14 @@ pub struct TestRuntime<'a> {
     /// Registers the component kinds of the test beside the built-in ones, before the plugins
     /// register theirs; none.
     pub components: Box<dyn FnOnce(&mut ComponentRegistry) + 'a>,
-    /// Agents that answer "ok" (`ScriptedAgents`).
+    /// None.
     pub plugins: Vec<&'a dyn Plugin>,
+    /// Agents that answer "ok" (`ScriptedAgents`), registered after the plugins, as a program
+    /// registers its libraries (issue 516).
+    pub libraries: Vec<&'a dyn Library>,
 }
 
-/// The plugin a `TestRuntime` runs its agents with unless a test names others.
+/// The library a `TestRuntime` runs its agents with unless a test names others.
 static ANSWERING_OK: LazyLock<ScriptedAgents> =
     LazyLock::new(|| ScriptedAgents(Script::Answers("ok".to_string())));
 
@@ -281,7 +285,8 @@ impl Default for TestRuntime<'_> {
             confidentiality: Arc::new(ConfidentialityRules::default()),
             config: AppConfig::default(),
             components: Box::new(|_| {}),
-            plugins: vec![&*ANSWERING_OK],
+            plugins: Vec::new(),
+            libraries: vec![&*ANSWERING_OK],
         }
     }
 }
@@ -295,7 +300,7 @@ impl TestRuntime<'_> {
     /// The runtime, or why it could not be built - for a test of that.
     ///
     /// # Errors
-    /// As `RuntimeBuilder::new`, `RuntimeBuilder::plugin` and `RuntimeBuilder::build`.
+    /// As `RuntimeBuilder::new`, `plugin`, `library` and `build`.
     pub fn try_build(self) -> Result<RuntimeManager> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
         let mut builder = RuntimeBuilder::new(
@@ -308,6 +313,9 @@ impl TestRuntime<'_> {
         (self.components)(builder.components());
         for plugin in self.plugins {
             builder.plugin(plugin)?;
+        }
+        for library in self.libraries {
+            builder.library(library)?;
         }
         builder.build()
     }
@@ -336,7 +344,7 @@ pub struct World {
 
 impl World {
     pub async fn new() -> Self {
-        Self::with(&[], |_| {}).await
+        Self::with(&[], &[], |_| {}).await
     }
 
     /// The files the storage of content "kept" holds of attachments, of every channel.
@@ -357,21 +365,22 @@ impl World {
         below(&self.files.path().join("content").join("attachments"))
     }
 
-    /// The world with `plugins` (issue 323), and the component kinds
-    /// `register` adds besides the built-in ones. It runs no agent unless a
-    /// plugin brings them: in the agents' tests,
-    /// `caelumora_agents::testing::TestAgents` does (issues 370, 373).
+    /// The world with `plugins` (issue 323) and `libraries` (issue 516), and the component kinds
+    /// `register` adds besides the built-in ones. It runs no agent unless a library brings them:
+    /// in the agents' tests, `caelumora_agents::testing::TestAgents` does (issues 370, 373).
     pub async fn with(
         plugins: &[&dyn Plugin],
+        libraries: &[&dyn Library],
         register: impl FnOnce(&mut ComponentRegistry),
     ) -> Self {
-        Self::configured(plugins, register, |_| {}).await
+        Self::configured(plugins, libraries, register, |_| {}).await
     }
 
     /// The world `with` makes, its configuration changed by `configure` before the runtime is
     /// built - one without a storage of content, say.
     pub async fn configured(
         plugins: &[&dyn Plugin],
+        libraries: &[&dyn Library],
         register: impl FnOnce(&mut ComponentRegistry),
         configure: impl FnOnce(&mut AppConfig),
     ) -> Self {
@@ -423,6 +432,7 @@ impl World {
             config,
             components: Box::new(register),
             plugins: plugins.to_vec(),
+            libraries: libraries.to_vec(),
         }
         .build();
         memberships.bind(&runtime.entity_stores().groups);

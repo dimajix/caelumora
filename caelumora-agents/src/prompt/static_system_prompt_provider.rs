@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, Params,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, LibraryComponents, Params,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -83,7 +83,7 @@ impl StaticSystemPromptProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND)

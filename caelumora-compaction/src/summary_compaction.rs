@@ -18,7 +18,7 @@ use caelumora_agents::turn::Turn;
 use caelumora_model::actor::ActorId;
 use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -182,7 +182,7 @@ fn summed(call: Message, then: &Message) -> Message {
 }
 
 /// Registers the kind `summary_compaction` with `registry`.
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(SUMMARY_COMPACTION_KIND)

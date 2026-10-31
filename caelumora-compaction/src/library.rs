@@ -5,21 +5,20 @@ use crate::component;
 use crate::summary_compaction::{self, SUMMARY_COMPACTION_KIND};
 use crate::{CompactionStrategy, NAMESPACE, PROMPTS};
 use anyhow::Result;
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::RuntimeBuilder;
+use caelumora_runtime::library::{Library, LibraryBuilder};
 
-/// Compaction, as a plugin.
+/// Compaction, as a library.
 #[derive(Debug, Default)]
-pub struct CompactionPlugin;
+pub struct CompactionLibrary;
 
-impl Plugin for CompactionPlugin {
+impl Library for CompactionLibrary {
     fn name(&self) -> &'static str {
         NAMESPACE
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
-        runtime.prompts().add(NAMESPACE, PROMPTS)?;
-        let components = runtime.components();
+    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+        library.prompts().add(NAMESPACE, PROMPTS)?;
+        let components = &mut library.components();
         components.single::<dyn CompactionStrategy>(Some(SUMMARY_COMPACTION_KIND));
         component::register(components);
         summary_compaction::register(components);

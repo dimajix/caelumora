@@ -608,20 +608,19 @@ old one but does not continue it:
 *   **Counted once.** The tokens used count a message kept where it was first recorded.
 
 The mechanism takes the replacement and the first entry kept, and whose the replacement is;
-components decide the rest - those of the plugin `caelumora-compaction`. When the agent compacts,
-where its context is cut and what is given again is its `compaction` component's; what stands in
-the place of the part cut off, its one `CompactionStrategy`'s (issue 413), so that the rules every
-compaction keeps cannot be exchanged with the strategy. The component is asked by two triggers
-with the same code: the agent itself before a model call, as an activity of the component (issues
-284, 464), and `/compact`, which the component carries out as a command. An agent whose
-personality does not list `compaction` does not compact at all. Before every call of a turn - the
-first of the next turn as well, with what was heard since - the activity is due once the context
-fills `threshold` of the model's context size, as soon as a call made on the active branch
-measured it; a model that reports no context size gives nothing to measure against, which the
-component says once. The agent then compacts in the state `Busy` (see [In a turn](#in-a-turn));
-the strategy's calls do not count against `MAX_MODEL_CALLS`. A compaction that fails gives the
-turn up: the call it was to make room for would not fit. `/compact` tells of itself as a command
-does.
+components decide the rest - those of the library `caelumora-compaction`. When the agent compacts,
+where its context is cut and what is given again is its `compaction` component's; what stands in the
+place of the part cut off, its one `CompactionStrategy`'s (issue 413), so that the rules every
+compaction keeps cannot be exchanged with the strategy. The component is asked by two triggers with
+the same code: the agent itself before a model call, as an activity of the component (issues 284,
+464), and `/compact`, which the component carries out as a command. An agent whose personality does
+not list `compaction` does not compact at all. Before every call of a turn - the first of the next
+turn as well, with what was heard since - the activity is due once the context fills `threshold` of
+the model's context size, as soon as a call made on the active branch measured it; a model that
+reports no context size gives nothing to measure against, which the component says once. The agent
+then compacts in the state `Busy` (see [In a turn](#in-a-turn)); the strategy's calls do not count
+against `MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call it was to make room
+for would not fit. `/compact` tells of itself as a command does.
 
 A compaction keeps `keep` of the model's context size as it stands, less than `threshold`, or it
 would free too little. It cuts only before a message, by the positions the resolver measured
@@ -665,12 +664,12 @@ The personality's own system prompt stays as written.
 
 ### The prompt catalogue
 
-What the runtime's parts say is kept apart from the code that fills them in, in the prompt
-catalogue (`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can be tuned without a
-change of code. Every crate brings its texts in a YAML file it compiles in - the agents'
-`caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin registers
-(`RuntimeBuilder::prompts`): `agents.channel_participants` is the roster. The catalogue is a
-service of the runtime. The core's texts are the namespace `core`
+What the runtime's parts say is kept apart from the code that fills them in, in the prompt catalogue
+(`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can be tuned without a change of
+code. Every crate brings its texts in a YAML file it compiles in - the agents'
+`caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin or library
+registers (`RuntimeBuilder::prompts`, `LibraryBuilder::prompts`): `agents.channel_participants` is
+the roster. The catalogue is a service of the runtime. The core's texts are the namespace `core`
 (`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as it resolves a
 context - a turn given up, who joined or left - and how the messages of others are marked
 (`ModelProfile::framing_explanation`).
@@ -791,7 +790,7 @@ do: permissions and approvals are untouched by it.
 
 `workspace_prompt_provider` describes the workspace the agent may use in its channel and names the
 instruction files at its root (`AGENTS.md`, `CLAUDE.md`) for the agent to read - by name only, so
-that the prompt does not change with their content. It lives with the tools it names, in the plugin
+that the prompt does not change with their content. It lives with the tools it names, in the library
 `caelumora-workspace-tools` ([TOOLS.md](TOOLS.md#the-workspace)).
 
 ### Instructions within a turn

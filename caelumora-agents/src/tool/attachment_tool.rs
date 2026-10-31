@@ -18,7 +18,7 @@ use caelumora_model::message::MessageId;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
 use caelumora_runtime::view::ChannelReader;
@@ -326,7 +326,7 @@ impl ToolProvider for AttachmentTool {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(ATTACHMENT_TOOL_KIND)

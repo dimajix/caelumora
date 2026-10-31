@@ -48,9 +48,10 @@ against this list, rule by rule, before it is reported (the self-review of
     adds nothing about its kind to the core (see [PLUGINS.md](PLUGINS.md)).
 *   A library of the agent side - `caelumora-agents`, a crate that brings an agent's components -
     names no `SecurityContext`, policy, view, manager or controller of the core or of a plugin, nor
-    the runtime of a participant: it asks the core through `ActorRuntime`, `Situation` and `Turn`,
-    and reads through the readers ([ARCHITECTURE.md](ARCHITECTURE.md#principles);
-    `scripts/library-names.sh` checks it).
+    the runtime of a participant, and registers through its `LibraryBuilder` alone, naming no
+    `RuntimeBuilder`, `Plugin` or `ComponentRegistry`: it asks the core through `ActorRuntime`,
+    `Situation` and `Turn`, and reads through the readers
+    ([ARCHITECTURE.md](ARCHITECTURE.md#principles); `scripts/library-names.sh` checks it).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
     test in the security suite (`caelumora-runtime/tests/security_suite.rs`, an agent's in
     `caelumora-agents/tests/security_suite.rs`, see
@@ -208,8 +209,9 @@ or changes.
     with it.
 *   **REST and web UI.** When you change the REST API - its routes in `caelumora-rest-server`, its
     types in `caelumora-rest-api` -, keep `caelumora-web-ui` compatible with it.
-*   **Components.** A new component kind is registered in the `ComponentRegistry`; where it goes and
-    how it is named is described in [COMPONENTS.md](COMPONENTS.md).
+*   **Components.** A new component kind is registered in the `ComponentRegistry` - a library's
+    through its `LibraryComponents` (issue 516); where it goes and how it is named is described in
+    [COMPONENTS.md](COMPONENTS.md).
 *   **A new crate.** A crate of the workspace takes `version`, `edition` and `license` from
     `[workspace.package]` in the root `Cargo.toml` (`version.workspace = true`, ...) and its lints
     from `[workspace.lints]` (`[lints] workspace = true`); it states none of them itself. Without
@@ -413,7 +415,7 @@ Errors carry what failed, and only what may be shown goes to users.
     [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)). The exceptions
     are named, so that "its caller only logs it" is no excuse for the next one: traits whose only
     caller is the top of the program or of a task and logs the error whole - `Plugin::register`,
-    `SeedSection::seed` and `Actor::run`.
+    `Library::register`, `SeedSection::seed` and `Actor::run`.
 *   Avoid `unwrap()` and `expect()` in production code. Use `?` or handle the error explicitly.
 
 ### Messages name what failed
@@ -565,7 +567,7 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
 *   **A runtime in tests:** a test builds its runtime with `testing::TestRuntime` (issue 375), whose
     parts all have defaults - a new memory store, no policy, the default rules, the default
     configuration, the runtime's component kinds and agents that answer "ok" - and names only those
-    it differs in: `TestRuntime { plugins: vec![&AgentsPlugin], ..Default::default() }.build()`,
+    it differs in: `TestRuntime { libraries: vec![&AgentsLibrary], ..Default::default() }.build()`,
     or `try_build()` for a test of what refuses to be built. Nobody else calls `RuntimeBuilder::new`
     in a test but the program's own (`caelumora-app`), which builds the runtime as the program does,
     so that a change to it is a change to one place, and what a test differs in is what it names; a
@@ -587,7 +589,7 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
 *   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the
-    agents' plugin, in `caelumora-agents`. A test that puts an actor straight into a channel or
+    agents' library, in `caelumora-agents`. A test that puts an actor straight into a channel or
     before a moderator - whom it finds, wakes or cancels, whoever the actor is - puts a
     `testing::StandIn` there, which does nothing (issue 372). No other test implements `Actor`,
     except one that needs what no actor of the runtime can do, such as sending envelopes in

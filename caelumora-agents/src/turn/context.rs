@@ -193,7 +193,7 @@ mod tests {
         };
         let runtime = TestRuntime {
             config: AppConfig { content, ..Default::default() },
-            plugins: vec![&TestAgents],
+            libraries: vec![&TestAgents],
             ..Default::default()
         }
         .build();

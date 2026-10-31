@@ -11,10 +11,10 @@ mod questions;
 
 use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommandProvider;
+use crate::library::AgentsLibrary;
 use crate::llm::{LLMClient, LLMResult};
 use crate::message::{MessageProcessor, PerceiveInProcessor, ProcessingError};
 use crate::notes::{AgentNotes, NoteKind};
-use crate::plugin::AgentsPlugin;
 use crate::prompt::ModelProfileProvider;
 use crate::prompt::{ContextError, Prompt, PromptProvider};
 use crate::situation::Situation;
@@ -225,7 +225,7 @@ async fn agent_channel_hearing(
         access_policy,
         config,
         components: Box::new(components),
-        plugins: vec![&AgentsPlugin],
+        libraries: vec![&AgentsLibrary],
         ..Default::default()
     }
     .build();

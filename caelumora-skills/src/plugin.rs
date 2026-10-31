@@ -12,6 +12,7 @@ use crate::{NAMESPACE, PROMPTS};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::store::EntityStore;
+use caelumora_runtime::component::LibraryComponents;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::seed::{create_unless_taken, SeedSection};
@@ -50,7 +51,9 @@ impl Plugin for SkillsPlugin {
         })?;
         runtime.seed_section(SKILLS, Arc::new(SeededSkills(skills)))?;
         runtime.prompts().add(NAMESPACE, PROMPTS)?;
-        component::register(runtime.components());
+        // Its component kind is a library's (issue 516), though the crate registers as a plugin
+        // until it is cut in two (step 5d of issue 516).
+        component::register(&mut LibraryComponents::new(runtime.components()));
         Ok(())
     }
 }

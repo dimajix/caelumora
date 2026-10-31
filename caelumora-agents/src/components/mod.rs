@@ -12,10 +12,10 @@ pub mod create_plan_tool;
 pub mod notes;
 pub mod private_notes;
 
-use caelumora_runtime::component::ComponentRegistry;
+use caelumora_runtime::component::LibraryComponents;
 
 /// Registers the component kinds of this directory with `registry`.
-pub fn register_all(registry: &mut ComponentRegistry) {
+pub fn register_all(registry: &mut LibraryComponents<'_>) {
     agent_memory::register(registry);
     channel_history::register(registry);
     create_plan_tool::register(registry);

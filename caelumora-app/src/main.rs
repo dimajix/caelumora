@@ -1,7 +1,7 @@
 //! Caelumora as one program (issue 323): the composition root that lists
-//! the plugins, builds the runtime with them, serves the REST API with
-//! their routes under `/api` and - with the feature `web-ui` - the web UI at
-//! `/`, from the binary.
+//! the plugins and the libraries (issue 516), builds the runtime with them,
+//! serves the REST API with the plugins' routes under `/api` and - with the
+//! feature `web-ui` - the web UI at `/`, from the binary.
 
 #[cfg(feature = "web-ui")]
 mod web_ui;
@@ -11,19 +11,19 @@ use axum::http::Request;
 use axum::middleware;
 use axum::routing;
 use axum::Router;
-use caelumora_a2a::plugin::A2aPlugin;
+use caelumora_a2a::library::A2aLibrary;
+use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::llm::LLMClient;
-use caelumora_agents::plugin::AgentsPlugin;
 use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
-use caelumora_comfyui::plugin::ComfyUiPlugin;
-use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_comfyui::library::ComfyUiLibrary;
+use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_logging::{init, LogTarget};
-use caelumora_mcp::plugin::McpPlugin;
+use caelumora_mcp::library::McpLibrary;
 use caelumora_model::config::AppConfig;
 use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
-use caelumora_ollama::plugin::OllamaPlugin;
+use caelumora_ollama::library::OllamaLibrary;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -31,6 +31,7 @@ use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
+use caelumora_runtime::library::Library;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::project::ProjectManager;
 use caelumora_runtime::runtime::RuntimeBuilder;
@@ -38,7 +39,7 @@ use caelumora_runtime::session::SessionManager;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
-use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
+use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
 use clap::Parser;
 use std::future;
 use std::future::IntoFuture;
@@ -79,6 +80,9 @@ async fn main() -> Result<()> {
     let rest_plugins = rest_plugins();
     let plugins = plugins();
     let mut builder = RuntimeBuilder::from_config(&config, &all(&rest_plugins, &plugins)).await?;
+    for library in libraries() {
+        builder.library(library.as_ref())?;
+    }
     default_kinds(builder.components())?;
     let runtime_manager = Arc::new(builder.build()?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
@@ -194,22 +198,28 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
     vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin)]
 }
 
-/// The plugins of the program that bring no routes (issues 325, 327, 329,
-/// 428, 512), which only its runtime is built with - first the essential one,
-/// the agents' (issue 370).
+/// The plugins of the program that bring no routes (issues 03, 327, 403, 446),
+/// which only its runtime is built with.
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
-        Box::new(AgentsPlugin),
-        Box::new(CompactionPlugin),
-        Box::new(OllamaPlugin),
-        Box::new(McpPlugin),
-        Box::new(A2aPlugin),
         Box::new(OpenTerminalPlugin),
-        Box::new(WorkspaceToolsPlugin),
         Box::new(DecisionPlugin),
-        Box::new(ComfyUiPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
+    ]
+}
+
+/// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 512, 516) -
+/// first the essential one, the agents' (issue 370).
+fn libraries() -> Vec<Box<dyn Library>> {
+    vec![
+        Box::new(AgentsLibrary),
+        Box::new(CompactionLibrary),
+        Box::new(OllamaLibrary),
+        Box::new(McpLibrary),
+        Box::new(A2aLibrary),
+        Box::new(WorkspaceToolsLibrary),
+        Box::new(ComfyUiLibrary),
     ]
 }
 
@@ -259,7 +269,7 @@ mod tests {
     use axum::routing::get;
     use caelumora_agents::testing::offered_anywhere;
     use caelumora_agents::tool::ToolProvider;
-    use caelumora_comfyui::plugin::COMFYUI;
+    use caelumora_comfyui::library::COMFYUI;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::actor::ActorId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -316,8 +326,8 @@ mod tests {
         )
     }
 
-    /// The runtime of the program, with its plugins, over `store`, as
-    /// `config` configures it.
+    /// The runtime of the program, with its plugins and its libraries, over `store`, as `config`
+    /// configures it.
     fn runtime_of(store: &Persistence, config: &AppConfig) -> RuntimeManager {
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets =
@@ -334,6 +344,9 @@ mod tests {
         .unwrap();
         for plugin in plugins {
             builder.plugin(plugin).unwrap();
+        }
+        for library in libraries() {
+            builder.library(library.as_ref()).unwrap();
         }
         default_kinds(builder.components()).unwrap();
         builder.build().unwrap()

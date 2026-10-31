@@ -9,7 +9,7 @@ use axum::Router;
 use caelumora_agents::testing::{agent_runtime, offered_anywhere, TestAgents};
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_mcp::plugin::McpPlugin;
+use caelumora_mcp::library::McpLibrary;
 use caelumora_mcp::tool::MCP_TOOL_KIND;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
@@ -124,10 +124,9 @@ fn names(tools: &[Tool]) -> Vec<String> {
     names
 }
 
-/// A runtime over `store` with the plugin of MCP servers, as the programs
-/// build theirs.
+/// A runtime over `store` with the library of MCP servers, as the programs build theirs.
 fn runtime(store: &Persistence) -> Arc<RuntimeManager> {
-    TestRuntime { store: store.clone(), plugins: vec![&McpPlugin], ..Default::default() }.build()
+    TestRuntime { store: store.clone(), libraries: vec![&McpLibrary], ..Default::default() }.build()
 }
 
 /// The tool provider of the one MCP tool component configured with
@@ -485,7 +484,7 @@ async fn a_server_gone_leaves_the_tools_discovered_before() {
 /// for alice's agent, asked by bob, as its turn begins.
 #[tokio::test]
 async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
-    let world = World::with(&[&TestAgents, &McpPlugin], |_| {}).await;
+    let world = World::with(&[], &[&TestAgents, &McpLibrary], |_| {}).await;
     let mcp = ComponentDescriptor {
         params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "MCP_TOKEN" } } }),
         ..ComponentDescriptor::new("tools", MCP_TOOL_KIND)

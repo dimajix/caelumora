@@ -18,8 +18,8 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolMedia, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_model::value::identifier::Identifier;
 use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
+    LibraryComponents, Params,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -243,7 +243,7 @@ impl ToolProvider for ComfyUiTool {
 
 /// Registers the component kind `comfyui_tool`, which takes the workflows of the section
 /// `comfyui` as a service and writes for the agent's model.
-pub(crate) fn register(registry: &mut ComponentRegistry) {
+pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(COMFYUI_TOOL_KIND)
