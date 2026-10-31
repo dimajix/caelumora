@@ -816,7 +816,6 @@ mod tests {
     use crate::digest;
     use crate::note::NoteId;
     use crate::prompt_catalogue::core;
-    use crate::security::SecurityContext;
     use crate::store::testing::{replayed, stored};
     use crate::tool::{Tool, ToolCall, ToolCallState, ToolParameters, ToolVisibility};
     use crate::user::UserId;
@@ -1040,7 +1039,6 @@ mod tests {
         state.begin_turn(Work::new(
             EventContext::default(),
             None,
-            SecurityContext::default(),
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         ));
@@ -1591,7 +1589,6 @@ mod tests {
             Work::new(
                 EventContext::default(),
                 None,
-                SecurityContext::default(),
                 Classification::CHANNEL_DEFAULT,
                 Default::default(),
             ),
@@ -1782,7 +1779,6 @@ mod tests {
         state.begin_turn(Work::new(
             EventContext::default(),
             None,
-            SecurityContext::default(),
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         ));
@@ -1911,13 +1907,7 @@ mod tests {
 
         let channel = Classification::general(Confidentiality::Confidential);
         state.turn = Some(TurnState {
-            work: Work::new(
-                Default::default(),
-                None,
-                Default::default(),
-                channel.clone(),
-                Default::default(),
-            ),
+            work: Work::new(Default::default(), None, channel.clone(), Default::default()),
             ..TurnState::default()
         });
         let confidential = Message { classification: channel.clone(), ..make_message(id(3)) };

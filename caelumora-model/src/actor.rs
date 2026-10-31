@@ -137,7 +137,7 @@ pub enum ActorEvent {
         id: QuestionId,
         shown_to: Option<Vec<ActorId>>,
     },
-    /// Asks its receiver to respond to the event whose contexts it carries
+    /// Asks its receiver to respond to the event whose context it carries
     /// (issue 45), for `reason` (issue 439): built by the channel for each
     /// its moderator asks, and recorded in the system's name to them
     /// (`HistoryEntry::ResponseRequested`, issue 417).
@@ -154,7 +154,7 @@ pub enum ActorEvent {
     },
     /// The sender now stands at this state (issue 243): announced by an
     /// agent as it changes, so that the users see who works, sleeps or
-    /// waits for an approval. Sent in the agent's own contexts, not a
+    /// waits for an approval. Sent in the agent's own context, not a
     /// turn's: the state is the agent's, not part of an answer.
     StateChanged(ActorState),
     PartialMessageGenerated(Message),

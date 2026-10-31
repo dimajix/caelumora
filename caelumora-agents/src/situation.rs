@@ -1,6 +1,6 @@
 //! The situation of a piece of work of an agent, to read (issues 204,
-//! 399): where it stands and what it sees from there - who works, in which
-//! contexts and bound by what, what it has seen so far, the agent's states,
+//! 399): where it stands and what it sees from there - who works, for whom
+//! and bound by what, what it has seen so far, the agent's states,
 //! and its session to navigate. A piece of work is a turn of an agent run
 //! here or an external agent's exchange with its remote agent - both a
 //! `Work` in the model; a [`Situation`] is what both kinds have. What only a
@@ -18,7 +18,7 @@ use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::context::{ContextResolver, ModelProfile};
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::secret::Secrets;
-use caelumora_model::security::{Grant, SecurityContext};
+use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::time_zone::TimeZone;
@@ -78,9 +78,11 @@ impl<'a> Situation<'a> {
         self.work.asked
     }
 
-    /// Whose authority the work acts with.
-    pub fn security_context(&self) -> &'a SecurityContext {
-        &self.work.security_context
+    /// Who began the chain the work answers (`EventContext::initiator_id`, issue 432): what the
+    /// core is told with every call it is asked in the work's name, for the record - never for
+    /// rights, which the core builds itself (issue 516).
+    pub fn initiator(&self) -> ActorId {
+        self.work.initiator()
     }
 
     /// The classification of the agent's channel as it was when the work
@@ -105,9 +107,7 @@ impl<'a> Situation<'a> {
     /// As `ActorRuntime::session_view`: the agent may not read it, or reading
     /// it failed.
     pub async fn session_view(&self) -> ViewResult<Option<SessionView>> {
-        self.runtime
-            .session_view(&self.work.security_context, self.work.classification.clone())
-            .await
+        self.runtime.session_view(self.initiator(), self.work.classification.clone()).await
     }
 
     /// The agent's channel as the work reads it from there (`session`,
@@ -142,7 +142,7 @@ impl<'a> Situation<'a> {
     /// # Errors
     /// As `ActorRuntime::workspace_terminal`.
     pub async fn workspace_terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        self.runtime.workspace_terminal(&self.work.security_context, Grant::Read).await
+        self.runtime.workspace_terminal(self.initiator(), Grant::Read).await
     }
 
     /// The agent's state in this channel as it stands: what components read
@@ -209,13 +209,13 @@ impl<'a> Situation<'a> {
     /// The secrets that may be read in the work's name (`ActorRuntime::secrets`, issue 516): what
     /// a component that talks to a remote system resolves its credentials by.
     pub fn secrets(&self) -> Arc<dyn Secrets> {
-        self.runtime.secrets(&self.work.security_context)
+        self.runtime.secrets(self.initiator())
     }
 
     /// Whether what lies at `from` may be copied, in the work's name, to `into`
     /// (`ActorRuntime::may_copy_information`, issue 516): what the agent may recall of what it
     /// keeps of its own.
     pub fn may_copy_information(&self, from: &Place, into: &Place) -> bool {
-        self.runtime.may_copy_information(&self.work.security_context, from, into)
+        self.runtime.may_copy_information(self.initiator(), from, into)
     }
 }

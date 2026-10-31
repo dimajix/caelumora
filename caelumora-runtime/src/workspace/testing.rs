@@ -36,7 +36,8 @@ pub struct WithWorkspace {
     pub files: TempDir,
     pub session: Arc<SessionLoop>,
     pub agent: AgentId,
-    /// What the agent acts in: for the workspace's owner.
+    /// The context the agent acts in, as the core builds it for the agent, a participant: for the
+    /// workspace's owner, on their word - what a test asks the core in the agent's name.
     pub context: SecurityContext,
     pub workspace: Workspace,
     /// What it runs on: where skills are made (issue 22).

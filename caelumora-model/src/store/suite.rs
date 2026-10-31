@@ -1780,7 +1780,6 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     state.begin_turn(Work::new(
         EventContext::default(),
         None,
-        SecurityContext::default(),
         Classification::CHANNEL_DEFAULT,
         Default::default(),
     ));

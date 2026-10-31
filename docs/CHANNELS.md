@@ -472,7 +472,7 @@ message, and what they said in reply stays.
     heard it are labelled by it as it stands (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Taking back is not erasing.** The message stays in every participant's record, in the
-    contexts of what was answered to it, and with a remote agent that was given it (see
+    context of what was answered to it, and with a remote agent that was given it (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#messages)).
 
 ### Answering again
@@ -508,7 +508,7 @@ naming a message or a turn.
         (`RetryRefused`), which a user interface words itself.
 
     A retry accepted and a request to respond in the same batch are one turn, in the request's
-    contexts; its model is given the conversation as it stands, without what was replaced.
+    context; its model is given the conversation as it stands, without what was replaced.
 *   **An external agent** rejects every request to answer again: its remote agent keeps what it was
     given, and nothing here takes the answer back from it.
 
@@ -818,10 +818,11 @@ An **actor** is anything that sends and receives events in a channel.
     program registered nothing for is refused (`ChannelError::UnknownAgentKind`). The agent is
     `ActorId::Agent` either way, and nothing else - the participants, the REST API, the moderator -
     tells the two apart.
-*   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent and in
-    whose name it acts there, its `AgentChannelState`, how it takes in what it hears, its context
-    provider, the commands it carries out itself, and its `RunControl` - where its actor stands and
-    what `cancel`, `stop` and `leave` asked of it (issue 363). The two actors differ in their mind:
+*   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent, its
+    runtime - which builds in whose name it acts there at every call (issue 516) -, its
+    `AgentChannelState`, how it takes in what it hears, its context provider, the commands it
+    carries out itself, and its `RunControl` - where its actor stands and what `cancel`, `stop` and
+    `leave` asked of it (issue 363). The two actors differ in their mind:
     a model run here with its tools, or the remote agent, whose every answer is a turn of the run
     control, ended by `cancel`, `stop` and `leave` as an agent's turn is. Both tell where they stand
     the same way; an external agent tells the begin and end of an answer at once.
@@ -835,19 +836,19 @@ An **actor** is anything that sends and receives events in a channel.
     it then, with the initiator the event names (issue 516, see
     [SECURITY.md](SECURITY.md#operations-that-check-themselves)) -, so a client is shown an
     envelope as it is. Every envelope the runtime sends is built through `Answering` (issue 352):
-    the contexts of a request continued in the actor's name (`to`) - an agent's, an external
+    the context of a request continued in the actor's name (`to`) - an agent's, an external
     agent's, the approver's -, an actor's own (`own`) - a user's -, or, for what the channel says
     itself, its place in someone's name (`in_channel`): a removal in the name of who removed, a
     refusal in its own. Whose name an envelope carries is what the `OriginEventSender` checks, so
     it is decided in one place. Every envelope is an event of its own, with an `event_id` of its
-    own, even where many are sent in the same contexts - the events of a turn share its span and
+    own, even where many are sent in the same context - the events of a turn share its span and
     what it answers (`correlation_id`), not their id.
 
 ### External agents
 
 An external agent has no turn and no tools here. It hears what others say and takes it in as an
 agent does: what it hears through its perceive processors into its transcript. When it is asked to
-respond - once for all it took in together, in the contexts of the last request - it gives its
+respond - once for all it took in together, in the context of the last request - it gives its
 remote agent:
 
 *   **the prompt parts** its `ContextProvider` assembles, as an agent's does for a turn - by default
@@ -961,7 +962,7 @@ which for what the history records is the rule its entry is read by (`HistoryEnt
 A moderator answers each event with a `Routing`: whether it goes where the rule sends it or to some
 participants alone, whom to ask to respond, and which of its own notices to tell whom - of a fixed
 few (`Notice`): a chain cut off, and that it could not be decided who responds. The channel builds
-every envelope from it: the event as it entered, a request to respond in the event's contexts, a
+every envelope from it: the event as it entered, a request to respond in the event's context, a
 notice in the system's name. So a moderator cannot change what anyone is told, nor speak in
 anybody's name.
 

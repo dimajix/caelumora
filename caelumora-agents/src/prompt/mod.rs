@@ -283,6 +283,7 @@ mod tests {
     use crate::testing::TestAgents;
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
+    use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -396,7 +397,8 @@ mod tests {
 
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
-        let actor_runtime = detached_actor_runtime_in(Arc::clone(&runtime), session, channel);
+        let actor_runtime =
+            detached_actor_runtime_in(Arc::clone(&runtime), session, channel, ActorId::None);
         let work = Work::default().given_as(Gemma.profile());
         let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
         let situation = Situation::new(AgentId::new(), &work, &state, &agent_state, &actor_runtime);

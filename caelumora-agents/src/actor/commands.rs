@@ -49,7 +49,7 @@ impl AgentBody {
     }
 
     /// Carries out the `CommandRequested` in `request` in a turn of its own,
-    /// begun on `state` in the request's contexts continued in the agent's
+    /// begun on `state` in the request's context continued in the agent's
     /// name (`Answering::to`): its owner's rights, whoever asked its
     /// initiator. Whether the issuer may ask for it was decided as the
     /// channel admitted the request (issue 516): the agent asks nothing and

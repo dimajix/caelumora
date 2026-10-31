@@ -512,7 +512,6 @@ mod tests {
             Work::new(
                 EventContext::new(world.session.id(), channel.id(), ActorId::None, String::new()),
                 None,
-                world.context.clone(),
                 channel.classification(),
                 berlin,
             )

@@ -294,9 +294,11 @@ checks.
 
 A container is built with a `ComponentContext`, which holds:
 
-*   the `SecurityContext` the graph is built in, the name of its owner - for an agent's components
-    the agent's own, with its owner's rights; for a channel's components and a session's commands,
-    the owner's, with their roles as they are when it is built (`ControllerManager::owner_context`).
+*   the `SecurityContext` the graph is built in, the name of its owner, set by the core and not
+    given out to the components (issue 516) - for an agent's components the agent's own, with its
+    owner's rights (`ActorRuntime::component_context`); for a channel's components and a session's
+    commands the owner's, with their roles as they are when it is built
+    (`ControllerManager::owner_context`).
     What a component reads while building - a `ref` resolved, a secret a component of the core
     needs - it reads in it. It does not keep it: what it asks later it asks in the context of
     the act it serves - a tool in its turn's, a moderator in the event's it routes -, one context
@@ -318,8 +320,9 @@ A container is built with a `ComponentContext`, which holds:
 Components are not given their actor's `ActorRuntime`: through it they could store the actor's state
 or act as the actor past the `Turn` they are called with. What a component may use is exactly what
 its context holds, and a service it needs is declared by its kind, which is where it shows who may
-use what. A service that acts in someone's name takes the security context with each call; while a
-turn runs, a component calls it with the turn's, never with the context it was built in.
+use what. A service of the core that acts in someone's name takes the security context with each
+call; a component of an application asks the core through its `Turn` and its `Situation`, which
+name only the initiator of the work, and the core builds the context of the call (issue 516).
 
 ## Writing a component
 

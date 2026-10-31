@@ -332,20 +332,22 @@ mod tests {
 
     impl Memory {
         /// Begins a turn of `agent` in `state`, in channel `at`, as its actor
-        /// begins one: the agent acting with its owner's rights.
-        fn begin(&self, state: &mut AgentChannelState, at: &At, agent: AgentId) {
+        /// begins one.
+        fn begin(&self, state: &mut AgentChannelState, at: &At) {
+            state.begin_turn(Work::new(in_channel(at), None, at.1.clone(), Default::default()));
+        }
+
+        /// The runtime a turn of `agent` in channel `at` acts through: its actor's there, run
+        /// by its session, acting with its owner's rights (issue 255). The agent takes no part,
+        /// so the test gives the runtime the context the core builds for a participant
+        /// (`acting_as`, issue 516).
+        fn runtime_in(&self, sessions: &Sessions, at: &At, agent: AgentId) -> ActorRuntime {
             let context = SecurityContext::new(self.owner, at.0 .0, at.0 .1).next(
                 ActorId::Agent(agent),
                 self.owner,
                 self.owner,
             );
-            state.begin_turn(Work::new(
-                in_channel(at),
-                None,
-                context,
-                at.1.clone(),
-                Default::default(),
-            ));
+            sessions.runtime_in(at, agent).acting_as(context)
         }
     }
 
@@ -500,13 +502,13 @@ mod tests {
         text: &str,
     ) {
         let mut state = AgentChannelState::default();
-        memory.begin(&mut state, &at, agent);
+        memory.begin(&mut state, &at);
         let mut turn = Turn::of(
             agent,
             "agent".to_string(),
             &mut state,
             Arc::clone(handle),
-            sessions.runtime_in(&at, agent),
+            memory.runtime_in(sessions, &at, agent),
         )
         .expect("a turn was begun");
         turn.see(&at.1);
@@ -526,13 +528,13 @@ mod tests {
         at: At,
     ) -> Prompt {
         let mut state = AgentChannelState::default();
-        memory.begin(&mut state, &at, agent);
+        memory.begin(&mut state, &at);
         let turn = Turn::of(
             agent,
             "agent".to_string(),
             &mut state,
             Arc::clone(handle),
-            sessions.runtime_in(&at, agent),
+            memory.runtime_in(sessions, &at, agent),
         )
         .expect("a turn was begun");
         memory.get_prompt(&turn.situation()).await.unwrap()
@@ -561,13 +563,13 @@ mod tests {
         // there ...
         let mut state = AgentChannelState::default();
         {
-            memory.begin(&mut state, &team, agent);
+            memory.begin(&mut state, &team);
             let mut turn = Turn::of(
                 agent,
                 "agent".to_string(),
                 &mut state,
                 Arc::clone(&handle),
-                sessions.runtime_in(&team, agent),
+                memory.runtime_in(&sessions, &team, agent),
             )
             .expect("a turn was begun");
             turn.see(&team.1);
@@ -613,26 +615,26 @@ mod tests {
 
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
-        memory.begin(&mut state, &elsewhere, agent);
+        memory.begin(&mut state, &elsewhere);
         let mut turn = Turn::of(
             agent,
             "agent".to_string(),
             &mut state,
             Arc::clone(&handle),
-            sessions.runtime_in(&elsewhere, agent),
+            memory.runtime_in(&sessions, &elsewhere, agent),
         )
         .expect("a turn was begun");
         assert!(memory
             .execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn)
             .await
             .is_err());
-        memory.begin(&mut state, &team, agent);
+        memory.begin(&mut state, &team);
         let mut turn = Turn::of(
             agent,
             "agent".to_string(),
             &mut state,
             Arc::clone(&handle),
-            sessions.runtime_in(&team, agent),
+            memory.runtime_in(&sessions, &team, agent),
         )
         .expect("a turn was begun");
         memory
@@ -664,13 +666,13 @@ mod tests {
         remember(&memory, &sessions, &handle, agent, team.clone(), "Kaya likes tea.").await;
 
         let mut state = AgentChannelState::default();
-        memory.begin(&mut state, &elsewhere, agent);
+        memory.begin(&mut state, &elsewhere);
         let mut turn = Turn::of(
             agent,
             "agent".to_string(),
             &mut state,
             Arc::clone(&handle),
-            sessions.runtime_in(&elsewhere, agent),
+            memory.runtime_in(&sessions, &elsewhere, agent),
         )
         .expect("a turn was begun");
         let there = memory
@@ -687,13 +689,13 @@ mod tests {
         );
 
         // Updated in a turn that has seen what is confidential ...
-        memory.begin(&mut state, &confidential, agent);
+        memory.begin(&mut state, &confidential);
         let mut turn = Turn::of(
             agent,
             "agent".to_string(),
             &mut state,
             Arc::clone(&handle),
-            sessions.runtime_in(&confidential, agent),
+            memory.runtime_in(&sessions, &confidential, agent),
         )
         .expect("a turn was begun");
         turn.see(&confidential.1);
@@ -737,13 +739,13 @@ mod tests {
             .await;
 
         let mut state = AgentChannelState::default();
-        memory.begin(&mut state, &team, agent);
+        memory.begin(&mut state, &team);
         let mut turn = Turn::of(
             agent,
             "agent".to_string(),
             &mut state,
             Arc::clone(&handle),
-            sessions.runtime_in(&team, agent),
+            memory.runtime_in(&sessions, &team, agent),
         )
         .expect("a turn was begun");
         memory
@@ -788,7 +790,7 @@ mod tests {
             Classification::general(Confidentiality::Internal),
         );
         let mut state = AgentChannelState::default();
-        memory.begin(&mut state, &at, agent);
+        memory.begin(&mut state, &at);
         let mut turn =
             Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), runtime.clone())
                 .expect("a turn was begun");
@@ -802,7 +804,7 @@ mod tests {
             SessionPrivacy { id: at.0 .0, ..SessionPrivacy::default() },
             "its session, private: nobody agreed to anything"
         );
-        memory.begin(&mut state, &at, agent);
+        memory.begin(&mut state, &at);
         let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), runtime)
             .expect("a turn was begun");
         assert!(
@@ -909,13 +911,13 @@ mod tests {
         // internal remembers it as internal (issue 168) ...
         let mut state = AgentChannelState::default();
         {
-            memory.begin(&mut state, &confidential, agent);
+            memory.begin(&mut state, &confidential);
             let mut turn = Turn::of(
                 agent,
                 "agent".to_string(),
                 &mut state,
                 Arc::clone(&handle),
-                sessions.runtime_in(&confidential, agent),
+                memory.runtime_in(&sessions, &confidential, agent),
             )
             .expect("a turn was begun");
             turn.see(&Classification::general(Confidentiality::Internal));
@@ -997,13 +999,13 @@ mod tests {
         );
 
         let mut state = AgentChannelState::default();
-        memory.begin(&mut state, &hr, agent);
+        memory.begin(&mut state, &hr);
         let mut turn = Turn::of(
             agent,
             "agent".to_string(),
             &mut state,
             Arc::clone(&handle),
-            sessions.runtime_in(&hr, agent),
+            memory.runtime_in(&sessions, &hr, agent),
         )
         .expect("a turn was begun");
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });

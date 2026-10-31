@@ -2,9 +2,9 @@ use super::{ChannelRuntime, Services};
 use crate::actor::ActorManager;
 use crate::agent::state::AgentStateHandle;
 use crate::attachment::{AttachmentManager, AttachmentResult};
-use crate::channel::ChannelLoop;
+use crate::channel::{ChannelLoop, ResolvedParticipant};
 use crate::command::CommandExecutor;
-use crate::component::ComponentRegistry;
+use crate::component::{ComponentContext, ComponentRegistry};
 use crate::controller::{ChannelController, SessionController, WorkspaceController};
 use crate::event::EventSubscription;
 use crate::terminal::{Shell, Terminal};
@@ -41,7 +41,7 @@ use std::sync::Arc;
 /// access to what concerns this actor alone - its controller, its state, its
 /// events, what it asks of its channel. It is the actor's interface: what an
 /// actor needs and does not find here is added here (issue 370). It is made
-/// for one actor (`ChannelRuntime::new_actor_runtime`) and hands out nothing
+/// for one participant (`ChannelRuntime::participant_runtime`) and hands out nothing
 /// about others. It is the actor's alone, and its turns': its components get
 /// only what they need of it (`ComponentContext`, issue 128) and the turn's
 /// methods; what they read of the session they read from the root its work
@@ -57,6 +57,24 @@ pub struct ActorRuntime {
     pub(super) actor: ActorId,
     pub(super) session_id: SessionId,
     pub(super) channel_id: ChannelId,
+    /// In whose name it acts, which the core builds into a context at every call (issue 516).
+    pub(super) acting: Acting,
+}
+
+/// How the context an actor's runtime acts in is built, at every call that asks the core
+/// (`ActorRuntime::acting_for`, issue 516).
+#[derive(Debug, Clone)]
+pub(crate) enum Acting {
+    /// A participant of the channel, as the channel resolved it: its context as the controllers
+    /// hold it now - a user's own, an agent's with its owner's rights and roles, limited by its
+    /// personality, the approver's answered for by the channel's owner.
+    Participant(ResolvedParticipant),
+    /// In a test, an actor that takes part in nothing: in its own name, without roles.
+    #[cfg(any(test, feature = "test-support"))]
+    Itself,
+    /// In a test, the context it gives (`ActorRuntime::acting_as`).
+    #[cfg(any(test, feature = "test-support"))]
+    Fixed(SecurityContext),
 }
 
 /// What the core decides of a tool call as it is admitted (`ActorRuntime::admit_tool_call`,
@@ -89,6 +107,30 @@ impl ActorRuntime {
         self.actor
     }
 
+    /// The context the actor acts in now, for `initiator` - who began the chain it answers, for
+    /// the record, never for rights (issue 516): built by the core at every call, from what it
+    /// holds of the actor (`Acting`), never handed in by the actor.
+    pub(crate) fn acting_for(&self, initiator: ActorId) -> SecurityContext {
+        match &self.acting {
+            Acting::Participant(participant) => participant.context_in(&self.channel(), initiator),
+            #[cfg(any(test, feature = "test-support"))]
+            Acting::Itself => SecurityContext {
+                initiator_id: initiator,
+                ..SecurityContext::new(self.actor, self.session_id, self.channel_id)
+            },
+            #[cfg(any(test, feature = "test-support"))]
+            Acting::Fixed(context) => context.clone(),
+        }
+    }
+
+    /// This runtime, acting in `context` whatever its actor and its initiator are: for a test
+    /// that gives the work of an actor the rights it needs without making it a participant
+    /// (issue 516).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn acting_as(self, context: SecurityContext) -> Self {
+        Self { acting: Acting::Fixed(context), ..self }
+    }
+
     /// The access policy of the process - the core's alone, as its other policy and its secrets
     /// are: what an actor of an application needs decided it asks below (issue 516).
     pub(crate) fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
@@ -103,6 +145,13 @@ impl ActorRuntime {
     /// The secrets of the process, which `secrets` binds to a name.
     fn secret_manager(&self) -> &Arc<SecretManager> {
         self.runtime.runtime_manager.secret_manager()
+    }
+
+    /// The context the actor's components are built in (issue 321): in the actor's own name, as
+    /// the core holds it now, with the runtime's services (issue 516). What a component reads
+    /// while it is built it reads in it; what it does later, in its turn's.
+    pub fn component_context(&self) -> ComponentContext {
+        ComponentContext::new(self.acting_for(self.actor), self.services().clone())
     }
 
     pub fn services(&self) -> &Services {
@@ -140,18 +189,19 @@ impl ActorRuntime {
         self.attachment_manager().load(messages, profile).await
     }
 
-    /// Keeps `media`, what a tool gave its model for the result of a call `context` makes in the
-    /// actor's channel, classified `classification` as the
+    /// Keeps `media`, what a tool gave its model for the result of a call the actor makes in its
+    /// channel for `initiator`, classified `classification` as the
     /// result (`AttachmentManager::create_media`, with the channel as it stands, issue 512).
     ///
     /// # Errors
     /// As `AttachmentManager::create_media`.
     pub async fn create_media(
         &self,
-        context: &SecurityContext,
+        initiator: ActorId,
         classification: Classification,
         media: Vec<ToolMedia>,
     ) -> AttachmentResult<Vec<ContentRef>> {
+        let context = &self.acting_for(initiator);
         let channel = self.channel();
         self.attachment_manager().create_media(context, &channel, classification, media).await
     }
@@ -193,15 +243,6 @@ impl ActorRuntime {
     /// else the store reports.
     pub(crate) async fn agent_attributes(&self, id: AgentId) -> StoreResult<SecurityAttributes> {
         self.runtime.runtime_manager.controller_manager().agent_attributes(id).await
-    }
-
-    /// The session `id` as stored, as `security` may read it.
-    pub async fn load_session(
-        &self,
-        security: &SecurityContext,
-        id: SessionId,
-    ) -> StoreResult<Session> {
-        self.runtime.runtime_manager.entity_stores().sessions.get(security, id).await
     }
 
     /// The agent's own state, shared with its actors in other channels and
@@ -287,7 +328,7 @@ impl ActorRuntime {
         );
     }
 
-    /// The actor's own session as `context` reads it from the actor's
+    /// The actor's own session as the actor reads it, for `initiator`, from its
     /// channel at `classification` (issue 163), if it may read it
     /// (`GetSession`, as `Views::session` asks, issue 304) - an agent by the
     /// group of the session's participants: the root of what its work
@@ -299,9 +340,10 @@ impl ActorRuntime {
     /// As `Views::session`: `context` may not read it, or reading it failed.
     pub async fn session_view(
         &self,
-        context: &SecurityContext,
+        initiator: ActorId,
         classification: Classification,
     ) -> ViewResult<Option<SessionView>> {
+        let context = &self.acting_for(initiator);
         let Some(session_loop) = self.channel_loop().and_then(|channel| channel.session_loop())
         else {
             return Ok(None);
@@ -327,7 +369,7 @@ impl ActorRuntime {
     }
 
     /// `questions` put to the users of the actor's channel, their addressees
-    /// resolved as `context` - who caused them - names them (issue 165,
+    /// resolved as the actor's context for `initiator` - who caused them - names them (issue 165,
     /// `ChannelLoop::address_questions`); `None` while the channel is still
     /// being built or once it is gone, when there is nobody to ask.
     ///
@@ -335,18 +377,20 @@ impl ActorRuntime {
     /// As `Questions::resolve`: an addressee the channel does not know.
     pub fn address_questions(
         &self,
+        initiator: ActorId,
         questions: Questions,
-        context: &SecurityContext,
     ) -> Option<Result<Questions, QuestionError>> {
+        let context = &self.acting_for(initiator);
         Some(self.channel_loop()?.address_questions(questions, context))
     }
 
-    /// How a call of `call`, made in `context` by the actor's agent, is admitted (issue 516):
+    /// How a call of `call`, made by the actor's agent for `initiator`, is admitted (issue 516):
     /// `Forbidden` unless the policy lets it be called (`CallTool`, the call's one question of
     /// permission, issue 304); else as the strongest rule of the system, the actor's session and
     /// its channel decides it now (`ApprovalRule::decide`, issue 13). Whether a person is asked
     /// beyond what a rule asks is its tool's, as the agent's owner configured it.
-    pub async fn admit_tool_call(&self, context: &SecurityContext, call: &ToolCall) -> CallPermit {
+    pub async fn admit_tool_call(&self, initiator: ActorId, call: &ToolCall) -> CallPermit {
+        let context = &self.acting_for(initiator);
         let call_tool = ActionType::CallTool(call);
         if self.access_policy().require(context, call_tool, |_| ()).await.is_err() {
             return CallPermit::Forbidden;
@@ -379,42 +423,40 @@ impl ActorRuntime {
             .map(|(rule, decision)| (rule.id, decision))
     }
 
-    /// Whether what is classified `classification` may flow, in `context`, into what is
+    /// Whether what is classified `classification` may flow, in the actor's name, into what is
     /// classified `into` (`ConfidentialityPolicy::may_publish`, issue 516): a tool's result into
     /// the turn, the channel to a tool set's remote side, what an external agent brings into the
     /// channel, what a turn saw into the channel as it is now.
     pub fn may_publish(
         &self,
-        context: &SecurityContext,
+        initiator: ActorId,
         classification: &Classification,
         into: &Classification,
     ) -> bool {
+        let context = &self.acting_for(initiator);
         self.confidentiality().may_publish(context, classification, into)
     }
 
-    /// Whether what lies at `from` may be copied, in `context`, to `into`
+    /// Whether what lies at `from` may be copied, in the actor's name, to `into`
     /// (`ConfidentialityQuestions::may_copy_information`, issue 516): what an agent may recall
     /// of what it keeps of its own, written elsewhere.
-    pub fn may_copy_information(
-        &self,
-        context: &SecurityContext,
-        from: &Place,
-        into: &Place,
-    ) -> bool {
+    pub fn may_copy_information(&self, initiator: ActorId, from: &Place, into: &Place) -> bool {
+        let context = &self.acting_for(initiator);
         self.confidentiality().may_copy_information(context, from, into)
     }
 
     /// Whether `record` - what the actor's agent keeps of its own in its channel - may be
-    /// reclassified, in `context`, as `classification`, within what is classified `within`
-    /// (issues 133, 516): `Reclassify` of it, by the agent as its author, with the channel's
-    /// attributes as it stands, then the flow (`require_publish`).
+    /// reclassified, in the actor's name for `initiator`, as `classification`, within what is
+    /// classified `within` (issues 133, 516): `Reclassify` of it, by the agent as its author, with
+    /// the channel's attributes as it stands, then the flow (`require_publish`).
     pub async fn may_reclassify(
         &self,
-        context: &SecurityContext,
+        initiator: ActorId,
         record: OwnRecord,
         classification: &Classification,
         within: &Classification,
     ) -> bool {
+        let context = &self.acting_for(initiator);
         let (author, attributes) = (self.actor, self.channel().security_attributes.clone());
         let target = match record {
             OwnRecord::Note => Reclassified::Note { author, attributes: &attributes },
@@ -428,23 +470,26 @@ impl ActorRuntime {
                 .is_ok()
     }
 
-    /// The secrets that may be read in the name of `context` (issue 516), each read asked of the
-    /// policy then (`ReadSecret`): what a component that talks to a remote system is handed for
-    /// its credentials, shared, as what follows a remote task after a call reads them too.
-    pub fn secrets(&self, context: &SecurityContext) -> Arc<dyn Secrets> {
+    /// The secrets that may be read in the actor's name, for `initiator` (issue 516), each read
+    /// asked of the policy then (`ReadSecret`): what a component that talks to a remote system is
+    /// handed for its credentials, shared, as what follows a remote task after a call reads them
+    /// too.
+    pub fn secrets(&self, initiator: ActorId) -> Arc<dyn Secrets> {
+        let context = &self.acting_for(initiator);
         Arc::new(self.secret_manager().for_context(context.clone()))
     }
 
-    /// `attachment`, one of the actor's channel, copied in `context` for a message the actor will
+    /// `attachment`, one of the actor's channel, copied in the actor's name for a message it will
     /// say there (`AttachmentManager::copy`, issue 282).
     ///
     /// # Errors
     /// As `AttachmentManager::copy`.
     pub async fn copy_attachment(
         &self,
-        context: &SecurityContext,
+        initiator: ActorId,
         attachment: &ContentRef,
     ) -> AttachmentResult<ContentRef> {
+        let context = &self.acting_for(initiator);
         self.attachment_manager().copy(context, &self.channel(), attachment).await
     }
 
@@ -462,32 +507,34 @@ impl ActorRuntime {
         Arc::clone(&self.channel_controller().load())
     }
 
-    /// The workspace of the actor's session and its terminal, for what `need` asks, as `context`
-    /// may use it in the actor's channel (`WorkspaceController::terminal_in`, issue 344): asked by
-    /// the workspace the session holds, of the session and the channel as they are now.
+    /// The workspace of the actor's session and its terminal, for what `need` asks, as the actor
+    /// may use it in its channel, for `initiator` (`WorkspaceController::terminal_in`, issue 344):
+    /// asked by the workspace the session holds, of the session and the channel as they are now.
     ///
     /// # Errors
     /// `NotUsableInChannel` while the channel is still being built or once it or its session is
     /// gone, or no workspace is attached to the session; else what `terminal_in` reports.
     pub async fn workspace_terminal(
         &self,
-        context: &SecurityContext,
+        initiator: ActorId,
         need: Grant,
     ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+        let context = &self.acting_for(initiator);
         let (session, workspace) = self.session_workspace()?;
         workspace.terminal_in(context, &session, &self.channel(), need).await
     }
 
     /// The workspace of the actor's session and its shell as the actor's channel sees it - the
-    /// commands started in that channel alone -, for `context` (`WorkspaceController::shell_in`,
+    /// commands started in that channel alone -, for `initiator` (`WorkspaceController::shell_in`,
     /// issue 344).
     ///
     /// # Errors
     /// As [`Self::workspace_terminal`].
     pub async fn workspace_shell(
         &self,
-        context: &SecurityContext,
+        initiator: ActorId,
     ) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+        let context = &self.acting_for(initiator);
         let (session, workspace) = self.session_workspace()?;
         workspace.shell_in(context, &session, &self.channel()).await
     }

@@ -1,7 +1,8 @@
+use super::actor::Acting;
 use super::{ActorRuntime, RuntimeManager, Services};
 use crate::actor::AgentKinds;
 use crate::attachment::AttachmentManager;
-use crate::channel::{ChannelLoop, Participation};
+use crate::channel::{ChannelLoop, Participation, ResolvedParticipant};
 use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
@@ -80,14 +81,27 @@ impl ChannelRuntime {
         }
     }
 
-    /// The runtime of `actor` in the channel this runtime is for, whose loop
-    /// is not attached yet while its actors are built.
+    /// The runtime of `actor` in the channel this runtime is for, for a test: one that takes part
+    /// in nothing, acting in its own name without roles (issue 516). The channel makes its actors'
+    /// runtimes of their participants (`participant_runtime`).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new_actor_runtime(&self, actor: ActorId) -> ActorRuntime {
+        self.runtime_acting(actor, Acting::Itself)
+    }
+
+    /// The runtime of the participant `resolved` in the channel this runtime is for: acting in
+    /// the participant's context as the controllers hold it now (issue 516).
+    pub(crate) fn participant_runtime(&self, resolved: &ResolvedParticipant) -> ActorRuntime {
+        self.runtime_acting(resolved.actor_id(), Acting::Participant(resolved.clone()))
+    }
+
+    fn runtime_acting(&self, actor: ActorId, acting: Acting) -> ActorRuntime {
         ActorRuntime {
             runtime: self.clone(),
             actor,
             session_id: self.session.id(),
             channel_id: self.channel.id(),
+            acting,
         }
     }
 

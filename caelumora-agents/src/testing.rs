@@ -26,7 +26,7 @@ use caelumora_model::context::ModelProfile;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{Grant, SecurityContext};
+use caelumora_model::security::Grant;
 use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::Persistence;
@@ -41,9 +41,7 @@ use caelumora_runtime::runtime::{ActorRuntime, RuntimeBuilder};
 use caelumora_runtime::session::testing::detached_actor_runtime_in;
 use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::testing::TestRuntime;
-use caelumora_runtime::testing::{
-    actor_runtime_in, test_registry as runtime_registry, World, STAFF,
-};
+use caelumora_runtime::testing::{actor_runtime_in, test_registry as runtime_registry, World};
 use caelumora_runtime::workspace::testing::WithWorkspace;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -92,13 +90,10 @@ pub fn turn<'a>(
     state: &'a mut AgentChannelState,
 ) -> Turn<'a> {
     let channel = &session.channels()[0];
-    let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id())
-        .next(ActorId::Agent(agent), ActorId::User(owner), ActorId::User(owner))
-        .with_roles(vec![*STAFF], None);
+    // On the owner's word; with the rights the core builds for the agent (issue 516).
     state.begin_turn(Work::new(
-        EventContext::new(session.id(), channel.id(), ActorId::None, String::new()),
+        EventContext::new(session.id(), channel.id(), ActorId::User(owner), String::new()),
         None,
-        context,
         channel.classification(),
         Default::default(),
     ));
@@ -116,13 +111,7 @@ pub fn turn<'a>(
 /// for a provider whose offer does not depend on the place.
 pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<Tool>, String> {
     let mut state = AgentChannelState::default();
-    state.begin_turn(Work::new(
-        Default::default(),
-        None,
-        Default::default(),
-        Default::default(),
-        Default::default(),
-    ));
+    state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
     let agent = AgentId::new();
     let Some(turn) = Turn::of(
         agent,
@@ -252,6 +241,7 @@ pub fn detached_actor_runtime() -> ActorRuntime {
         TestRuntime { plugins: vec![&TestAgents], ..Default::default() }.build(),
         session,
         channel,
+        ActorId::None,
     )
 }
 
@@ -497,10 +487,12 @@ impl Turn<'_> {
 /// test of a tool on the workspace calls it.
 pub fn workspace_turn<'a>(with: &WithWorkspace, state: &'a mut AgentChannelState) -> Turn<'a> {
     let channel = &with.session.channels()[0];
+    // On the owner's word; with the rights the core builds for the agent, a participant of the
+    // channel (issue 516).
+    let asked_by = with.context.initiator_id;
     state.begin_turn(Work::new(
-        EventContext::new(with.session.id(), channel.id(), ActorId::None, String::new()),
+        EventContext::new(with.session.id(), channel.id(), asked_by, String::new()),
         None,
-        with.context.clone(),
         channel.classification(),
         Default::default(),
     ));

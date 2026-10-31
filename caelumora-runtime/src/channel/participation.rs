@@ -306,6 +306,23 @@ impl ResolvedParticipant {
         }
     }
 
+    /// The context the participant acts in, in `channel`, for `initiator` (issue 516): a user's
+    /// own, an agent's with its owner's rights and roles, limited by its personality, as the
+    /// controllers hold them now, the approver's - an internal actor of the channel - answered for
+    /// by the channel's owner (`Approver::security_context`).
+    pub(crate) fn context_in(&self, channel: &Channel, initiator: ActorId) -> SecurityContext {
+        let own = match &self.kind {
+            ResolvedKind::User(user) => user.security_context(channel.session_id, channel.id),
+            ResolvedKind::Agent(agent, personality) => agent.security_context(
+                channel.session_id,
+                channel.id,
+                personality.load().limiting_roles(),
+            ),
+            ResolvedKind::Approver(approver) => approver.security_context(channel),
+        };
+        SecurityContext { initiator_id: initiator, ..own }
+    }
+
     /// The sets of roles the participant has to be cleared by, each of them
     /// (issues 133, 179): a user's own; an agent's owner's - it must not
     /// see more than the person responsible for it - and, if its

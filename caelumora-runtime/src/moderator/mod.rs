@@ -50,7 +50,7 @@ pub(crate) struct Routing {
     /// What its entry in the history records (issue 417).
     pub audience: Audience,
     /// Whom to ask to respond to what the event said, each by a
-    /// `ResponseRequested` in the event's contexts, after it.
+    /// `ResponseRequested` in the event's context, after it.
     pub ask: Vec<ActorId>,
     /// Why those of `ask` are asked (issue 439), which their requests
     /// carry: all of them for the same reason.

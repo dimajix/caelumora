@@ -327,7 +327,6 @@ mod tests {
     use crate::actor::{EventContext, RequestReason};
     use crate::agent::AgentId;
     use crate::confidentiality::Classification;
-    use crate::security::SecurityContext;
     use crate::user::UserId;
 
     #[test]
@@ -390,7 +389,6 @@ mod tests {
         let work = Work::new(
             EventContext { initiator_id: alice, ..EventContext::default() },
             None,
-            SecurityContext::default(),
             internal.clone(),
             Default::default(),
         );
@@ -517,7 +515,6 @@ mod tests {
         let work = Work::new(
             EventContext { initiator_id: alice, ..EventContext::default() },
             None,
-            SecurityContext::default(),
             internal.clone(),
             Default::default(),
         );

@@ -124,16 +124,19 @@ a plugin depends on:
     those of others it `needs` and the services it `uses`, `ComponentFacets`, and
     `config_of_params` to read its `params`. A kind that declares no parameters takes none: every
     one it is given is refused ([COMPONENTS.md](COMPONENTS.md#parameters)).
-*   **While it is built:** the `ComponentContext` - `security_context`, in whose name it is built,
-    `service::<T>()`, the services of the runtime it declared, and `all` and `one`, the facets of
-    others it declared it needs. What a container accepts follows from these declarations
+*   **While it is built:** the `ComponentContext` - in whose name it is built, the core's to set
+    and not given out (issue 516) -, `service::<T>()`, the services of the runtime it declared,
+    and `all` and `one`, the facets of others it declared it needs. What a container accepts
+    follows from these declarations
     ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service that decides for the
     core - a policy, one of the core's managers, a store - is the core's, and a component of an
     application does not declare it: what it needs decided it asks of the core, through the
     `Turn` and the `Situation` it is called with (`may_reclassify`, `may_copy_information`,
     `copy_attachment`, `max_file_bytes`; the executor's `admit_tool_call`, issue 516); what it
     needs of another plugin it declares as the trait that plugin offers for it. Today the
-    artifacts' component still declares the `ArtifactManager` itself (issue 516).
+    artifacts' component still declares the `ArtifactManager` itself, and the components of skills
+    and artifacts hand their managers the context the views were opened in (`Views::context`,
+    issue 516).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,

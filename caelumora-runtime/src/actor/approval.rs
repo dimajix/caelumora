@@ -14,9 +14,7 @@ use caelumora_model::approval::{
 };
 use caelumora_model::channel::{self, Channel, Participant};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{
-    AccessPolicy, AccessQuestions, SecurityAttributes, SecurityContext,
-};
+use caelumora_model::security::{AccessPolicy, AccessQuestions, SecurityAttributes};
 use caelumora_model::value::name::Name;
 use chrono::{DateTime, Duration, Utc};
 use std::collections::{HashMap, HashSet};
@@ -42,7 +40,7 @@ struct PendingApproval {
     /// (issue 419).
     responses: HashMap<ActorId, (ApprovalStatus, ApprovalDecision)>,
     timeout: DateTime<Utc>,
-    /// The agent's request, whose contexts every answer to it continues
+    /// The agent's request, whose context every answer to it continues
     /// (`ApproverActor::answering`).
     request: Envelope,
 }
@@ -94,14 +92,14 @@ impl ApproverActor {
         }
     }
 
-    /// The contexts it answers `request`, an agent's request for approval,
+    /// The context it answers `request`, an agent's request for approval,
     /// in (`Answering::to`): in its own name, about the call of whoever asked
-    /// (issue 255), answered for by the owner of its channel as it is when
-    /// it answers. What it sends passes `Answering::send` unchanged: an
-    /// approval carries no message, and the approvers see the arguments of
-    /// the call they decide.
+    /// (issue 255); the channel admits what it sends answered for by the owner
+    /// of its channel as it is then (issue 516). What it sends passes
+    /// `Answering::send` unchanged: an approval carries no message, and the
+    /// approvers see the arguments of the call they decide.
     fn answering(&self, request: &Envelope) -> Answering {
-        Answering::to(request, self.id, self.name(), &self.security_context())
+        Answering::to(request, self.id, self.name())
     }
 
     /// The attributes of `agent`, as stored (`agent_attributes`). `None` if
@@ -367,16 +365,6 @@ impl ApproverActor {
     }
 }
 
-impl ApproverActor {
-    /// The context it acts in, here: its own, answered for by the owner of
-    /// its channel (issue 341) - what its work continues a request in; what
-    /// it sends is admitted in the context the channel builds for it, the
-    /// same (issue 516).
-    fn security_context(&self) -> SecurityContext {
-        self.approver.security_context(&self.channel.load())
-    }
-}
-
 #[async_trait]
 impl Actor for ApproverActor {
     fn id(&self) -> ActorId {
@@ -500,6 +488,7 @@ mod tests {
     use caelumora_model::approval::ApprovalRequest;
     use caelumora_model::channel::testing::make_channel;
     use caelumora_model::channel::{Channel, InternalActor};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::security::{Grant, OwnershipPolicy, Policies, Subject};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;

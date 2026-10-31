@@ -100,7 +100,6 @@ mod tests {
         state.begin_turn(Work::new(
             Default::default(),
             asked,
-            Default::default(),
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         ));

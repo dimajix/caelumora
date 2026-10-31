@@ -244,14 +244,10 @@ mod tests {
             .create(&as_owner, session.clone(), vec![channel.clone()])
             .await
             .unwrap();
-
-        let context =
-            SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             EventContext::new(session.id, channel.id, ActorId::None, String::new()),
             None,
-            context.clone(),
             channel.classification.clone(),
             Default::default(),
         ));

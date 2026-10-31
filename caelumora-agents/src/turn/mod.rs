@@ -108,7 +108,7 @@ impl<'a> Turn<'a> {
         Some(Self { agent_id, agent_name, agent_channel_state, agent_state, runtime })
     }
 
-    /// A turn begun on `agent_channel_state` with default contexts, no
+    /// A turn begun on `agent_channel_state` with a default context, no
     /// tools and the default profile, as `under_way` - what a test needs to
     /// work in one.
     #[cfg(test)]
@@ -116,7 +116,6 @@ impl<'a> Turn<'a> {
         agent_channel_state.begin_turn(Work::new(
             Default::default(),
             None,
-            Default::default(),
             Default::default(),
             Default::default(),
         ));
@@ -170,7 +169,7 @@ impl<'a> Turn<'a> {
         &self,
         need: Grant,
     ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        self.runtime.workspace_terminal(self.situation().security_context(), need).await
+        self.runtime.workspace_terminal(self.situation().initiator(), need).await
     }
 
     /// The workspace of the agent's session and its shell as its channel
@@ -180,7 +179,7 @@ impl<'a> Turn<'a> {
     /// # Errors
     /// As [`Self::workspace_terminal`].
     pub async fn workspace_shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        self.runtime.workspace_shell(self.situation().security_context()).await
+        self.runtime.workspace_shell(self.situation().initiator()).await
     }
 
     /// `attachment`, one of the agent's channel, copied in the turn's name for what the agent
@@ -189,16 +188,15 @@ impl<'a> Turn<'a> {
     /// # Errors
     /// As `ActorRuntime::copy_attachment`.
     pub async fn copy_attachment(&self, attachment: &ContentRef) -> AttachmentResult<ContentRef> {
-        self.runtime.copy_attachment(self.situation().security_context(), attachment).await
+        self.runtime.copy_attachment(self.situation().initiator(), attachment).await
     }
 
     /// Whether `record` - a note of the agent or an entry of its memory, in its channel - may be
     /// reclassified, in the turn's name, as `classification`, never above the turn's channel as it
     /// began (`ActorRuntime::may_reclassify`, issue 516): what the turn stages then.
     pub async fn may_reclassify(&self, record: OwnRecord, classification: &Classification) -> bool {
-        let work = &self.current().work;
-        let within = &work.classification;
-        self.runtime.may_reclassify(&work.security_context, record, classification, within).await
+        let (initiator, within) = (self.situation().initiator(), self.situation().classification());
+        self.runtime.may_reclassify(initiator, record, classification, &within).await
     }
 
     /// The largest file the turn may put into its session's workspace, as the process is
@@ -411,13 +409,13 @@ impl<'a> Turn<'a> {
         self.current().requested_state
     }
 
-    /// The contexts the turn publishes in: those it began with.
+    /// The context the turn publishes in: the one it began with.
     pub(crate) fn answering(&self) -> Answering {
         Answering::continuing(&self.current().work)
     }
 
     /// Sends `event` to the channel as the agent publishes it, in the
-    /// turn's contexts (`Answering::send`): messages without what only the
+    /// turn's context (`Answering::send`): messages without what only the
     /// agent's owner sees (issues 54, 133). The agent keeps the full
     /// messages in its context; an event with nothing left to show is not
     /// sent. Only the actor holds `output`: what the turn says reaches the
@@ -487,7 +485,6 @@ mod tests {
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
-    use caelumora_model::security::SecurityContext;
     use caelumora_runtime::transport::memory::InMemoryEventSender;
     use tokio::sync::mpsc;
 
@@ -565,7 +562,6 @@ mod tests {
             None,
             Default::default(),
             Default::default(),
-            Default::default(),
         ));
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
         let aside = make_content_ref("a.png", b"a");
@@ -613,7 +609,6 @@ mod tests {
         state.begin_turn(Work::new(
             Default::default(),
             None,
-            Default::default(),
             Default::default(),
             Default::default(),
         ));
@@ -683,7 +678,6 @@ mod tests {
         state.begin_turn(Work::new(
             EventContext::default(),
             None,
-            SecurityContext::default(),
             confidential.clone(),
             Default::default(),
         ));

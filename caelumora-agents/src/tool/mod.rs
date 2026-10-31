@@ -764,7 +764,7 @@ impl ToolExecutor {
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
         let addressed = self
             .runtime
-            .address_questions(questions, turn.situation().security_context())
+            .address_questions(turn.situation().initiator(), questions)
             .ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
         addressed.map(Some).map_err(|e| ToolError::InvalidParameter(e.to_string()))
     }
@@ -857,11 +857,11 @@ impl ToolExecutor {
             .and_then(|t| t.classification.clone());
         let classification =
             output.classification.or(configured).unwrap_or_else(|| channel.clone());
-        let context = turn.situation().security_context();
+        let initiator = turn.situation().initiator();
         let parts = iter::once(&classification)
             .chain(output.shown.iter().map(|shown| &shown.classification));
         if let Some(refused) =
-            parts.into_iter().find(|part| !self.runtime.may_publish(context, part, &channel))
+            parts.into_iter().find(|part| !self.runtime.may_publish(initiator, part, &channel))
         {
             debug!(tool = %call.function_name, classification = %refused, "Withheld a result the channel does not admit");
             return ToolCallResult::of(
@@ -912,8 +912,8 @@ impl ToolExecutor {
         if media.is_empty() {
             return Ok(Vec::new());
         }
-        let context = turn.situation().security_context();
-        self.runtime.create_media(context, classification.clone(), media).await.map_err(not_kept)
+        let initiator = turn.situation().initiator();
+        self.runtime.create_media(initiator, classification.clone(), media).await.map_err(not_kept)
     }
 
     /// How `call`, made by the model in `turn`, is admitted: a call that
@@ -942,7 +942,7 @@ impl ToolExecutor {
         }
         // The one question of the call's permission (issue 304, rule 4) is
         // asked as it is admitted, not again when it runs: the core's.
-        let permit = self.runtime.admit_tool_call(turn.situation().security_context(), call).await;
+        let permit = self.runtime.admit_tool_call(turn.situation().initiator(), call).await;
         let forbidden = || {
             Admission::Answered(Box::new(ToolCallResult::of(
                 call,
@@ -1007,13 +1007,13 @@ impl ToolExecutor {
     /// the work acts in) offered as unavailable, without its tools -
     /// its arguments would carry what the channel holds out of the system.
     pub async fn tool_sets(&self, situation: &Situation<'_>) -> Vec<ToolSet> {
-        let context = situation.security_context();
+        let initiator = situation.initiator();
         let channel = &situation.classification();
         let mut offered = Vec::new();
         for set in self.providers.tool_sets(situation).await {
             let withheld = match (&set.destination, &set.unavailable) {
                 (Some(destination), None) => {
-                    !self.runtime.may_publish(context, channel, destination)
+                    !self.runtime.may_publish(initiator, channel, destination)
                 }
                 _ => false,
             };
@@ -1033,11 +1033,10 @@ impl ToolExecutor {
         if !offered(call, turn) {
             return Err(ToolError::UnknownTool(call.function_name.clone()));
         }
-        let security = turn.situation().security_context();
-        if security.caller_id.as_agent_id().is_none() {
+        let caller = self.runtime.actor_id();
+        if caller.as_agent_id().is_none() {
             return Err(ToolError::PermissionDenied(format!(
-                "tools can only be called by agents, not by {}",
-                security.caller_id
+                "tools can only be called by agents, not by {caller}"
             )));
         }
         // A rule that denies may have been set while the call waited.
@@ -1350,17 +1349,26 @@ mod tests {
         providers: Vec<(&str, Arc<dyn ToolProvider>)>,
         places: Places,
     ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
-        guarding_under(access_policy, Arc::new(ConfidentialityRules::default()), providers, places)
+        let agent = ActorId::Agent(AgentId::new());
+        guarding_under(
+            access_policy,
+            Arc::new(ConfidentialityRules::default()),
+            providers,
+            places,
+            agent,
+        )
     }
 
     /// As `guarding`, the flow decided by `confidentiality` (issue 304): for
-    /// an agent whose runtime holds the policies, the system's rules and the
-    /// session of the test (issue 371).
+    /// the actor `actor` - an agent, as tools are called -, whose runtime
+    /// holds the policies, the system's rules and the session of the test
+    /// (issue 371).
     fn guarding_under(
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         providers: Vec<(&str, Arc<dyn ToolProvider>)>,
         places: Places,
+        actor: ActorId,
     ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
         let providers = providers
             .into_iter()
@@ -1382,18 +1390,15 @@ mod tests {
             None,
         );
         channel.approval_rules = places.channel;
-        let runtime = detached_actor_runtime_in(
-            TestRuntime {
-                access_policy,
-                confidentiality,
-                config,
-                plugins: vec![&TestAgents],
-                ..Default::default()
-            }
-            .build(),
-            session,
-            channel,
-        );
+        let runtime = TestRuntime {
+            access_policy,
+            confidentiality,
+            config,
+            plugins: vec![&TestAgents],
+            ..Default::default()
+        }
+        .build();
+        let runtime = detached_actor_runtime_in(runtime, session, channel, actor);
         let session = Arc::clone(runtime.session_controller());
         let channel = Arc::clone(runtime.channel_controller());
         let executor = ToolExecutor::new(providers, runtime).unwrap();
@@ -1500,17 +1505,7 @@ mod tests {
         let executor = executor(Arc::new(DenyAllPolicy));
 
         let agent_id = AgentId::new();
-        let mut agent_channel_state = offered(
-            &executor,
-            Work {
-                security_context: SecurityContext {
-                    caller_id: ActorId::Agent(agent_id),
-                    ..SecurityContext::default()
-                },
-                ..Default::default()
-            },
-        )
-        .await;
+        let mut agent_channel_state = offered(&executor, Work { ..Default::default() }).await;
         let mut context = Turn::under_way(agent_id, &mut agent_channel_state);
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
@@ -1631,15 +1626,10 @@ mod tests {
             vec![("outward", outward), ("local", local)],
             Places::default(),
         );
-        let agent = SecurityContext {
-            caller_id: ActorId::Agent(AgentId::new()),
-            ..SecurityContext::default()
-        };
 
         let internal = sets_offered(
             &executor,
             Work {
-                security_context: agent.clone(),
                 classification: Classification::general(Confidentiality::Internal),
                 ..Default::default()
             },
@@ -1658,7 +1648,6 @@ mod tests {
         let confidential = sets_offered(
             &executor,
             Work {
-                security_context: agent.clone(),
                 classification: Classification::general(Confidentiality::Confidential),
                 ..Default::default()
             },
@@ -1680,7 +1669,6 @@ mod tests {
 
         let mut agent_channel_state = offering(
             Work {
-                security_context: agent,
                 classification: Classification::general(Confidentiality::Confidential),
                 ..Default::default()
             },
@@ -1719,18 +1707,19 @@ mod tests {
 
     #[tokio::test]
     async fn only_an_agent_calls_tools() {
-        let executor = executor(Arc::new(AllowAllPolicy::new()));
-        let mut agent_channel_state = offered(
-            &executor,
-            Work {
-                security_context: SecurityContext {
-                    caller_id: ActorId::User(UserId::new()),
-                    ..SecurityContext::default()
-                },
-                ..Default::default()
-            },
-        )
-        .await;
+        let providers = vec![(
+            "tools",
+            Arc::new(MockToolProvider { requires_approval: false }) as Arc<dyn ToolProvider>,
+        )];
+        // The executor of a user's actor, whose work calls a tool.
+        let (executor, _, _) = guarding_under(
+            Arc::new(AllowAllPolicy::new()),
+            Arc::new(ConfidentialityRules::default()),
+            providers,
+            Places::default(),
+            ActorId::User(UserId::new()),
+        );
+        let mut agent_channel_state = offered(&executor, Work::default()).await;
         let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
         let result =
@@ -1741,17 +1730,7 @@ mod tests {
     /// A turn of an agent in a general internal channel, with the tools of
     /// `executor` as it began with them.
     async fn agent_turn(executor: &ToolExecutor) -> AgentChannelState {
-        offered(
-            executor,
-            Work {
-                security_context: SecurityContext {
-                    caller_id: ActorId::Agent(AgentId::new()),
-                    ..SecurityContext::default()
-                },
-                ..Default::default()
-            },
-        )
-        .await
+        offered(executor, Work { ..Default::default() }).await
     }
 
     /// The tool sets `executor` offers in a turn done as `work` says.
@@ -1797,6 +1776,7 @@ mod tests {
             Arc::new(ConfidentialityRules::new(compartments)),
             vec![("tools", tools)],
             Places::default(),
+            ActorId::Agent(AgentId::new()),
         )
         .0
     }

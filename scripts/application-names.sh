@@ -1,0 +1,91 @@
+#!/bin/sh
+# Finds what an application names that only the core may hold, against the rule of
+# docs/ARCHITECTURE.md, "The core decides, applications ask" (issue 516): an application builds no
+# `SecurityContext`, asks no policy and holds no manager of the core, but asks the core through the
+# interface it is given.
+#
+#   application-names.sh [file...]
+#
+# The applications are the crates that run an agent or bring components for its facets, and the
+# components of the plugins that stand on both levels; their code is told apart from their tests,
+# which may build what they test: a file below `channel_tests/` and a `testing.rs` are left out, as
+# is the item a `#[cfg(test)]` stands on - an import, or an item to its closing brace - and every
+# comment. Without files, it checks every Rust file of the applications, as `import-blocks.sh` does
+# every Rust file; with files, those of them that belong to an application, passes over the other
+# Rust files and names any other file on stderr. Every name found is printed as
+# `file:line: names Name`, and the script fails if there is one.
+set -eu
+
+applications='caelumora-agents/src caelumora-mcp/src caelumora-a2a/src caelumora-ollama/src
+caelumora-comfyui/src caelumora-workspace-tools/src caelumora-compaction/src
+caelumora-skills/src/component.rs caelumora-artifacts/src/component.rs'
+names='SecurityContext|ActionType|AccessPolicy|AccessQuestions|Enforcement|OwnershipPolicy'
+names="$names|AllowAllPolicy|ConfidentialityPolicy|ConfidentialityQuestions|ConfidentialityRules"
+names="$names|PrivacyPolicy|Policies|SecretManager|RuntimeManager|ControllerManager"
+names="$names|SessionManager|AgentManager|UserManager|GroupManager|ProjectManager|ActorManager"
+names="$names|WorkspaceManager|AttachmentManager"
+
+if [ $# -eq 0 ]; then
+    cd "$(git rev-parse --show-toplevel)"
+    set -- $(git ls-files -- $applications | grep '\.rs$')
+fi
+
+found=0
+for file in "$@"; do
+    applies=no
+    for application in $applications; do
+        case "$file" in
+            "$application" | "$application"/*) applies=yes ;;
+        esac
+    done
+    case "$file" in
+        */channel_tests/* | */testing.rs) applies=no ;;
+    esac
+    if [ "$applies" = no ]; then
+        case "$file" in
+            *.rs) ;;
+            *) echo "application-names.sh: $file is no Rust file" >&2 ;;
+        esac
+        continue
+    fi
+    [ -f "$file" ] || continue
+    if ! awk -v file="$file" -v names="$names" '
+        # The item a `#[cfg(test)]` stands on: an import to its `;`, an item to its closing brace.
+        skipping == 1 && /^[[:space:]]*#\[/ { next }
+        skipping == 1 {
+            line = $0
+            if (line ~ /^[[:space:]]*(pub(\([a-z]+\))? )?use /) {
+                skipping = (line ~ /;[[:space:]]*$/) ? 0 : 2
+                next
+            }
+            depth = gsub(/\{/, "{", line) - gsub(/\}/, "}", line)
+            opened = depth > 0
+            skipping = (opened || line !~ /;[[:space:]]*$/) ? 3 : 0
+            next
+        }
+        skipping == 2 { if ($0 ~ /;[[:space:]]*$/) skipping = 0; next }
+        skipping == 3 {
+            line = $0
+            depth += gsub(/\{/, "{", line) - gsub(/\}/, "}", line)
+            if (depth > 0) opened = 1
+            if (opened && depth <= 0) skipping = 0
+            next
+        }
+        /^[[:space:]]*#\[cfg\(test\)\]/ { skipping = 1; next }
+        /^[[:space:]]*\/\// { next }
+        {
+            line = $0
+            while (match(line, "(^|[^A-Za-z0-9_])(" names ")([^A-Za-z0-9_]|$)")) {
+                name = substr(line, RSTART, RLENGTH)
+                gsub(/[^A-Za-z]/, "", name)
+                printf "%s:%d: names %s\n", file, NR, name
+                failed = 1
+                line = substr(line, RSTART + RLENGTH)
+            }
+        }
+        END { exit failed }
+    ' "$file"; then
+        found=1
+    fi
+done
+exit $found

@@ -1,5 +1,5 @@
 //! Actors, the participants of a channel (see CHANNELS.md): the `Actor`
-//! trait, the contexts an actor answers in (`Answering`), and the actors -
+//! trait, the context an actor answers in (`Answering`), and the actors -
 //! an agent's, an external agent's, a user's and an approver's. What both
 //! kinds of agent are in a channel is their `body`; how it takes in what it
 //! is told is `intake`, the commands it carries out `commands`. Which actor
@@ -154,69 +154,53 @@ pub trait Actor: Any + Debug + Send + Sync {
     fn leave(&self);
 }
 
-/// The contexts an actor acts in when it answers: those of the request,
-/// continued in its name - for an agent's turn those it began with
-/// (`TurnState`), for an external agent's answer those of the request it
-/// answers or of the task it speaks of, for the approver those of the call
-/// it decides. Every envelope the runtime sends is built here (issue 352),
-/// of the event context alone: whose name it carries and what it continues
-/// is what the channel checks at the door (`OriginEventSender`, the
-/// admission), in a context the channel builds for the sender itself (issue
-/// 516). The security context is the actor's own work's - what it acts in
-/// while it answers. Public with what the actors of a kind of agent build
-/// their envelopes with (`to`, `continuing`, `own`, `send`, `send_all`), so
-/// that they build them here too, wherever they are built (issue 370).
+/// The context an actor speaks in when it answers: that of the request,
+/// continued in its name - for an agent's turn the one it began with
+/// (`TurnState`), for an external agent's answer that of the request it
+/// answers or of the task it speaks of, for the approver that of the call it
+/// decides. Every envelope the runtime sends is built here (issue 352), of
+/// the event context alone: whose name it carries and what it continues is
+/// what the channel checks at the door (`OriginEventSender`, the admission),
+/// in a context the channel builds for the sender itself (issue 516). Public
+/// with what the actors of a kind of agent build their envelopes with (`to`,
+/// `continuing`, `own`, `send`, `send_all`), so that they build them here
+/// too, wherever they are built (issue 370).
 #[derive(Debug, Clone)]
 pub struct Answering {
     pub event_context: EventContext,
-    pub security_context: SecurityContext,
 }
 
 impl Answering {
-    /// The contexts of `request`, continued in the name of the actor `id`,
-    /// called `name`, answered for and with the rights its `own` context
-    /// gives it - an agent's owner, with their roles as they are now and its
-    /// limit (issues 255, 304, 341). The request's initiator stays the
-    /// initiator - the root of the chain - and lends nothing: the security
-    /// context is `own`, in the request's place and for its initiator.
-    pub fn to(
-        request: &Envelope,
-        id: ActorId,
-        name: impl Into<String>,
-        own: &SecurityContext,
-    ) -> Self {
-        let security_context = SecurityContext {
-            caller_id: id,
-            initiator_id: request.context.initiator_id,
-            session_id: request.context.session_id,
-            channel_id: request.context.channel_id,
-            ..own.clone()
-        };
-        Self { event_context: request.context.next(id, name), security_context }
+    /// The context of `request`, continued in the name of the actor `id`,
+    /// called `name`. The request's initiator stays the initiator - the root
+    /// of the chain - and lends nothing (issues 255, 304, 341): in whose name
+    /// and with whose rights the actor acts the core decides, as it is asked
+    /// (issue 516).
+    pub fn to(request: &Envelope, id: ActorId, name: impl Into<String>) -> Self {
+        Self { event_context: request.context.next(id, name) }
     }
 
-    /// The contexts `work` was begun in - the request it answers, continued
+    /// The context `work` was begun in - the request it answers, continued
     /// in the actor's name as `to` continued it then: what comes of it,
-    /// later too, is said in them, and stays in the span and the chain of
+    /// later too, is said in it, and stays in the span and the chain of
     /// the request (issue 45).
     pub fn continuing(work: &Work) -> Self {
-        Self {
-            event_context: work.event_context.clone(),
-            security_context: work.security_context.clone(),
-        }
+        Self { event_context: work.event_context.clone() }
     }
 
-    /// The contexts of the actor `id`, called `name`, speaking of itself
-    /// rather than answering - nobody asked: those of its channel, in its
-    /// own `security` context.
-    pub fn own(id: ActorId, name: impl Into<String>, security: &SecurityContext) -> Self {
-        Self {
-            event_context: EventContext::new(security.session_id, security.channel_id, id, name),
-            security_context: security.clone(),
-        }
+    /// The context in which the actor `id`, called `name`, speaks of itself
+    /// rather than answering - nobody asked: in the channel `channel_id` of
+    /// session `session_id`, its own initiator.
+    pub fn own(
+        session_id: SessionId,
+        channel_id: ChannelId,
+        id: ActorId,
+        name: impl Into<String>,
+    ) -> Self {
+        Self { event_context: EventContext::new(session_id, channel_id, id, name) }
     }
 
-    /// The contexts in which the caller of `security`, called `name`, speaks
+    /// The context in which the caller of `security`, called `name`, speaks
     /// in the channel `channel_id` of session `session_id`, whatever place
     /// `security` names - what the channel says in someone's name: that a
     /// participant was removed, in the name of who removed them, and why it
@@ -225,23 +209,23 @@ impl Answering {
         session_id: SessionId,
         channel_id: ChannelId,
         name: impl Into<String>,
-        security: SecurityContext,
+        security: &SecurityContext,
     ) -> Self {
         let event_context = EventContext {
             initiator_id: security.initiator_id,
             ..EventContext::new(session_id, channel_id, security.caller_id, name)
         };
-        Self { event_context, security_context: security }
+        Self { event_context }
     }
 
-    /// These contexts in the span `span_id`: a user's action, whose events
+    /// This context in the span `span_id`: a user's action, whose events
     /// share the span the frontend learns.
     pub(crate) fn with_span(mut self, span_id: Uuid) -> Self {
         self.event_context.span_id = span_id;
         self
     }
 
-    /// These contexts in the span of `answered`, answering its event - what
+    /// This context in the span of `answered`, answering its event - what
     /// is said of an event that is no request, as the channel's refusal of
     /// it (`Answering::to` continues a request so).
     pub(crate) fn replying_to(self, answered: &EventContext) -> Self {
@@ -250,12 +234,11 @@ impl Answering {
         answering
     }
 
-    /// `event` in these contexts, as it is - what `send` sends, and what a
+    /// `event` in this context, as it is - what `send` sends, and what a
     /// sender that hands its events on otherwise than through an
-    /// `EventSender` builds. Every envelope is an event
-    /// of its own, with an `event_id` of its own, however many are sent in
-    /// the same contexts - the events of a turn, which share its span and
-    /// what it answers (issue 352).
+    /// `EventSender` builds. Every envelope is an event of its own, with an
+    /// `event_id` of its own, however many are sent in the same context - the
+    /// events of a turn, which share its span and what it answers (issue 352).
     pub(crate) fn envelope(&self, event: ActorEvent) -> Envelope {
         let context = EventContext { event_id: Uuid::new_v4(), ..self.event_context.clone() };
         Envelope::new(context, event)
@@ -294,7 +277,7 @@ mod tests {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let answered = EventContext::new(session, channel, ActorId::System, "sender");
 
-        let said = Answering::in_channel(session, channel, "system", SecurityContext::system())
+        let said = Answering::in_channel(session, channel, "system", &SecurityContext::system())
             .replying_to(&answered)
             .envelope(ActorEvent::WakeupRequested);
 
@@ -313,13 +296,14 @@ mod tests {
         assert_ne!(said.context.event_id, answered.event_id, "an event of its own");
     }
 
-    /// Every envelope sent in the same contexts - the events of a turn - is
+    /// Every envelope sent in the same context - the events of a turn - is
     /// an event of its own (issue 352).
     #[test]
     fn every_envelope_is_an_event_of_its_own() {
-        let request = Answering::own(ActorId::System, "user", &SecurityContext::system())
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let request = Answering::own(session, channel, ActorId::System, "user")
             .envelope(ActorEvent::WakeupRequested);
-        let turn = Answering::to(&request, ActorId::System, "agent", &SecurityContext::system());
+        let turn = Answering::to(&request, ActorId::System, "agent");
 
         let first = turn.envelope(ActorEvent::WakeupRequested);
         let second = turn.envelope(ActorEvent::WakeupRequested);

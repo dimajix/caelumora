@@ -80,19 +80,19 @@ pub fn test_runtime() -> Arc<RuntimeManager> {
 pub fn detached_actor_runtime() -> ActorRuntime {
     let session = bare_session(SessionId::new());
     let channel = bare_channel(session.id);
-    detached_actor_runtime_in(test_runtime(), session, channel)
+    detached_actor_runtime_in(test_runtime(), session, channel, ActorId::None)
 }
 
-/// As `detached_actor_runtime`, on `runtime_manager`, in `channel` of
-/// `session` - for tests that give the actor the policy, the rules, the
-/// session and the channel of their own (issues 371, 374).
+/// As `detached_actor_runtime`, of `actor`, on `runtime_manager`, in `channel` of `session` - for
+/// tests that give the actor the policy, the rules, the session and the channel of their own
+/// (issues 371, 374), acting in its own name without roles (issue 516).
 pub fn detached_actor_runtime_in(
     runtime_manager: Arc<RuntimeManager>,
     session: Session,
     channel: Channel,
+    actor: ActorId,
 ) -> ActorRuntime {
-    ChannelRuntime::outside_a_session(runtime_manager, session, channel)
-        .new_actor_runtime(ActorId::None)
+    ChannelRuntime::outside_a_session(runtime_manager, session, channel).new_actor_runtime(actor)
 }
 
 /// Creates and starts `session` with its main channel.

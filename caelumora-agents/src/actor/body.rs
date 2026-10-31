@@ -1,7 +1,8 @@
 //! The body of an agent in one channel (issue 355): what both kinds of
 //! agent are there alike - the `AgentActor`, whose mind is a model run
 //! here, and the `ExternalAgentActor`, whose mind runs elsewhere. Who the
-//! agent is in the channel and in whose name it acts, what it holds of the
+//! agent is in the channel and the runtime it asks the core through - which
+//! builds in whose name it acts (issue 516) -, what it holds of the
 //! channel (its `AgentChannelState`), how it takes in what it hears there
 //! (`intake`), the commands it carries out itself (`commands`), and where
 //! its actor stands and what `cancel` and `stop` asked of it (`RunControl`,
@@ -22,7 +23,6 @@ use caelumora_model::agent::{AgentChannelState, AgentId, HearsDuringTurn, RetryR
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Visibility;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
@@ -30,7 +30,7 @@ use caelumora_model::work::Work;
 use caelumora_runtime::actor::Answering;
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::command::CommandSet;
-use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentImpl};
+use caelumora_runtime::component::{ComponentContainer, ComponentImpl};
 use caelumora_runtime::controller::{AgentController, PersonalityController};
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
@@ -56,22 +56,19 @@ fn hand_over_nothing<'a>(
     Box::pin(ready(()))
 }
 
-/// The body of one agent in one channel (issue 355): the agent, in whose
-/// name it acts there, its components that hear and frame what it is
-/// given, its commands, and its state in the channel.
+/// The body of one agent in one channel (issue 355): the agent, its
+/// runtime, its components that hear and frame what it is given, its
+/// commands, and its state in the channel.
 #[derive(Debug)]
 pub(super) struct AgentBody {
     /// The session's controller of the agent, shared with its actors in
     /// the session's other channels (issue 120).
     pub(super) agent: Arc<AgentController>,
     /// The instance's controller of its personality (issue 406), what it
-    /// answers by as it runs - what it is limited to, who sees its
-    /// reasoning. Its components stay as they were built from it.
+    /// answers by as it runs - how it is introduced, who sees its reasoning.
+    /// Its components stay as they were built from it.
     personality: Arc<PersonalityController>,
     pub(super) runtime: ActorRuntime,
-    /// Where it acts, as it was built; its roles and what it is limited to
-    /// are taken anew by `security_context` (issues 304, 406).
-    context: SecurityContext,
     /// What filters what reaches it (issue 196).
     pub(super) perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     /// What frames what its mind is given (issues 98, 204, 214): exactly one.
@@ -122,23 +119,15 @@ impl AgentBody {
         resume: impl FnOnce(&mut AgentChannelState),
     ) -> Result<(Self, ComponentContainer)> {
         let attributes = agent.load().security_attributes.clone();
-        // It acts on behalf of its owner, in this channel (issue 87), with
-        // its owner's roles as they are when it is built, limited by its
-        // personality (issue 304); `security_context` takes them anew.
-        let channel = runtime.channel_controller().load();
-        let context = agent.security_context(
-            channel.session_id,
-            channel.id,
-            personality.load().limiting_roles(),
-        );
         let components = ComponentContainer::with_defaults(
             &personality.load().components,
             defaults,
             facets,
             runtime.component_registry(),
             // Its components get nothing of its runtime (issue 128); what they
-            // read of the session they read through their work (issue 163).
-            &ComponentContext::new(context.clone(), runtime.services().clone()),
+            // read of the session they read through their work (issue 163). They
+            // are built in its name as the core holds it (issue 516).
+            &runtime.component_context(),
         )
         .await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
@@ -154,7 +143,6 @@ impl AgentBody {
             agent,
             personality,
             runtime,
-            context,
             perceive_in_processors,
             context_provider,
             hand_over: hand_over_nothing,
@@ -187,17 +175,6 @@ impl AgentBody {
     /// The agent's name as it is now.
     pub(super) fn name(&self) -> Name {
         self.agent.load().name.name.clone()
-    }
-
-    /// The context it acts in, here: its owner's delegate, with its owner's
-    /// roles as they are now, limited as its personality is now (issues 304,
-    /// 406).
-    pub(super) fn security_context(&self) -> SecurityContext {
-        self.agent.security_context(
-            self.context.session_id,
-            self.context.channel_id,
-            self.personality.load().limiting_roles(),
-        )
     }
 
     /// What of it is public in its channel (issue 403): its name as it is
@@ -240,18 +217,17 @@ impl AgentBody {
         )
     }
 
-    /// The contexts `request` is answered in, continued in the agent's name
-    /// and with its rights (`Answering::to`), and the work that answers it:
+    /// The context `request` is answered in, continued in the agent's name
+    /// (`Answering::to`), and the work that answers it:
     /// asked for as the request says (issue 439), bound by the channel as it
     /// is now - its classification (issue 212), and its session's time zone
     /// the times of messages are given in (issue 424). How its model is
     /// given its context is the answerer's to add (`Work::given_as`).
     pub(super) fn work_for(&self, request: &Envelope) -> (Answering, Work) {
-        let answering = Answering::to(request, self.id(), self.name(), &self.security_context());
+        let answering = Answering::to(request, self.id(), self.name());
         let work = Work::new(
             answering.event_context.clone(),
             request.event.request_reason(),
-            answering.security_context.clone(),
             self.runtime.channel_classification(),
             self.runtime.session_time_zone(),
         );
@@ -293,7 +269,7 @@ impl AgentBody {
             warn!(
                 "Agent {} cannot store its state in channel {}: {:#}",
                 self.agent_id(),
-                self.context.channel_id,
+                self.runtime.channel().id,
                 e
             );
         }
@@ -339,18 +315,17 @@ impl AgentBody {
     }
 
     /// Tells the users that its actor stands at `state` (issue 243) - in
-    /// its own contexts: the state is the agent's, not a turn's. Not sent
-    /// is only logged.
+    /// its own context (`own`): the state is the agent's, not a turn's. Not
+    /// sent is only logged.
     pub(super) async fn announce(&self, state: ActorState, output: &dyn EventSender) {
-        let own = Answering::own(self.id(), self.name(), &self.security_context());
-        if let Err(e) = own.send(ActorEvent::StateChanged(state), output).await {
+        if let Err(e) = self.own().send(ActorEvent::StateChanged(state), output).await {
             warn!("{:#}", e);
         }
     }
 
     /// Tells its channel what the agent recorded since it last did - what
     /// it was given to read, a compaction of its context (issue 417) -, in
-    /// its own contexts, for the channel's history to hold what it saw
+    /// its own context, for the channel's history to hold what it saw
     /// where it saw it. Not sent is only logged: the transcript holds it.
     pub(super) async fn tell_recorded(
         &self,
@@ -361,15 +336,20 @@ impl AgentBody {
         if told.is_empty() {
             return;
         }
-        Answering::own(self.id(), self.name(), &self.security_context())
-            .send_all(told, output)
-            .await;
+        self.own().send_all(told, output).await;
+    }
+
+    /// The context the agent speaks in of itself, nobody having asked: in its channel, its own
+    /// initiator (`Answering::own`).
+    pub(super) fn own(&self) -> Answering {
+        let channel = self.runtime.channel();
+        Answering::own(channel.session_id, channel.id, self.id(), self.name())
     }
 }
 
 impl AgentBody {
     /// Tells whoever asked each of `retries` that the agent does not answer
-    /// again, for `reason` (issue 234) - in the contexts of each request,
+    /// again, for `reason` (issue 234) - in the context of each request,
     /// as an answer to it, in the agent's name and with its rights. One that
     /// cannot be sent is logged.
     pub(super) async fn reject_retries(
@@ -380,12 +360,11 @@ impl AgentBody {
     ) {
         let own = self.id();
         let name = self.name();
-        let acting = self.security_context();
         for retry in retries {
             let Some(target) = retry_target(&retry) else { continue };
             let rejected = ActorEvent::RetryRejected { target, reason };
             if let Err(e) =
-                Answering::to(&retry, own, name.to_string(), &acting).send(rejected, output).await
+                Answering::to(&retry, own, name.to_string()).send(rejected, output).await
             {
                 warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
             }
@@ -435,11 +414,9 @@ mod testing {
             let commands = CommandSet::empty();
             let session = bare_session(SessionId::new());
             let channel = bare_channel(session.id);
-            let (session_id, channel_id) = (session.id, channel.id);
             let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), session, channel);
             let actor_runtime = channel.new_actor_runtime(ActorId::Agent(agent.id()));
             Self {
-                context: agent.security_context(session_id, channel_id, None),
                 agent,
                 personality: Arc::new(PersonalityController::new(personality)),
                 runtime: actor_runtime,

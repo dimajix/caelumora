@@ -1,5 +1,5 @@
 #!/bin/sh
-# Six checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Seven checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
@@ -22,8 +22,12 @@
 #   block (docs/CODING-GUIDELINES.md, "Imports"): `scripts/import-blocks.sh` must find none out of
 #   order and no split block in the Rust files a commit adds or changes, read whole from the
 #   working tree.
+# - An application names nothing only the core may hold (docs/ARCHITECTURE.md, "The core decides,
+#   applications ask"): `scripts/application-names.sh` must find no `SecurityContext`, policy or
+#   manager of the core in the code of the applications' Rust files a commit adds or changes, read
+#   whole from the working tree.
 #
-# `git commit --no-verify` skips all six.
+# `git commit --no-verify` skips all seven.
 set -eu
 
 if ! git diff --cached --quiet -- issues/; then
@@ -51,4 +55,5 @@ rust=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
 if [ -n "$rust" ]; then
     scripts/tuple-bindings.sh $rust
     scripts/import-blocks.sh $rust
+    scripts/application-names.sh $rust
 fi

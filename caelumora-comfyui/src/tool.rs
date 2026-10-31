@@ -430,7 +430,6 @@ mod tests {
             None,
             Default::default(),
             Default::default(),
-            Default::default(),
         ));
         let mut turn = Turn::of(
             AgentId::default(),

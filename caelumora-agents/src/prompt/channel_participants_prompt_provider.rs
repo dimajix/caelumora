@@ -366,17 +366,10 @@ mod tests {
             .unwrap();
         // One who no longer exists: deleted once it founded the channel with the others.
         runtime.agent_manager().delete(&system, gone.id).await.unwrap();
-
-        let context = SecurityContext::default().next(
-            ActorId::Agent(jonathan.id),
-            ActorId::None,
-            ActorId::None,
-        );
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             EventContext::new(session.id, channel.id, ActorId::None, String::new()),
             None,
-            context.clone(),
             channel.classification.clone(),
             Default::default(),
         ));
@@ -416,13 +409,10 @@ mod tests {
         let session = world.shared_session(&[], &[]).await;
         let channel = &session.channels()[0];
         // In its own name alone: nobody it acts for may read the session.
-        let context =
-            SecurityContext::default().next(ActorId::Agent(outsider), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             EventContext::new(session.id(), channel.id(), ActorId::None, String::new()),
             None,
-            context,
             channel.classification(),
             Default::default(),
         ));

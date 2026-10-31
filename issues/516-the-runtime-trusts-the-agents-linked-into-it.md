@@ -520,6 +520,9 @@ whether or not 5 and 6 follow.
    module's service traits (`SkillCatalogue`).
 6. Whether the admission of agent commands at the door is step 2 (recommended, it is the door's)
    or a step of its own.
+7. Where `SecurityContext` and the policies go, since the store traits name the context (found in
+   step 4): with the store traits into the runtime, the model keeping the entities and values
+   alone (recommended for step 6); or both into a crate of the core's own beside the model.
 
 ## Done when
 
@@ -612,4 +615,29 @@ whether or not 5 and 6 follow.
   Left for step 5: the artifacts' component declares the `ArtifactManager`, the views still lend
   their policies (`Views::access_policy`, `confidentiality`), and a component's context still
   offers every service. Stored data: none.
+- **2026-10-31** — Step 4 done on the branch, but for the move of the types: the context leaves
+  the application. `Work` carries no `SecurityContext`; the agent's runtime builds the context of
+  every call its work makes of the core (`ActorRuntime::acting_for`), from the participant the
+  channel resolved for it (`Acting::Participant`, as `ChannelRuntime::participant_runtime` makes
+  it) and the initiator the work names - for the record, as the door does since step 2
+  (`ResolvedParticipant::context_in`, now the one place both build it). Every call of
+  `ActorRuntime` takes the initiator instead of a context; `Situation::security_context` is
+  `Situation::initiator`; `Answering` is the event context alone; the `AgentBody` builds no
+  context and its components are built in the one the core sets (`ActorRuntime::component_context`,
+  `ComponentContext::security_context` the crate's); `MessageProcessor` takes none. The rights of
+  a turn are those at each call, not those of the request kept for the turn - decision 3, the
+  other way than 432, which the security suite now checks (an owner's roles taken away between
+  two calls of one turn). Outside the tests every actor's runtime is a participant's; a test may
+  make one in the actor's own name, without roles (`Acting::Itself`), or give it the context it
+  needs (`acting_as`), both behind `test-support`. `scripts/application-names.sh`, run by the
+  pre-commit hook, finds a `SecurityContext`, a policy or a manager of the core in an
+  application's code.
+  Not done: moving `SecurityContext`, the policies, the `SecretManager`, the user providers and
+  `AppConfig` from the model into the runtime. The plan contradicts itself there: the store
+  traits, which it leaves in the model, take a `&SecurityContext` in every method, so the context
+  cannot leave the model without them. Decided with the model's split in step 6 (Decisions, 7);
+  until then the check keeps applications from naming them. The components of skills and
+  artifacts still hand their managers a context - the one of the views the core built for the
+  turn, unnamed (`views().context()`) -, which their service traits take over in step 5. Stored
+  data: none - a `Work` stored with a context reads as one without.
 

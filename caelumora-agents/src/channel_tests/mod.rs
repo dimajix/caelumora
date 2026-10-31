@@ -289,11 +289,7 @@ struct NoSecrets;
 
 #[async_trait::async_trait]
 impl MessageProcessor for NoSecrets {
-    async fn process_messages(
-        &self,
-        input: Vec<Message>,
-        _security: &SecurityContext,
-    ) -> Result<Vec<Message>, ProcessingError> {
+    async fn process_messages(&self, input: Vec<Message>) -> Result<Vec<Message>, ProcessingError> {
         Ok(input
             .into_iter()
             .filter(|m| !m.content.as_deref().unwrap_or_default().contains("secret"))

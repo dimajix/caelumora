@@ -1500,7 +1500,9 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![Ok(
         ExternalEvent::Started(task("t-1")),
     )]]));
-    let Stuck { channel, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+    let Stuck { channel, context, agent, running, .. } =
+        with_an_external_agent(Arc::clone(&remote)).await;
+    let alice = alice_of(&context);
 
     let state = time::timeout(Duration::from_secs(5), async {
         loop {
@@ -1531,7 +1533,11 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
         ["hello"]
     );
     let sent_as = remote.called_as()[0].1.clone();
-    assert_eq!(work.security_context, sent_as, "the authority of the request it was sent with");
+    assert_eq!(
+        (sent_as.caller_id, sent_as.principal_id, sent_as.initiator_id),
+        (ActorId::Agent(agent), ActorId::User(alice), work.initiator()),
+        "in the agent's name, with its owner's rights, for whoever began the request"
+    );
     assert_eq!(
         work.event_context.sender_id,
         ActorId::Agent(agent),
@@ -1633,30 +1639,27 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
     let request =
         EventContext::new(SessionId::default(), ChannelId::default(), bob, "bob".to_string());
     let begun = request.clone();
-    let stored =
-        move |agent| {
-            let hermes = ActorId::Agent(agent);
-            Some(AgentChannelState {
-                remote: RemoteState {
-                    open_tasks: vec![OpenTask {
-                        task: task("t-1"),
-                        since: Utc::now(),
-                        state: OpenTaskState::Working,
-                        unsaid: None,
-                        work: Some(Work::new(
-                            begun.next(hermes, "hermes".to_string()),
-                            None,
-                            SecurityContext::new(bob, SessionId::default(), ChannelId::default())
-                                .next(hermes, ActorId::None, ActorId::None),
-                            Classification::CHANNEL_DEFAULT,
-                            Default::default(),
-                        )),
-                    }],
-                    ..RemoteState::default()
-                },
-                ..AgentChannelState::default()
-            })
-        };
+    let stored = move |agent| {
+        let hermes = ActorId::Agent(agent);
+        Some(AgentChannelState {
+            remote: RemoteState {
+                open_tasks: vec![OpenTask {
+                    task: task("t-1"),
+                    since: Utc::now(),
+                    state: OpenTaskState::Working,
+                    unsaid: None,
+                    work: Some(Work::new(
+                        begun.next(hermes, "hermes".to_string()),
+                        None,
+                        Classification::CHANNEL_DEFAULT,
+                        Default::default(),
+                    )),
+                }],
+                ..RemoteState::default()
+            },
+            ..AgentChannelState::default()
+        })
+    };
     let remote = Arc::new(ScriptedExternalAgent::default().resuming(vec![vec![
         Ok(ExternalEvent::Message("Done for bob.".to_string())),
         Ok(ExternalEvent::Completed),
@@ -1699,7 +1702,6 @@ fn begun_above(agent: AgentId, open: &str, standing: OpenTaskState) -> AgentChan
     let work = Work::new(
         EventContext::default().next(own, "hermes".to_string()),
         None,
-        SecurityContext::default().next(own, ActorId::None, ActorId::None),
         Classification::general(Confidentiality::Confidential),
         Default::default(),
     );

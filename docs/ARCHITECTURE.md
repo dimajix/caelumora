@@ -434,10 +434,12 @@ The design repeats a few decisions; new code follows them.
     decide. What the core cannot enforce it does not pretend to: a tool whose effect lies outside
     the system runs if the application runs it, and an agent's own record - its transcript - is
     the application's; the core's record of a conversation is the channel's history, taken at its
-    door. Today the code keeps this as a rule, not by the compiler: an application asks its
-    controller for the context of its own work, holds controllers, and could reach the policies
-    through the views and the core's services through its components' context (issue
-    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)).
+    door. Today the code keeps part of this as a rule, not by the compiler: an application holds
+    controllers, could reach the policies through the views and the core's services through its
+    components' context, and the components of skills and artifacts hand their managers the
+    context the views were opened in (issue
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)); that it names no
+    context, policy or manager of the core `scripts/application-names.sh` checks.
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to

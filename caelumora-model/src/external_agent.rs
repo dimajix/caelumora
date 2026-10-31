@@ -61,10 +61,10 @@ pub struct OpenTask {
     /// the task ended: not said yet, but said - once - with the rest when
     /// the task ends (issue 195).
     pub unsaid: Option<String>,
-    /// The work it is: the contexts it is done in and what it writes as.
-    /// The remote agent is called in them for as long as the task is open,
-    /// to follow it, to cancel it, and what comes of it is said in them,
-    /// classified as it. `None` for a task stored before it was kept.
+    /// The work it is: the event context it is done in and what it writes
+    /// as. The remote agent is called for its initiator for as long as the
+    /// task is open, to follow it, to cancel it, and what comes of it is said
+    /// in that context, classified as it. `None` for a task stored before it was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work: Option<Work>,
 }
@@ -212,7 +212,6 @@ mod tests {
     use crate::actor::{ActorId, EventContext};
     use crate::confidentiality::Classification;
     use crate::digest;
-    use crate::security::SecurityContext;
     use crate::user::UserId;
 
     #[test]
@@ -229,26 +228,21 @@ mod tests {
         remote.set_unsaid(&two, Some("so far".to_string()));
         assert_eq!(remote.unsaid_of(&two).as_deref(), Some("so far"));
         assert_eq!(remote.unsaid_of(&one), None);
-        let bob = SecurityContext::new(
-            ActorId::User(UserId::new()),
-            Default::default(),
-            Default::default(),
-        );
+        let bob = ActorId::User(UserId::new());
         remote.begin(
             &one,
             &Work::new(
-                EventContext::default(),
+                EventContext { initiator_id: bob, ..EventContext::default() },
                 None,
-                bob.clone(),
                 Classification::CHANNEL_DEFAULT,
                 Default::default(),
             ),
         );
         assert_eq!(remote.working().collect::<Vec<_>>(), [&one, &two], "taken up again, it works");
         assert_eq!(
-            remote.work_of(&one).map(|w| w.security_context.initiator_id),
-            Some(bob.initiator_id),
-            "in the contexts of the request"
+            remote.work_of(&one).map(|w| w.event_context.initiator_id),
+            Some(bob),
+            "in the context of the request"
         );
         assert!(remote.work_of(&two).is_none(), "none kept");
         remote.open(&one, OpenTaskState::InputRequired);

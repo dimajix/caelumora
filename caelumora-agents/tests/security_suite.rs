@@ -56,7 +56,7 @@ use caelumora_model::question::{Addressee, Answers, QuestionId, QuestionRequest,
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::Secrets;
-use caelumora_model::security::{AclEntry, Grant, Secured, SecurityContext, Subject};
+use caelumora_model::security::{AclEntry, Grant, Secured, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::PersonalitySnapshot;
 use caelumora_model::store::query::Query;
@@ -76,7 +76,8 @@ use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_runtime::testing::{
-    asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World, STAFF,
+    actor_runtime_in, asked_for, attributes, checks, denied, not_found, quiet, shown, workspace,
+    World, STAFF,
 };
 use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
@@ -3717,10 +3718,11 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
 // --- Commands an agent carries out itself (issue 269) ------------------------
 
 /// A component whose agent carries out `/mark`, for whoever may write in the
-/// channel, and `/seal`, for its owners alone; it keeps the context of every
-/// turn it carries one out in.
+/// channel, and `/seal`, for its owners alone; it keeps the initiator of every
+/// turn it carries one out in, and reads its session there - so that the
+/// policy sees in whose name the core lets the turn act (issue 516).
 #[derive(Debug)]
-struct Commanded(Arc<Mutex<Vec<SecurityContext>>>);
+struct Commanded(Arc<Mutex<Vec<ActorId>>>);
 
 impl ProvidesCommands for Commanded {
     fn commands(&self) -> Vec<Command> {
@@ -3742,7 +3744,8 @@ impl AgentCommandProvider for Commanded {
         _args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {
-        self.0.lock().unwrap().push(turn.situation().security_context().clone());
+        let _ = turn.situation().session_view().await;
+        self.0.lock().unwrap().push(turn.situation().initiator());
         Ok(CommandOutput::private(format!("{name}: done")))
     }
 }
@@ -3751,7 +3754,7 @@ impl AgentCommandProvider for Commanded {
 /// commands of `Commanded`; what its turns ran in, and how bob's stream
 /// shows the answers to his commands.
 async fn with_a_commanded_agent(
-) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, Arc<Mutex<Vec<SecurityContext>>>, ChannelWatch) {
+) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, Arc<Mutex<Vec<ActorId>>>, ChannelWatch) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let world = World::with(&[&TestAgents], |registry| {
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)]);
@@ -3893,26 +3896,88 @@ async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
 }
 
 /// An agent carries a command out for its owner, on the word of whoever
-/// asked (issue 255): bob's `/mark` runs in a turn whose caller is the agent,
-/// whose principal is alice, and whose initiator is bob.
+/// asked (issue 255): bob's `/mark` runs in a turn whose initiator is bob, and
+/// what it asks the core is asked with the agent as caller and alice as
+/// principal - the core builds that context, the agent names only bob
+/// (issue 516).
 #[tokio::test]
 async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
     let (world, session, main, seen, mut his) = with_a_commanded_agent().await;
-    let helper =
-        main.participants().into_iter().find(|m| m.name == "helper").expect("helper takes part").id;
 
-    main.user_actor(world.bob)
-        .unwrap()
-        .execute_command("mark", "@helper")
-        .await
-        .expect("his to ask for");
-    shown(&mut his, "CommandExecuted").await;
-    let turn = seen.lock().unwrap().pop().expect("carried out");
-    assert_eq!(
-        (turn.caller_id, turn.principal_id, turn.initiator_id),
-        (helper, ActorId::User(world.alice), ActorId::User(world.bob))
+    let (_, asked) = world
+        .asked(async {
+            main.user_actor(world.bob)
+                .unwrap()
+                .execute_command("mark", "@helper")
+                .await
+                .expect("his to ask for");
+            shown(&mut his, "CommandExecuted").await;
+        })
+        .await;
+    assert_eq!(seen.lock().unwrap().pop(), Some(ActorId::User(world.bob)), "on his word");
+    assert!(
+        asked.iter().any(|line| line.starts_with("alice as helper, asked by bob: GetSession")),
+        "with her rights, as the agent, on his word: {asked:?}"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+// --- Rights at each call (issue 516) ----------------------------------------------------------
+
+/// What an agent's work asks the core is asked with its owner's rights as they are at the call, not
+/// as they were when the request came (issue 516, decision 3): the core builds the context of each
+/// call from the agent's participant as the controllers hold it. Alice's role clears her for her
+/// internal workspace, which her agent reads through the views it navigates for bob's request;
+/// once the role is taken, the next read on the same request does not reach it.
+#[tokio::test]
+async fn an_agents_work_acts_with_its_owners_rights_as_they_are_at_each_call() {
+    use caelumora_model::event::GlobalEvent;
+    use caelumora_model::user::{User, UserUpdateEvent};
+    let world = World::with(&[&TestAgents], |_| {}).await;
+    let personality = world.personality("plain", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let alice = World::as_user(world.alice);
+    let docs = world
+        .runtime
+        .workspace_manager()
+        .create(
+            &alice,
+            "docs",
+            Scope::UserScope { user_id: world.alice },
+            "shell",
+            None,
+            Classification::general(Confidentiality::Internal),
+        )
+        .await
+        .unwrap();
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let runtime = actor_runtime_in(&main, ActorId::Agent(helper));
+    let read = || async {
+        let session = runtime
+            .session_view(ActorId::User(world.bob), main.classification())
+            .await
+            .expect("its session to read")
+            .expect("in its session");
+        session.views().workspace(docs.id).await
+    };
+
+    assert!(read().await.is_ok(), "cleared for it by her role");
+    world
+        .runtime
+        .controller_manager()
+        .user_controller(world.alice)
+        .await
+        .unwrap()
+        .process_global_event(&GlobalEvent::updated::<User>(
+            &world.alice,
+            &UserUpdateEvent::RolesChanged(Vec::new()),
+        ));
+    assert!(
+        matches!(read().await, Err(ViewError::WorkspaceNotFound(_))),
+        "not any more, at the next call"
+    );
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 // --- Attachments ---------------------------------------------------------------

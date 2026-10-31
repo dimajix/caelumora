@@ -186,7 +186,6 @@ impl ToolProvider for ArtifactTool {
             _ => at.file_name().unwrap_or_default().to_string(),
         };
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
-        let ctx = turn.situation().security_context();
         let channel = (turn.situation().session_id(), turn.situation().channel_id());
         // Into the project its session's results go to (issue 467), as the session is now.
         let session = turn.situation().session_view().await?.ok_or_else(|| {
@@ -198,7 +197,15 @@ impl ToolProvider for ArtifactTool {
         let content = terminal.read(&at).await?;
         let (artifact, number) = self
             .artifacts
-            .publish(ctx, channel, content, &workspace.classification, &name, description)
+            // In the name the core reads the session in for the turn (issue 516).
+            .publish(
+                session.views().context(),
+                channel,
+                content,
+                &workspace.classification,
+                &name,
+                description,
+            )
             .await?;
         let version = artifact.version(number).ok_or_else(|| {
             ToolError::ExecutionFailed(format!("version {number} of the artifact is missing"))

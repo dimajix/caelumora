@@ -2,7 +2,7 @@
 //! appending to the history what they send.
 
 use super::inbox::{Behind, Inbox, InboxReceiver, CAPACITY};
-use super::{stopped, ActorChange, ChannelActor, ChannelLoop, ResolvedKind};
+use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
 use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::moderator::Routing;
@@ -242,8 +242,7 @@ impl ChannelLoop {
         running: &HashMap<ActorId, RunningActor>,
     ) {
         let name = self.name_of(by.caller_id).await;
-        let envelope =
-            Answering::in_channel(self.session_id, self.id, name, by.clone()).envelope(event);
+        let envelope = Answering::in_channel(self.session_id, self.id, name, &by).envelope(event);
         debug!("Announcing {}", envelope.describe());
         self.enter(envelope, &by, running).await;
     }
@@ -404,26 +403,16 @@ impl ChannelLoop {
     /// `initiator` (issue 516): what its envelopes are admitted and routed in, live and read back
     /// from the history alike (issue 223) - never what the sender says of itself. A user's own; an
     /// agent's with its owner's rights and roles as the controllers hold them, limited by its
-    /// personality (`ResolvedParticipant::context`); the approver's its own, answered for by the
+    /// personality (`ResolvedParticipant::context_in`); the approver's its own, answered for by the
     /// owner of its channel (issue 341); one without rights if the sender takes no part, or is
     /// none - the channel, the system. The initiator is the one the event names.
     fn security_context_of(&self, sender: ActorId, initiator: ActorId) -> SecurityContext {
-        let nobody = || SecurityContext::new(ActorId::None, self.session_id, self.id);
-        let now = match self.actors.load().get(&sender).map(|actor| &actor.participant) {
-            Some(participant) => match participant.kind() {
-                // An internal actor of the channel, no participant (issue 420).
-                ResolvedKind::Approver(approver) => approver.security_context(&self.channel.load()),
-                ResolvedKind::User(_) | ResolvedKind::Agent(..) => {
-                    participant.context().unwrap_or_else(nobody)
-                }
+        match self.actors.load().get(&sender) {
+            Some(actor) => actor.participant.context_in(&self.channel.load(), initiator),
+            None => SecurityContext {
+                initiator_id: initiator,
+                ..SecurityContext::new(ActorId::None, self.session_id, self.id)
             },
-            None => nobody(),
-        };
-        SecurityContext {
-            initiator_id: initiator,
-            session_id: self.session_id,
-            channel_id: self.id,
-            ..now
         }
     }
 
@@ -719,7 +708,7 @@ impl ChannelLoop {
             self.session_id,
             self.id,
             ActorId::System.to_string(),
-            SecurityContext::system(),
+            &SecurityContext::system(),
         )
         .replying_to(&event.context)
         .envelope(rejected);
@@ -837,7 +826,7 @@ impl ChannelLoop {
     /// to whom it goes among the actors (`Envelope::recipients`) or whom
     /// the moderator named; each notice of the moderator's to whom it names,
     /// in the system's name; a request to respond to each it asks, in the
-    /// event's contexts, with the hops it counted - unless the channel is
+    /// event's context, with the hops it counted - unless the channel is
     /// `quiet` after a cancel: what was said still reaches everyone, so that
     /// every transcript keeps up with the history, but nobody is asked to
     /// answer it. Each notice and request is recorded, in the system's name,

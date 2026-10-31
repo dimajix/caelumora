@@ -424,7 +424,8 @@ impl ToolProvider for SkillsComponent {
             CREATE_SKILL_TOOL_NAME => {
                 let Create { name, description, body, scope } = arguments(params)?;
                 let session = session_of(turn).await?;
-                let context = turn.situation().security_context().clone();
+                // In the name the core reads the session in for the turn (issue 516).
+                let context = session.views().context().clone();
                 let scope = match SkillScope::of(&scope)? {
                     SkillScope::Session => {
                         Scope::SessionScope { session_id: turn.situation().session_id() }
@@ -464,7 +465,7 @@ impl ToolProvider for SkillsComponent {
                 }
                 let session = session_of(turn).await?;
                 let skill = session.views().usable_skill_named(name.trim()).await?;
-                let context = turn.situation().security_context().clone();
+                let context = session.views().context().clone();
                 let views = session.views();
                 let manager = views.skill_manager()?;
                 // What the turn saw goes into the skill: raised to it first,
@@ -577,7 +578,7 @@ impl AgentCommandProvider for SkillsComponent {
                     .await
                     .map_err(|e| command_error(name, e))?;
                 // In the name of who asked, as the channel knows them.
-                let issuer = turn.situation().security_context().initiator_id;
+                let issuer = turn.situation().initiator();
                 let issuer_name = match turn.situation().channel_view().await {
                     Ok(Some(channel)) => channel
                         .participant(issuer)

@@ -687,8 +687,9 @@ pub fn denied(error: &Error) -> bool {
     refusal(error).is_some()
 }
 
-/// The runtime of `actor` in `channel`, as its turns act through it and
-/// navigate from it (`ActorRuntime::views`).
+/// The runtime of `actor` in `channel`, as its turns act through it and navigate from it: the
+/// participant's, in its context as the controllers hold it, or, for an actor that takes no part,
+/// one in its own name without roles (issue 516).
 pub fn actor_runtime_in(channel: &Arc<ChannelLoop>, actor: ActorId) -> ActorRuntime {
     channel.new_actor_runtime(actor)
 }

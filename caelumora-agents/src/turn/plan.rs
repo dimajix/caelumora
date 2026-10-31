@@ -279,7 +279,6 @@ mod tests {
     use caelumora_model::message::Message;
     use caelumora_model::message::MessageId;
     use caelumora_model::plan::PlanId;
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::work::Work;
     use caelumora_runtime::transport::Discard;
     use futures::executor;
@@ -422,7 +421,6 @@ mod tests {
                 Work::new(
                     EventContext::default(),
                     None,
-                    SecurityContext::default(),
                     Classification::default(),
                     Default::default(),
                 )
@@ -487,14 +485,8 @@ mod tests {
         );
 
         state.begin_turn(
-            Work::new(
-                EventContext::default(),
-                None,
-                SecurityContext::default(),
-                Classification::default(),
-                Default::default(),
-            )
-            .given_as(keeps_system),
+            Work::new(EventContext::default(), None, Classification::default(), Default::default())
+                .given_as(keeps_system),
         );
         let mut turn = Turn::under_way(agent, &mut state);
         turn.set_context(Vec::new(), Vec::new());

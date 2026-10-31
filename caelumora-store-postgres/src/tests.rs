@@ -330,13 +330,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
         channel_id: channel,
         ..EventContext::default()
     };
-    state.begin_turn(Work::new(
-        context,
-        None,
-        SecurityContext::default(),
-        Classification::CHANNEL_DEFAULT,
-        Default::default(),
-    ));
+    state.begin_turn(Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default()));
     let sets = vec![ToolSet::new("search", "searches", Vec::new())];
     state.offer_tools(sets.clone());
     let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);

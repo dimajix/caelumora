@@ -161,12 +161,12 @@ impl UserActor {
     }
 
     /// An envelope from this user, in the span `span_id`. Envelopes are only
-    /// ever built here, so the sender, session, channel and security context
-    /// are always this actor's own (`Answering::own`), whatever the caller of
+    /// ever built here, so the sender, session and channel are always this
+    /// actor's own (`Answering::own`), whatever the caller of
     /// `send_message` is. Nothing of what a user says is for its owner
     /// alone: it is sent as it is (`Answering::envelope`).
     fn envelope(&self, event: ActorEvent, span_id: Uuid) -> Envelope {
-        Answering::own(self.id(), self.name(), &self.security_context())
+        Answering::own(self.session_id, self.channel_id, self.id(), self.name())
             .with_span(span_id)
             .envelope(event)
     }
@@ -878,7 +878,7 @@ impl UserActor {
     /// what they ask of the channel are checked in. What they send is
     /// admitted in the context the channel builds for them (issue 516).
     pub(crate) fn security_context(&self) -> SecurityContext {
-        self.user.security_context(self.session_id, self.channel_id)
+        self.actor_runtime.acting_for(self.id)
     }
 }
 

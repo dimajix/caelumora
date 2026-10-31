@@ -13,9 +13,8 @@ use crate::transport::{EventReceiver, EventSender};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::agent::{Personality, PersonalityKind};
+use caelumora_model::agent::PersonalityKind;
 use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
@@ -50,11 +49,10 @@ impl Plugin for ScriptedAgents {
         let kinds: &mut AgentKinds = runtime.agent_kinds();
         for kind in [PersonalityKind::Internal, PersonalityKind::External] {
             let script = self.0.clone();
-            kinds.register(kind, &[], move |agent, personality, runtime| {
+            kinds.register(kind, &[], move |agent, _personality, runtime| {
                 let script = script.clone();
                 async move {
-                    Ok(Box::new(ScriptedAgent::new(&agent, &personality.load(), runtime, script))
-                        as Box<dyn Actor>)
+                    Ok(Box::new(ScriptedAgent::new(&agent, runtime, script)) as Box<dyn Actor>)
                 }
             });
         }
@@ -76,9 +74,6 @@ enum Interrupt {
 pub struct ScriptedAgent {
     id: ActorId,
     name: Name,
-    /// In whose name it acts, as an agent of its owner, limited as its
-    /// personality says.
-    security: SecurityContext,
     runtime: ActorRuntime,
     script: Script,
     state: Mutex<ActorState>,
@@ -95,21 +90,10 @@ pub struct ScriptedAgent {
 }
 
 impl ScriptedAgent {
-    fn new(
-        agent: &AgentController,
-        personality: &Personality,
-        runtime: ActorRuntime,
-        script: Script,
-    ) -> Self {
-        let channel = runtime.channel_controller().load();
+    fn new(agent: &AgentController, runtime: ActorRuntime, script: Script) -> Self {
         Self {
             id: ActorId::Agent(agent.id()),
             name: agent.load().name.name.clone(),
-            security: agent.security_context(
-                channel.session_id,
-                channel.id,
-                personality.limiting_roles(),
-            ),
             runtime,
             script,
             state: Mutex::new(ActorState::Idle),
@@ -135,7 +119,7 @@ impl ScriptedAgent {
     /// stop or leave meanwhile. Stopped, it keeps its turn as an agent
     /// does, and says nothing more of it (issue 377).
     async fn respond(&self, request: &Envelope, output: &dyn EventSender) -> bool {
-        let answering = Answering::to(request, self.id, self.name.clone(), &self.security);
+        let answering = Answering::to(request, self.id, self.name.clone());
         let turn_id = TurnId::new();
         self.set_turn(Some(turn_id));
         self.go_to(ActorState::Planning, output).await;
@@ -217,7 +201,8 @@ impl ScriptedAgent {
         if let Ok(mut current) = self.state.lock() {
             *current = state;
         }
-        Answering::own(self.id, self.name.clone(), &self.security)
+        let channel = self.runtime.channel();
+        Answering::own(channel.session_id, channel.id, self.id, self.name.clone())
             .send_all(vec![ActorEvent::StateChanged(state)], output)
             .await;
     }

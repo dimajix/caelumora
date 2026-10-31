@@ -13,7 +13,7 @@ use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use anyhow::{anyhow, Context, Error, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{
-    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget,
+    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };
 use caelumora_model::agent::{AgentChannelState, RetryRefused};
 use caelumora_model::approval::{ApprovalResponse, ApprovalStatus};
@@ -116,14 +116,9 @@ impl AgentActor {
     /// A message as it leaves the agent, through the emit processors - a
     /// complete one to be said, a partial one only shown. `None` if the
     /// processors dropped it.
-    async fn respond(&self, message: Message, turn: &mut Turn<'_>) -> Option<Message> {
-        let mut output = apply_stage_processors(
-            &self.emit_out_processors,
-            vec![message],
-            turn.situation().security_context(),
-        )
-        .await
-        .ok()?;
+    async fn respond(&self, message: Message) -> Option<Message> {
+        let mut output =
+            apply_stage_processors(&self.emit_out_processors, vec![message]).await.ok()?;
         if output.is_empty() {
             return None;
         }
@@ -146,7 +141,7 @@ impl AgentActor {
     }
 
     /// Starts a new turn in answer to the `ResponseRequested` in `request`,
-    /// in its contexts continued in the agent's name, with the channel as it
+    /// in its context continued in the agent's name, with the channel as it
     /// is now: begins it on `state`, offers it the tools its providers offer
     /// for its work (issue 290), announces `ResponseStarted` and builds the
     /// context. The run loop then goes on in `Planning`. Fails without a
@@ -260,7 +255,7 @@ impl AgentActor {
     /// gone already, else the last - and the others are rejected as asked
     /// again. A retry accepted and a request to respond in the same batch
     /// are one turn, answering the conversation as it stands, in the
-    /// contexts of the request; a retry alone begins one in its own. A
+    /// context of the request; a retry alone begins one in its own. A
     /// command is carried out where it came in the batch, asleep or not
     /// (issue 269). `None` once the actor's input is closed; where it
     /// stands, untouched, once `stop` or `leave` ask the run loop to end
@@ -340,7 +335,7 @@ impl AgentActor {
     }
 
     /// Answers the `RetryRequested` in `request` (issues 234, 235), in its
-    /// contexts continued in the agent's name. The turn `given_up_for` it
+    /// context continued in the agent's name. The turn `given_up_for` it
     /// can be answered again, its answer being gone already; another turn
     /// is over (`Ended`); a message can be if it is the agent's last answer
     /// (`AgentChannelState::retried`). If it can, the agent says so with
@@ -357,12 +352,7 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<bool> {
         let Some(target) = retry_target(request) else { return Ok(false) };
-        let answering = Answering::to(
-            request,
-            self.id(),
-            self.body.agent.name(),
-            &self.body.security_context(),
-        );
+        let answering = Answering::to(request, self.id(), self.body.agent.name());
         let can = match target {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
             // Its last turn given up: answered anew after it, nothing taken
@@ -460,7 +450,7 @@ impl AgentActor {
     fn lowered(&self, under_way: &TurnState) -> Option<Classification> {
         let channel = self.body.runtime.channel_classification();
         let flows = self.body.runtime.may_publish(
-            &under_way.work.security_context,
+            under_way.work.initiator(),
             &under_way.work.classification,
             &channel,
         );
@@ -694,7 +684,7 @@ impl AgentActor {
             match event {
                 MessageEvent::Partial(mut message) => {
                     stamp(&mut message, turn, self.body.reasoning_visibility(), false);
-                    if let Some(msg) = self.respond(message, turn).await {
+                    if let Some(msg) = self.respond(message).await {
                         turn.show(msg, output).await?;
                     }
                 }
@@ -702,7 +692,7 @@ impl AgentActor {
                     stamp(&mut message, turn, self.body.reasoning_visibility(), true);
                     self.request_approvals(&message.tool_calls, turn, output).await?;
                     let converged = message.tool_calls.is_empty();
-                    if let Some(msg) = self.respond(message, turn).await {
+                    if let Some(msg) = self.respond(message).await {
                         turn.say(msg, output).await?;
                     }
                     // An answer without tool calls ends a step of a plan -
@@ -1197,19 +1187,10 @@ impl Actor for AgentActor {
                 return Vec::new();
             }
         };
-        let at = EventContext::new(
-            runtime.session_controller().load().id,
-            runtime.channel_controller().load().id,
-            ActorId::None,
-            String::new(),
-        );
-        let work = Work::new(
-            at,
-            None,
-            self.body.security_context(),
-            runtime.channel_classification(),
-            runtime.session_time_zone(),
-        );
+        // As the agent's own, nobody having asked.
+        let at = self.body.own().event_context;
+        let work =
+            Work::new(at, None, runtime.channel_classification(), runtime.session_time_zone());
         self.tool_executor.tool_sets(&self.body.situation(&work, &state)).await
     }
 
@@ -1343,7 +1324,6 @@ mod tests {
         agent_channel_state.begin_turn(Work::new(
             Default::default(),
             None,
-            Default::default(),
             channel.clone(),
             Default::default(),
         ));
@@ -1412,7 +1392,6 @@ mod tests {
             agent_channel_state.begin_turn(Work::new(
                 Default::default(),
                 None,
-                Default::default(),
                 Classification::CHANNEL_DEFAULT,
                 Default::default(),
             ));

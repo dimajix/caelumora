@@ -76,19 +76,21 @@ views, and maps refusals to `403`, every `*NotFound` to `404`.
 ## The map
 
 Notation for whose name: **U** the user's own context; **T** a turn's (the agent as caller, its
-owner as owner and principal, whoever asked as initiator); **A** the agent's own (the agent itself
-as initiator); **E** an envelope's, built by the channel as it admits it (issue 516): the sender's
-context as the channel knows it then - a user's own, an agent's with its owner's rights and roles as
-the controllers hold them, limited by its personality, the approver's answered for by the channel's
-owner -, with the initiator the event names, and one without rights if the sender takes no part;
-never what the sender set. An envelope read back from the history (issue 223) carries the recorded
-initiator and is admitted again only as a command asked of an agent; **V** a viewer's (U, or T with
-the place the agent reads from); **C** the owner's of a channel or session, with their roles as they
-are when it is built (its components, its commands - only while they are built); **S** the system's,
-which asks nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
-SECURITY.md); "store" is the store layer, in the context the caller passes. Every Read of the store
-of what is classified - a channel, a workspace, a skill, an artifact - is followed by `cleared_for`
-in the same context (issue 322), named in the rows where it is the reason of a refusal.
+owner as owner and principal, whoever asked as initiator), built by the agent's runtime at every
+call from the participant the channel resolved and the initiator the work names (issue 516); **A**
+the agent's own (the agent itself as initiator), built so too; **E** an envelope's, built by the
+channel as it admits it (issue 516): the sender's context as the channel knows it then - a user's
+own, an agent's with its owner's rights and roles as the controllers hold them, limited by its
+personality, the approver's answered for by the channel's owner -, with the initiator the event
+names, and one without rights if the sender takes no part; never what the sender set. An envelope
+read back from the history (issue 223) carries the recorded initiator and is admitted again only as
+a command asked of an agent; **V** a viewer's (U, or T with the place the agent reads from); **C**
+the owner's of a channel or session, with their roles as they are when it is built (its components,
+its commands - only while they are built); **S** the system's, which asks nothing. After the name
+the concept. The rule column names the reason it is asked (R1-R5, SECURITY.md); "store" is the store
+layer, in the context the caller passes. Every Read of the store of what is classified - a channel,
+a workspace, a skill, an artifact - is followed by `cleared_for` in the same context (issue 322),
+named in the rows where it is the reason of a refusal.
 
 The column *Again* names where a question of the operation is asked once more on the way: *(pair)*
 asked by the operation itself before it acts (R2) and again by the store as it writes (R1);

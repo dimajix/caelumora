@@ -336,9 +336,13 @@ impl ChannelLoop {
         self.runtime.restarted()
     }
 
-    /// The runtime of `actor` in this channel, attached to it, as its turns
-    /// act through it - for tests, where no actor runs.
+    /// The runtime of `actor` in this channel, attached to it, as its turns act through it - for
+    /// tests, where no actor runs: the participant's, acting in its context as the controllers
+    /// hold it (issue 516), or, for an actor that takes no part, one in its own name without roles.
     pub(crate) fn new_actor_runtime(&self, actor: ActorId) -> ActorRuntime {
-        self.runtime.new_actor_runtime(actor)
+        match self.actors.load().get(&actor) {
+            Some(taking_part) => self.runtime.participant_runtime(&taking_part.participant),
+            None => self.runtime.new_actor_runtime(actor),
+        }
     }
 }

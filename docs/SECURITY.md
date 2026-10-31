@@ -394,11 +394,12 @@ rights. In three parts:
     when nobody asked (`Agent::security_context`) and the one of a turn, the request's continued as
     the agent. The core builds the context it decides by, at every check, from the agent's record
     and its owner's roles as its controllers hold them; the agent, an application (see
-    [ARCHITECTURE.md](ARCHITECTURE.md#principles)), holds none and names none. The channel's
-    door builds the context it admits an envelope in (see
-    [What enters a channel](#what-enters-a-channel)); today the agent's actor still asks its
-    controller for its own, naming its own place, for the work it begins (issue
-    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). A piece of work has one
+    [ARCHITECTURE.md](ARCHITECTURE.md#principles)), holds none and names none (issue
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). The channel's door
+    builds the context it admits an envelope in (see
+    [What enters a channel](#what-enters-a-channel)), the agent's runtime the context of every
+    call its work makes of the core (`ActorRuntime`), from the participant the channel resolved,
+    with the initiator the work names - for the record. A piece of work has one
     context: the views a turn navigates and the components it calls ask in the turn's; a
     component's own is only for what it reads while it is built. So what
     the agent reads, the tools it calls, the credentials they reach with and the clearance it is

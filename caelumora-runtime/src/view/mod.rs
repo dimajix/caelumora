@@ -2938,17 +2938,16 @@ mod tests {
         let channel = Arc::clone(&hers.channels()[0]);
         let runtime = actor_runtime_in(&channel, alice_id);
         let session = runtime
-            .session_view(&alice_ctx, channel.classification())
+            .session_view(alice_id, channel.classification())
             .await
             .expect("hers to read")
             .expect("attached to its session");
-        let stranger = SecurityContext::new(
-            ActorId::Agent(AgentId::new()),
-            Default::default(),
-            Default::default(),
-        );
+        let stranger = ActorId::Agent(AgentId::new());
         assert!(
-            runtime.session_view(&stranger, channel.classification()).await.is_err(),
+            actor_runtime_in(&channel, stranger)
+                .session_view(stranger, channel.classification())
+                .await
+                .is_err(),
             "reached by who may read it alone (issue 304)"
         );
 
@@ -3045,10 +3044,10 @@ mod tests {
         // Read as an agent in another channel reads: through its actor's runtime.
         let reading_from = |channel: &Arc<ChannelLoop>| {
             let runtime = actor_runtime_in(channel, alice_id);
-            let (context, classification) = (alice_ctx.clone(), channel.classification());
+            let classification = channel.classification();
             async move {
                 runtime
-                    .session_view(&context, classification)
+                    .session_view(alice_id, classification)
                     .await
                     .expect("hers to read")
                     .expect("attached to its session")

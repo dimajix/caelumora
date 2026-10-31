@@ -25,7 +25,7 @@ pub(crate) struct CommittedTurn {
     /// Whether the agent's state in the channel changed, to be announced
     /// once stored.
     pub(crate) channel_state_changed: bool,
-    /// What its answer is sent with: the contexts the turn had (issue 85).
+    /// What its answer is sent with: the context the turn had (issue 85).
     pub(crate) answering: Answering,
     /// The tool calls that had no result when it ended, answered as not
     /// executed (`Turn::abandon_tool_calls`, issue 148): their approval

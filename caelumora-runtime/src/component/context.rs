@@ -35,7 +35,7 @@ pub struct ComponentContext {
     /// built - a `ref` resolved, a secret - it asks in this name. It does not
     /// keep it: what it does later it does in the context of the act it
     /// serves, as a tool does in its turn's.
-    pub security_context: SecurityContext,
+    pub(crate) security_context: SecurityContext,
     /// The services of the runtime: all of them in the context a graph is
     /// built with, those its kind uses in the one a component is given.
     pub(super) services: Services,

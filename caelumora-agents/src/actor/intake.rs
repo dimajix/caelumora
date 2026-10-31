@@ -34,13 +34,7 @@ impl AgentBody {
         };
         state.last_message = Some(last.id);
         let offered = heard.iter().filter_map(Message::as_heard).collect();
-        let perceived = match apply_stage_processors(
-            &self.perceive_in_processors,
-            offered,
-            &self.security_context(),
-        )
-        .await
-        {
+        let perceived = match apply_stage_processors(&self.perceive_in_processors, offered).await {
             Ok(perceived) => perceived,
             Err(e) => {
                 warn!("The perceive stage failed: {:#}", e);
@@ -68,19 +62,15 @@ impl AgentBody {
         let (id, at) = (modified.id, modified.timestamp);
         let perceived = match modified.as_heard() {
             None => None,
-            Some(heard) => match apply_stage_processors(
-                &self.perceive_in_processors,
-                vec![heard],
-                &self.security_context(),
-            )
-            .await
-            {
-                Ok(perceived) => perceived.into_iter().find(|m| m.id == modified.id),
-                Err(e) => {
-                    warn!("The perceive stage failed on a modified message: {:#}", e);
-                    None
+            Some(heard) => {
+                match apply_stage_processors(&self.perceive_in_processors, vec![heard]).await {
+                    Ok(perceived) => perceived.into_iter().find(|m| m.id == modified.id),
+                    Err(e) => {
+                        warn!("The perceive stage failed on a modified message: {:#}", e);
+                        None
+                    }
                 }
-            },
+            }
         };
         let taken = match &perceived {
             Some(perceived) => state.modify(perceived.clone()),
@@ -272,7 +262,7 @@ impl TakenIn {
 }
 
 /// Which of two requests to respond, `earlier` and `later`, both taken in
-/// for one turn, the turn answers: the later, in whose contexts it acts -
+/// for one turn, the turn answers: the later, in whose context it acts -
 /// for the stronger reason of the two (issue 439), since a mention among
 /// them is a reason to answer though the last request was only a choice.
 fn answered(earlier: Option<Envelope>, later: Option<Envelope>) -> Option<Envelope> {
@@ -297,7 +287,6 @@ mod tests {
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{MessageId, MessageRole};
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use caelumora_model::work::Work;
@@ -398,7 +387,7 @@ mod tests {
     }
 
     /// Issue 439: of the requests a turn takes in, it answers the last - in
-    /// whose contexts it acts - for the strongest reason among them, also
+    /// whose context it acts - for the strongest reason among them, also
     /// across a command that ended a batch.
     #[tokio::test]
     async fn the_request_answered_keeps_the_strongest_reason() {
@@ -449,7 +438,6 @@ mod tests {
         state.begin_turn(Work::new(
             context,
             None,
-            SecurityContext::default(),
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         ));

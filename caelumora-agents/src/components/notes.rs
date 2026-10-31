@@ -416,13 +416,13 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::message::MessageId;
-    use caelumora_model::security::{OwnershipPolicy, SecurityContext};
+    use caelumora_model::security::OwnershipPolicy;
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
-    use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
     use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::runtime::{ActorRuntime, ChannelRuntime};
+    use caelumora_runtime::runtime::ActorRuntime;
+    use caelumora_runtime::session::testing::detached_actor_runtime_in;
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::transport::Discard;
     use chrono::Utc;
@@ -439,18 +439,15 @@ mod tests {
             ..Default::default()
         }
         .build();
-        ChannelRuntime::outside_a_session(runtime, session, channel)
-            .new_actor_runtime(ActorId::Agent(agent))
+        detached_actor_runtime_in(runtime, session, channel, ActorId::Agent(agent))
     }
 
-    /// A turn of `agent` under way in `state`, begun in the context of `caller`, through the
-    /// runtime of its actor under the ownership policy.
-    fn turn_as<'a>(agent: AgentId, caller: ActorId, state: &'a mut AgentChannelState) -> Turn<'a> {
-        let context = SecurityContext::default().next(caller, ActorId::None, ActorId::None);
+    /// A turn of `agent` under way in `state`, through the runtime of its actor under the
+    /// ownership policy, which builds the context it acts in (issue 516).
+    fn turn_of(agent: AgentId, state: &mut AgentChannelState) -> Turn<'_> {
         state.begin_turn(Work::new(
             Default::default(),
             None,
-            context,
             Default::default(),
             Default::default(),
         ));
@@ -509,8 +506,8 @@ mod tests {
         let agent = AgentId::new();
         let mut state = AgentChannelState::default();
         let tools = NotesComponent::new(testing::prompts()).unwrap();
-        // Asked in the turn's context: the agent's, which reclassifies its own note.
-        let mut turn = turn_as(agent, ActorId::Agent(agent), &mut state);
+        // Asked in the context the core builds for the agent, the author of its own note.
+        let mut turn = turn_of(agent, &mut state);
         tools
             .execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn)
             .await
@@ -549,28 +546,6 @@ mod tests {
         assert_eq!(
             state.notes.current()[0].classification,
             Classification::general(Confidentiality::Public)
-        );
-    }
-
-    /// Whether a note may be reclassified is decided by the core, with the agent of the runtime as
-    /// its author (issue 516): in a context whose caller is someone else, it may not.
-    #[tokio::test]
-    async fn a_note_is_reclassified_only_in_the_name_of_its_author() {
-        let agent = AgentId::new();
-        let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(testing::prompts()).unwrap();
-        let mut turn = turn_as(agent, ActorId::User(UserId::new()), &mut state);
-        tools
-            .execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn)
-            .await
-            .unwrap();
-        let public = serde_json::json!({ "id": 1, "level": "public" });
-        assert!(
-            matches!(
-                tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &public, None, &mut turn).await,
-                Err(ToolError::PermissionDenied(_))
-            ),
-            "not its author's"
         );
     }
 

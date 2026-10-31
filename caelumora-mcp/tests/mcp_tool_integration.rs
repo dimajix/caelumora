@@ -146,13 +146,7 @@ async fn executed(
     params: Value,
 ) -> ToolResult<ToolOutput> {
     let mut state = AgentChannelState::default();
-    state.begin_turn(Work::new(
-        Default::default(),
-        None,
-        Default::default(),
-        Default::default(),
-        Default::default(),
-    ));
+    state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
     let agent = AgentId::default();
     let mut turn = Turn::of(
         agent,
@@ -204,7 +198,7 @@ fn detached_actor_runtime() -> ActorRuntime {
         Classification::CHANNEL_DEFAULT,
         None,
     );
-    detached_actor_runtime_in(runtime(&Persistence::in_memory()), session, channel)
+    detached_actor_runtime_in(runtime(&Persistence::in_memory()), session, channel, ActorId::None)
 }
 
 #[tokio::test]

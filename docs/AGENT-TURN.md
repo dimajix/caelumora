@@ -35,7 +35,7 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
     (issue 482, `WaitingForUser` below).
 *   **Begin.** The last request to respond among what was taken in begins one turn; the earlier
     ones are dropped. The one turn answers the conversation as it stands, having heard every
-    message, and acts in the contexts of the last request - with the authority of the last who
+    message, and acts in the context of the last request - with the authority of the last who
     asked, never of someone who did not -, for the strongest reason among them (issue 439): a
     mention among them is a reason to answer, though the last request was only a choice of the
     policy. An agent that falls behind thus answers once when it is
@@ -163,7 +163,7 @@ a plan may cost is bounded by its steps: `create_plan` refuses a plan of more th
 `Plan::MAX_STEPS`, those it is extended by included, and the plan in play stays as it was.
 
 The agent announces its state to the users as it changes (`StateChanged`), each state once, in its
-own contexts rather than a turn's: its state is the agent's, not part of an answer. One move is not
+own context rather than a turn's: its state is the agent's, not part of an answer. One move is not
 the run loop's: the channel wakes a sleeping agent itself, synchronously, because the moderator,
 deciding right after whom to ask, leaves the sleeping out; the run loop is notified and announces
 `Idle`.
@@ -193,7 +193,7 @@ with its remote agent (`caelumora_model::work`):
     resolver](#the-turns-context-and-the-resolver)), with the session's time zone as the work
     began and how its model is given what was said.
 
-Whoever answers begins the work (`AgentBody::work_for`): the contexts of the request continued in
+Whoever answers begins the work (`AgentBody::work_for`): the context of the request continued in
 the agent's name, its reason, the channel's classification and the session's time zone, as they
 are now - the same for a turn, a command turn and an external agent's exchange. It adds how its
 model is given its context (`Work::given_as`) and hands the work to the state, which adds only what
@@ -254,7 +254,7 @@ given up as `Lowered` and the users are told (see [CONFIDENTIALITY.md](CONFIDENT
 asked for again while under way is given up as `Retried` after the step it cut short, and the
 request on its way begins the next turn.
 
-Either way the turn hands back the contexts it had as an `Answering`, which sends its last event
+Either way the turn hands back the context it had as an `Answering`, which sends its last event
 with the publication the turn had and withdraws the approval requests of the calls it abandoned. An
 external agent publishes its answers through the same `Answering`.
 
