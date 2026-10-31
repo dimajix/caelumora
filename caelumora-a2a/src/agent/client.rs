@@ -17,7 +17,7 @@ use caelumora_runtime::remote::{describe_chain, describe_request_error, Expiring
 use futures::stream::{once, BoxStream};
 use futures::{Stream, StreamExt};
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
-use reqwest::{Client, Error, Response};
+use reqwest::{Client, Error, Response, Url};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sse_stream::SseStream;
@@ -149,15 +149,20 @@ impl A2aClient {
         self.endpoint.shown()
     }
 
-    /// Where the agent card is: below the agent's base URL, or at the URL
-    /// configured if that is a card's own, ending in `.json`.
-    fn card_url(&self) -> String {
-        let url = &self.endpoint.url;
-        if url.ends_with(".json") {
-            url.clone()
-        } else {
-            format!("{}/{CARD_PATH}", url.trim_end_matches('/'))
+    /// Where the agent card is: below the agent's base URL, or at the URL configured if that is
+    /// a card's own, its path ending in `.json`.
+    ///
+    /// # Errors
+    /// `Connection` for an endpoint that is no URL.
+    fn card_url(&self) -> ExternalAgentResult<Url> {
+        match self.endpoint.url_of(&[]) {
+            Some(url) if url.path().ends_with(".json") => Some(url),
+            _ => self.endpoint.url_of(&CARD_PATH),
         }
+        .ok_or_else(|| ExternalAgentError::Connection {
+            endpoint: self.shown(),
+            reason: "the endpoint is no URL".to_string(),
+        })
     }
 
     /// Where and how to reach the agent, as its card says: read in
@@ -168,7 +173,7 @@ impl A2aClient {
 
     /// Reads the agent card and chooses its JSON-RPC interface of A2A 1.x.
     async fn discover(&self, security: &SecurityContext) -> ExternalAgentResult<Interface> {
-        let mut request = self.http.get(self.card_url()).timeout(self.timeout);
+        let mut request = self.http.get(self.card_url()?).timeout(self.timeout);
         if let Some(token) = self.token(security).await? {
             request = request.bearer_auth(token);
         }
@@ -351,17 +356,18 @@ mod tests {
 
     #[test]
     fn the_card_is_found_below_the_agent_or_where_its_own_url_says() {
+        let card_url = |url: &str| client(url).card_url().unwrap().to_string();
+        for url in ["https://hermes.example/", "https://hermes.example"] {
+            assert_eq!(card_url(url), "https://hermes.example/.well-known/agent-card.json");
+        }
         assert_eq!(
-            client("https://hermes.example/").card_url(),
-            "https://hermes.example/.well-known/agent-card.json"
+            card_url("https://hermes.example/a2a/?key=secret"),
+            "https://hermes.example/a2a/.well-known/agent-card.json?key=secret",
+            "below its path, its query kept"
         );
         assert_eq!(
-            client("https://hermes.example").card_url(),
-            "https://hermes.example/.well-known/agent-card.json"
-        );
-        assert_eq!(
-            client("https://hermes.example/card.json").card_url(),
-            "https://hermes.example/card.json",
+            card_url("https://hermes.example/card.json?key=secret"),
+            "https://hermes.example/card.json?key=secret",
             "a card's own URL"
         );
     }

@@ -154,7 +154,7 @@ impl ComfyUiClient {
     /// Queues `graph` as the prompt `prompt_id`: the id ComfyUI gives it.
     async fn queue(&self, graph: Map<String, Value>, prompt_id: &str) -> ComfyUiResult<String> {
         let body = json!({ "prompt": graph, "prompt_id": prompt_id });
-        let response = self.send(self.post("prompt").json(&body)).await?;
+        let response = self.send(self.post(&["prompt"])?.json(&body)).await?;
         if response.status().as_u16() == 400 {
             let refused: Value = response.json().await.unwrap_or_default();
             return Err(ComfyUiError::Refused(refusal(&refused)));
@@ -179,7 +179,7 @@ impl ComfyUiClient {
 
     /// Where the prompt `prompt_id` stands.
     async fn state(&self, prompt_id: &str) -> ComfyUiResult<PromptState> {
-        let response = self.send(self.get(&format!("history/{prompt_id}"))).await?;
+        let response = self.send(self.get(&["history", prompt_id])?).await?;
         let history: Value = self.read(response).await?;
         let Some(entry) = history.get(prompt_id) else { return Ok(PromptState::Unfinished) };
         let status = entry.get("status");
@@ -202,8 +202,8 @@ impl ComfyUiClient {
     async fn image(&self, image: &ImageRef) -> ComfyUiResult<Bytes> {
         let query =
             [("filename", &image.filename), ("subfolder", &image.subfolder), ("type", &image.kind)];
-        let url = Url::parse_with_params(&self.url("view"), query)
-            .map_err(|_| self.answered("an image no URL can name"))?;
+        let mut url = self.url(&["view"])?;
+        url.query_pairs_mut().extend_pairs(query);
         let response = self.send(self.http.get(url).timeout(REQUEST_TIMEOUT)).await?;
         let response = self.successful(response)?;
         response.bytes().await.map_err(|e| self.unreachable(e))
@@ -212,7 +212,7 @@ impl ComfyUiClient {
     /// Ends the prompt `prompt_id`: removed from the queue where it waits, interrupted by its id
     /// where it runs, nothing where it ended already.
     async fn cancel(&self, prompt_id: &str) -> ComfyUiResult<()> {
-        let queue: Value = self.read(self.send(self.get("queue")).await?).await?;
+        let queue: Value = self.read(self.send(self.get(&["queue"])?).await?).await?;
         let holds = |list: &str| {
             queue
                 .get(list)
@@ -222,9 +222,9 @@ impl ComfyUiClient {
                 .any(|entry| entry.get(1).and_then(Value::as_str) == Some(prompt_id))
         };
         let ending = if holds("queue_running") {
-            self.post("interrupt").json(&json!({ "prompt_id": prompt_id }))
+            self.post(&["interrupt"])?.json(&json!({ "prompt_id": prompt_id }))
         } else if holds("queue_pending") {
-            self.post("queue").json(&json!({ "delete": [prompt_id] }))
+            self.post(&["queue"])?.json(&json!({ "delete": [prompt_id] }))
         } else {
             return Ok(());
         };
@@ -233,16 +233,23 @@ impl ComfyUiClient {
         Ok(())
     }
 
-    fn url(&self, path: &str) -> String {
-        format!("{}/{path}", self.endpoint.url.trim_end_matches('/'))
+    /// The URL of `segments` below the endpoint.
+    ///
+    /// # Errors
+    /// `Unreachable` for an endpoint that is no URL.
+    fn url(&self, segments: &[&str]) -> ComfyUiResult<Url> {
+        self.endpoint.url_of(segments).ok_or_else(|| ComfyUiError::Unreachable {
+            endpoint: self.endpoint.shown(),
+            reason: "the endpoint is no URL".to_string(),
+        })
     }
 
-    fn get(&self, path: &str) -> RequestBuilder {
-        self.http.get(self.url(path)).timeout(REQUEST_TIMEOUT)
+    fn get(&self, segments: &[&str]) -> ComfyUiResult<RequestBuilder> {
+        Ok(self.http.get(self.url(segments)?).timeout(REQUEST_TIMEOUT))
     }
 
-    fn post(&self, path: &str) -> RequestBuilder {
-        self.http.post(self.url(path)).timeout(REQUEST_TIMEOUT)
+    fn post(&self, segments: &[&str]) -> ComfyUiResult<RequestBuilder> {
+        Ok(self.http.post(self.url(segments)?).timeout(REQUEST_TIMEOUT))
     }
 
     async fn send(&self, request: RequestBuilder) -> ComfyUiResult<Response> {

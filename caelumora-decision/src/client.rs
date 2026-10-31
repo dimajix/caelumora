@@ -19,7 +19,7 @@ use std::time::Duration;
 use tracing::trace;
 
 /// Where the contract is served below an endpoint's URL.
-const PATH: &str = "v1/systemone";
+const PATH: [&str; 2] = ["v1", "systemone"];
 
 /// How long a decision may take unless the endpoint says otherwise: the
 /// channel waits for it before it routes anything else.
@@ -127,10 +127,9 @@ impl DecisionClient {
     /// resolved.
     ///
     /// # Errors
-    /// `Credential` if the credential cannot be resolved; `Unreachable` if
-    /// the endpoint does not answer in time; `Rejected` if it refuses;
-    /// `InvalidResponse` if its answer cannot be read or leaves a question
-    /// unanswered.
+    /// `Credential` if the credential cannot be resolved; `Unreachable` if the endpoint is no URL
+    /// or does not answer in time; `Rejected` if it refuses; `InvalidResponse` if its answer
+    /// cannot be read or leaves a question unanswered.
     pub async fn ask(
         &self,
         context: &SecurityContext,
@@ -144,7 +143,10 @@ impl DecisionClient {
             keep_alive: self.keep_alive.as_deref(),
         };
         trace!(endpoint = %self.shown(), "Asking a decision model: {}", serde_json::to_string(&body).unwrap_or_default());
-        let url = format!("{}/{PATH}", self.endpoint.url.trim_end_matches('/'));
+        let url = self.endpoint.url_of(&PATH).ok_or_else(|| DecisionError::Unreachable {
+            endpoint: self.shown(),
+            reason: "the endpoint is no URL".to_string(),
+        })?;
         let mut request = self.http.post(url).json(&body);
         let token = self
             .endpoint

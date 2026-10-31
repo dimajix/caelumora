@@ -11,7 +11,7 @@ use uuid::Uuid;
 pub(super) const A2A_VERSION: &str = "1.0";
 
 /// Where an agent card is found, below the agent's base URL.
-pub(super) const CARD_PATH: &str = ".well-known/agent-card.json";
+pub(super) const CARD_PATH: [&str; 2] = [".well-known", "agent-card.json"];
 
 /// The protocol binding used: JSON-RPC over HTTP.
 pub(super) const JSONRPC_BINDING: &str = "JSONRPC";

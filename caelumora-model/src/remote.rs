@@ -49,6 +49,15 @@ impl RemoteEndpoint {
         redact_endpoint(&self.url)
     }
 
+    /// The URL of `segments` below its own, each encoded as one segment, its query kept - without
+    /// any, its own without a trailing `/`. `None` for a URL that is none, or one with no path to
+    /// go below, such as a `mailto:` - which only one not read as parameters can be.
+    pub fn url_of(&self, segments: &[&str]) -> Option<Url> {
+        let mut url = Url::parse(&self.url).ok()?;
+        url.path_segments_mut().ok()?.pop_if_empty().extend(segments);
+        Some(url)
+    }
+
     /// `text` - a message of a library that writes the URL into its own -
     /// with the URL shown instead: as written, as a parser normalizes it,
     /// and as a client sends it, its credentials moved into a header.
@@ -163,6 +172,31 @@ mod tests {
                 "{url:?}: {refused}"
             );
         }
+    }
+
+    #[test]
+    fn a_url_below_the_endpoint_keeps_its_query_and_encodes_each_segment() {
+        let below = |url: &str, segments: &[&str]| {
+            RemoteEndpoint::new(url).url_of(segments).map(|url| url.to_string())
+        };
+        for url in ["http://127.0.0.1:11434", "http://127.0.0.1:11434/"] {
+            assert_eq!(
+                below(url, &["api", "chat"]).as_deref(),
+                Some("http://127.0.0.1:11434/api/chat"),
+                "{url}"
+            );
+        }
+        assert_eq!(
+            below("https://user:secret@agent.example/a2a/?key=secret", &["v1", "a/b"]).as_deref(),
+            Some("https://user:secret@agent.example/a2a/v1/a%2Fb?key=secret"),
+            "below its path, its query kept, a segment as one"
+        );
+        assert_eq!(
+            below("https://agent.example/card.json", &[]).as_deref(),
+            Some("https://agent.example/card.json")
+        );
+        assert_eq!(below("agent.example", &["api"]), None, "no URL");
+        assert_eq!(below("mailto:agent@example", &["api"]), None, "none below which a path lies");
     }
 
     #[test]

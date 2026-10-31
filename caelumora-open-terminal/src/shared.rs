@@ -100,8 +100,7 @@ impl SharedProvider {
     /// `mount` are as its parameters checked them (`SharedStorageConfig`).
     ///
     /// # Errors
-    /// `Unavailable` for a client that cannot be made, or for an endpoint that is no URL, which
-    /// only one not read as parameters can be.
+    /// `Unavailable` for a client that cannot be made.
     pub(crate) fn new(
         endpoint: RemoteEndpoint,
         mount: &str,
@@ -507,9 +506,11 @@ mod tests {
                 && !error.contains("127.0.0.1"),
             "{error}"
         );
+        let nowhere =
+            SharedProvider::new(endpoint("no url"), MOUNT, MAX_RUN, None, secrets(KEY)).unwrap();
         assert!(matches!(
-            SharedProvider::new(endpoint("no url"), MOUNT, MAX_RUN, None, secrets(KEY)),
-            Err(TerminalError::Unavailable(_))
+            nowhere.create(WorkspaceId::new()).await,
+            Err(TerminalError::Unavailable(why)) if why.contains("no URL")
         ));
         assert_eq!(refused.destination(), Some(&Classification::PUBLIC), "public unless given");
     }

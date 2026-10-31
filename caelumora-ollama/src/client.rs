@@ -64,7 +64,7 @@ use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::{BoxStream, StreamExt};
 use futures::Stream;
-use reqwest::{Client, RequestBuilder, Response};
+use reqwest::{Client, RequestBuilder, Response, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -415,7 +415,7 @@ async fn show(
 ) -> LLMResult<OllamaShowResponse> {
     let endpoint = remote.shown();
     let request = serde_json::json!({ "model": model, "verbose": verbose });
-    let response = send(http.post(api_url(remote, "show")).json(&request), remote).await?;
+    let response = send(http.post(api_url(remote, "show")?).json(&request), remote).await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -605,7 +605,7 @@ async fn read_running_context_size(
     model: &str,
 ) -> LLMResult<Option<u64>> {
     let endpoint = remote.shown();
-    let response = send(http.get(api_url(remote, "ps")), remote).await?;
+    let response = send(http.get(api_url(remote, "ps")?), remote).await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -723,8 +723,14 @@ fn default_endpoint() -> RemoteEndpoint {
 }
 
 /// The URL of Ollama's API `path` at `endpoint`.
-fn api_url(endpoint: &RemoteEndpoint, path: &str) -> String {
-    format!("{}/api/{path}", endpoint.url.trim_end_matches('/'))
+///
+/// # Errors
+/// `Connection` for an endpoint that is no URL.
+fn api_url(endpoint: &RemoteEndpoint, path: &str) -> LLMResult<Url> {
+    endpoint.url_of(&["api", path]).ok_or_else(|| LLMError::Connection {
+        endpoint: endpoint.shown(),
+        reason: "the endpoint is no URL".to_string(),
+    })
 }
 
 /// `request` sent to `endpoint`, answered within its timeout if it has one -
@@ -977,6 +983,13 @@ impl LLMClient for OllamaClient {
                 message_count,
                 endpoint
             );
+            let url = match url {
+                Ok(url) => url,
+                Err(e) => {
+                    yield Err(e);
+                    return;
+                }
+            };
             let response = match send(http.post(url).json(&request), &remote).await {
                 Ok(response) => response,
                 Err(e) => {

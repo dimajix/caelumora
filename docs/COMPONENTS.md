@@ -401,8 +401,9 @@ endpoint:
 card - is kept before it is read again. That is read when it is first needed, in the name of whoever
 needs it, never while the component is built, and a read that fails is not kept (`ExpiringCache`,
 issue 126). An unknown field is refused, and so is a `url` that is no `http` or `https` URL, as the
-`params` are read and without naming it. In messages the endpoint is shown without
-credentials, query or fragment.
+`params` are read and without naming it. In messages the endpoint is shown without credentials,
+query or fragment. A component that reaches paths below the endpoint's URL builds them with
+`RemoteEndpoint::url_of` - each segment encoded as one, the query kept -, never as text.
 
 ### The components
 

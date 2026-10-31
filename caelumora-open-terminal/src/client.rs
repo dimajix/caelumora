@@ -43,7 +43,6 @@ impl fmt::Debug for Key {
 #[derive(Debug)]
 pub(crate) struct Client {
     endpoint: RemoteEndpoint,
-    base: Url,
     key: Key,
     http: HttpClient,
     /// When a request was last sent.
@@ -56,15 +55,8 @@ impl Client {
     /// Caelumora started is reached.
     ///
     /// # Errors
-    /// `Unavailable` for a URL that is none, or a client that cannot be
-    /// made.
+    /// `Unavailable` for a client that cannot be made.
     pub(crate) fn new(endpoint: RemoteEndpoint, key: Key, direct: bool) -> TerminalResult<Self> {
-        let base = Url::parse(&endpoint.url).map_err(|_| {
-            TerminalError::Unavailable("the storage's endpoint is no URL".to_string())
-        })?;
-        if base.cannot_be_a_base() {
-            return Err(TerminalError::Unavailable("the storage's endpoint is no URL".to_string()));
-        }
         let builder = HttpClient::builder();
         let http = match direct {
             true => builder.no_proxy(),
@@ -77,7 +69,7 @@ impl Client {
                 describe_request_error(e)
             ))
         })?;
-        Ok(Self { endpoint, base, key, http, used: Mutex::new(Instant::now()) })
+        Ok(Self { endpoint, key, http, used: Mutex::new(Instant::now()) })
     }
 
     /// How long no request was sent.
@@ -86,17 +78,18 @@ impl Client {
         self.used.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).elapsed()
     }
 
-    /// The URL of `segments` below the endpoint, with `query`. A segment is
-    /// encoded as one, whatever it holds.
-    fn url(&self, segments: &[&str], query: &[(&str, String)]) -> Url {
-        let mut url = self.base.clone();
-        if let Ok(mut path) = url.path_segments_mut() {
-            path.pop_if_empty().extend(segments);
-        }
+    /// The URL of `segments` below the endpoint, with `query`.
+    ///
+    /// # Errors
+    /// `Unavailable` for an endpoint that is no URL.
+    fn url(&self, segments: &[&str], query: &[(&str, String)]) -> TerminalResult<Url> {
+        let mut url = self.endpoint.url_of(segments).ok_or_else(|| {
+            TerminalError::Unavailable("the storage's endpoint is no URL".to_string())
+        })?;
         if !query.is_empty() {
             url.query_pairs_mut().extend_pairs(query);
         }
-        url
+        Ok(url)
     }
 
     /// Sends `method` to `segments` with `query`, for a process of `scope`
@@ -105,7 +98,8 @@ impl Client {
     /// caller's to say.
     ///
     /// # Errors
-    /// `Unavailable` where the instance was not reached, or refused the key.
+    /// `Unavailable` for an endpoint that is no URL, or where the instance was not reached, or
+    /// refused the key.
     pub(crate) async fn send(
         &self,
         method: Method,
@@ -118,7 +112,7 @@ impl Client {
         *self.used.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
         let mut request = self
             .http
-            .request(method, self.url(segments, query))
+            .request(method, self.url(segments, query)?)
             .timeout(self.endpoint.timeout_or(DEFAULT_TIMEOUT) + wait);
         let key = match &self.key {
             // The storage is the operator's, configured as the server's
