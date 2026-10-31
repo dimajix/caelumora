@@ -816,7 +816,7 @@ mod tests {
         let workspace = workspace_in(&store, "removed").await;
         let controller = manager.workspace_controller(workspace.id).await.unwrap();
 
-        let terminal = controller.terminal(&SecurityContext::system(), Grant::Read).await;
+        let terminal = controller.reader(&SecurityContext::system()).await;
         assert!(
             matches!(&terminal, Err(WorkspaceError::StorageGone(StorageGone(name))) if name == "removed"),
             "{:?}",

@@ -7,8 +7,9 @@
 
 use super::local_shell::{LocalCommands, LocalShell};
 use super::{
-    check_max_run_secs, default_max_run_secs, ByteStream, CommandKey, FileEntry, Shell, Terminal,
-    TerminalError, TerminalProvider, TerminalResult, WorkspacePath,
+    check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
+    ByteStream, CommandKey, FileEntry, Shell, Terminal, TerminalError, TerminalProvider,
+    TerminalReader, TerminalResult, WorkspacePath,
 };
 use crate::backend::Backends;
 use crate::component::{ComponentResult, Params};
@@ -49,13 +50,18 @@ struct LocalStorageConfig {
     /// started, once it ran so long. Of use only with `shell`.
     #[serde(default = "default_max_run_secs")]
     max_run_secs: u64,
+    /// The largest file a person may put into a workspace of it.
+    #[serde(default = "default_max_file_bytes")]
+    max_file_bytes: u64,
 }
 
 impl Params for LocalStorageConfig {
     /// # Errors
-    /// `InvalidConfig` if `max_run_secs` is no time a command may run.
+    /// `InvalidConfig` if `max_run_secs` is no time a command may run, or `max_file_bytes` no size
+    /// a file may have.
     fn check(&self) -> ComponentResult<()> {
-        check_max_run_secs(self.max_run_secs)
+        check_max_run_secs(self.max_run_secs)?;
+        check_max_file_bytes(self.max_file_bytes)
     }
 }
 
@@ -66,6 +72,7 @@ pub(super) fn register_backend(backends: &mut Backends) {
             config.root,
             config.shell,
             Duration::from_secs(config.max_run_secs),
+            config.max_file_bytes,
             config.destination,
         )))
     });
@@ -78,25 +85,42 @@ pub(crate) struct LocalProvider {
     commands: Option<Arc<LocalCommands>>,
     /// How long a command may run.
     max_run: Duration,
+    /// The largest file a workspace of it takes.
+    max_file_bytes: u64,
     destination: Option<Classification>,
 }
 
 impl LocalProvider {
-    /// The provider of a storage whose workspaces lie under `root`, with a
-    /// shell if `shell`; what may be put into it at most `destination`, or
-    /// `public` with a shell and no bound without one.
+    /// The provider of a storage whose workspaces lie under `root`, with a shell if `shell`, its
+    /// commands running for `max_run` at most and its files of `max_file_bytes` at most; what may
+    /// be put into it at most `destination`, or `public` with a shell and no bound without one.
     pub(crate) fn new(
         root: PathBuf,
         shell: bool,
         max_run: Duration,
+        max_file_bytes: u64,
         destination: Option<Classification>,
     ) -> Self {
         let destination = destination.or_else(|| shell.then_some(Classification::PUBLIC));
-        Self { root, commands: shell.then(Arc::default), max_run, destination }
+        Self { root, commands: shell.then(Arc::default), max_run, max_file_bytes, destination }
     }
 
     fn place(&self, id: WorkspaceId) -> PathBuf {
         self.root.join(id.to_string())
+    }
+
+    /// The directory of workspace `id`, if it is there; a place gone is logged.
+    async fn found(&self, id: WorkspaceId) -> TerminalResult<PathBuf> {
+        let dir = self.place(id);
+        match fs::metadata(&dir).await {
+            Ok(metadata) if metadata.is_dir() => Ok(dir),
+            Ok(_) => Err(TerminalError::Unavailable("its place is not a directory".to_string())),
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                warn!(workspace = %id, "The place of a workspace is gone");
+                Err(TerminalError::Unavailable("its place is gone".to_string()))
+            }
+            Err(e) => Err(unavailable(e)),
+        }
     }
 }
 
@@ -136,21 +160,23 @@ impl TerminalProvider for LocalProvider {
     }
 
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>> {
-        let dir = self.place(id);
-        match fs::metadata(&dir).await {
-            Ok(metadata) if metadata.is_dir() => Ok(Arc::new(LocalTerminal {
-                dir,
-                workspace: id,
-                commands: self.commands.clone(),
-                max_run: self.max_run,
-            })),
-            Ok(_) => Err(TerminalError::Unavailable("its place is not a directory".to_string())),
-            Err(e) if e.kind() == ErrorKind::NotFound => {
-                warn!(workspace = %id, "The place of a workspace is gone");
-                Err(TerminalError::Unavailable("its place is gone".to_string()))
-            }
-            Err(e) => Err(unavailable(e)),
-        }
+        let dir = self.found(id).await?;
+        Ok(Arc::new(LocalTerminal { dir, max_file_bytes: self.max_file_bytes }))
+    }
+
+    async fn shell_for(
+        &self,
+        id: WorkspaceId,
+        scope: &str,
+    ) -> TerminalResult<Option<Arc<dyn Shell>>> {
+        let Some(commands) = self.commands.as_ref() else { return Ok(None) };
+        Ok(Some(Arc::new(LocalShell {
+            dir: self.found(id).await?,
+            workspace: id,
+            scope: scope.to_string(),
+            commands: Arc::clone(commands),
+            max_run: self.max_run,
+        })))
     }
 
     fn has_shell(&self) -> bool {
@@ -193,9 +219,7 @@ impl TerminalProvider for LocalProvider {
 #[derive(Debug)]
 struct LocalTerminal {
     dir: PathBuf,
-    workspace: WorkspaceId,
-    commands: Option<Arc<LocalCommands>>,
-    max_run: Duration,
+    max_file_bytes: u64,
 }
 
 impl LocalTerminal {
@@ -290,7 +314,7 @@ pub async fn write_whole(
 }
 
 #[async_trait]
-impl Terminal for LocalTerminal {
+impl TerminalReader for LocalTerminal {
     async fn list(&self, dir: &WorkspacePath) -> TerminalResult<Vec<FileEntry>> {
         let full = self.inside(dir).await?;
         let mut entries = fs::read_dir(&full).await.map_err(|e| failed(dir, e))?;
@@ -319,12 +343,15 @@ impl Terminal for LocalTerminal {
         Ok((metadata.len(), Box::pin(ReaderStream::new(file))))
     }
 
-    async fn write(
-        &self,
-        path: &WorkspacePath,
-        content: ByteStream,
-        limit: u64,
-    ) -> TerminalResult<u64> {
+    fn max_file_bytes(&self) -> u64 {
+        self.max_file_bytes
+    }
+}
+
+#[async_trait]
+impl Terminal for LocalTerminal {
+    async fn write(&self, path: &WorkspacePath, content: ByteStream) -> TerminalResult<u64> {
+        let limit = self.max_file_bytes;
         if path.is_root() {
             return Err(TerminalError::IsADirectory(path.to_string()));
         }
@@ -376,17 +403,6 @@ impl Terminal for LocalTerminal {
         fs::create_dir_all(parent.under(&self.dir)).await.map_err(|e| failed(&parent, e))?;
         fs::rename(&source, &target).await.map_err(|e| failed(to, e))
     }
-
-    fn shell(&self, scope: &str) -> Option<Arc<dyn Shell>> {
-        let commands = Arc::clone(self.commands.as_ref()?);
-        Some(Arc::new(LocalShell {
-            dir: self.dir.clone(),
-            workspace: self.workspace,
-            scope: scope.to_string(),
-            commands,
-            max_run: self.max_run,
-        }))
-    }
 }
 
 #[cfg(test)]
@@ -407,7 +423,7 @@ mod tests {
         Box::pin(stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
     }
 
-    async fn text(terminal: &dyn Terminal, path: &str) -> String {
+    async fn text(terminal: &dyn TerminalReader, path: &str) -> String {
         let (_, stream) = terminal.read(&WorkspacePath::parse(path).unwrap()).await.expect(path);
         let chunks: Vec<_> = stream.collect().await;
         String::from_utf8(chunks.into_iter().flat_map(|c| c.unwrap().to_vec()).collect()).unwrap()
@@ -415,8 +431,13 @@ mod tests {
 
     async fn workspace() -> (TempDir, LocalProvider, Arc<dyn Terminal>, WorkspaceId) {
         let root = tempfile::tempdir().unwrap();
-        let provider =
-            LocalProvider::new(root.path().to_path_buf(), false, Duration::from_secs(3600), None);
+        let provider = LocalProvider::new(
+            root.path().to_path_buf(),
+            false,
+            Duration::from_secs(3600),
+            100,
+            None,
+        );
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
         let terminal = provider.terminal_for(id).await.unwrap();
@@ -431,12 +452,12 @@ mod tests {
     async fn files_are_written_read_listed_moved_and_deleted() {
         let (_root, _, terminal, _) = workspace().await;
         assert_eq!(
-            terminal.write(&path("docs/a.md"), content("hello"), 100).await.unwrap(),
+            terminal.write(&path("docs/a.md"), content("hello")).await.unwrap(),
             5,
             "and its directory made"
         );
         assert_eq!(text(terminal.as_ref(), "docs/a.md").await, "hello");
-        terminal.write(&path("docs/a.md"), content("again"), 100).await.expect("replaced");
+        terminal.write(&path("docs/a.md"), content("again")).await.expect("replaced");
         assert_eq!(text(terminal.as_ref(), "docs/a.md").await, "again");
 
         let listed = terminal.list(&WorkspacePath::root()).await.unwrap();
@@ -450,7 +471,7 @@ mod tests {
         assert!(
             matches!(terminal.stat(&path("docs/a.md")).await, Err(TerminalError::NotFound(p)) if p == "docs/a.md")
         );
-        terminal.write(&path("docs/b.md"), content("b"), 100).await.unwrap();
+        terminal.write(&path("docs/b.md"), content("b")).await.unwrap();
         assert!(
             matches!(
                 terminal.move_entry(&path("docs/b.md"), &path("archive/a.md")).await,
@@ -473,9 +494,19 @@ mod tests {
 
     #[tokio::test]
     async fn a_write_beyond_the_limit_leaves_nothing() {
-        let (_root, _, terminal, _) = workspace().await;
-        terminal.write(&path("a.txt"), content("old"), 100).await.unwrap();
-        let refused = terminal.write(&path("a.txt"), content("far too long"), 4).await;
+        let root = tempfile::tempdir().unwrap();
+        let provider = LocalProvider::new(
+            root.path().to_path_buf(),
+            false,
+            Duration::from_secs(3600),
+            4,
+            None,
+        );
+        let id = WorkspaceId::new();
+        provider.create(id).await.unwrap();
+        let terminal = provider.terminal_for(id).await.unwrap();
+        terminal.write(&path("a.txt"), content("old")).await.unwrap();
+        let refused = terminal.write(&path("a.txt"), content("far too long")).await;
         assert!(matches!(refused, Err(TerminalError::TooLarge { limit: 4 })), "{refused:?}");
         assert_eq!(text(terminal.as_ref(), "a.txt").await, "old", "the file as it was");
         let names: Vec<_> = terminal
@@ -509,12 +540,12 @@ mod tests {
             );
         }
         assert!(matches!(
-            terminal.write(&path("up/new.txt"), content("x"), 10).await,
+            terminal.write(&path("up/new.txt"), content("x")).await,
             Err(TerminalError::InvalidPath(_))
         ));
         assert!(
             matches!(
-                terminal.write(&path("dangling"), content("x"), 10).await,
+                terminal.write(&path("dangling"), content("x")).await,
                 Err(TerminalError::InvalidPath(_))
             ),
             "nor written through"
@@ -530,7 +561,7 @@ mod tests {
     #[tokio::test]
     async fn a_place_is_made_and_removed_with_everything_in_it() {
         let (root, provider, terminal, id) = workspace().await;
-        terminal.write(&path("a/b/c.txt"), content("c"), 10).await.unwrap();
+        terminal.write(&path("a/b/c.txt"), content("c")).await.unwrap();
         provider.remove(id).await.unwrap();
         assert!(!root.path().join(id.to_string()).exists());
         provider.remove(id).await.expect("nothing there is no error");
@@ -541,11 +572,16 @@ mod tests {
     #[tokio::test]
     async fn the_commands_of_its_workspaces_are_listed_and_ended_when_told() {
         let root = tempfile::tempdir().unwrap();
-        let provider =
-            LocalProvider::new(root.path().to_path_buf(), true, Duration::from_secs(3600), None);
+        let provider = LocalProvider::new(
+            root.path().to_path_buf(),
+            true,
+            Duration::from_secs(3600),
+            100,
+            None,
+        );
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
-        let shell = provider.terminal_for(id).await.unwrap().shell("channel").expect("a shell");
+        let shell = provider.shell_for(id, "channel").await.unwrap().expect("a shell");
         let long = shell.start("sleep 30").await.unwrap();
         let short = shell.start("true").await.unwrap();
         shell.output(&short, 0, Duration::from_secs(10)).await.unwrap();
@@ -568,13 +604,18 @@ mod tests {
     #[tokio::test]
     async fn what_runs_in_a_place_is_ended_before_it_is_removed() {
         let root = tempfile::tempdir().unwrap();
-        let provider =
-            LocalProvider::new(root.path().to_path_buf(), true, Duration::from_secs(3600), None);
+        let provider = LocalProvider::new(
+            root.path().to_path_buf(),
+            true,
+            Duration::from_secs(3600),
+            100,
+            None,
+        );
         let (id, other) = (WorkspaceId::new(), WorkspaceId::new());
         provider.create(id).await.unwrap();
         provider.create(other).await.unwrap();
-        let shell = provider.terminal_for(id).await.unwrap().shell("channel").unwrap();
-        let elsewhere = provider.terminal_for(other).await.unwrap().shell("channel").unwrap();
+        let shell = provider.shell_for(id, "channel").await.unwrap().unwrap();
+        let elsewhere = provider.shell_for(other, "channel").await.unwrap().unwrap();
         let writing = shell.start("while true; do date > out.txt; sleep 0.05; done").await.unwrap();
         let untouched = elsewhere.start("sleep 30").await.unwrap();
 

@@ -304,16 +304,17 @@ given to work on them is built on the terminal's public API and the agents' tool
 any other subject are. `caelumora-app` and `caelumora-tui` list the plugin, and a personality names
 the kinds as before.
 
-**Files.** The file tools work over the workspace's `Terminal`, whatever its storage, without a
-shell. A path is relative to the workspace's top; one that leaves the workspace is the model's to
-correct, as is a file that is not there or not text. Reading is bounded, and says where to read on.
-A replacement must find its text exactly once, unless every occurrence is to be replaced; it reads,
-replaces and writes, so what changed the file in between is overwritten. Nothing is moved over,
-which would be a deletion, and the workspace's top is neither moved nor moved over. What was read
-is recorded as the turn's knowledge, a file's content by its digest (see
-[MEMORY.md](MEMORY.md#recording-what-was-read)). The approver reads a change whole, and a rule
-derived from an approved change covers the file, whatever is written into it - for a move, both
-places.
+**Files.** The file tools work over the workspace's terminal, whatever its storage, without a shell:
+those that only read over the `TerminalReader` the workspace's reader hands out, those that change
+over the `Terminal` of its writer (issue 516). A path is relative to the workspace's top; one that
+leaves the workspace is the model's to correct, as is a file that is not there or not text. Reading
+is bounded, and says where to read on. A replacement must find its text exactly once, unless every
+occurrence is to be replaced; it reads, replaces and writes, so what changed the file in between is
+overwritten. Nothing is moved over, which would be a deletion, and the workspace's top is neither
+moved nor moved over. What was read is recorded as the turn's knowledge, a file's content by its
+digest (see [MEMORY.md](MEMORY.md#recording-what-was-read)). The approver reads a change whole, and
+a rule derived from an approved change covers the file, whatever is written into it - for a move,
+both places.
 
 `publish_file` offers a file for download at the message that calls it: a link to the file as it is
 now, with its digest, downloaded through the channel's workspace by whoever may use it there. It

@@ -14,19 +14,16 @@
 //!   What was read is recorded as the turn's knowledge
 //!   (`KnowledgeSource::Workspace`).
 //!
-//! A turn is offered the tools that may be called on the workspace its
-//! channel may use (issue 290): none where there is none, none that change
-//! where its access list grants reading alone, no shell where its storage
-//! gives none. The workspace is reached through the workspace's writer the
-//! turn hands out on every call all the same (`WorkspaceWriter::terminal`,
-//! issues 344, 516), before anything is sent, in its context (issue 296):
-//! as a participant of the channel, where the channel uses it, its access
-//! list lets the agent read it - change it, for the shell and the tools
-//! that write (issue 23) - and it and the channel flow both ways. A result
-//! is classified as the workspace. Which calls need approval is configured
-//! as for `mcp_tool` (`requires_approval`, an `ApprovalMode`): all, none,
-//! or all but those that only read; `command_output`, `kill_command` and
-//! `publish_file` never ask.
+//! A turn is offered the tools that may be called on the workspace its channel may use (issue 290):
+//! none where there is none, none that change where its access list grants reading alone, no shell
+//! where its storage gives none. The workspace is reached on every call all the same - to read
+//! through the reader of it the situation hands out, to change through the writer the turn does
+//! (issues 344, 516) -, before anything is sent, in its context (issue 296): as a participant of
+//! the channel, where the channel uses it, its access list lets the agent read it - change it, for
+//! the shell and the tools that write (issue 23) - and it and the channel flow both ways. A result
+//! is classified as the workspace. Which calls need approval is configured as for `mcp_tool`
+//! (`requires_approval`, an `ApprovalMode`): all, none, or all but those that only read;
+//! `command_output`, `kill_command` and `publish_file` never ask.
 
 pub use files::{
     DELETE_FILE, GREP_FILES, LIST_FILES, MOVE_FILE, PUBLISH_FILE, READ_FILE, REPLACE_IN_FILE,
@@ -39,14 +36,13 @@ use async_trait::async_trait;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    described, proposed_matcher, tool_text, usable_workspace, workspace_writer, ApprovalMode,
+    described, proposed_matcher, tool_text, workspace_reader, workspace_writer, ApprovalMode,
     ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
-use caelumora_model::security::Grant;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_runtime::component::{
     config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
@@ -107,8 +103,7 @@ pub struct TerminalTool {
 }
 
 impl TerminalTool {
-    /// The tool, configured by `config`, its texts from `prompts`. It writes no larger file than a
-    /// workspace takes (`WorkspaceWriter::max_file_bytes`, issue 516).
+    /// The tool, configured by `config`, its texts from `prompts`.
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
@@ -164,17 +159,25 @@ pub(crate) fn next(prompts: &PromptTexts, key: &str, values: impl Serialize) -> 
         .ok()
 }
 
-/// What a call of the tool `name` needs of the workspace, both to be offered
-/// (issue 290) and to run: what its access list must grant (issue 23) -
-/// reading for the tools that only read files, changing for the others -
-/// and whether a shell; a command may change anything its place reaches.
-/// `None` for a name that is none of its tools.
-fn needs(name: &str) -> Option<(Grant, bool)> {
-    match name {
-        _ if shell::TOOLS.contains(&name) => Some((Grant::Write, true)),
-        _ if files::read_only(name) => Some((Grant::Read, false)),
-        _ if files::TOOLS.contains(&name) => Some((Grant::Write, false)),
-        _ => None,
+/// How a call of one of its tools uses the workspace, both to be offered (issue 290) and to run:
+/// reading its files, changing them, or running a command, which may change anything its place
+/// reaches (issue 23).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Use {
+    Read,
+    Change,
+    Shell,
+}
+
+impl Use {
+    /// How the tool `name` uses the workspace; `None` for a name that is none of its tools.
+    fn of(name: &str) -> Option<Self> {
+        match name {
+            _ if shell::TOOLS.contains(&name) => Some(Self::Shell),
+            _ if files::read_only(name) => Some(Self::Read),
+            _ if files::TOOLS.contains(&name) => Some(Self::Change),
+            _ => None,
+        }
     }
 }
 
@@ -193,15 +196,16 @@ impl ToolProvider for TerminalTool {
     /// where its list grants reading alone, no shell where its storage gives
     /// none.
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
-        let workspace = usable_workspace(situation).await?;
+        let workspace = workspace_reader(situation).await.map_err(|e| e.to_string())?;
         let (writable, has_shell) = (workspace.may_write().await, workspace.has_shell());
         Ok(self
             .tools()
             .into_iter()
-            .filter(|tool| {
-                needs(&tool.name).is_some_and(|(grant, shell)| {
-                    (grant == Grant::Read || writable) && (!shell || has_shell)
-                })
+            .filter(|tool| match Use::of(&tool.name) {
+                Some(Use::Read) => true,
+                Some(Use::Change) => writable,
+                Some(Use::Shell) => writable && has_shell,
+                None => false,
             })
             .collect())
     }
@@ -237,37 +241,34 @@ impl ToolProvider for TerminalTool {
         _answers: Option<&Answers>,
         turn: &mut Turn,
     ) -> ToolResult<ToolOutput> {
-        let Some((need, is_shell)) = needs(name) else {
+        let Some(using) = Use::of(name) else {
             return Err(ToolError::UnknownTool(name.to_string()));
         };
-        let writer = workspace_writer(turn).await?;
-        let (workspace, value) = match is_shell {
-            true => {
-                let (workspace, shell) = writer.shell().await?;
+        let (value, classification) = match using {
+            Use::Shell => {
+                let (workspace, shell) = workspace_writer(turn).await?.shell().await?;
                 let shell = shell.ok_or_else(|| {
                     ToolError::ExecutionFailed(
                         "the workspace's storage gives it no shell".to_string(),
                     )
                 })?;
-                (workspace, shell::execute(self, name, params, shell).await?)
+                (shell::execute(self, name, params, shell).await?, workspace.classification)
             }
-            false => {
-                let (workspace, terminal) = writer.terminal(need).await?;
-                let max_file_bytes = writer.max_file_bytes();
-                let value = files::execute(
-                    self,
-                    name,
-                    params,
-                    terminal.as_ref(),
-                    &workspace,
-                    max_file_bytes,
-                    turn,
-                )
-                .await?;
-                (workspace, value)
+            Use::Read => {
+                let (workspace, terminal) =
+                    workspace_reader(&turn.situation()).await?.terminal().await?;
+                let seen = (workspace.id, &workspace.classification);
+                let value = files::read(self, name, params, terminal.as_ref(), seen, turn).await?;
+                (value, workspace.classification)
+            }
+            Use::Change => {
+                let (workspace, terminal) = workspace_writer(turn).await?.terminal().await?;
+                let seen = (workspace.id, &workspace.classification);
+                let value = files::change(name, params, terminal.as_ref(), seen, turn).await?;
+                (value, workspace.classification)
             }
         };
-        Ok(ToolOutput::classified(value, workspace.classification))
+        Ok(ToolOutput::classified(value, classification))
     }
 }
 
@@ -293,20 +294,80 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::files::READ_FILE;
+    use crate::plugin::WorkspaceToolsPlugin;
     use crate::{catalogue, prompts};
     use caelumora_agents::testing::with_agent_kinds;
     use caelumora_agents::testing::workspace_turn;
+    use caelumora_agents::testing::{self as agent_testing, TestAgents};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::confidentiality::{Classification, Confidentiality};
+    use caelumora_model::scope::Scope;
+    use caelumora_model::security::Grant;
     use caelumora_model::security::{Policies, SecurityContext};
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::type_map::TypeKey;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
+    use caelumora_runtime::testing::World;
     use caelumora_runtime::workspace::testing::session_with_workspace;
     use serde_json::json;
+    use std::fs;
 
     pub(crate) fn tool(params: Value) -> TerminalTool {
         TerminalTool::new(serde_json::from_value(params).unwrap(), prompts()).unwrap()
+    }
+
+    /// Issue 516: a tool that only reads the files goes through the workspace's reader - finding
+    /// the workspace usable in the channel, then reading it, each asking what using it there asks
+    /// to read -, and is never asked whether the agent may change them.
+    #[tokio::test]
+    async fn a_read_of_a_file_asks_what_reading_asks_and_never_a_change() {
+        let world = World::with(&[&TestAgents, &WorkspaceToolsPlugin], |_| {}).await;
+        let personality = world.personality("plain", None, &[]).await;
+        let helper = world.agent("helper", world.alice, &personality).await;
+        let alice = World::as_user(world.alice);
+        let docs = world
+            .runtime
+            .workspace_manager()
+            .create(
+                &alice,
+                "docs",
+                Scope::UserScope { user_id: world.alice },
+                "shell",
+                None,
+                Classification::general(Confidentiality::Internal),
+            )
+            .await
+            .unwrap();
+        let session = world.shared_session(&[helper], &[]).await;
+        session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+        let place = world.files.path().join("shell").join(docs.id.to_string());
+        fs::create_dir_all(place.join("notes")).unwrap();
+        fs::write(place.join("notes/a.md"), "present").unwrap();
+        let tool = tool(json!({}));
+        let mut state = AgentChannelState::default();
+        let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+
+        let (read, asked) = world
+            .asked(tool.execute(READ_FILE, &json!({ "path": "notes/a.md" }), None, &mut turn))
+            .await;
+        read.expect("read");
+        let using = [
+            "alice as helper: GetChannel(alice's) yes",
+            "alice as helper: GetWorkspace(alice's) yes",
+            "alice as helper: Publish yes",
+            "alice as helper: Publish yes",
+        ];
+        let session_read = ["alice as helper: GetSession(alice's) yes"];
+        let expected: Vec<String> = [&session_read[..], &using[..], &session_read[..], &using[..]]
+            .concat()
+            .iter()
+            .map(|line| line.to_string())
+            .collect();
+        assert_eq!(asked, expected, "found usable, then read, as reading is asked");
+        drop(turn);
+        world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 290: offered where the channel uses the workspace - every tool,

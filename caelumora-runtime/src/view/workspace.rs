@@ -55,11 +55,6 @@ impl WorkspaceView {
             .any(|(name, has_shell)| name == self.workspace.storage && has_shell)
     }
 
-    /// The largest file that may be put into it.
-    pub fn max_file_bytes(&self) -> u64 {
-        self.views.workspace_manager().max_file_bytes()
-    }
-
     /// Whether the viewer may change it, share it and attach it to a
     /// session (`UpdateWorkspace`): its owner.
     pub async fn may_change(&self) -> bool {

@@ -8,12 +8,12 @@
 use super::{WorkspaceError, WorkspaceResult};
 use crate::controller::WorkspaceController;
 use crate::session::SessionLoop;
-use crate::terminal::{Shell, Terminal};
+use crate::terminal::{Shell, Terminal, TerminalReader};
 use crate::view::{ChannelView, SessionView, WorkspaceView};
 use async_trait::async_trait;
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{Grant, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, Session};
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
@@ -41,26 +41,26 @@ pub trait WorkspaceReader: Send + Sync {
     /// Whether the work may change its files.
     async fn may_write(&self) -> bool;
 
-    /// Its terminal, to read its files - asked as reading them is asked. A handle: it is the
-    /// storage's terminal, which can do more than reading, and the work is trusted to read alone
-    /// (issue 516).
+    /// The workspace as it is now and its files to read - asked as reading them is asked -,
+    /// through a terminal that reads alone.
     ///
     /// # Errors
-    /// As `WorkspaceController::terminal_in`.
-    async fn terminal(&self) -> WorkspaceResult<Arc<dyn Terminal>>;
+    /// As `WorkspaceController::reader_in`.
+    async fn terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn TerminalReader>)>;
 }
 
 /// The workspace of its session an agent's work acts on in its channel: what a tool of a turn
-/// reads and changes its files by and runs its commands by, each use asked in the work's context
-/// as it is made. What only reads goes through the reader.
+/// changes its files by and runs its commands by, each use asked in the work's context as it is
+/// made. Reading goes through the reader, in a tool too.
 #[async_trait]
 pub trait WorkspaceWriter: Send + Sync {
-    /// The workspace and its terminal, for what `need` asks - reading its files, or changing them
-    /// too -, a tool's one way to them. A handle, as the reader's terminal is.
+    /// The workspace and its terminal, to change its files - asked as changing them is asked
+    /// (`WriteWorkspace`). A handle that carries the right to change them, and writes no file
+    /// larger than the workspaces take.
     ///
     /// # Errors
     /// As `WorkspaceController::terminal_in`.
-    async fn terminal(&self, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)>;
+    async fn terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)>;
 
     /// The workspace and its shell as the work's channel sees it, the shell `None` where its
     /// storage runs no commands.
@@ -68,9 +68,6 @@ pub trait WorkspaceWriter: Send + Sync {
     /// # Errors
     /// As `WorkspaceController::shell_in`.
     async fn shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)>;
-
-    /// The largest file a workspace takes, which what the terminal writes is bound by.
-    fn max_file_bytes(&self) -> u64;
 }
 
 /// The workspace a piece of work may use in its channel, found as it is bound: the reader.
@@ -126,13 +123,10 @@ impl WorkspaceReader for UsableWorkspace {
         self.workspace.may_write().await
     }
 
-    async fn terminal(&self) -> WorkspaceResult<Arc<dyn Terminal>> {
+    async fn terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn TerminalReader>)> {
         let session = self.channel.session().as_session();
         let context = self.channel.views().context();
-        let channel = self.channel.document();
-        let (_, terminal) =
-            self.controller.terminal_in(context, session, channel, Grant::Read).await?;
-        Ok(terminal)
+        self.controller.reader_in(context, session, self.channel.document()).await
     }
 }
 
@@ -142,7 +136,6 @@ pub(crate) struct WorkspaceUse {
     context: SecurityContext,
     session: Arc<SessionLoop>,
     channel: ChannelId,
-    max_file_bytes: u64,
 }
 
 impl WorkspaceUse {
@@ -154,7 +147,6 @@ impl WorkspaceUse {
             context: views.context().clone(),
             session: Arc::clone(session.running()?),
             channel: views.viewer().place()?.channel,
-            max_file_bytes: views.workspace_manager().max_file_bytes(),
         })
     }
 
@@ -168,19 +160,15 @@ impl WorkspaceUse {
 
 #[async_trait]
 impl WorkspaceWriter for WorkspaceUse {
-    async fn terminal(&self, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+    async fn terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let (session, channel) = self.documents()?;
         let controller = self.session.workspace()?;
-        controller.terminal_in(&self.context, &session, &channel, need).await
+        controller.terminal_in(&self.context, &session, &channel).await
     }
 
     async fn shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
         let (session, channel) = self.documents()?;
         let controller = self.session.workspace()?;
         controller.shell_in(&self.context, &session, &channel).await
-    }
-
-    fn max_file_bytes(&self) -> u64 {
-        self.max_file_bytes
     }
 }

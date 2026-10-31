@@ -10,7 +10,6 @@ use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
@@ -37,7 +36,6 @@ pub struct WorkspaceManager {
     /// with the `ControllerManager`, which gives a workspace's controller
     /// its own, and the `CommandReaper`.
     storages: Arc<NamedBackends<dyn TerminalProvider>>,
-    max_file_bytes: u64,
 }
 
 impl fmt::Debug for WorkspaceManager {
@@ -49,15 +47,13 @@ impl fmt::Debug for WorkspaceManager {
 impl WorkspaceManager {
     /// The manager of the workspaces of `stores`, whose files lie in
     /// `storages`, by their names - the storages its configuration names,
-    /// made as backends (issue 324) -, and of which a person may put files
-    /// as large as `config` says.
+    /// made as backends (issue 324).
     pub(crate) fn new(
         stores: &EntityStores,
         holders: Arc<ScopeHolders>,
         events: Arc<EventBus>,
         policies: &Policies,
         storages: Arc<NamedBackends<dyn TerminalProvider>>,
-        config: &WorkspacesConfig,
     ) -> Self {
         Self {
             workspaces: Arc::clone(&stores.workspaces),
@@ -65,13 +61,7 @@ impl WorkspaceManager {
             events,
             policies: policies.clone(),
             storages,
-            max_file_bytes: config.max_file_bytes,
         }
-    }
-
-    /// The largest file a person may put into a workspace.
-    pub fn max_file_bytes(&self) -> u64 {
-        self.max_file_bytes
     }
 
     /// The configured storages, by name, each with whether its workspaces

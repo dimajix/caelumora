@@ -256,24 +256,18 @@ pub struct AppConfig {
 
 /// The storages workspaces are made in (issue 253), each by the name a
 /// workspace refers to it with and a backend (`dyn TerminalProvider`), the
-/// provider that makes and reaches the place of each (issue 251, part A),
-/// and how large a file a person may put into one.
-#[derive(Debug, Deserialize, Clone)]
+/// provider that makes and reaches the place of each (issue 251, part A) -
+/// how large a file a person may put into one is each storage's parameter
+/// (`max_file_bytes`, issue 516).
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkspacesConfig {
-    pub max_file_bytes: u64,
     pub storage: BTreeMap<String, BackendConfig>,
 }
 
-/// The largest file a person may put into a workspace unless configured
-/// otherwise: 50 MiB.
+/// The largest file a person may put into a workspace of a storage that names none
+/// (`max_file_bytes`), and into an artifact unless configured otherwise: 50 MiB.
 pub const DEFAULT_MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
-
-impl Default for WorkspacesConfig {
-    fn default() -> Self {
-        Self { max_file_bytes: DEFAULT_MAX_FILE_BYTES, storage: BTreeMap::new() }
-    }
-}
 
 /// The storages binary content is kept in (issue 282), each by the name
 /// what is kept there refers to it with and a backend (`dyn
@@ -464,11 +458,10 @@ persistence:
 
     #[test]
     fn a_backend_is_named_by_its_type_and_keeps_its_parameters_for_its_factory() {
-        let config = AppConfig::from_yaml("workspaces:\n  max_file_bytes: 1024\n  storage:\n    dev:\n      type: local\n      root: x\n      shell: true\n      destination: { level: internal }\n").expect("a local storage");
-        assert_eq!(config.workspaces.max_file_bytes, 1024);
+        let config = AppConfig::from_yaml("workspaces:\n  storage:\n    dev:\n      type: local\n      root: x\n      shell: true\n      destination: { level: internal }\n      max_file_bytes: 1024\n").expect("a local storage");
         let expected = BackendConfig::new(
             "local",
-            serde_json::json!({ "root": "x", "shell": true, "destination": { "level": "internal" } }),
+            serde_json::json!({ "root": "x", "shell": true, "destination": { "level": "internal" }, "max_file_bytes": 1024 }),
         );
         assert_eq!(config.workspaces.storage.get("dev"), Some(&expected));
         // What the parameters are is the factory's to say, when the runtime
@@ -487,7 +480,10 @@ persistence:
         );
         let none = AppConfig::from_yaml("{}\n").expect("nothing configured");
         assert!(none.workspaces.storage.is_empty(), "no storage unless configured");
-        assert_eq!(none.workspaces.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
+        assert!(
+            AppConfig::from_yaml("workspaces:\n  max_file_bytes: 1024\n").is_err(),
+            "the largest file is a storage's to say"
+        );
     }
 
     #[test]

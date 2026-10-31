@@ -50,7 +50,7 @@ position, `the secret provider 2 (vault)`. An unknown type is answered with the 
 | `logging` | The log `format` (`text` or `json`) and an optional `file`. What is logged is selected with `RUST_LOG`. See [CODING-GUIDELINES.md](CODING-GUIDELINES.md#logging). | `text`; stderr (REST server) or `local/tui.log` (TUI) |
 | `commands` | The user commands every session has, as a list of components; a session template can add its own. An empty list switches them off. See [COMMANDS.md](COMMANDS.md). | `help_command`, `wakeup_command` and `nudge_command` |
 | `approvals` | What the system restricts of tool calls everywhere: `rules`, each with a `matcher` (`tool`, `*` for every one, and optionally `arguments`, per argument a regular expression, `{ "shell": [words] }` for a command line, or `{ "equals": value }` for the whole value), a `decision` (`ask` or `deny` - the system never allows) and optionally `expires_at`. See [APPROVALS.md](APPROVALS.md#rules-of-a-place). | none |
-| `workspaces` | Where the files of workspaces lie: `max_file_bytes`, the largest file a person may put into one, and `storage`, the storages by name, each a [backend](#backends) - see [Workspace storages](#workspace-storages). A workspace names its storage when it is made. | 50 MiB; no storage - no workspace can be made |
+| `workspaces` | Where the files of workspaces lie: `storage`, the storages by name, each a [backend](#backends) - see [Workspace storages](#workspace-storages). A workspace names its storage when it is made. | no storage - no workspace can be made |
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
 | `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment and the largest file a tool gives its model (issue 512); `max_per_message`, also the most files one tool result gives; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
 | `artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
@@ -65,9 +65,10 @@ built.
 ### Workspace storages
 
 Every storage takes `max_run_secs` (3600), how long a command in one of its workspaces may run
-before it is killed with what it started, and `destination`, the most a workspace there may be
-classified (see [WORKSPACE.md](WORKSPACE.md#storages), which also says how far each provider keeps
-its workspaces apart).
+before it is killed with what it started, `max_file_bytes` (50 MiB), the largest file a person may
+put into one of its workspaces - its terminal refuses a larger one -, and `destination`, the most a
+workspace there may be classified (see [WORKSPACE.md](WORKSPACE.md#storages), which also says how
+far each provider keeps its workspaces apart).
 
 | `type` | Workspaces | Parameters |
 |---|---|---|

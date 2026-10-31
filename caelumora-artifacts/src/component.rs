@@ -5,14 +5,12 @@
 //! published it. Beside it, `publish_file` of `terminal_tool` offers a file
 //! as a link to it as it is now (issue 273).
 //!
-//! The workspace is reached as `terminal_tool` reaches it, through the
-//! workspace's writer the turn hands out (`WorkspaceWriter`, issues 344,
-//! 516), for reading; the file read is handed to the `ArtifactPublisher`
-//! the plugin binds to the turn's work (issue 516). Its tool is offered
-//! where a file can be published (issue 290): where the turn may use a
-//! workspace in its channel, and a storage of content is configured; a call
-//! is checked again all the same, and fails and says so. The result is
-//! classified as the artifact, which is classified as the workspace.
+//! The workspace is reached as `terminal_tool` reaches it to read, through the reader of it the
+//! situation hands out (`WorkspaceReader`, issues 344, 516); the file read is handed to the
+//! `ArtifactPublisher` the plugin binds to the turn's work (issue 516). Its tool is offered where a
+//! file can be published (issue 290): where the turn may use a workspace in its channel, and a
+//! storage of content is configured; a call is checked again all the same, and fails and says so.
+//! The result is classified as the artifact, which is classified as the workspace.
 
 use crate::extension::ArtifactPublisher;
 use crate::manager::ArtifactError;
@@ -21,14 +19,13 @@ use async_trait::async_trait;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    arguments, described, tool_text, usable_workspace, workspace_writer, ApprovalMode, ToolError,
-    ToolOutput, ToolProvider, ToolResult,
+    arguments, described, tool_text, workspace_reader, ApprovalMode, ToolError, ToolOutput,
+    ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::Grant;
 use caelumora_model::store::StoreError;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_model::value::name::ScopedName;
@@ -37,7 +34,7 @@ use caelumora_runtime::component::{
 };
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::WorkspacePath;
-use caelumora_runtime::workspace::{WorkspaceReader, WorkspaceWriter};
+use caelumora_runtime::workspace::WorkspaceReader;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -149,7 +146,7 @@ impl ToolProvider for ArtifactTool {
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
         // A work that reaches no workspace is told so first; one that does is given no publisher
         // only where no storage of content is configured.
-        usable_workspace(situation).await?;
+        workspace_reader(situation).await.map_err(|e| e.to_string())?;
         if !situation.has_writer::<dyn ArtifactPublisher>().await {
             return Err("no storage of content is configured".to_string());
         }
@@ -192,7 +189,7 @@ impl ToolProvider for ArtifactTool {
         })?;
         let name = ScopedName::new(name, Scope::ProjectScope { project_id: session.project() })
             .map_err(ArtifactError::from)?;
-        let (workspace, terminal) = workspace_writer(turn).await?.terminal(Grant::Read).await?;
+        let (workspace, terminal) = workspace_reader(&turn.situation()).await?.terminal().await?;
         let content = terminal.read(&at).await?;
         let publisher =
             turn.writer::<dyn ArtifactPublisher>().await.ok_or(ArtifactError::NotConfigured)?;
@@ -225,7 +222,6 @@ pub fn register(registry: &mut ComponentRegistry) {
                 .params::<ArtifactToolConfig>()
                 .provides::<dyn ToolProvider>()
                 .reads::<dyn WorkspaceReader>()
-                .writes::<dyn WorkspaceWriter>()
                 .writes::<dyn ArtifactPublisher>(),
         ),
         |descriptor, context| async move {

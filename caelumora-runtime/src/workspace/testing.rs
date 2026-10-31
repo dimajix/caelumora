@@ -5,7 +5,7 @@
 
 use crate::runtime::RuntimeManager;
 use crate::session::{SessionLoop, SessionManager};
-use crate::terminal::{Shell, Terminal};
+use crate::terminal::{Shell, Terminal, TerminalReader};
 use crate::testing::TestRuntime;
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
@@ -17,7 +17,7 @@ use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::config::AppConfig;
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{Grant, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::testing::make_session;
 use caelumora_model::session::Session;
 use caelumora_model::user::testing::{make_user, record_users};
@@ -59,12 +59,9 @@ pub async fn session_with_workspace() -> WithWorkspace {
     let internal = Classification::general(Confidentiality::Internal);
     let storage = BackendConfig::new(
         "local",
-        json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }),
+        json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" }, "max_file_bytes": MAX_FILE_BYTES }),
     );
-    let workspaces = WorkspacesConfig {
-        storage: [("dev".to_string(), storage)].into(),
-        max_file_bytes: MAX_FILE_BYTES,
-    };
+    let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into() };
     let runtime = TestRuntime {
         config: AppConfig { workspaces, ..Default::default() },
         ..Default::default()
@@ -126,9 +123,9 @@ pub async fn session_with_workspace() -> WithWorkspace {
     WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }
 }
 
-/// The session's workspace and its terminal in channel `channel` of `session`, for what `need`
-/// asks, as a frontend reaches them (`WorkspaceController::terminal_in`): of the session and the
-/// channel as the running session holds them.
+/// The session's workspace and its terminal in channel `channel` of `session`, to change its files,
+/// as a frontend reaches them (`WorkspaceController::terminal_in`): of the session and the channel
+/// as the running session holds them.
 ///
 /// # Errors
 /// `NotUsableInChannel` where no workspace is attached (`SessionLoop::workspace`) or the channel
@@ -137,11 +134,25 @@ pub async fn terminal_in(
     session: &SessionLoop,
     channel: ChannelId,
     ctx: &SecurityContext,
-    need: Grant,
 ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
     let workspace = session.workspace()?;
     let (session, channel) = documents_of(session, channel)?;
-    workspace.terminal_in(ctx, &session, &channel, need).await
+    workspace.terminal_in(ctx, &session, &channel).await
+}
+
+/// The session's workspace and its files to read in channel `channel` of `session`, as
+/// `terminal_in` reaches its terminal (`WorkspaceController::reader_in`).
+///
+/// # Errors
+/// As `terminal_in`.
+pub async fn reader_in(
+    session: &SessionLoop,
+    channel: ChannelId,
+    ctx: &SecurityContext,
+) -> WorkspaceResult<(Workspace, Arc<dyn TerminalReader>)> {
+    let workspace = session.workspace()?;
+    let (session, channel) = documents_of(session, channel)?;
+    workspace.reader_in(ctx, &session, &channel).await
 }
 
 /// The session's workspace and its shell as channel `channel` of `session` sees it, as a frontend

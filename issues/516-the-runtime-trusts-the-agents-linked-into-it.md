@@ -977,3 +977,34 @@ service and the application never holds an entry it may not recall.
   is answered as absent. The full terminal is too high a privilege to hand to what only reads: the
   terminal is cut into a reading and a changing part, as its extension is, in a step of its own
   before the trait (*The steps of 5b*, 3), which is step 4 now.
+- **2026-10-31** — Step 5b.3 done on the branch: the terminal is cut as its extension is. A
+  `TerminalReader` lists, looks at and reads, and is what the workspace's reader hands out; a
+  `Terminal` is a reader and changes the files, and is what its writer hands out, asking
+  `WriteWorkspace` always - reading goes through the reader, in a tool too (`files::read` and
+  `files::change` of the terminal tool, `tool::workspace_reader`). A provider makes a terminal for
+  the largest file a workspace takes (`TerminalProvider::terminal_for(id, max_file_bytes)`), which
+  the terminal keeps itself, and hands a shell out for a scope (`shell_for`), which the
+  workspace's controller alone asks for; the terminal has none. `max_file_bytes` left the writer,
+  the `WorkspaceManager` and the `WorkspaceView`. Differs from the plan: the terminal keeps the
+  largest file itself, as both backends did per write, so that no hull of the core is needed and
+  one `Terminal` serves every caller, the REST routes among them; and in `caelumora-open-terminal`
+  the place of a workspace in an instance (`OpenTerminal`, which its shell is made of) is apart
+  from its files as a terminal (`OpenFiles`). What a tool that only reads asks is now what finding
+  the usable workspace asks, then what reading it asks, as the artifacts' tests state. Stored
+  data: none.
+  After the review of the step: the workspace's controller cuts its terminals as the extension
+  does - `reader` and `reader_in` hand out a `TerminalReader`, `terminal` and `terminal_in` a
+  `Terminal` and ask `WriteWorkspace` always, without a `Grant` -, so that the REST routes that
+  only read, and the workspace's reader, hold no handle that writes. The reader hands out the
+  workspace as it is now with its files, as the writer does, so that what is read is labelled as
+  it was checked. `tool::workspace_reader` is the one public way to the reader (it replaces
+  `usable_workspace`); a provider's shell is had only where the workspace's place is there, as its
+  terminal is; the terminal tool tells its tools' uses by a type (`Use`), and the reading tools'
+  questions are stated by a test. Then, decided with the maintainer: the largest file is a
+  storage's parameter (`max_file_bytes`, read and checked as `max_run_secs` is, with
+  `default_max_file_bytes` and `check_max_file_bytes`), which its provider keeps and makes its
+  terminals with (`TerminalProvider::terminal_for(id)` again); `workspaces.max_file_bytes` is gone,
+  and nothing of the core - the controllers, the workspace manager - carries the value on. A
+  configuration that names it fails to load, naming it, and is to name it at each storage instead.
+  Differs from the plan besides: an application still reads the largest file of the storage, from
+  the `TerminalReader`, where `publish_file` bounds what it offers.

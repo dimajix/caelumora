@@ -8,7 +8,7 @@
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::situation::Situation;
 use crate::tool::{
-    arguments, described, page_of, tool_text, usable_workspace, workspace_writer, ToolError,
+    arguments, described, page_of, tool_text, workspace_reader, workspace_writer, ToolError,
     ToolOutput, ToolProvider, ToolResult,
 };
 use crate::turn::Turn;
@@ -17,7 +17,6 @@ use caelumora_model::content::{ContentId, ContentRef};
 use caelumora_model::message::MessageId;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
-use caelumora_model::security::Grant;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::content::ContentError;
@@ -82,8 +81,8 @@ pub struct AttachmentTool {
 
 impl AttachmentTool {
     /// The provider, its texts from `prompts`. What it attaches it has its turn copy
-    /// (`Turn::copy_attachment`), and it writes no larger file into a workspace than a workspace
-    /// takes (`WorkspaceWriter::max_file_bytes`, issue 516).
+    /// (`Turn::copy_attachment`); the workspace's terminal writes no larger file into a workspace
+    /// than a workspace takes (issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
@@ -218,7 +217,7 @@ impl ToolProvider for AttachmentTool {
             return Ok(Vec::new());
         }
         let sees = situation.profile().images;
-        let writable = match usable_workspace(situation).await {
+        let writable = match workspace_reader(situation).await {
             Ok(workspace) => workspace.may_write().await,
             Err(_) => false,
         };
@@ -280,12 +279,12 @@ impl ToolProvider for AttachmentTool {
                 // A workspace used in the channel takes what the channel holds: the attachment's
                 // label flows into it as the channel's does.
                 let writer = workspace_writer(turn).await?;
-                let (workspace, terminal) = writer.terminal(Grant::Write).await?;
+                let (workspace, terminal) = writer.terminal().await?;
                 let (attachment, content) = attachment_content(turn, &reference).await?;
                 let at = WorkspacePath::parse(
                     &path.unwrap_or_else(|| format!("{COPIED_TO}/{}", attachment.name.as_str())),
                 )?;
-                let written = terminal.write(&at, content, writer.max_file_bytes()).await?;
+                let written = terminal.write(&at, content).await?;
                 Ok(ToolOutput::classified(
                     json!({ "ref": reference, "path": at.to_string(), "bytes": written }),
                     workspace.classification,
@@ -356,6 +355,7 @@ mod tests {
     use caelumora_model::history::HistoryEntry;
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::scope::Scope;
+    use caelumora_model::security::Grant;
     use caelumora_model::workspace::Workspace;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::session::SessionLoop;

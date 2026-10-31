@@ -115,3 +115,5 @@ checks.
   Markdown, 18 in Rust comments - are rewrapped, with the paragraphs they run into; no line of
   them changed what it says. Issue done: the lints are on, clippy and the script are silent, and
   CODING-GUIDELINES.md says which rules a lint checks.
+- **2026-10-31** — Issue 516 cut `files::execute` of `caelumora-workspace-tools` into what reads
+  the files and what changes them, each below the limit; its `expect` is gone.

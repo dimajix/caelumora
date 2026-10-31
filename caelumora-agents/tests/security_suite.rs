@@ -3482,7 +3482,7 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
         "its members' to work on (issue 23)"
     );
     assert!(
-        workspace(&world, mine).await.terminal(&alice, Grant::Write).await.is_ok(),
+        workspace(&world, mine).await.terminal(&alice).await.is_ok(),
         "used directly, wherever who may use it acts (issue 23)"
     );
     let refused = second.update_workspace(&alice, Some(mine), None).await.unwrap_err();

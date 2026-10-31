@@ -225,7 +225,7 @@ The channel as it stands - its document, what an operation in the channel is giv
 (`AttachmentManager::copy`) - is `Situation::channel`. What is done with the workspace's files goes
 through a handle instead, named after the handle: its terminal, to read them, through the reader of
 the workspace the situation hands out (`WorkspaceReader::terminal`), and to change them or run
-commands, through its writer the turn hands out (`WorkspaceWriter::terminal_for`, `shell`). A system
+commands, through its writer the turn hands out (`WorkspaceWriter::terminal`, `shell`). A system
 service's extensions are cut the same way (issue 516, see
 [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)): what the work reads by is the
 situation's to hand out (`Situation::reader`, the skills' `SkillReader`), what it acts by the turn's

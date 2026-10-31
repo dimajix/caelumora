@@ -32,7 +32,7 @@ use crate::plugin::Plugin;
 use crate::project::{ProjectError, ProjectManager};
 use crate::runtime::{ActorRuntime, RuntimeBuilder, RuntimeManager};
 use crate::session::{SessionError, SessionLoop, SessionManager};
-use crate::terminal::{ByteStream, Terminal, WorkspacePath};
+use crate::terminal::{ByteStream, TerminalReader, WorkspacePath};
 use crate::view::Viewer;
 use crate::workspace::WorkspaceError;
 use anyhow::{Error, Result};
@@ -406,7 +406,6 @@ impl World {
                 ("shell".to_string(), shell),
             ]
             .into(),
-            ..Default::default()
         };
         let content = ContentConfig {
             storage: [(
@@ -776,7 +775,7 @@ pub fn file(text: &'static str) -> ByteStream {
 }
 
 /// The content of the file `path` of `terminal`, as text.
-pub async fn read(terminal: &dyn Terminal, path: &str) -> String {
+pub async fn read(terminal: &dyn TerminalReader, path: &str) -> String {
     let (_, content) = terminal.read(&WorkspacePath::parse(path).unwrap()).await.unwrap();
     let chunks: Vec<_> = content.collect().await;
     String::from_utf8(chunks.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect())

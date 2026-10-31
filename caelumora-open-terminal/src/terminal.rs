@@ -41,7 +41,7 @@ use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use caelumora_runtime::remote::describe_request_error;
 use caelumora_runtime::terminal::{
     ByteStream, CommandKey, CommandState, Commands, FileEntry, Kept, Shell, Terminal,
-    TerminalError, TerminalResult, WorkspacePath,
+    TerminalError, TerminalReader, TerminalResult, WorkspacePath,
 };
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, TryStreamExt};
@@ -90,7 +90,7 @@ pub(crate) type OpenCommands = Commands<Arc<Started>>;
 /// One workspace in an instance: its directory there, `base`, and the
 /// commands of its storage, which run for `max_run` at most.
 #[derive(Debug, Clone)]
-pub(crate) struct OpenTerminal {
+pub(crate) struct OpenPlace {
     pub(crate) client: Arc<Client>,
     pub(crate) base: String,
     pub(crate) workspace: WorkspaceId,
@@ -98,7 +98,7 @@ pub(crate) struct OpenTerminal {
     pub(crate) max_run: Duration,
 }
 
-impl OpenTerminal {
+impl OpenPlace {
     /// Where `path` lies in the instance.
     fn at(&self, path: &WorkspacePath) -> String {
         match path.is_root() {
@@ -212,12 +212,27 @@ impl OpenTerminal {
     }
 }
 
+impl OpenPlace {
+    /// Its shell as `scope` sees it.
+    pub(crate) fn shell(&self, scope: &str) -> Arc<dyn Shell> {
+        Arc::new(OpenTerminalShell { terminal: self.clone(), scope: scope.to_string() })
+    }
+}
+
+/// The files of one workspace in an instance, as a terminal hands them out: writing no file larger
+/// than `max_file_bytes`.
+#[derive(Debug)]
+pub(crate) struct OpenFiles {
+    pub(crate) place: OpenPlace,
+    pub(crate) max_file_bytes: u64,
+}
+
 #[async_trait]
-impl Terminal for OpenTerminal {
+impl TerminalReader for OpenFiles {
     async fn list(&self, dir: &WorkspacePath) -> TerminalResult<Vec<FileEntry>> {
-        match self.listing(dir).await? {
+        match self.place.listing(dir).await? {
             Some(entries) => Ok(entries),
-            None => match self.found(dir).await? {
+            None => match self.place.found(dir).await? {
                 Some(entry) if !entry.is_dir => Err(TerminalError::NotADirectory(dir.to_string())),
                 _ => Err(TerminalError::NotFound(dir.to_string())),
             },
@@ -225,28 +240,29 @@ impl Terminal for OpenTerminal {
     }
 
     async fn stat(&self, path: &WorkspacePath) -> TerminalResult<FileEntry> {
-        self.found(path).await?.ok_or_else(|| TerminalError::NotFound(path.to_string()))
+        self.place.found(path).await?.ok_or_else(|| TerminalError::NotFound(path.to_string()))
     }
 
     async fn read(&self, path: &WorkspacePath) -> TerminalResult<(u64, ByteStream)> {
         let answer = self
+            .place
             .client
             .send(
                 Method::GET,
                 &["files", "view"],
-                &[("path", self.at(path))],
+                &[("path", self.place.at(path))],
                 None,
                 Duration::ZERO,
                 |r| r,
             )
             .await?;
         if answer.status() == StatusCode::NOT_FOUND {
-            return Err(match self.found(path).await? {
+            return Err(match self.place.found(path).await? {
                 Some(entry) if entry.is_dir => TerminalError::IsADirectory(path.to_string()),
                 _ => TerminalError::NotFound(path.to_string()),
             });
         }
-        let answer = self.client.success(answer)?;
+        let answer = self.place.client.success(answer)?;
         let size = match answer.content_length() {
             Some(size) => size,
             None => self.stat(path).await?.size,
@@ -255,16 +271,19 @@ impl Terminal for OpenTerminal {
         Ok((size, Box::pin(content)))
     }
 
-    async fn write(
-        &self,
-        path: &WorkspacePath,
-        mut content: ByteStream,
-        limit: u64,
-    ) -> TerminalResult<u64> {
+    fn max_file_bytes(&self) -> u64 {
+        self.max_file_bytes
+    }
+}
+
+#[async_trait]
+impl Terminal for OpenFiles {
+    async fn write(&self, path: &WorkspacePath, mut content: ByteStream) -> TerminalResult<u64> {
+        let limit = self.max_file_bytes;
         let Some(name) = path.file_name() else {
             return Err(TerminalError::IsADirectory(path.to_string()));
         };
-        if self.found(path).await?.is_some_and(|entry| entry.is_dir) {
+        if self.place.found(path).await?.is_some_and(|entry| entry.is_dir) {
             return Err(TerminalError::IsADirectory(path.to_string()));
         }
         let mut held = Vec::new();
@@ -284,11 +303,12 @@ impl Terminal for OpenTerminal {
         let file = Part::bytes(held).file_name(name.to_string());
         let form = Form::new().part("file", file);
         let answer = self
+            .place
             .client
             .send(
                 Method::POST,
                 &["files", "upload"],
-                &[("directory", self.at(&path.parent()))],
+                &[("directory", self.place.at(&path.parent()))],
                 None,
                 Duration::ZERO,
                 |r| r.multipart(form),
@@ -296,7 +316,7 @@ impl Terminal for OpenTerminal {
             .await?;
         match answer.status() {
             status if status.is_success() => Ok(written),
-            status => Err(self.why(path, status).await),
+            status => Err(self.place.why(path, status).await),
         }
     }
 
@@ -310,11 +330,12 @@ impl Terminal for OpenTerminal {
             return Err(TerminalError::NotEmpty(path.to_string()));
         }
         let answer = self
+            .place
             .client
             .send(
                 Method::DELETE,
                 &["files", "delete"],
-                &[("path", self.at(path))],
+                &[("path", self.place.at(path))],
                 None,
                 Duration::ZERO,
                 |r| r,
@@ -323,19 +344,20 @@ impl Terminal for OpenTerminal {
         match answer.status() {
             status if status.is_success() => Ok(()),
             StatusCode::NOT_FOUND => Err(TerminalError::NotFound(path.to_string())),
-            status => Err(self.client.refused(status)),
+            status => Err(self.place.client.refused(status)),
         }
     }
 
     async fn mkdir(&self, path: &WorkspacePath) -> TerminalResult<()> {
-        if let Some(entry) = self.found(path).await? {
+        if let Some(entry) = self.place.found(path).await? {
             return match entry.is_dir {
                 true => Ok(()),
                 false => Err(TerminalError::Exists(path.to_string())),
             };
         }
-        let at = self.at(path);
+        let at = self.place.at(path);
         let answer = self
+            .place
             .client
             .send(Method::POST, &["files", "mkdir"], &[], None, Duration::ZERO, |r| {
                 r.json(&wire::PathRequest { path: &at })
@@ -343,7 +365,7 @@ impl Terminal for OpenTerminal {
             .await?;
         match answer.status() {
             status if status.is_success() => Ok(()),
-            status => Err(self.why(path, status).await),
+            status => Err(self.place.why(path, status).await),
         }
     }
 
@@ -354,14 +376,15 @@ impl Terminal for OpenTerminal {
             ));
         }
         self.stat(from).await?;
-        if self.found(to).await?.is_some() {
+        if self.place.found(to).await?.is_some() {
             return Err(TerminalError::Exists(to.to_string()));
         }
         // As the `local` provider does: the directory it goes to is made.
         self.mkdir(&to.parent()).await?;
-        let (source, destination) = (self.at(from), self.at(to));
+        let (source, destination) = (self.place.at(from), self.place.at(to));
         let request = wire::MoveRequest { source: &source, destination: &destination };
         let answer = self
+            .place
             .client
             .send(Method::POST, &["files", "move"], &[], None, Duration::ZERO, |r| r.json(&request))
             .await?;
@@ -369,12 +392,8 @@ impl Terminal for OpenTerminal {
             status if status.is_success() => Ok(()),
             StatusCode::NOT_FOUND => Err(TerminalError::NotFound(from.to_string())),
             StatusCode::CONFLICT => Err(TerminalError::Exists(to.to_string())),
-            status => Err(self.client.refused(status)),
+            status => Err(self.place.client.refused(status)),
         }
-    }
-
-    fn shell(&self, scope: &str) -> Option<Arc<dyn Shell>> {
-        Some(Arc::new(OpenTerminalShell { terminal: self.clone(), scope: scope.to_string() }))
     }
 }
 
@@ -383,7 +402,7 @@ impl Terminal for OpenTerminal {
 /// that scope alone.
 #[derive(Debug)]
 struct OpenTerminalShell {
-    terminal: OpenTerminal,
+    terminal: OpenPlace,
     scope: String,
 }
 
@@ -469,7 +488,7 @@ impl Shell for OpenTerminalShell {
             .await?;
         let asked = match answer.status() {
             StatusCode::NOT_FOUND => Err(TerminalError::UnknownCommand(id.to_string())),
-            _ => client.parsed(answer).await.and_then(|process| OpenTerminal::state(id, process)),
+            _ => client.parsed(answer).await.and_then(|process| OpenPlace::state(id, process)),
         };
         self.seen(id, asked)
     }

@@ -52,7 +52,7 @@ use caelumora_runtime::testing::{
     attributes, checks, denied, file, not_found, quiet, read, shown, workspace, World, STAFF,
 };
 use caelumora_runtime::view::{ViewError, Viewer};
-use caelumora_runtime::workspace::testing::{shell_in, terminal_in};
+use caelumora_runtime::workspace::testing::{reader_in, shell_in, terminal_in};
 use caelumora_runtime::workspace::WorkspaceError;
 use serde_json::json;
 use std::sync::Arc;
@@ -3363,8 +3363,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     // Alice without the role that clears her for internal.
     let uncleared =
         SecurityContext::new(ActorId::User(world.alice), Default::default(), Default::default());
-    let (reached, asked) =
-        world.asked(workspace(&world, docs.id).await.terminal(&uncleared, Grant::Write)).await;
+    let (reached, asked) = world.asked(workspace(&world, docs.id).await.terminal(&uncleared)).await;
     assert!(
         matches!(reached, Err(WorkspaceError::NotFound(id)) if id == docs.id),
         "not found, not refused: {:?}",
@@ -3375,8 +3374,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
         checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) no"]),
         "read, not cleared - and not asked whether she may change it"
     );
-    let (reached, asked) =
-        world.asked(workspace(&world, docs.id).await.terminal(&alice, Grant::Write)).await;
+    let (reached, asked) = world.asked(workspace(&world, docs.id).await.terminal(&alice)).await;
     assert!(reached.is_ok(), "cleared, she reaches it");
     assert_eq!(
         asked,
@@ -3671,9 +3669,9 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
         "its list, then both ways: {asked:?}"
     );
     assert_eq!(bobs.id(), docs.id);
-    let his = |need| terminal_in(&session, main, &bob, need);
+    let his = || terminal_in(&session, main, &bob);
     assert!(
-        matches!(his(Grant::Write).await, Err(WorkspaceError::ReadOnly { .. })),
+        matches!(his().await, Err(WorkspaceError::ReadOnly { .. })),
         "reading, not changing, where it grants reading"
     );
     workspace(&world, docs.id)
@@ -3681,12 +3679,9 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
         .share(&alice, Subject::Group(GroupId::of_session(session_id)), Grant::Write)
         .await
         .unwrap();
-    let (_, terminal) = his(Grant::Write).await.expect("and reaches its files");
-    terminal
-        .write(&WorkspacePath::parse("notes/a.md").unwrap(), file("from bob"), 100)
-        .await
-        .unwrap();
-    let owned = workspace(&world, docs.id).await.terminal(&alice, Grant::Read).await.unwrap();
+    let (_, terminal) = his().await.expect("and reaches its files");
+    terminal.write(&WorkspacePath::parse("notes/a.md").unwrap(), file("from bob")).await.unwrap();
+    let owned = workspace(&world, docs.id).await.reader(&alice).await.unwrap();
     assert_eq!(
         read(owned.as_ref(), "notes/a.md").await,
         "from bob",
@@ -3704,7 +3699,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
         "not where the channel does not use it"
     );
     assert!(
-        matches!(his(Grant::Read).await, Err(WorkspaceError::NotUsableInChannel)),
+        matches!(reader_in(&session, main, &bob).await, Err(WorkspaceError::NotUsableInChannel)),
         "asked again when used"
     );
     channel.update_uses_workspace(&alice, true).await.unwrap();
@@ -3851,8 +3846,24 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     // As `run_command` starts them: in the shell of the channel.
     let (_, shell) = shell_in(&session, main, &alice).await.unwrap();
     let started = shell.expect("a shell").start("sleep 30").await.unwrap();
-    let terminal = workspace(&world, docs.id).await.terminal(&alice, Grant::Write).await.unwrap();
-    let other = terminal.shell(&ChannelId::new().to_string()).expect("a shell");
+    // In the shell of another channel that uses the workspace.
+    let side = session
+        .create_channel(
+            &alice,
+            ChannelSpec {
+                name: "side".to_string(),
+                components: quiet(),
+                participants: vec![],
+                classification: None,
+                language: None,
+                uses_workspace: Some(true),
+                internal_actors: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let (_, other) = shell_in(&session, side.id(), &alice).await.unwrap();
+    let other = other.expect("a shell");
     let elsewhere = other.start("sleep 30").await.unwrap();
 
     let (refused, asked) = world.asked(kill(&session, main, &bob, &started)).await;
@@ -3937,10 +3948,10 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
         SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new())
             .with_roles(vec![*STAFF], None);
     let his = views(&elsewhere).workspace(docs.id).await.expect("he reads it, wherever he acts");
-    workspace(&world, docs.id).await.terminal(&elsewhere, Grant::Read).await.expect("its files");
+    workspace(&world, docs.id).await.reader(&elsewhere).await.expect("its files");
     assert!(
         matches!(
-            workspace(&world, docs.id).await.terminal(&elsewhere, Grant::Write).await,
+            workspace(&world, docs.id).await.terminal(&elsewhere).await,
             Err(WorkspaceError::ReadOnly { .. })
         ),
         "not to change them"
@@ -3977,7 +3988,7 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     workspace(&world, docs.id).await.update_access(&alice, writers).await.unwrap();
     workspace(&world, docs.id)
         .await
-        .terminal(&bob, Grant::Write)
+        .terminal(&bob)
         .await
         .expect("where it grants writing, he writes");
     let agent = SecurityAttributes::owned_by(ActorId::User(world.alice))

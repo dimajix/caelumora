@@ -1,7 +1,8 @@
-//! The file tools of `terminal_tool` (issue 251, step 9): the workspace's
-//! files through its `Terminal`, whatever its storage - a shell is not
-//! needed. Paths are relative to the workspace's top directory and made
-//! `WorkspacePath`s before anything is asked.
+//! The file tools of `terminal_tool` (issue 251, step 9): the workspace's files through its
+//! terminal, whatever its storage - a shell is not needed -, those that only read through a
+//! `TerminalReader` (`read`, issue 516), those that change through a `Terminal` (`change`). Paths
+//! are relative to the workspace's top directory and made `WorkspacePath`s before anything is
+//! asked.
 //!
 //! - `list_files`, `read_file` and `grep_files` only read; what they read
 //!   is recorded as the turn's knowledge (`KnowledgeSource::Entity`), a
@@ -24,12 +25,15 @@ use bytes::Bytes;
 use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_model::approval::{ArgumentMatcher, ToolMatcher};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::{self, ContentDigest, Digest};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
-use caelumora_model::workspace::Workspace;
-use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
+use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_runtime::terminal::{
+    ByteStream, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
+};
 use futures::stream;
 use futures::StreamExt;
 use regex::{Regex, RegexBuilder};
@@ -341,7 +345,7 @@ pub(crate) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
 }
 
 /// The bytes of the file `at`, at most `READ_LIMIT`.
-async fn content(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<Vec<u8>> {
+async fn content(terminal: &dyn TerminalReader, at: &WorkspacePath) -> ToolResult<Vec<u8>> {
     let (size, mut stream) = terminal.read(at).await?;
     if size > READ_LIMIT {
         return Err(ToolError::InvalidParameter(format!("'{at}' is {size} bytes, more than the {READ_LIMIT} a file may be read with; search it with {GREP_FILES}, or read part of it with a command")));
@@ -362,7 +366,7 @@ async fn content(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<Vec<
 }
 
 /// The file `at` as text.
-async fn text(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<(String, Digest)> {
+async fn text(terminal: &dyn TerminalReader, at: &WorkspacePath) -> ToolResult<(String, Digest)> {
     let bytes = content(terminal, at).await?;
     let digest = digest::content(&bytes);
     let text = String::from_utf8(bytes)
@@ -370,22 +374,14 @@ async fn text(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<(String
     Ok((text, digest))
 }
 
-async fn write(
-    terminal: &dyn Terminal,
-    limit: u64,
-    at: &WorkspacePath,
-    content: String,
-) -> ToolResult<u64> {
+async fn write(terminal: &dyn Terminal, at: &WorkspacePath, content: String) -> ToolResult<u64> {
     let stream: ByteStream = Box::pin(stream::iter([Ok(Bytes::from(content))]));
-    terminal.write(at, stream, limit).await.map_err(ToolError::from)
+    terminal.write(at, stream).await.map_err(ToolError::from)
 }
 
-/// The digest of the file `at`, read in parts, at most `limit` bytes.
-async fn digest(
-    terminal: &dyn Terminal,
-    at: &WorkspacePath,
-    limit: u64,
-) -> ToolResult<(u64, Digest)> {
+/// The digest of the file `at`, read in parts, at most the largest file a workspace takes.
+async fn digest(terminal: &dyn TerminalReader, at: &WorkspacePath) -> ToolResult<(u64, Digest)> {
+    let limit = terminal.max_file_bytes();
     let (size, mut stream) = terminal.read(at).await?;
     if size > limit {
         return Err(ToolError::InvalidParameter(format!(
@@ -427,7 +423,7 @@ fn shown(line: &str) -> String {
 /// Searches `terminal` from `start` for `pattern`; what was searched and
 /// the matches.
 async fn search(
-    terminal: &dyn Terminal,
+    terminal: &dyn TerminalReader,
     start: WorkspacePath,
     pattern: &Regex,
     most: usize,
@@ -481,29 +477,35 @@ async fn search(
     )
 }
 
-/// Runs the file tool `name` of `tool` with `params` on `terminal`, the files of `workspace` - as
-/// `tool` is configured, with `max_file_bytes`, the largest file the workspaces take, and the texts
-/// its results give -, recording in `turn` what was read.
-#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
-pub(crate) async fn execute(
+/// Records in `turn` that the work read the files of `workspace` - its id and its classification -,
+/// as of `digest` where one file was read whole.
+fn known(
+    turn: &mut Turn<'_>,
+    (id, classification): (WorkspaceId, &Classification),
+    digest: Option<Digest>,
+) {
+    turn.record_knowledge(KnowledgeRef {
+        channel: turn.situation().channel_id(),
+        session: turn.situation().session_id(),
+        source: KnowledgeSource::entity::<Workspace>(id, digest),
+        classification: Some(classification.clone()),
+    })
+}
+
+/// Runs the file tool `name` of `tool` that only reads (`read_only`) with `params` on `terminal`,
+/// the files of `workspace` - its id and its classification -, as `tool` is configured, with the
+/// texts its results give, recording in `turn` what was read.
+pub(crate) async fn read(
     tool: &TerminalTool,
     name: &str,
     params: &Value,
-    terminal: &dyn Terminal,
-    workspace: &Workspace,
-    max_file_bytes: u64,
+    terminal: &dyn TerminalReader,
+    workspace: (WorkspaceId, &Classification),
     turn: &mut Turn<'_>,
 ) -> ToolResult<Value> {
     let config = &tool.config;
     let prompts = &tool.prompts;
-    let read = |turn: &mut Turn<'_>, digest| {
-        turn.record_knowledge(KnowledgeRef {
-            channel: turn.situation().channel_id(),
-            session: turn.situation().session_id(),
-            source: KnowledgeSource::entity::<Workspace>(workspace.id, digest),
-            classification: Some(workspace.classification.clone()),
-        })
-    };
+    let read = |turn: &mut Turn<'_>, digest| known(turn, workspace, digest);
     match name {
         LIST_FILES => {
             let at = path(&arguments::<At>(params)?.path.unwrap_or_default())?;
@@ -556,46 +558,6 @@ pub(crate) async fn execute(
             read(turn, None);
             Ok(found)
         }
-        WRITE_FILE => {
-            let Write { path: at, content } = arguments(params)?;
-            let at = path(&at)?;
-            let written = write(terminal, max_file_bytes, &at, content).await?;
-            Ok(json!({ "path": at.to_string(), "bytes": written }))
-        }
-        REPLACE_IN_FILE => {
-            let Replace { path: at, old_text, new_text, replace_all } = arguments(params)?;
-            if old_text.is_empty() {
-                return Err(ToolError::InvalidParameter(
-                    "'old_text' must not be empty".to_string(),
-                ));
-            }
-            let at = path(&at)?;
-            let (text, digest) = text(terminal, &at).await?;
-            read(turn, Some(digest));
-            let found = text.matches(old_text.as_str()).count();
-            let replaced = match (found, replace_all) {
-                (0, _) => return Err(ToolError::InvalidParameter(format!("'old_text' does not occur in '{at}'"))),
-                (1, _) | (_, true) => text.replace(old_text.as_str(), &new_text),
-                (many, false) => return Err(ToolError::InvalidParameter(format!("'old_text' occurs {many} times in '{at}': give more of what surrounds it, or set replace_all"))),
-            };
-            write(terminal, max_file_bytes, &at, replaced).await?;
-            Ok(json!({ "path": at.to_string(), "replacements": found }))
-        }
-        MOVE_FILE => {
-            let Move { from, to } = arguments(params)?;
-            let (from, to) = (path(&from)?, path(&to)?);
-            terminal.move_entry(&from, &to).await.map_err(|e| match e {
-                TerminalError::InvalidPath(_) if from.is_root() || to.is_root() => {
-                    ToolError::InvalidParameter(
-                        "the workspace itself cannot be moved, nor moved over".to_string(),
-                    )
-                }
-                e => ToolError::from(e),
-            })?;
-            Ok(
-                json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }),
-            )
-        }
         PUBLISH_FILE => {
             let Publish { path: at, name, description } = arguments(params)?;
             let at = path(&at)?;
@@ -615,9 +577,9 @@ pub(crate) async fn execute(
             {
                 return Err(ToolError::InvalidParameter(format!("'{name}' is no name to offer a file under: at most {MAX_NAME_CHARS} characters, no slashes")));
             }
-            let (size, digest) = digest(terminal, &at, max_file_bytes).await?;
+            let (size, digest) = digest(terminal, &at).await?;
             read(turn, Some(digest));
-            let mut result = json!({ "workspace": workspace.id, "path": at.to_string(), "name": name, "size": size, "modified": found.modified, "digest": digest.to_string() });
+            let mut result = json!({ "workspace": workspace.0, "path": at.to_string(), "name": name, "size": size, "modified": found.modified, "digest": digest.to_string() });
             if let Some(description) =
                 description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty())
             {
@@ -625,7 +587,62 @@ pub(crate) async fn execute(
             }
             Ok(result)
         }
-        _ => {
+        _ => Err(ToolError::UnknownTool(name.to_string())),
+    }
+}
+
+/// Runs the file tool `name` of `tool` that changes the files with `params` on `terminal`, the
+/// files of `workspace` - its id and its classification -, recording in `turn` what was read.
+pub(crate) async fn change(
+    name: &str,
+    params: &Value,
+    terminal: &dyn Terminal,
+    workspace: (WorkspaceId, &Classification),
+    turn: &mut Turn<'_>,
+) -> ToolResult<Value> {
+    let read = |turn: &mut Turn<'_>, digest| known(turn, workspace, digest);
+    match name {
+        WRITE_FILE => {
+            let Write { path: at, content } = arguments(params)?;
+            let at = path(&at)?;
+            let written = write(terminal, &at, content).await?;
+            Ok(json!({ "path": at.to_string(), "bytes": written }))
+        }
+        REPLACE_IN_FILE => {
+            let Replace { path: at, old_text, new_text, replace_all } = arguments(params)?;
+            if old_text.is_empty() {
+                return Err(ToolError::InvalidParameter(
+                    "'old_text' must not be empty".to_string(),
+                ));
+            }
+            let at = path(&at)?;
+            let (text, digest) = text(terminal, &at).await?;
+            read(turn, Some(digest));
+            let found = text.matches(old_text.as_str()).count();
+            let replaced = match (found, replace_all) {
+                (0, _) => return Err(ToolError::InvalidParameter(format!("'old_text' does not occur in '{at}'"))),
+                (1, _) | (_, true) => text.replace(old_text.as_str(), &new_text),
+                (many, false) => return Err(ToolError::InvalidParameter(format!("'old_text' occurs {many} times in '{at}': give more of what surrounds it, or set replace_all"))),
+            };
+            write(terminal, &at, replaced).await?;
+            Ok(json!({ "path": at.to_string(), "replacements": found }))
+        }
+        MOVE_FILE => {
+            let Move { from, to } = arguments(params)?;
+            let (from, to) = (path(&from)?, path(&to)?);
+            terminal.move_entry(&from, &to).await.map_err(|e| match e {
+                TerminalError::InvalidPath(_) if from.is_root() || to.is_root() => {
+                    ToolError::InvalidParameter(
+                        "the workspace itself cannot be moved, nor moved over".to_string(),
+                    )
+                }
+                e => ToolError::from(e),
+            })?;
+            Ok(
+                json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }),
+            )
+        }
+        DELETE_FILE => {
             let at = path(&arguments::<Delete>(params)?.path)?;
             terminal.delete(&at).await.map_err(|e| match e {
                 TerminalError::InvalidPath(_) if at.is_root() => ToolError::InvalidParameter(
@@ -635,6 +652,7 @@ pub(crate) async fn execute(
             })?;
             Ok(json!({ "path": at.to_string(), "deleted": true }))
         }
+        _ => Err(ToolError::UnknownTool(name.to_string())),
     }
 }
 

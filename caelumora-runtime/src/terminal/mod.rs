@@ -1,28 +1,28 @@
-//! How a workspace is reached (issue 251, part A): every workspace lies in
-//! a storage, served by one `TerminalProvider`, which makes and removes the
-//! place of a workspace there and hands out its `Terminal` - the one handle
-//! through which its files are read and written. Whatever works on a
-//! workspace - the panel, uploads and downloads, the tools of agents -
-//! holds that handle; nothing else reaches the files.
+//! How a workspace is reached (issue 251, part A): every workspace lies in a storage, served by one
+//! `TerminalProvider`, which makes and removes the place of a workspace there and hands out its
+//! `Terminal` - the one handle through which its files are read and written, writing no file larger
+//! than its storage takes (`max_file_bytes`, a parameter of the storage). What only reads holds its
+//! reading part, a `TerminalReader`, which changes nothing (issue 516). Whatever works on a
+//! workspace - the panel, uploads and downloads, the tools of agents - holds one of them; nothing
+//! else reaches the files.
 //!
-//! What a caller writes as a path is made a `WorkspacePath` before any
-//! provider sees it: relative, without `..`, so that no provider is ever
-//! handed one that leaves the workspace. An error never names more of a
-//! path than the caller wrote.
+//! What a caller writes as a path is made a `WorkspacePath` before any provider sees it: relative,
+//! without `..`, so that no provider is ever handed one that leaves the workspace. An error never
+//! names more of a path than the caller wrote.
 //!
-//! A terminal may have a `Shell`, a capability of the storage: commands run
-//! in the workspace's directory, each seen only under the scope it was
-//! started with - a channel - and kept a while after it ended. A storage
-//! knows its commands (`commands.rs`, issue 254): its provider lists those
-//! that may still run and ends one when told, and none runs longer than the
-//! storage's `max_run`.
+//! A storage may have a `Shell`, a capability its provider hands out for a scope
+//! (`TerminalProvider::shell_for`), not its terminal: commands run in the workspace's directory,
+//! each seen only under the scope it was started with - a channel - and kept a while after it
+//! ended. A storage knows its commands (`commands.rs`, issue 254): its provider lists those that
+//! may still run and ends one when told, and none runs longer than the storage's `max_run`.
 //!
 //! A storage is a backend (issue 324): its provider is made by the factory registered for its
 //! type - `local` here (`register_backends`), others by a plugin, such as the Open Terminal
 //! storages of `caelumora-open-terminal` (issue 327) -, from its parameters, which that factory
 //! reads and checks. What a provider outside the core has to offer is this module's public API: a
-//! `TerminalProvider` with its `Terminal` and `Shell`, the commands of its storage kept in
-//! `Commands`, and its `max_run_secs` checked as `check_max_run_secs` checks it.
+//! `TerminalProvider` with its `Terminal`, `TerminalReader` and `Shell`, the commands of its
+//! storage kept in `Commands`, and its `max_run_secs` and `max_file_bytes` checked as
+//! `check_max_run_secs` and `check_max_file_bytes` check them.
 
 mod commands;
 mod local;
@@ -36,6 +36,7 @@ use crate::component::{ComponentError, ComponentResult};
 use async_trait::async_trait;
 use bytes::Bytes;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use chrono::{DateTime, Utc};
 use futures::Stream;
@@ -158,35 +159,36 @@ pub struct FileEntry {
     pub modified: Option<DateTime<Utc>>,
 }
 
-/// The one handle to a workspace's files (issue 251): every path is one
-/// inside the workspace, and what a path names that is not there is
-/// `NotFound`.
+/// What of a workspace's files can be read (issue 516): listed, looked at, read - every path one
+/// inside the workspace, and what a path names that is not there `NotFound`. What a work that only
+/// reads is handed: it can change nothing.
 #[async_trait]
-pub trait Terminal: Send + Sync + Debug {
+pub trait TerminalReader: Send + Sync + Debug {
     /// The entries of the directory `dir`, by name.
     async fn list(&self, dir: &WorkspacePath) -> TerminalResult<Vec<FileEntry>>;
     /// What `path` names.
     async fn stat(&self, path: &WorkspacePath) -> TerminalResult<FileEntry>;
     /// The content of the file `path`, with its size.
     async fn read(&self, path: &WorkspacePath) -> TerminalResult<(u64, ByteStream)>;
-    /// Writes `content` to the file `path`, replacing what was there, and
-    /// makes the directories it lies in; at most `limit` bytes, or nothing
-    /// is written. Answers how many bytes were written.
-    async fn write(
-        &self,
-        path: &WorkspacePath,
-        content: ByteStream,
-        limit: u64,
-    ) -> TerminalResult<u64>;
+    /// The largest file the workspace's storage takes (its `max_file_bytes`): what its `Terminal`
+    /// writes beyond it is refused.
+    fn max_file_bytes(&self) -> u64;
+}
+
+/// The one handle to a workspace's files (issue 251): what it reads, and what changes them. Its
+/// shell is not its: a provider hands it out, for a scope (`TerminalProvider::shell_for`).
+#[async_trait]
+pub trait Terminal: TerminalReader {
+    /// Writes `content` to the file `path`, replacing what was there, and makes the directories it
+    /// lies in; at most `max_file_bytes`, or nothing is written. Answers how many bytes were
+    /// written.
+    async fn write(&self, path: &WorkspacePath, content: ByteStream) -> TerminalResult<u64>;
     /// Removes the file `path`, or the directory if it is empty.
     async fn delete(&self, path: &WorkspacePath) -> TerminalResult<()>;
     /// Makes the directory `path`, and those it lies in.
     async fn mkdir(&self, path: &WorkspacePath) -> TerminalResult<()>;
     /// Moves `from` to `to`, which must not exist.
     async fn move_entry(&self, from: &WorkspacePath, to: &WorkspacePath) -> TerminalResult<()>;
-    /// Its shell as `scope` sees it - the commands started under that scope
-    /// alone (issue 296) -, if its storage has one.
-    fn shell(&self, scope: &str) -> Option<Arc<dyn Shell>>;
 }
 
 /// What a command printed since an offset, and where it stands.
@@ -205,11 +207,10 @@ pub struct CommandState {
     pub truncated: bool,
 }
 
-/// Commands in a workspace (issue 251) as one scope sees them: started at
-/// once, followed by what they print, killed with everything they started.
-/// A shell is bound to its scope when it is made (`Terminal::shell`, issue
-/// 296) and sees the commands started under it alone; for a storage a
-/// scope is any text.
+/// Commands in a workspace (issue 251) as one scope sees them: started at once, followed by what
+/// they print, killed with everything they started. A shell is bound to its scope when it is made
+/// (`TerminalProvider::shell_for`, issue 296) and sees the commands started under it alone; for a
+/// storage a scope is any text.
 #[async_trait]
 pub trait Shell: Send + Sync + Debug {
     /// Starts `command` in the workspace's directory; answers its id at once.
@@ -246,9 +247,16 @@ pub trait TerminalProvider: Send + Sync + Debug {
     /// commands running there ended first (issue 254); nothing there is no
     /// error.
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()>;
-    /// The terminal of the workspace `id`.
+    /// The terminal of the workspace `id`, which writes no file larger than the storage takes.
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>>;
-    /// Whether its terminals have a shell - asked without reaching one.
+    /// The shell of the workspace `id` as `scope` sees it - the commands started under that scope
+    /// alone (issue 296) -, `None` where the storage has none.
+    async fn shell_for(
+        &self,
+        id: WorkspaceId,
+        scope: &str,
+    ) -> TerminalResult<Option<Arc<dyn Shell>>>;
+    /// Whether its storage has a shell - asked without reaching one.
     fn has_shell(&self) -> bool;
     /// The commands of its workspaces that may still run (issue 254) -
     /// listed without reaching any place.
@@ -287,6 +295,25 @@ pub trait TerminalProvider: Send + Sync + Debug {
 /// How long a command in a workspace may run unless its storage says
 /// otherwise (issue 254): an hour.
 pub const DEFAULT_MAX_RUN_SECS: u64 = 3600;
+
+/// The `max_file_bytes` of a storage that names none - the largest file a person may put into a
+/// workspace of it -, for its parameters' `#[serde(default = ...)]`.
+pub fn default_max_file_bytes() -> u64 {
+    DEFAULT_MAX_FILE_BYTES
+}
+
+/// Checks `bytes`, a storage's `max_file_bytes`, for the `Params::check` of its parameters.
+///
+/// # Errors
+/// `ComponentError::InvalidConfig` for none at all.
+pub fn check_max_file_bytes(bytes: u64) -> ComponentResult<()> {
+    if bytes == 0 {
+        return Err(ComponentError::InvalidConfig(
+            "max_file_bytes must be more than 0".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// The `max_run_secs` of a storage that names none - for its parameters'
 /// `#[serde(default = ...)]`.

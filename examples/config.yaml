@@ -45,13 +45,14 @@ seed:
 # Caelumora's host, as its user, with no isolation but the directory: only
 # for development. A storage with a shell takes no workspace classified
 # above its `destination` (default then: public). A command runs for
-# `max_run_secs` (default 3600) at most, in any storage.
+# `max_run_secs` (default 3600) at most, and a file is of `max_file_bytes`
+# (default 50 MiB) at most, in any storage.
 workspaces:
-  max_file_bytes: 52428800
   storage:
     files:
       type: local
       root: "local/workspaces/files"
+      max_file_bytes: 52428800
 #    dev:
 #      type: local
 #      root: "local/workspaces/dev"

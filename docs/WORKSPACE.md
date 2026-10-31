@@ -71,9 +71,13 @@ server from the session it opened.
 
 ## Storages
 
-The files of workspaces lie in the configured storages, each served by one `TerminalProvider`,
-which makes and removes the place of a workspace and hands out its `Terminal`, the one handle to its
-files. A path a caller writes is made a `WorkspacePath` - relative, without `..` - before any
+The files of workspaces lie in the configured storages, each served by one `TerminalProvider`, which
+makes and removes the place of a workspace and hands out its `Terminal`, the one handle to its
+files, which writes no file larger than the storage takes (`max_file_bytes`, a parameter of the
+storage). What only reads is handed the reading part of it, a `TerminalReader`: it lists, looks at
+and reads, and can change nothing (issue 516). A shell is not the terminal's: the provider hands it
+out for a scope (`shell_for`), which the workspace's controller alone asks for, for the scope of a
+channel. A path a caller writes is made a `WorkspacePath` - relative, without `..` - before any
 provider sees it.
 
 The providers - `local`, `open_terminal_shared` (one Open Terminal instance started outside
@@ -93,12 +97,12 @@ plugin that registers a `TerminalProvider` of its own.
 
 What a provider has to offer is the public API of `caelumora_runtime::terminal`:
 
-*   a `TerminalProvider`: making and removing the place of a workspace, its `Terminal`, whether it
-    has a shell, the commands that may still run and ending one (`CommandKey`), and its
-    `destination`;
-*   the `Terminal` it hands out, on `WorkspacePath`s, with files as `ByteStream`s and its failures
-    as `TerminalError`s, and, if it has one, its `Shell` for one scope - whose `end` ends a command
-    as a provider is told to;
+*   a `TerminalProvider`: making and removing the place of a workspace, its `Terminal` for the
+    largest file a workspace takes, its `Shell` for one scope if it has one - whose `end` ends a
+    command as a provider is told to -, whether it has a shell, the commands that may still run and
+    ending one (`CommandKey`), and its `destination`;
+*   the `Terminal` it hands out, a `TerminalReader` besides, on `WorkspacePath`s, with files as
+    `ByteStream`s and its failures as `TerminalError`s;
 *   the commands of its storage, kept in `Commands` by what its shells keep of each (`Kept`), so
     that they are listed and forgotten as the core's are;
 *   its parameter `max_run_secs`, read with `default_max_run_secs` and checked with
@@ -124,11 +128,11 @@ alone. A classification says who may read a workspace; it does not keep a comman
 
 ## Commands
 
-A terminal may have a `Shell`, a capability of its storage: commands started in the workspace,
-followed by what they print and killed with everything they started. A shell is made for one scope -
-for the runtime, the channel - and sees only the commands started under it. A storage knows the
-commands it started, so that none is started past it, and ends one when told, without asking
-anything.
+A storage may have a `Shell`, which its provider hands out, not its terminal: commands started in
+the workspace, followed by what they print and killed with everything they started. A shell is made
+for one scope - for the runtime, the channel - and sees only the commands started under it. A
+storage knows the commands it started, so that none is started past it, and ends one when told,
+without asking anything.
 
 **Commands live with the storage**, not with a call or a turn: a command handed back to an agent as
 running outlives the call that started it. A command is its channel's, not its starter's: it runs on

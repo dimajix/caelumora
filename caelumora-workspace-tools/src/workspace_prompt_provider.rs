@@ -98,7 +98,7 @@ impl WorkspacePromptProvider {
             return Vec::new();
         }
         let terminal = match workspace.terminal().await {
-            Ok(terminal) => terminal,
+            Ok((_, terminal)) => terminal,
             Err(error) => {
                 warn!(workspace = %workspace.id(), "Looking for the instruction files of a workspace failed: {error}");
                 return Vec::new();

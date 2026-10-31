@@ -3,7 +3,7 @@
 use super::document::LiveDocument;
 use crate::backend::StorageGone;
 use crate::group::require_nameable;
-use crate::terminal::{Shell, Terminal, TerminalProvider};
+use crate::terminal::{Shell, Terminal, TerminalProvider, TerminalReader};
 use crate::view::{channel_reading, ReadingBasis};
 use crate::workspace::reaper::scope_of;
 use crate::workspace::{
@@ -58,8 +58,8 @@ pub struct WorkspaceController {
 }
 
 impl WorkspaceController {
-    /// The live `workspace`, whose files lie in `provider`. Made by the
-    /// `ControllerManager`, which keeps one per workspace.
+    /// The live `workspace`, whose files lie in `provider`. Made by the `ControllerManager`, which
+    /// keeps one per workspace.
     pub(crate) fn new(
         workspace: Workspace,
         provider: Option<Arc<dyn TerminalProvider>>,
@@ -89,31 +89,37 @@ impl WorkspaceController {
         *self.workspace.address()
     }
 
-    /// Whether its terminals have a shell - asked of its storage, without
-    /// reaching one; `false` for a storage no longer configured.
+    /// Whether its storage has a shell - asked of its storage, without reaching one; `false` for a
+    /// storage no longer configured.
     pub fn has_shell(&self) -> bool {
         self.provider.as_ref().is_some_and(|provider| provider.has_shell())
     }
 
-    /// Its terminal, for whoever `ctx` acts for to use directly, for what
-    /// `need` asks - reading its files, or changing them too (issue 23) -,
-    /// wherever they act: reached as the views reach it, then, to change
-    /// its files, if its list lets them (`WriteWorkspace`).
+    /// Its files to read, for whoever `ctx` acts for to read directly, wherever they act (issue
+    /// 23): reached as the views reach it, through a terminal that reads alone (issue 516).
     ///
     /// # Errors
-    /// `NotFound` if they do not reach it, so that nothing can be probed; `ReadOnly` if they may
-    /// not change its files where `need` asks to; `StorageGone`; a `TerminalError` of reaching its
-    /// place; or whatever else the store reports.
-    pub async fn terminal(
-        &self,
-        ctx: &SecurityContext,
-        need: Grant,
-    ) -> WorkspaceResult<Arc<dyn Terminal>> {
+    /// `NotFound` if they do not reach it, so that nothing can be probed; `StorageGone`; a
+    /// `TerminalError` of reaching its place; or whatever else the store reports.
+    pub async fn reader(&self, ctx: &SecurityContext) -> WorkspaceResult<Arc<dyn TerminalReader>> {
         let workspace = self.reached(ctx).await?;
-        if need == Grant::Write {
-            require_write(self.policies.access_policy().as_ref(), ctx, &workspace).await?;
-        }
-        Ok(self.provider(&workspace)?.terminal_for(self.id()).await?)
+        Ok(self.made(&workspace).await?)
+    }
+
+    /// Its terminal, for whoever `ctx` acts for to change its files directly, wherever they act:
+    /// reached as the views reach it, if its list lets them change them (`WriteWorkspace`).
+    ///
+    /// # Errors
+    /// As `reader`, and `ReadOnly` if they may not change its files.
+    pub async fn terminal(&self, ctx: &SecurityContext) -> WorkspaceResult<Arc<dyn Terminal>> {
+        let workspace = self.reached(ctx).await?;
+        require_write(self.policies.access_policy().as_ref(), ctx, &workspace).await?;
+        self.made(&workspace).await
+    }
+
+    /// The terminal of `workspace`, made by its storage.
+    async fn made(&self, workspace: &Workspace) -> WorkspaceResult<Arc<dyn Terminal>> {
+        Ok(self.provider(workspace)?.terminal_for(self.id()).await?)
     }
 
     /// The workspace, if the caller of `ctx` may use it in `channel` of
@@ -167,21 +173,35 @@ impl WorkspaceController {
         Ok(flows.then_some(workspace))
     }
 
-    /// The workspace and its terminal, for what `need` asks, if whoever
-    /// `ctx` acts for may use it in `channel` of `session` (issue 296), as
-    /// `usable_in_channel` asks.
+    /// The workspace and its files to read, through a terminal that reads alone, if whoever `ctx`
+    /// acts for may use it in `channel` of `session` (issue 296), as `usable_in_channel` asks.
     ///
     /// # Errors
     /// What `usable_in_channel` reports, `StorageGone`, or a `TerminalError` of reaching its place.
+    pub async fn reader_in(
+        &self,
+        ctx: &SecurityContext,
+        session: &Session,
+        channel: &Channel,
+    ) -> WorkspaceResult<(Workspace, Arc<dyn TerminalReader>)> {
+        let workspace = self.usable_in_channel(ctx, session, channel, Grant::Read).await?;
+        let reader = self.made(&workspace).await?;
+        Ok((workspace, reader))
+    }
+
+    /// The workspace and its terminal, to change its files, if whoever `ctx` acts for may change
+    /// them in `channel` of `session`, as `usable_in_channel` asks (`WriteWorkspace`).
+    ///
+    /// # Errors
+    /// As `reader_in`, and `ReadOnly` if they may not change its files.
     pub async fn terminal_in(
         &self,
         ctx: &SecurityContext,
         session: &Session,
         channel: &Channel,
-        need: Grant,
     ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        let workspace = self.usable_in_channel(ctx, session, channel, need).await?;
-        let terminal = self.provider(&workspace)?.terminal_for(self.id()).await?;
+        let workspace = self.usable_in_channel(ctx, session, channel, Grant::Write).await?;
+        let terminal = self.made(&workspace).await?;
         Ok((workspace, terminal))
     }
 
@@ -199,8 +219,8 @@ impl WorkspaceController {
         session: &Session,
         channel: &Channel,
     ) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        let (workspace, terminal) = self.terminal_in(ctx, session, channel, Grant::Write).await?;
-        let shell = terminal.shell(&scope_of(channel.id));
+        let workspace = self.usable_in_channel(ctx, session, channel, Grant::Write).await?;
+        let shell = self.provider(&workspace)?.shell_for(self.id(), &scope_of(channel.id)).await?;
         Ok((workspace, shell))
     }
 

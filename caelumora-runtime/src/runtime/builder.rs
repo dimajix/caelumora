@@ -175,7 +175,6 @@ impl RuntimeBuilder {
             Arc::clone(&event_bus),
             &policies,
             storages,
-            &config.workspaces,
         ));
         let content_storages = Arc::new(backends.make_named::<dyn ContentStorage>(
             "storage of content",

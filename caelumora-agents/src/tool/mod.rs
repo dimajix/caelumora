@@ -597,19 +597,21 @@ pub trait ToolProvider: Send + Sync + Debug {
     }
 }
 
-/// The workspace the tools of a set on it may be offered on in `situation` (issue 290): the one of
-/// the agent's session the work may use in its channel, as the core binds its reader to the work
-/// (`Situation::reader`, issue 516). `Err` with why the set is unavailable, in general terms: there
-/// is none it may use - also where reading it failed.
-pub async fn usable_workspace(
+/// The reader of the workspace of its session `situation` may use in its channel
+/// (`Situation::reader`, issue 516): what only reads its files goes this way, a tool too, and what
+/// the tools of a set on it are offered by (issue 290) - none where there is none it may use, also
+/// where reading it failed.
+///
+/// # Errors
+/// `NotUsableInChannel` where the work may use none.
+pub async fn workspace_reader(
     situation: &Situation<'_>,
-) -> Result<Arc<dyn WorkspaceReader>, String> {
-    let workspace = situation.reader::<dyn WorkspaceReader>().await;
-    workspace.ok_or_else(|| WorkspaceError::NotUsableInChannel.to_string())
+) -> WorkspaceResult<Arc<dyn WorkspaceReader>> {
+    situation.reader::<dyn WorkspaceReader>().await.ok_or(WorkspaceError::NotUsableInChannel)
 }
 
-/// The writer of the workspace a tool of `turn` reads and changes the files of and runs commands in
-/// (`Turn::writer`, issue 516): a tool's one way to them.
+/// The writer of the workspace a tool of `turn` changes the files of and runs commands in
+/// (`Turn::writer`, issue 516).
 ///
 /// # Errors
 /// `NotUsableInChannel` where the work may use none.
