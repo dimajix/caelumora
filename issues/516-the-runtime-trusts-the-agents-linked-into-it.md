@@ -1,6 +1,6 @@
 # 516 — The runtime trusts the agents linked into it
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -508,7 +508,9 @@ whether or not 5 and 6 follow.
 
 ## Decisions for the maintainer
 
-1. The three words - kernel, module, program - and the crate's name, `caelumora-api`.
+1. The three words - kernel, module, program - and the crate's name, `caelumora-api`. Taken on
+   2026-10-31 for the words: the core, its plugins trusted as the core, and the applications
+   (see History); the crate's name stays open.
 2. The external agent's actor as a program (recommended), not a kernel bridge.
 3. Rights at the moment of each check, built by the kernel, instead of the request's context kept
    for the turn - taking 432's decision the other way (recommended).
@@ -546,3 +548,14 @@ whether or not 5 and 6 follow.
   sides. It revises the considerations in two points: the actor's loop and the commit of a turn
   are the program's, and the `SecurityContext` leaves the program's sight rather than becoming
   unconstructible. The steps are rewritten in the order the dependencies ask for.
+- **2026-10-31** — Step 1 begun on `issue-516-kernel-and-programs`: the principle written into
+  ARCHITECTURE.md (Principles, Crates, Plugins), SECURITY.md (Operations that check themselves,
+  In whose name an agent acts) and PLUGINS.md (What a plugin is, What a component kind outside the
+  core may use), each naming what the code does not keep yet. The words chosen differ from the
+  plan's: the documents call the kernel *the core* already, and *program* is their word for a
+  binary; so the levels are **the core** with its **plugins**, trusted as the core, and the
+  **applications** on it - `caelumora-agents` and the crates that bring an agent's components -,
+  trusted for nothing. "Plugin" stays the word for how a crate registers until applications
+  register on their own (step 5). Found while writing: an application may offer a service of its
+  own to its own kinds (`caelumora-comfyui` provides its workflows), so `Program` registers such a
+  service too, which the plan's list of what it registers lacks.

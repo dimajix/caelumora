@@ -14,16 +14,17 @@ The project is a Rust workspace, with a web UI next to it:
     their fields hold (`value`: `Name`, `Language`, free text such as `Summary`), messages and
     events, the traits of the stores, the security and confidentiality model, and the configuration
     (`AppConfig`). It holds data and rules, but runs nothing.
-*   **`caelumora-runtime`** - where everything runs: sessions, channels and the actors of their
-    users and approvers, the kinds of agent registered with it (`AgentKinds`), components, the
-    views, the event bus, the controllers that keep entities live, workspaces, the storages of
-    binary content, and the store implementations. An actor reaches its channel through its
-    `ActorRuntime` alone.
+*   **`caelumora-runtime`** - the core, where everything runs: sessions, channels and the actors
+    of their users and approvers, the kinds of agent registered with it (`AgentKinds`),
+    components, the views, the event bus, the controllers that keep entities live, workspaces, the
+    storages of binary content, and the store implementations. An actor reaches its channel
+    through its `ActorRuntime` alone.
 *   **`caelumora-agents`** - what an agent does in a channel (issue 370): both kinds of agent - a
     model run here, or an agent that runs elsewhere -, the agent's cognitive cycle and its turn, and
     the facets its components serve (tools, prompt parts, the model, message stages, its commands,
     what it does of its own accord) with their built-in kinds. It joins the runtime
     as a plugin, `AgentsPlugin`, an essential one: without it, the program is a chat between users.
+    It is an application on the core (see [Principles](#principles)).
 *   **`caelumora-rest-api`** - the wire of the REST API: the requests and responses, as `serde`
     reads and writes them, made from the model's entities and snapshots. It depends on the model
     alone, so that a client reads the API without the server (issue 323).
@@ -109,8 +110,10 @@ agent, whose actors the channel builds (`AgentKinds`), and the kinds of their co
 it, the program is a chat between users. The plugins whose components serve an agent's facets -
 tools, models, external agents - build on it, and a plugin that defines facets of its own for
 others to serve is built on in turn: `caelumora-skills` serves the `KnowledgeRestorer` of
-`caelumora-compaction`. Where the core calls a plugin, the plugin answers in
-the core's error types, not in its own: the core decides by the types it knows what a person is told
+`caelumora-compaction`. Which plugin is trusted as the core and which is an application on it,
+trusted for nothing, is said in [Principles](#principles) and listed in
+[PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the core calls a plugin, the plugin answers in the
+core's error types, not in its own: the core decides by the types it knows what a person is told
 of an error.
 
 Details: [PLUGINS.md](PLUGINS.md).
@@ -414,6 +417,24 @@ The design repeats a few decisions; new code follows them.
     failed turn leaves nothing behind.
 *   **Least authority.** Everything is handed only what it needs: a component gets a narrow context,
     not its actor's runtime; an actor gets its own channel, not the session.
+*   **The core decides, applications ask.** As the frontends map what the runtime decides, the
+    applications ask it. The runtime is the core, to the applications what an operating system's
+    kernel is to its programs. A plugin that brings what is the core's - a backend, a kind of
+    entity with its manager, views and routes, a component of a channel - is trusted as the core;
+    what runs an agent or serves its facets is an **application** on the core, trusted for
+    nothing: `caelumora-agents`, and the plugins that bring components for an agent (which plugin
+    stands where is listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). An application is given
+    the core's interface - an actor its `ActorRuntime`, a component its `ComponentContext` and the
+    `Turn` it is called with -, and the core checks every call of it in the name of the actor it
+    made the interface for. An application builds no `SecurityContext`, asks no policy and holds
+    no manager, no store and no controller of the core: what it needs decided, it asks the core to
+    decide. What the core cannot enforce it does not pretend to: a tool whose effect lies outside
+    the system runs if the application runs it, and an agent's own record - its transcript - is
+    the application's; the core's record of a conversation is the channel's history, taken at its
+    door. Today the code keeps this as a rule, not by the compiler: an application asks its
+    controller for its context and sets it on what it sends, declares the policies and the
+    managers as services of its components, and holds controllers (issue
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)).
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to

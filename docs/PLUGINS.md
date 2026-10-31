@@ -27,6 +27,23 @@ two steps:
     agent's components and the kinds of agent (issue 370) -, and `build` makes the runtime. The
     program names the default kinds of singles after its plugins registered (`set_default_kind`).
 
+A plugin stands on one of two levels of trust (see
+[ARCHITECTURE.md](ARCHITECTURE.md#principles)). One that brings what is the core's - a backend, a
+kind of entity with its manager, views and routes, a component of a channel such as the
+`ResponderPolicy` of `caelumora-decision` - is trusted as the core and is given what the core has:
+the stores, the policies, the secrets, the controllers, the system's context. One that runs an
+agent or brings components for an agent's facets is an application, trusted for nothing: the
+agents' plugin, `caelumora-mcp`, `caelumora-a2a`, `caelumora-ollama`, `caelumora-comfyui`,
+`caelumora-workspace-tools` and `caelumora-compaction`. `caelumora-skills` and
+`caelumora-artifacts` stand on both: their manager, views and routes are the core's, their
+components an application's. An application reaches the core through the interface the core gives
+an actor and its components (see
+[What a component kind outside the core may use](#what-a-component-kind-outside-the-core-may-use)),
+and may offer a service of its own to its own kinds - `caelumora-comfyui` its workflows -, which
+decides nothing of the core's. Both levels register as a `Plugin`, and "plugin" in this document
+covers both, until applications register on their own (issue
+[516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)).
+
 A test builds the runtime with `testing::TestRuntime`, naming the plugins it needs (issue 375). A
 test of the agents' logic names the agents' plugin; the runtime's own tests name scripted agents
 (`testing::ScriptedAgents`, issue 370) where an agent takes part, so that they test what the runtime
@@ -110,15 +127,21 @@ a plugin depends on:
 *   **While it is built:** the `ComponentContext` - `security_context`, in whose name it is built,
     `service::<T>()`, the services of the runtime it declared, and `all` and `one`, the facets of
     others it declared it needs. What a container accepts follows from these declarations
-    ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)).
+    ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service that decides for the
+    core - a policy, one of the core's managers, a store - is the core's, and a component of an
+    application does not declare it: what it needs decided it asks of the core, through its
+    `ComponentContext` while it is built and its `Turn` when it is called; what it needs of
+    another plugin it declares as the trait that plugin offers for it. Today the `AccessPolicy`,
+    the `ConfidentialityPolicy`, the `SecretManager`, the `WorkspaceManager`, the
+    `AttachmentManager` and the `ArtifactManager` are still among what such kinds declare (issue
+    516).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
     `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
 *   **If it talks to a remote system:** `caelumora_runtime::remote`, which describes its errors
     as the core's are described - `describe_request_error`, `describe_chain` (issue 326).
-*   **The model's types** of what it handles: `Tool`, `RemoteEndpoint`, `SecretManager`,
-    `Classification`, ...
+*   **The model's types** of what it handles: `Tool`, `RemoteEndpoint`, `Classification`, ...
 
 What a plugin needs beyond that is made visible when a plugin needs it, as part of the runtime's
 API, rather than reached around (issue 325).

@@ -392,8 +392,14 @@ rights. In three parts:
 1.  **The agent acts with its owner's rights.** Every context an agent acts in names it as the
     caller, its owner as owner and its principal - its owner - as principal: the one it speaks in
     when nobody asked (`Agent::security_context`) and the one of a turn, the request's continued as
-    the agent. A piece of work has one context: the views a turn navigates and the components it
-    calls ask in the turn's; a component's own is only for what it reads while it is built. So what
+    the agent. The core builds the context it decides by, at every check, from the agent's record
+    and its owner's roles as its controllers hold them; the agent, an application (see
+    [ARCHITECTURE.md](ARCHITECTURE.md#principles)), holds none and names none. Today the agent's
+    actor asks its controller for it, naming its own place, and sets it on what it sends, which
+    the channel's door takes on trust (issue
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). A piece of work has one
+    context: the views a turn navigates and the components it calls ask in the turn's; a
+    component's own is only for what it reads while it is built. So what
     the agent reads, the tools it calls, the credentials they reach with and the clearance it is
     judged by are its owner's, whoever asked - within its session too: it reaches another channel if
     its owner may read it or it takes part in it itself, and copies from it what the flow rule lets
@@ -525,13 +531,19 @@ The store asks again as it stores (rule 2): that pair is the rule, not a double.
 `interrupt_tool_call`, `wakeup`, `stop` and `leave` check nothing: they are the consequence of an
 act that was checked - cancelling or waking a channel or an actor, interrupting a tool call,
 removing a participant, deleting a channel, stopping or deleting a session, a request to answer
-again the channel admitted - and know no caller. That only the channel calls them is a rule for the
-code linked into the program, not a boundary: the `Actor` trait is public, so that a kind of agent
-can be built in a crate of its own (issue 370), as `SecurityContext::system` and the stores are
-public. Code linked into the program is trusted; what is kept from it is kept by the API, not by a
-guarantee. The `Moderator` trait that is handed actors and `ChannelLoop::actor` stay crate-internal,
-so that no agent's actor is handed out: a frontend reaches its user's actor through
-`ChannelLoop::user_actor`, and acts through that actor's own methods, never the control methods.
+again the channel admitted - and know no caller. Only the channel calls them: the `Actor` trait is
+public, so that a kind of agent can be built in a crate of its own (issue 370), but an actor is
+handed out of the runtime to nobody - the `Moderator` trait that is handed actors and
+`ChannelLoop::actor` stay crate-internal, and a frontend reaches its user's actor through
+`ChannelLoop::user_actor` and acts through that actor's own methods, never the control methods.
+
+**What is linked into the program is trusted by its level** (see
+[ARCHITECTURE.md](ARCHITECTURE.md#principles)): a plugin that brings what is the core's as the
+core, an application for nothing. So the core checks every call of the interface it gives an
+application in the name of the actor it made it for; a decision an application needs - whether a
+tool call is admitted, whether its tool set may be offered, whether it may recall what it read
+elsewhere - is a call of the core, decided by the core; and what touches the core's resources - a
+secret, the workspace, what is kept - is checked once more where it is touched, in the same name.
 
 ### What enters a channel
 
